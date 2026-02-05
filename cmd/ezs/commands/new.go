@@ -434,7 +434,7 @@ func New(args []string) error {
 		// Output cd command for shell wrapper to eval
 		fmt.Printf("cd %s\n", branch.WorktreePath)
 		// Check if shell function is likely not set up (we're outputting cd but it won't work without eval)
-		ui.Info("Note: If cd doesn't work, add this to your ~/.bashrc or ~/.zshrc:")
+		ui.Info("Note: If `ezs goto` doesn't work, add this to your ~/.bashrc or ~/.zshrc:")
 		ui.Info("  eval \"$(ezs --shell-init)\"")
 	} else {
 		ui.Info(fmt.Sprintf("To start working: cd %s", branch.WorktreePath))

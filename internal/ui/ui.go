@@ -161,6 +161,7 @@ func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string
 	// Use escape codes that echo -e can interpret
 	bold := "\\x1b[1m"
 	reset := "\\x1b[0m"
+	strikethrough := "\\x1b[9m"
 	green := "\\x1b[32m"
 	yellow := "\\x1b[33m"
 	gray := "\\x1b[90m"
@@ -179,7 +180,9 @@ func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string
 		}
 
 		var prText string
-		if b.PRNumber > 0 {
+		if b.IsMerged {
+			prText = fmt.Sprintf("[PR #%d MERGED]", b.PRNumber)
+		} else if b.PRNumber > 0 {
 			prText = fmt.Sprintf("[PR #%d]", b.PRNumber)
 		} else {
 			prText = "[no PR]"
@@ -224,7 +227,10 @@ func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string
 
 		// Build PR info and pad it
 		var prText, prColor string
-		if b.PRNumber > 0 {
+		if b.IsMerged {
+			prText = fmt.Sprintf("[PR #%d MERGED]", b.PRNumber)
+			prColor = cyan // Light blue for merged
+		} else if b.PRNumber > 0 {
 			prText = fmt.Sprintf("[PR #%d]", b.PRNumber)
 			prColor = yellow
 		} else {
@@ -243,9 +249,16 @@ func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string
 			remoteTag = fmt.Sprintf("  %s%s[remote]%s", magenta, IconRemote, reset)
 		}
 
-		preview.WriteString(fmt.Sprintf("%s%s%s %s%s%s  %s%s%s  %s%s%s\\n",
-			prefix, color, connector, bold, paddedName, reset,
-			prColor, paddedPRText, reset, paddedParent, reset, remoteTag))
+		// For merged branches, wrap entire line in strikethrough
+		if b.IsMerged {
+			preview.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %s%s%s  %s%s%s\\n",
+				strikethrough, prefix, color, connector, bold, paddedName, reset+strikethrough,
+				prColor, paddedPRText, reset+strikethrough, paddedParent, reset, remoteTag))
+		} else {
+			preview.WriteString(fmt.Sprintf("%s%s%s %s%s%s  %s%s%s  %s%s%s\\n",
+				prefix, color, connector, bold, paddedName, reset,
+				prColor, paddedPRText, reset, paddedParent, reset, remoteTag))
+		}
 	}
 
 	return preview.String()
