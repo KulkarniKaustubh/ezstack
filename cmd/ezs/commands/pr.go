@@ -10,6 +10,7 @@ import (
 	"github.com/ezstack/ezstack/internal/config"
 	"github.com/ezstack/ezstack/internal/git"
 	"github.com/ezstack/ezstack/internal/github"
+	"github.com/ezstack/ezstack/internal/helpers"
 	"github.com/ezstack/ezstack/internal/stack"
 	"github.com/ezstack/ezstack/internal/ui"
 )
@@ -304,9 +305,7 @@ func prCreate(args []string) error {
 	if *bodyShort != "" {
 		*body = *bodyShort
 	}
-	if *draftShort {
-		*draft = true
-	}
+	helpers.MergeFlags(draftShort, draft)
 
 	cwd, err := os.Getwd()
 	if err != nil {

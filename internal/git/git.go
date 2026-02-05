@@ -466,11 +466,11 @@ func (g *Git) CreateBranchFromRemote(remoteBranch string) (string, error) {
 // GetPRTemplate finds and reads the GitHub PR template from common locations.
 // Returns the template content or empty string if no template is found.
 // GitHub looks for templates in these locations (in order of priority):
-// 1. .github/pull_request_template.md
-// 2. .github/PULL_REQUEST_TEMPLATE.md
-// 3. docs/pull_request_template.md
-// 4. pull_request_template.md
-// 5. PULL_REQUEST_TEMPLATE.md
+// - .github/pull_request_template.md
+// - .github/PULL_REQUEST_TEMPLATE.md
+// - docs/pull_request_template.md
+// - pull_request_template.md
+// - PULL_REQUEST_TEMPLATE.md
 func (g *Git) GetPRTemplate() string {
 	// Get the repo root
 	repoRoot, err := g.GetRepoRoot()

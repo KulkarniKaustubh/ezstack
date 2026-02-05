@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/ezstack/ezstack/internal/git"
+	"github.com/ezstack/ezstack/internal/helpers"
 	"github.com/ezstack/ezstack/internal/stack"
 	"github.com/ezstack/ezstack/internal/ui"
 )
@@ -45,10 +46,7 @@ func Delete(args []string) error {
 		return nil
 	}
 
-	// Merge short and long flags
-	if *forceShort {
-		*force = true
-	}
+	helpers.MergeFlags(forceShort, force)
 
 	// Get the branch name to delete
 	var branchName string
