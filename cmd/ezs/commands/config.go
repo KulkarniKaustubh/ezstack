@@ -37,14 +37,12 @@ func printConfigUsage() {
 
 // Config handles configuration commands
 func Config(args []string) error {
-	// Check if we're in a git repo first
 	_, err := getCurrentRepoPath()
 	if err != nil {
 		return fmt.Errorf("ezs config must be run inside a git repository")
 	}
 
 	if len(args) < 1 {
-		// Interactive mode
 		return configInteractive()
 	}
 
@@ -73,12 +71,10 @@ func getCurrentRepoPath() (string, error) {
 	g := git.New(cwd)
 	mainWorktree, err := g.GetMainWorktree()
 	if err != nil {
-		// Try to get repo root instead
 		repoRoot, err := g.GetRepoRoot()
 		if err != nil {
 			return "", fmt.Errorf("not in a git repository")
 		}
-		// Resolve symlinks for consistency
 		resolved, err := filepath.EvalSymlinks(repoRoot)
 		if err == nil {
 			repoRoot = resolved
@@ -98,13 +94,11 @@ func configSet(key, value string) error {
 
 	switch key {
 	case "worktree_base_dir":
-		// This is a per-repo setting
 		repoPath, err := getCurrentRepoPath()
 		if err != nil {
 			return fmt.Errorf("worktree_base_dir is a per-repo setting: %w", err)
 		}
 
-		// Convert relative path to absolute path
 		if !filepath.IsAbs(value) {
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -112,7 +106,6 @@ func configSet(key, value string) error {
 			}
 			value = filepath.Join(cwd, value)
 		}
-		// Clean the path to resolve any .. or . components
 		value = filepath.Clean(value)
 
 		repoCfg := cfg.GetRepoConfig(repoPath)
@@ -127,7 +120,6 @@ func configSet(key, value string) error {
 	case "github_token":
 		cfg.GitHubToken = value
 	case "cd_after_new":
-		// This is a per-repo setting
 		repoPath, err := getCurrentRepoPath()
 		if err != nil {
 			return fmt.Errorf("cd_after_new is a per-repo setting: %w", err)
@@ -178,7 +170,6 @@ func configShow() error {
 		fmt.Printf("  github_token:        %s\n", "(not set - using gh cli)")
 	}
 
-	// Show current repo config if in a repo
 	repoPath, err := getCurrentRepoPath()
 	if err == nil {
 		fmt.Printf("\n%sCurrent Repository:%s\n", ui.Bold, ui.Reset)
@@ -200,7 +191,6 @@ func configShow() error {
 		}
 	}
 
-	// Show all configured repos
 	if len(cfg.Repos) > 0 {
 		fmt.Printf("\n%sConfigured Repositories:%s\n", ui.Bold, ui.Reset)
 		for path, repoCfg := range cfg.Repos {
@@ -238,7 +228,6 @@ func configInteractive() error {
 	fmt.Printf("\n%sConfiguring ezstack for repository:%s\n", ui.Bold, ui.Reset)
 	fmt.Printf("  %s%s%s\n\n", ui.Cyan, repoPath, ui.Reset)
 
-	// Get current config if set
 	repoCfg := cfg.GetRepoConfig(repoPath)
 	currentWorktreeBaseDir := ""
 	currentCdAfterNew := false
@@ -251,13 +240,11 @@ func configInteractive() error {
 
 	configChanged := false
 
-	// Prompt for worktree_base_dir
 	worktreeBaseDir := ui.Prompt("Worktree base directory (where new worktrees will be created)", currentWorktreeBaseDir)
 
 	if worktreeBaseDir != "" {
 		worktreeBaseDir = helpers.ExpandPath(worktreeBaseDir)
 
-		// Convert relative path to absolute path
 		if !filepath.IsAbs(worktreeBaseDir) {
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -265,7 +252,6 @@ func configInteractive() error {
 			}
 			worktreeBaseDir = filepath.Join(cwd, worktreeBaseDir)
 		}
-		// Clean the path
 		worktreeBaseDir = filepath.Clean(worktreeBaseDir)
 
 		if repoCfg == nil {
@@ -276,7 +262,6 @@ func configInteractive() error {
 		ui.Success(fmt.Sprintf("Set worktree_base_dir = %s", worktreeBaseDir))
 	}
 
-	// Prompt for cd_after_new using TUI
 	cdAfterNew := ui.ConfirmTUIWithDefault("Auto-cd into new worktrees after creation", currentCdAfterNew)
 	if repoCfg == nil {
 		repoCfg = &config.RepoConfig{}
@@ -285,7 +270,6 @@ func configInteractive() error {
 	configChanged = true
 	ui.Success(fmt.Sprintf("Set cd_after_new = %v", cdAfterNew))
 
-	// Save config if changed
 	if configChanged {
 		cfg.SetRepoConfig(repoPath, repoCfg)
 		if err := cfg.Save(); err != nil {
@@ -295,7 +279,6 @@ func configInteractive() error {
 		ui.Info("No changes made to configuration")
 	}
 
-	// Remind user about shell init for cd functionality
 	fmt.Fprintf(os.Stderr, "\n%sNote:%s For 'ezs goto' and 'ezs new --cd' to change directories, add this to your shell config (if not already done):\n", ui.Bold, ui.Reset)
 	fmt.Fprintf(os.Stderr, "  eval \"$(ezs --shell-init)\"\n\n")
 

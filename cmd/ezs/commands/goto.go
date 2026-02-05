@@ -55,7 +55,6 @@ func Goto(args []string) error {
 	var targetBranch *config.Branch
 
 	if fs.NArg() > 0 {
-		// Branch name provided
 		targetBranch = mgr.GetBranch(fs.Arg(0))
 		if targetBranch == nil {
 			return fmt.Errorf("branch '%s' not found in any stack", fs.Arg(0))
@@ -64,12 +63,10 @@ func Goto(args []string) error {
 			return fmt.Errorf("branch '%s' has been merged and its worktree was deleted", fs.Arg(0))
 		}
 	} else {
-		// Interactive selection with fzf - filter out merged branches
 		stacks := mgr.ListStacks()
 		var allBranches []*config.Branch
 		for _, s := range stacks {
 			for _, b := range s.Branches {
-				// Skip merged branches - they have no worktree to navigate to
 				if !b.IsMerged {
 					allBranches = append(allBranches, b)
 				}
@@ -94,8 +91,6 @@ func Goto(args []string) error {
 		return fmt.Errorf("no worktree path for branch '%s'", targetBranch.Name)
 	}
 
-	// Output cd command for eval
-	// Usage: eval "$(ezs goto branch)"
 	fmt.Printf("cd %s\n", targetBranch.WorktreePath)
 
 	return nil

@@ -28,9 +28,7 @@ func Delete(args []string) error {
     If branch-name is omitted, shows interactive branch selector.
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	// Long flags
 	force := fs.Bool("force", false, "Force delete even if branch has children")
-	// Short flags
 	forceShort := fs.Bool("f", false, "Force delete (short)")
 	helpFlag := fs.Bool("h", false, "Show help")
 
@@ -57,15 +55,12 @@ func Delete(args []string) error {
 		return err
 	}
 
-	// Get the branch name to delete
 	var branchName string
 	if fs.NArg() < 1 {
-		// If no branch specified, show interactive fzf selection
 		stacks := mgr.ListStacks()
 		var allBranches []ui.BranchWithChildInfo
 		for _, s := range stacks {
 			for _, b := range s.Branches {
-				// Skip merged branches and main branch
 				if b.IsMerged || mgr.IsMainBranch(b.Name) {
 					continue
 				}
@@ -87,13 +82,11 @@ func Delete(args []string) error {
 		}
 		branchName = selectedBranch.Name
 
-		// Check if branch has children and force flag is not set
 		if hasChildren && !*force {
 			ui.Error(fmt.Sprintf("Branch '%s' has child branches", branchName))
 			return fmt.Errorf("cannot delete branch with children. Use --force to delete anyway")
 		}
 
-		// Show confirmation dialog immediately after selection
 		confirmPrompt := fmt.Sprintf("Delete branch '%s'?", branchName)
 		if hasChildren {
 			confirmPrompt = fmt.Sprintf("Delete branch '%s'? %s(has child branches!)%s", branchName, ui.Red, ui.Reset)
@@ -105,12 +98,10 @@ func Delete(args []string) error {
 	} else {
 		branchName = fs.Arg(0)
 
-		// Non-interactive mode: check if it's a protected branch
 		if mgr.IsMainBranch(branchName) {
 			return fmt.Errorf("cannot delete main/master branch")
 		}
 
-		// Check for children first (before confirmation)
 		children := mgr.GetChildren(branchName)
 		if len(children) > 0 && !*force {
 			ui.Error(fmt.Sprintf("Branch '%s' has child branches:", branchName))
@@ -120,7 +111,6 @@ func Delete(args []string) error {
 			return fmt.Errorf("cannot delete branch with children. Use --force to delete anyway")
 		}
 
-		// Show warning and ask for confirmation
 		ui.Warn(fmt.Sprintf("This will delete branch '%s' and its worktree", branchName))
 		if len(children) > 0 {
 			ui.Warn(fmt.Sprintf("This will also orphan %d child branch(es)", len(children)))
@@ -132,26 +122,21 @@ func Delete(args []string) error {
 		}
 	}
 
-	// Change to repo root before deleting, in case we're deleting the current worktree
 	repoRoot := mgr.GetRepoDir()
 	if err := os.Chdir(repoRoot); err != nil {
 		return fmt.Errorf("failed to change to repo root: %w", err)
 	}
 
-	// Reinitialize manager from repo root to ensure git commands work
 	mgr, err = stack.NewManager(repoRoot)
 	if err != nil {
 		return err
 	}
 
-	// Perform the deletion
 	if err := mgr.DeleteBranch(branchName, *force); err != nil {
 		return err
 	}
 
 	ui.Success(fmt.Sprintf("Deleted branch '%s' and its worktree", branchName))
-
-	// Output cd command to move shell to repo root (for shell wrapper to eval)
 	fmt.Printf("cd %s\n", repoRoot)
 
 	return nil
