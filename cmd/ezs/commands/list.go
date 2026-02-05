@@ -90,9 +90,7 @@ func List(args []string) error {
 
 	// Helper to print stack (uses cached PR numbers only - no GitHub API calls)
 	printStack := func(s *config.Stack) {
-		// Only discover PRs for branches that don't have cached PR numbers
-		// This is the only GitHub call, and it's skipped if all PRs are already cached
-		discoverAndCachePRs(g, s)
+		// ezs ls should be instant - just use cached data, no GitHub API calls
 		// Pass nil statusMap - ezs ls doesn't show PR status or CI, just PR numbers
 		ui.PrintStackWithStatus(s, currentBranch, nil)
 	}
@@ -131,10 +129,13 @@ func Status(args []string) error {
     When not in a stack, shows all stacks with their PR statuses.
 
 %sOPTIONS%s
+    -d, --debug   Show debug output
     -h, --help    Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	helpFlag := fs.Bool("h", false, "Show help")
+	debug := fs.Bool("debug", false, "Show debug output")
+	debugShort := fs.Bool("d", false, "Show debug output (short)")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
 			return nil
@@ -145,6 +146,10 @@ func Status(args []string) error {
 		fs.Usage()
 		return nil
 	}
+	if *debugShort {
+		*debug = true
+	}
+	debugMode = *debug
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -296,14 +301,24 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
 func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 	statusMap := make(map[string]*ui.BranchStatus)
 
+	if debugMode {
+		fmt.Fprintf(os.Stderr, "[DEBUG] fetchBranchStatuses for stack %s with %d branches\n", s.Name, len(s.Branches))
+	}
+
 	// First discover and cache any missing PRs
 	gh := discoverAndCachePRs(g, s)
 	if gh == nil {
+		if debugMode {
+			fmt.Fprintf(os.Stderr, "[DEBUG] gh client is nil, returning empty statusMap\n")
+		}
 		return statusMap
 	}
 
 	// Now fetch detailed status for each branch with a PR
 	for _, branch := range s.Branches {
+		if debugMode {
+			fmt.Fprintf(os.Stderr, "[DEBUG] branch %s PRNumber=%d\n", branch.Name, branch.PRNumber)
+		}
 		if branch.PRNumber == 0 {
 			continue
 		}
@@ -328,6 +343,9 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 
 		// Get CI status
 		checks, err := gh.GetPRChecks(branch.PRNumber)
+		if debugMode {
+			fmt.Fprintf(os.Stderr, "[DEBUG] GetPRChecks(%d): state=%s summary=%s err=%v\n", branch.PRNumber, checks.State, checks.Summary, err)
+		}
 		if err == nil && checks != nil {
 			status.CIState = checks.State
 			status.CISummary = checks.Summary
