@@ -794,6 +794,21 @@ func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOn
 			}
 
 			if pr.Merged {
+				// Check if there's actually something to clean up locally
+				// (worktree exists or git branch exists)
+				hasWorktree := false
+				if branch.WorktreePath != "" {
+					if _, err := os.Stat(branch.WorktreePath); err == nil {
+						hasWorktree = true
+					}
+				}
+
+				hasBranch := m.git.BranchExists(branch.Name)
+				if !hasWorktree && !hasBranch {
+					// Nothing to clean up locally, skip
+					continue
+				}
+
 				// Make sure this branch has no unmerged children
 				hasUnmergedChildren := false
 				for _, child := range m.GetChildren(branch.Name) {
