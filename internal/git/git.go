@@ -258,6 +258,42 @@ func (g *Git) IsLocalAheadOfOrigin(branch string) (bool, error) {
 	return ahead > 0, nil
 }
 
+// RemoteBranchExists checks if a remote branch exists
+func (g *Git) RemoteBranchExists(branch string) bool {
+	originBranch := "origin/" + branch
+	_, err := g.run("rev-parse", "--verify", originBranch)
+	return err == nil
+}
+
+// HasDivergedFromOrigin checks if local and remote branches have diverged
+// Returns (hasDiverged, localAhead, remoteBehind, error)
+// hasDiverged is true if both local has commits not in remote AND remote has commits not in local
+func (g *Git) HasDivergedFromOrigin(branch string) (bool, int, int, error) {
+	originBranch := "origin/" + branch
+	// Check if origin branch exists
+	_, err := g.run("rev-parse", "--verify", originBranch)
+	if err != nil {
+		// Origin branch doesn't exist - not diverged, just needs first push
+		return false, 0, 0, nil
+	}
+
+	// Get commits local has that remote doesn't
+	localAhead, err := g.GetCommitsAhead(branch, originBranch)
+	if err != nil {
+		return false, 0, 0, err
+	}
+
+	// Get commits remote has that local doesn't
+	remoteBehind, err := g.GetCommitsBehind(branch, originBranch)
+	if err != nil {
+		return false, 0, 0, err
+	}
+
+	// Diverged if both have unique commits
+	hasDiverged := localAhead > 0 && remoteBehind > 0
+	return hasDiverged, localAhead, remoteBehind, nil
+}
+
 // RebaseResult contains the result of a rebase operation
 type RebaseResult struct {
 	Success     bool
