@@ -362,3 +362,197 @@ func TestManager_MarkBranchMerged(t *testing.T) {
 		t.Error("WorktreePath should be cleared")
 	}
 }
+
+// TestManager_ReparentBranch_SameStack tests reparenting within the same stack
+func TestManager_ReparentBranch_SameStack(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	// Create a stack: main -> feature-a -> feature-b -> feature-c
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "feature-a", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-c", "feature-b", "")
+
+	// Reparent feature-c to feature-a (skipping feature-b)
+	mgr, _ = NewManager(repoDir)
+	branch, err := mgr.ReparentBranch("feature-c", "feature-a", false)
+	if err != nil {
+		t.Fatalf("ReparentBranch() error = %v", err)
+	}
+
+	if branch.Parent != "feature-a" {
+		t.Errorf("branch.Parent = %q, want %q", branch.Parent, "feature-a")
+	}
+
+	// Verify the parent was updated
+	mgr, _ = NewManager(repoDir)
+	branch = mgr.GetBranch("feature-c")
+	if branch.Parent != "feature-a" {
+		t.Errorf("After reload, branch.Parent = %q, want %q", branch.Parent, "feature-a")
+	}
+}
+
+// TestManager_ReparentBranch_ToMain tests reparenting a branch to main
+func TestManager_ReparentBranch_ToMain(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	// Create a stack: main -> feature-a -> feature-b
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "feature-a", "")
+
+	// Reparent feature-b to main
+	mgr, _ = NewManager(repoDir)
+	branch, err := mgr.ReparentBranch("feature-b", "main", false)
+	if err != nil {
+		t.Fatalf("ReparentBranch() error = %v", err)
+	}
+
+	if branch.Parent != "main" {
+		t.Errorf("branch.Parent = %q, want %q", branch.Parent, "main")
+	}
+}
+
+// TestManager_ReparentBranch_CycleDetection tests that cycles are prevented
+func TestManager_ReparentBranch_CycleDetection(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	// Create a stack: main -> feature-a -> feature-b -> feature-c
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "feature-a", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-c", "feature-b", "")
+
+	// Try to reparent feature-a to feature-c (would create cycle)
+	mgr, _ = NewManager(repoDir)
+	_, err := mgr.ReparentBranch("feature-a", "feature-c", false)
+	if err == nil {
+		t.Error("ReparentBranch() should fail when creating a cycle")
+	}
+	if !strings.Contains(err.Error(), "circular") {
+		t.Errorf("Error should mention circular dependency, got: %v", err)
+	}
+}
+
+// TestManager_ReparentBranch_NonExistentParent tests error handling
+func TestManager_ReparentBranch_NonExistentParent(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+	_, err := mgr.ReparentBranch("feature-a", "nonexistent", false)
+	if err == nil {
+		t.Error("ReparentBranch() should fail for non-existent parent")
+	}
+}
+
+// TestManager_GetAllBranchesInAllStacks tests getting all branches
+func TestManager_GetAllBranchesInAllStacks(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "feature-a", "")
+
+	mgr, _ = NewManager(repoDir)
+	branches := mgr.GetAllBranchesInAllStacks()
+	if len(branches) != 2 {
+		t.Errorf("GetAllBranchesInAllStacks() returned %d branches, want 2", len(branches))
+	}
+}
+
+// TestManager_WouldCreateCycle tests the cycle detection helper
+func TestManager_WouldCreateCycle(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	// Create a stack: main -> a -> b -> c
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("b", "a", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("c", "b", "")
+
+	mgr, _ = NewManager(repoDir)
+
+	// c -> a would not create cycle (a is not descendant of c)
+	if mgr.wouldCreateCycle("c", "a") {
+		t.Error("wouldCreateCycle('c', 'a') should be false")
+	}
+
+	// a -> c would create cycle (c is descendant of a)
+	if !mgr.wouldCreateCycle("a", "c") {
+		t.Error("wouldCreateCycle('a', 'c') should be true")
+	}
+
+	// b -> c would create cycle (c is child of b)
+	if !mgr.wouldCreateCycle("b", "c") {
+		t.Error("wouldCreateCycle('b', 'c') should be true")
+	}
+
+	// c -> main should not create cycle
+	if mgr.wouldCreateCycle("c", "main") {
+		t.Error("wouldCreateCycle('c', 'main') should be false")
+	}
+}
+
+// TestManager_CollectDescendants tests collecting all descendants
+func TestManager_CollectDescendants(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	// Create a tree: main -> a -> b -> c
+	//                       \-> d
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("b", "a", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("c", "b", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("d", "a", "")
+
+	mgr, _ = NewManager(repoDir)
+	descendants := mgr.collectDescendants("a")
+
+	// Should have b, c, d as descendants
+	if len(descendants) != 3 {
+		t.Errorf("collectDescendants('a') returned %d, want 3", len(descendants))
+	}
+
+	// Check all expected descendants are present
+	names := make(map[string]bool)
+	for _, d := range descendants {
+		names[d.Name] = true
+	}
+	for _, expected := range []string{"b", "c", "d"} {
+		if !names[expected] {
+			t.Errorf("collectDescendants('a') missing %q", expected)
+		}
+	}
+}
