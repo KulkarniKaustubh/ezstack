@@ -138,43 +138,71 @@ func (c *Client) GetPRChecks(number int) (*CheckStatus, error) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(output), "\n")
-	if len(lines) == 0 {
+	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
 		return &CheckStatus{State: "none", Summary: "no checks"}, nil
 	}
 
 	passed := 0
 	failed := 0
 	pending := 0
-	total := len(lines)
 
 	for _, line := range lines {
+		if line == "" {
+			continue
+		}
 		lower := strings.ToLower(line)
-		trimmed := strings.TrimSpace(line)
-		// Check for success: ✓ at start of line, or contains "pass"/"success"
-		if strings.HasPrefix(trimmed, "✓") || strings.Contains(lower, "pass") || strings.Contains(lower, "success") {
-			passed++
-		} else if strings.HasPrefix(trimmed, "X") || strings.HasPrefix(trimmed, "✗") || strings.Contains(lower, "fail") || strings.Contains(lower, "error") {
-			// Check for failure: X or ✗ at start of line, or contains "fail"/"error"
-			failed++
-		} else if strings.HasPrefix(trimmed, "-") || strings.Contains(lower, "pending") || strings.Contains(lower, "running") {
-			// Check for pending: - at start of line, or contains "pending"/"running"
-			pending++
+
+		// Try to parse summary line first (when output is piped, gh may include this):
+		// "0 cancelled, 1 failing, 10 successful, 0 skipped, and 0 pending checks"
+		if strings.Contains(lower, "successful") && strings.Contains(lower, "pending checks") {
+			re := regexp.MustCompile(`(\d+)\s+failing`)
+			if matches := re.FindStringSubmatch(lower); len(matches) > 1 {
+				fmt.Sscanf(matches[1], "%d", &failed)
+			}
+			re = regexp.MustCompile(`(\d+)\s+successful`)
+			if matches := re.FindStringSubmatch(lower); len(matches) > 1 {
+				fmt.Sscanf(matches[1], "%d", &passed)
+			}
+			re = regexp.MustCompile(`(\d+)\s+pending`)
+			if matches := re.FindStringSubmatch(lower); len(matches) > 1 {
+				fmt.Sscanf(matches[1], "%d", &pending)
+			}
+			// Found summary line, use these counts
+			break
+		}
+
+		// Otherwise parse individual check lines (space or tab separated):
+		// "Check Name      pass    10s     https://..."
+		// Split by whitespace and look for status keywords
+		fields := strings.Fields(lower)
+		for _, field := range fields {
+			if field == "pass" {
+				passed++
+				break
+			} else if field == "fail" {
+				failed++
+				break
+			} else if field == "pending" || field == "running" {
+				pending++
+				break
+			}
 		}
 	}
 
+	total := passed + failed + pending
 	status := &CheckStatus{}
-	if failed > 0 {
+	if total == 0 {
+		status.State = "none"
+		status.Summary = "no checks"
+	} else if failed > 0 {
 		status.State = "failure"
 		status.Summary = fmt.Sprintf("%d/%d failed", failed, total)
 	} else if pending > 0 {
 		status.State = "pending"
 		status.Summary = fmt.Sprintf("%d/%d pending", pending, total)
-	} else if passed > 0 {
+	} else {
 		status.State = "success"
 		status.Summary = fmt.Sprintf("%d/%d passed", passed, total)
-	} else {
-		status.State = "none"
-		status.Summary = "no checks"
 	}
 
 	return status, nil
@@ -266,6 +294,11 @@ func (c *Client) runGH(args ...string) (string, error) {
 		// Check for repository access errors
 		if strings.Contains(stderrStr, "Could not resolve to a Repository") {
 			return "", fmt.Errorf("cannot access repository %s. Check that your gh account has access. Run: gh auth status", repoFlag)
+		}
+		// gh pr checks returns exit code 1 when there are failing checks,
+		// but still outputs valid data we can parse
+		if len(args) >= 2 && args[0] == "pr" && args[1] == "checks" && stdout.Len() > 0 {
+			return stdout.String(), nil
 		}
 		return "", fmt.Errorf("gh %s failed: %s\n%s", strings.Join(fullArgs, " "), err, stderrStr)
 	}
