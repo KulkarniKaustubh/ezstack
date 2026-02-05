@@ -906,6 +906,114 @@ func ConfirmTUIWithDefault(prompt string, defaultYes bool) bool {
 	return selected == 0
 }
 
+// SelectTUI shows a TUI selection menu with arrow key navigation
+// options is the list of options to display
+// prompt is the question to ask
+// defaultIdx is the 0-based index of the default selected option
+// Returns the 0-based index of the selected option, or -1 if cancelled
+func SelectTUI(options []string, prompt string, defaultIdx int) int {
+	if len(options) == 0 {
+		return -1
+	}
+
+	// Clamp defaultIdx to valid range
+	if defaultIdx < 0 || defaultIdx >= len(options) {
+		defaultIdx = 0
+	}
+
+	// Save terminal state and set raw mode
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		// Fallback: just return default
+		return defaultIdx
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	selected := defaultIdx
+	numOptions := len(options)
+	// Total lines: 1 prompt + numOptions + 1 hint line
+	totalLines := numOptions + 1
+
+	renderMenu := func() {
+		// Move to start of line and clear
+		fmt.Fprint(os.Stderr, "\r\033[K")
+
+		// Print prompt
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s\n\r", Bold, Yellow, Reset, prompt)
+		fmt.Fprint(os.Stderr, "\033[K")
+
+		// Print each option
+		for i, opt := range options {
+			if i == selected {
+				fmt.Fprintf(os.Stderr, "  %s▸ %s%s%s\n\r", Cyan, Bold, opt, Reset)
+			} else {
+				fmt.Fprintf(os.Stderr, "    %s\n\r", opt)
+			}
+			fmt.Fprint(os.Stderr, "\033[K")
+		}
+
+		fmt.Fprintf(os.Stderr, "%s(Use ↑/↓ arrows to select, Enter to confirm)%s\r", Magenta, Reset)
+
+		// Move cursor up to start position (totalLines up from hint line)
+		fmt.Fprintf(os.Stderr, "\033[%dA", totalLines)
+	}
+
+	// Initial render
+	fmt.Fprintln(os.Stderr) // Add space before dialog
+	renderMenu()
+
+	// Read input
+	buf := make([]byte, 3)
+	for {
+		n, err := os.Stdin.Read(buf)
+		if err != nil {
+			break
+		}
+
+		if n == 1 {
+			switch buf[0] {
+			case 13, 10: // Enter key
+				// Move cursor down past the dialog and clear
+				fmt.Fprintf(os.Stderr, "\033[%dB\r\033[K", totalLines+1)
+				return selected
+			case 3: // Ctrl+C
+				fmt.Fprintf(os.Stderr, "\033[%dB\r\033[K", totalLines+1)
+				return -1
+			case 'k', 'K': // vim-style up
+				if selected > 0 {
+					selected--
+					renderMenu()
+				}
+			case 'j', 'J': // vim-style down
+				if selected < numOptions-1 {
+					selected++
+					renderMenu()
+				}
+			}
+		} else if n == 3 && buf[0] == 27 && buf[1] == 91 {
+			// Arrow key escape sequence
+			switch buf[2] {
+			case 65: // Up arrow
+				if selected > 0 {
+					selected--
+					renderMenu()
+				}
+			case 66: // Down arrow
+				if selected < numOptions-1 {
+					selected++
+					renderMenu()
+				}
+			}
+		} else if n == 1 && buf[0] == 27 {
+			// Single ESC key - cancel
+			fmt.Fprintf(os.Stderr, "\033[%dB\r\033[K", totalLines+1)
+			return -1
+		}
+	}
+
+	return selected
+}
+
 // Success prints a success message to stderr
 func Success(msg string) {
 	fmt.Fprintf(os.Stderr, "%s%s %s%s\n", Green, IconSuccess, msg, Reset)
