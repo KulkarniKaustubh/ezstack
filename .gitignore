@@ -8,7 +8,9 @@
 
 # Test artifacts
 test/testrepo/
+test/testrepo_reparent/
 test/worktrees/
+test/worktrees_reparent/
 
 # Go build cache
 *.test
