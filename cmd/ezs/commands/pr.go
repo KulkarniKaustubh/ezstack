@@ -110,11 +110,11 @@ func prInteractive() error {
 		optionActions = append(optionActions, "create-all")
 	}
 
-	options = append(options, fmt.Sprintf("%s  Cancel", ui.IconCancel))
-	optionActions = append(optionActions, "cancel")
-
-	selected, err := ui.SelectOption(options, "What would you like to do?")
+	selected, err := ui.SelectOptionWithBack(options, "What would you like to do?")
 	if err != nil {
+		if err == ui.ErrBack {
+			return ui.ErrBack
+		}
 		return err
 	}
 
@@ -128,8 +128,6 @@ func prInteractive() error {
 		return prStack(nil)
 	case "create-all":
 		return prCreateAll(currentStack)
-	case "cancel":
-		return nil
 	}
 
 	return nil
