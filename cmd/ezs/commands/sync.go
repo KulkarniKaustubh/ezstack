@@ -98,7 +98,10 @@ func Sync(args []string) error {
 		gh, _ = github.NewClient(remoteURL)
 	}
 
+	spinner := ui.NewDelayedSpinner("Fetching branch status...")
+	spinner.Start()
 	statusMap := fetchBranchStatuses(g, currentStack)
+	spinner.Stop()
 	ui.PrintStackWithStatus(currentStack, branch.Name, statusMap)
 
 	deleteLocal := !*noDeleteLocal
