@@ -246,42 +246,9 @@ func configInteractive() error {
 		}
 	}
 
-	// Generate suggested default: <repo parent>/<repo name>_worktrees
-	suggestedWorktreeDir := ""
-	if currentWorktreeBaseDir == "" {
-		repoParent := filepath.Dir(repoPath)
-		repoName := filepath.Base(repoPath)
-		suggestedWorktreeDir = filepath.Join(repoParent, repoName+"_worktrees")
-		currentWorktreeBaseDir = suggestedWorktreeDir
-	}
-
 	configChanged := false
 
-	// Create a validator that checks worktree base dir is outside the repo
-	worktreeValidator := func(path string) error {
-		expandedPath := helpers.ExpandPath(path)
-		if !filepath.IsAbs(expandedPath) {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return fmt.Errorf("failed to get current directory: %w", err)
-			}
-			expandedPath = filepath.Join(cwd, expandedPath)
-		}
-		expandedPath = filepath.Clean(expandedPath)
-		return ValidateWorktreeBaseDir(expandedPath, repoPath)
-	}
-
-	// Build prompt with hint if using suggested default
-	hintText := ""
-	if suggestedWorktreeDir != "" {
-		hintText = "↑ suggested location"
-	}
-
-	worktreeBaseDir, ok := ui.PromptPathTUIWithValidatorAndHint("Worktree base directory", hintText, currentWorktreeBaseDir, true, worktreeValidator)
-	if !ok {
-		ui.Warn("Cancelled")
-		return nil
-	}
+	worktreeBaseDir := ui.Prompt("Worktree base directory (where new worktrees will be created)", currentWorktreeBaseDir)
 
 	if worktreeBaseDir != "" {
 		worktreeBaseDir = helpers.ExpandPath(worktreeBaseDir)
