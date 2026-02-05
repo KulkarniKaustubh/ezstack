@@ -122,6 +122,10 @@ func main() {
 		err = commands.Reparent(args)
 	case "update", "up":
 		err = commands.Update(args)
+	case "stack":
+		err = commands.Stack(args)
+	case "unstack":
+		err = commands.Unstack(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		printUsage()
@@ -147,6 +151,8 @@ func runInteractiveMenu() error {
 			ui.IconBranch + "  pr       - Manage pull requests",
 			ui.IconArrow + "  goto     - Navigate to a branch worktree",
 			ui.IconUp + "  reparent - Change the parent of a branch",
+			ui.IconNew + "  stack    - Add a branch to a stack",
+			ui.IconCancel + "  unstack  - Remove a branch from tracking",
 			ui.IconSync + "  update   - Sync config with git (detect changes)",
 			ui.IconCancel + "  delete   - Delete a branch and its worktree",
 			ui.IconBullet + "  config   - Configure ezstack",
@@ -173,12 +179,16 @@ func runInteractiveMenu() error {
 		case 5:
 			cmdErr = commands.Reparent(nil)
 		case 6:
-			cmdErr = commands.Update(nil)
+			cmdErr = commands.Stack(nil)
 		case 7:
-			cmdErr = commands.Delete(nil)
+			cmdErr = commands.Unstack(nil)
 		case 8:
-			cmdErr = commands.Config(nil)
+			cmdErr = commands.Update(nil)
 		case 9:
+			cmdErr = commands.Delete(nil)
+		case 10:
+			cmdErr = commands.Config(nil)
+		case 11:
 			printUsage()
 			return nil
 		}
@@ -206,6 +216,8 @@ func printUsage() {
     sync          Sync stack with remote (rebase onto main)
     goto, go      Navigate to a branch worktree
     reparent, rp  Change the parent of a branch
+    stack         Add a branch to a stack
+    unstack       Remove a branch from tracking (keeps git branch)
     update, up    Sync config with git (detect manual changes)
     delete, rm    Delete a branch and its worktree
     pr            Manage pull requests

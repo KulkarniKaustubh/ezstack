@@ -671,3 +671,122 @@ func TestManager_AddWorktreeToStack(t *testing.T) {
 		t.Error("manual-branch should be in a stack")
 	}
 }
+
+func TestManager_UntrackBranch(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	// Verify branch exists
+	branch := mgr.GetBranch("feature-a")
+	if branch == nil {
+		t.Fatal("Branch should exist before untracking")
+	}
+
+	// Untrack the branch
+	err := mgr.UntrackBranch("feature-a")
+	if err != nil {
+		t.Fatalf("UntrackBranch() error = %v", err)
+	}
+
+	// Verify branch is no longer tracked
+	branch = mgr.GetBranch("feature-a")
+	if branch != nil {
+		t.Error("Branch should not be tracked after untracking")
+	}
+
+	// Verify the stack is removed (was only branch)
+	stacks := mgr.ListStacks()
+	if len(stacks) != 0 {
+		t.Errorf("Expected 0 stacks after untracking only branch, got %d", len(stacks))
+	}
+}
+
+func TestManager_UntrackBranch_NotTracked(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+
+	// Try to untrack a branch that doesn't exist
+	err := mgr.UntrackBranch("nonexistent")
+	if err == nil {
+		t.Error("UntrackBranch() should fail for non-tracked branch")
+	}
+	if !strings.Contains(err.Error(), "not tracked") {
+		t.Errorf("Error should mention 'not tracked', got: %v", err)
+	}
+}
+
+func TestManager_UntrackBranch_WithChildren(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-b", "feature-a", "")
+
+	// Verify parent-child relationship
+	children := mgr.GetChildren("feature-a")
+	if len(children) != 1 {
+		t.Fatalf("Expected 1 child, got %d", len(children))
+	}
+
+	// Untrack the parent
+	err := mgr.UntrackBranch("feature-a")
+	if err != nil {
+		t.Fatalf("UntrackBranch() error = %v", err)
+	}
+
+	// Verify feature-a is no longer tracked
+	branch := mgr.GetBranch("feature-a")
+	if branch != nil {
+		t.Error("feature-a should not be tracked after untracking")
+	}
+
+	// Verify feature-b is reparented to main
+	branchB := mgr.GetBranch("feature-b")
+	if branchB == nil {
+		t.Fatal("feature-b should still be tracked")
+	}
+	if branchB.Parent != "main" {
+		t.Errorf("feature-b.Parent = %q, want %q", branchB.Parent, "main")
+	}
+}
+
+func TestManager_UntrackBranch_MiddleOfStack(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-b", "feature-a", "")
+	mgr.CreateBranch("feature-c", "feature-b", "")
+
+	// Untrack the middle branch
+	err := mgr.UntrackBranch("feature-b")
+	if err != nil {
+		t.Fatalf("UntrackBranch() error = %v", err)
+	}
+
+	// Verify feature-b is no longer tracked
+	if mgr.GetBranch("feature-b") != nil {
+		t.Error("feature-b should not be tracked")
+	}
+
+	// Verify feature-c is reparented to feature-a
+	branchC := mgr.GetBranch("feature-c")
+	if branchC == nil {
+		t.Fatal("feature-c should still be tracked")
+	}
+	if branchC.Parent != "feature-a" {
+		t.Errorf("feature-c.Parent = %q, want %q", branchC.Parent, "feature-a")
+	}
+
+	// Verify feature-a still exists
+	if mgr.GetBranch("feature-a") == nil {
+		t.Error("feature-a should still be tracked")
+	}
+}

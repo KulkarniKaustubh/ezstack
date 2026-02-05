@@ -132,7 +132,7 @@ func reparentInteractive(mgr *stack.Manager, g *git.Git, branchName, newParent s
 
 	// Select new parent if not specified
 	if newParent == "" {
-		newParent, err = selectNewParent(mgr, g, branchName, baseBranch)
+		newParent, err = SelectNewParent(mgr, g, branchName, baseBranch)
 		if err != nil {
 			return err
 		}
@@ -181,8 +181,9 @@ func selectBranchToReparent(mgr *stack.Manager, g *git.Git) (string, error) {
 	return branchNames[selected], nil
 }
 
-// selectNewParent shows a selection UI for choosing the new parent
-func selectNewParent(mgr *stack.Manager, g *git.Git, branchName, baseBranch string) (string, error) {
+// SelectNewParent shows a selection UI for choosing the new parent
+// Exported for reuse by stack command
+func SelectNewParent(mgr *stack.Manager, g *git.Git, branchName, baseBranch string) (string, error) {
 	// Get all branches in stacks
 	allBranches := mgr.GetAllBranchesInAllStacks()
 	stacks := mgr.ListStacks()
@@ -198,7 +199,7 @@ func selectNewParent(mgr *stack.Manager, g *git.Git, branchName, baseBranch stri
 	// Add branches from stacks (with stack preview)
 	for _, b := range allBranches {
 		// Skip the branch being reparented and its descendants
-		if b.Name == branchName || isDescendantOf(mgr, b.Name, branchName) {
+		if b.Name == branchName || IsDescendantOf(mgr, b.Name, branchName) {
 			continue
 		}
 		if b.IsMerged {
@@ -233,8 +234,9 @@ func selectNewParent(mgr *stack.Manager, g *git.Git, branchName, baseBranch stri
 	return parentNames[selected], nil
 }
 
-// isDescendantOf checks if branchName is a descendant of ancestorName
-func isDescendantOf(mgr *stack.Manager, branchName, ancestorName string) bool {
+// IsDescendantOf checks if branchName is a descendant of ancestorName
+// Exported for reuse by stack command
+func IsDescendantOf(mgr *stack.Manager, branchName, ancestorName string) bool {
 	branch := mgr.GetBranch(branchName)
 	if branch == nil {
 		return false

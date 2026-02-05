@@ -346,6 +346,49 @@ func (m *Manager) DeleteBranch(branchName string, force bool) error {
 	return nil
 }
 
+// UntrackBranch removes a branch from ezstack tracking without deleting the git branch or worktree
+// Children of the untracked branch are reparented to the untracked branch's parent
+func (m *Manager) UntrackBranch(branchName string) error {
+	// Check if branch exists in tracking
+	branch := m.GetBranch(branchName)
+	if branch == nil {
+		return fmt.Errorf("branch '%s' is not tracked by ezstack", branchName)
+	}
+
+	// Get children before removing
+	children := m.GetChildren(branchName)
+
+	// Remove from stack config (but don't touch git)
+	for stackName, stack := range m.stackConfig.Stacks {
+		for i, b := range stack.Branches {
+			if b.Name == branchName {
+				// Remove this branch from the stack
+				stack.Branches = append(stack.Branches[:i], stack.Branches[i+1:]...)
+
+				// If this was the only branch, remove the entire stack
+				if len(stack.Branches) == 0 {
+					delete(m.stackConfig.Stacks, stackName)
+				}
+
+				// Update children to point to this branch's parent
+				for _, child := range children {
+					child.Parent = branch.Parent
+					child.BaseBranch = branch.Parent
+				}
+
+				break
+			}
+		}
+	}
+
+	// Save the config
+	if err := m.stackConfig.Save(m.repoDir); err != nil {
+		return fmt.Errorf("failed to save stack config: %w", err)
+	}
+
+	return nil
+}
+
 // ReparentBranch changes the parent of a branch to a new parent
 // This handles several cases:
 // 1. Branch is already in a stack - just update parent pointer
