@@ -92,9 +92,9 @@ func List(args []string) error {
 	} else {
 		currentStack, _, err := mgr.GetCurrentStack()
 		if err != nil {
-			for _, s := range stacks {
-				printStack(s)
-			}
+			// Current branch is not part of any stack
+			ui.Info(fmt.Sprintf("Branch '%s' is not part of any stack.", currentBranch))
+			ui.Info("Use 'ezs ls -a' to see all stacks, or 'ezs new' to create a new stack.")
 		} else {
 			printStack(currentStack)
 		}
@@ -114,14 +114,17 @@ func Status(args []string) error {
 
 %sDESCRIPTION%s
     Shows the current stack with PR and CI status for each branch.
-    When not in a stack, shows all stacks with their PR statuses.
+    When not in a stack, shows a message. Use -a to see all stacks.
 
 %sOPTIONS%s
+    -a, --all     Show all stacks
     -d, --debug   Show debug output
     -h, --help    Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	helpFlag := fs.Bool("h", false, "Show help")
+	all := fs.Bool("all", false, "Show all stacks")
+	allShort := fs.Bool("a", false, "Show all stacks (short)")
 	debug := fs.Bool("debug", false, "Show debug output")
 	debugShort := fs.Bool("d", false, "Show debug output (short)")
 	if err := fs.Parse(args); err != nil {
@@ -134,7 +137,7 @@ func Status(args []string) error {
 		fs.Usage()
 		return nil
 	}
-	helpers.MergeFlags(debugShort, debug)
+	helpers.MergeFlags(allShort, all, debugShort, debug)
 	debugMode = *debug
 
 	cwd, err := os.Getwd()
@@ -153,14 +156,14 @@ func Status(args []string) error {
 		return err
 	}
 
-	currentStack, branch, err := mgr.GetCurrentStack()
-	if err != nil {
-		stacks := mgr.ListStacks()
-		if len(stacks) == 0 {
-			ui.Info("No stacks found. Create one with: ezs new <branch-name>")
-			return nil
-		}
+	stacks := mgr.ListStacks()
+	if len(stacks) == 0 {
+		ui.Info("No stacks found. Create one with: ezs new <branch-name>")
+		return nil
+	}
 
+	// Helper to fetch and print all stacks with status
+	printAllStacksWithStatus := func() {
 		spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
 		spinner.Start()
 		statusMaps := make([]map[string]*ui.BranchStatus, len(stacks))
@@ -172,6 +175,18 @@ func Status(args []string) error {
 		for i, s := range stacks {
 			ui.PrintStack(s, currentBranch, true, statusMaps[i])
 		}
+	}
+
+	if *all {
+		printAllStacksWithStatus()
+		return nil
+	}
+
+	currentStack, branch, err := mgr.GetCurrentStack()
+	if err != nil {
+		// Current branch is not part of any stack
+		ui.Info(fmt.Sprintf("Branch '%s' is not part of any stack.", currentBranch))
+		ui.Info("Use 'ezs status -a' to see all stacks, or 'ezs new' to create a new stack.")
 		return nil
 	}
 

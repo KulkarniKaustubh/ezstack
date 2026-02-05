@@ -353,8 +353,38 @@ func New(args []string) error {
 	ui.Info(fmt.Sprintf("Creating branch '%s' from '%s'", branchName, parentBranch))
 	ui.Info(fmt.Sprintf("Worktree path: %s", worktreePath))
 
+	// Check if parent is the base branch (main/master) and ask about stack
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
+
+	// Check if this would create a new stack (parent is base branch and not already in a stack)
+	createAsStackRoot := true
+	if parentBranch == baseBranch && mgr.GetBranch(parentBranch) == nil {
+		// Parent is main/master and not in any stack - ask if user wants to create a stack
+		createAsStackRoot = ui.ConfirmTUIWithDefault("Make this a stack root? (allows stacking more branches on top)", true)
+	}
+
 	if !ui.ConfirmTUI(fmt.Sprintf("Create new worktree for branch '%s'", branchName)) {
 		ui.Warn("Cancelled")
+		return nil
+	}
+
+	if !createAsStackRoot {
+		// Just create the worktree without adding to a stack
+		if err := mgr.CreateWorktreeOnly(branchName, parentBranch, worktreePath); err != nil {
+			return err
+		}
+		ui.Success(fmt.Sprintf("Created worktree '%s' at '%s' (not part of a stack)", branchName, worktreePath))
+		if shouldCd := getCdAfterNew(cfg, mgr.GetRepoDir(), *cdFlag, *noCdFlag); shouldCd {
+			fmt.Printf("cd %s\n", worktreePath)
+			ui.Info("Note: If `ezs goto` doesn't work, add this to your ~/.bashrc or ~/.zshrc:")
+			ui.Info("  eval \"$(ezs --shell-init)\"")
+		} else {
+			ui.Info(fmt.Sprintf("To start working: cd %s", worktreePath))
+		}
 		return nil
 	}
 
@@ -365,19 +395,7 @@ func New(args []string) error {
 
 	ui.Success(fmt.Sprintf("Created branch '%s' with worktree at '%s'", branch.Name, branch.WorktreePath))
 
-	shouldCd := false
-	if *noCdFlag {
-		shouldCd = false
-	} else if *cdFlag {
-		shouldCd = true
-	} else {
-		cfg, err := config.Load()
-		if err == nil {
-			shouldCd = cfg.GetCdAfterNew(mgr.GetRepoDir())
-		}
-	}
-
-	if shouldCd {
+	if getCdAfterNew(cfg, mgr.GetRepoDir(), *cdFlag, *noCdFlag) {
 		fmt.Printf("cd %s\n", branch.WorktreePath)
 		ui.Info("Note: If `ezs goto` doesn't work, add this to your ~/.bashrc or ~/.zshrc:")
 		ui.Info("  eval \"$(ezs --shell-init)\"")
@@ -386,6 +404,20 @@ func New(args []string) error {
 	}
 
 	return nil
+}
+
+// getCdAfterNew determines if we should cd after creating a new worktree
+func getCdAfterNew(cfg *config.Config, repoDir string, cdFlag, noCdFlag bool) bool {
+	if noCdFlag {
+		return false
+	}
+	if cdFlag {
+		return true
+	}
+	if cfg != nil {
+		return cfg.GetCdAfterNew(repoDir)
+	}
+	return false
 }
 
 // ValidateWorktreeBaseDir validates that the worktree base directory is not inside the repo.

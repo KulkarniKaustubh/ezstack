@@ -197,6 +197,26 @@ func (m *Manager) CreateBranch(name, parentBranch, worktreeDir string) (*config.
 	return branch, nil
 }
 
+// CreateWorktreeOnly creates a worktree without adding it to a stack
+// This is used when the user wants to create a standalone worktree from main/master
+func (m *Manager) CreateWorktreeOnly(name, parentBranch, worktreeDir string) error {
+	// If no worktree dir specified, use the configured base dir for this repo
+	if worktreeDir == "" {
+		if m.repoConfig != nil && m.repoConfig.WorktreeBaseDir != "" {
+			worktreeDir = filepath.Join(m.repoConfig.WorktreeBaseDir, name)
+		} else {
+			return fmt.Errorf("worktree directory not specified and no default configured for this repo. Run: ezs config set worktree_base_dir <path>")
+		}
+	}
+
+	// Create the worktree
+	if err := m.git.CreateWorktree(name, worktreeDir, parentBranch); err != nil {
+		return fmt.Errorf("failed to create worktree: %w", err)
+	}
+
+	return nil
+}
+
 // findStackForBranch finds which stack a branch belongs to
 func (m *Manager) findStackForBranch(branchName string) string {
 	for stackName, stack := range m.stackConfig.Stacks {

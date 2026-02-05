@@ -790,3 +790,106 @@ func TestManager_UntrackBranch_MiddleOfStack(t *testing.T) {
 		t.Error("feature-a should still be tracked")
 	}
 }
+
+// TestManager_CreateWorktreeOnly tests creating a worktree without adding to a stack
+func TestManager_CreateWorktreeOnly(t *testing.T) {
+	repoDir, worktreeDir, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+
+	err := mgr.CreateWorktreeOnly("standalone-branch", "main", "")
+	if err != nil {
+		t.Fatalf("CreateWorktreeOnly() error = %v", err)
+	}
+
+	// Verify worktree was created
+	expectedPath := filepath.Join(worktreeDir, "standalone-branch")
+	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+		t.Error("Worktree directory was not created")
+	}
+
+	// Verify branch is NOT in any stack
+	branch := mgr.GetBranch("standalone-branch")
+	if branch != nil {
+		t.Error("Branch should NOT be tracked in any stack")
+	}
+
+	// Verify no stacks were created
+	stacks := mgr.ListStacks()
+	if len(stacks) != 0 {
+		t.Errorf("Expected 0 stacks, got %d", len(stacks))
+	}
+}
+
+// TestManager_CreateWorktreeOnly_WithExplicitPath tests creating a worktree with explicit path
+func TestManager_CreateWorktreeOnly_WithExplicitPath(t *testing.T) {
+	repoDir, worktreeDir, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+
+	customPath := filepath.Join(worktreeDir, "custom-path")
+	err := mgr.CreateWorktreeOnly("standalone-custom", "main", customPath)
+	if err != nil {
+		t.Fatalf("CreateWorktreeOnly() error = %v", err)
+	}
+
+	// Verify worktree was created at custom path
+	if _, err := os.Stat(customPath); os.IsNotExist(err) {
+		t.Error("Worktree directory was not created at custom path")
+	}
+
+	// Verify branch is NOT in any stack
+	branch := mgr.GetBranch("standalone-custom")
+	if branch != nil {
+		t.Error("Branch should NOT be tracked in any stack")
+	}
+}
+
+// TestManager_CreateWorktreeOnly_NoWorktreeDir tests error when no worktree dir configured
+func TestManager_CreateWorktreeOnly_NoWorktreeDir(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "stack-test-nodir-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	tmpDir, _ = filepath.EvalSymlinks(tmpDir)
+	repoDir := filepath.Join(tmpDir, "repo")
+	configDir := filepath.Join(tmpDir, "config")
+
+	os.MkdirAll(repoDir, 0755)
+	os.MkdirAll(configDir, 0755)
+
+	originalHome := os.Getenv("EZSTACK_HOME")
+	os.Setenv("EZSTACK_HOME", configDir)
+	defer os.Setenv("EZSTACK_HOME", originalHome)
+
+	exec.Command("git", "-C", repoDir, "init").Run()
+	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", repoDir, "config", "user.name", "Test User").Run()
+	os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Test\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Initial commit").Run()
+
+	repoDir, _ = filepath.EvalSymlinks(repoDir)
+
+	// Config without worktree base dir
+	cfg := &config.Config{
+		DefaultBaseBranch: "main",
+		Repos:             map[string]*config.RepoConfig{},
+	}
+	cfg.Save()
+
+	mgr, _ := NewManager(repoDir)
+
+	// Should fail because no worktree dir is configured
+	err = mgr.CreateWorktreeOnly("standalone-branch", "main", "")
+	if err == nil {
+		t.Error("CreateWorktreeOnly() should fail when no worktree dir is configured")
+	}
+	if !strings.Contains(err.Error(), "worktree directory not specified") {
+		t.Errorf("Error should mention worktree directory, got: %v", err)
+	}
+}

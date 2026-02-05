@@ -212,3 +212,77 @@ func TestNewBranchWithoutWorktreeConfig(t *testing.T) {
 		t.Errorf("Unexpected error for worktree dir outside repo: %v", err)
 	}
 }
+
+// TestCreateWorktreeOnly tests creating a worktree without adding to a stack
+func TestCreateWorktreeOnly(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	mgr, err := stack.NewManager(env.RepoDir)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	// Create a worktree without adding to stack
+	err = mgr.CreateWorktreeOnly("standalone-branch", "main", "")
+	if err != nil {
+		t.Fatalf("CreateWorktreeOnly failed: %v", err)
+	}
+
+	// Verify worktree was created
+	worktreePath := filepath.Join(env.WorktreeDir, "standalone-branch")
+	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		t.Error("Worktree directory was not created")
+	}
+
+	// Verify branch is NOT in any stack
+	branch := mgr.GetBranch("standalone-branch")
+	if branch != nil {
+		t.Error("Branch should NOT be tracked in any stack")
+	}
+
+	// Verify no stacks were created
+	stacks := mgr.ListStacks()
+	if len(stacks) != 0 {
+		t.Errorf("Expected 0 stacks, got %d", len(stacks))
+	}
+}
+
+// TestCreateWorktreeOnly_ThenAddToStack tests creating a standalone worktree then adding it to a stack
+func TestCreateWorktreeOnly_ThenAddToStack(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	mgr, err := stack.NewManager(env.RepoDir)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	// Create a worktree without adding to stack
+	worktreePath := filepath.Join(env.WorktreeDir, "standalone-then-stack")
+	err = mgr.CreateWorktreeOnly("standalone-then-stack", "main", worktreePath)
+	if err != nil {
+		t.Fatalf("CreateWorktreeOnly failed: %v", err)
+	}
+
+	// Verify not in stack
+	if mgr.GetBranch("standalone-then-stack") != nil {
+		t.Error("Branch should not be in stack initially")
+	}
+
+	// Now add it to a stack using AddWorktreeToStack
+	branch, err := mgr.AddWorktreeToStack("standalone-then-stack", worktreePath, "main")
+	if err != nil {
+		t.Fatalf("AddWorktreeToStack failed: %v", err)
+	}
+
+	if branch.Name != "standalone-then-stack" {
+		t.Errorf("branch.Name = %q, want %q", branch.Name, "standalone-then-stack")
+	}
+
+	// Verify now in stack
+	mgr, _ = stack.NewManager(env.RepoDir)
+	if mgr.GetBranch("standalone-then-stack") == nil {
+		t.Error("Branch should now be in stack")
+	}
+}

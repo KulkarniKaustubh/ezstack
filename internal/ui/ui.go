@@ -200,6 +200,61 @@ func SelectWorktree(worktrees []WorktreeInfo, prompt string) (*WorktreeInfo, err
 	return nil, fmt.Errorf("worktree not found: %s", branchName)
 }
 
+// SelectWorktreeWithStackPreview uses fzf to select a worktree with stack preview
+// For worktrees not in any stack, the preview shows "Not part of a stack"
+func SelectWorktreeWithStackPreview(worktrees []WorktreeInfo, stacks []*config.Stack, prompt string) (*WorktreeInfo, error) {
+	if len(worktrees) == 0 {
+		return nil, fmt.Errorf("no worktrees to select from")
+	}
+
+	// Build a map of branch -> stack for quick lookup
+	branchToStack := make(map[string]*config.Stack)
+	for _, s := range stacks {
+		for _, b := range s.Branches {
+			branchToStack[b.Name] = s
+		}
+	}
+
+	// Build fzf input with preview data embedded
+	var input strings.Builder
+	for _, wt := range worktrees {
+		displayText := fmt.Sprintf("%s (%s)", wt.Branch, wt.Path)
+
+		// Generate preview
+		var preview string
+		if stack, ok := branchToStack[wt.Branch]; ok {
+			preview = formatStackString(stack, wt.Branch)
+		} else {
+			// Not in any stack
+			gray := "\\x1b[90m"
+			reset := "\\x1b[0m"
+			preview = fmt.Sprintf("%sNot part of a stack%s\\n\\nThis worktree is not tracked by ezstack.\\nUse 'ezs new -f' to register it as a stack root.", gray, reset)
+		}
+
+		input.WriteString(fmt.Sprintf("%s\t%s\n", displayText, preview))
+	}
+
+	selected, err := runFzfWithPreview(input.String(), prompt, true)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the selected branch name (first field before space)
+	parts := strings.SplitN(selected, " ", 2)
+	if len(parts) == 0 {
+		return nil, fmt.Errorf("no worktree selected")
+	}
+	branchName := parts[0]
+
+	for i := range worktrees {
+		if worktrees[i].Branch == branchName {
+			return &worktrees[i], nil
+		}
+	}
+
+	return nil, fmt.Errorf("worktree not found: %s", branchName)
+}
+
 // SelectStack uses fzf to select a stack
 func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 	if len(stacks) == 0 {
