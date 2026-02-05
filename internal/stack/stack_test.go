@@ -1,0 +1,364 @@
+package stack
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/ezstack/ezstack/internal/config"
+)
+
+// setupTestEnv creates a temporary git repository and config directory for testing
+func setupTestEnv(t *testing.T) (repoDir, worktreeBaseDir string, cleanup func()) {
+	t.Helper()
+
+	tmpDir, err := os.MkdirTemp("", "stack-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+
+	// Resolve symlinks (macOS /tmp -> /private/tmp)
+	tmpDir, err = filepath.EvalSymlinks(tmpDir)
+	if err != nil {
+		t.Fatalf("Failed to resolve symlinks: %v", err)
+	}
+
+	repoDir = filepath.Join(tmpDir, "repo")
+	worktreeBaseDir = filepath.Join(tmpDir, "worktrees")
+	configDir := filepath.Join(tmpDir, "config")
+
+	os.MkdirAll(repoDir, 0755)
+	os.MkdirAll(worktreeBaseDir, 0755)
+	os.MkdirAll(configDir, 0755)
+
+	originalHome := os.Getenv("EZSTACK_HOME")
+	os.Setenv("EZSTACK_HOME", configDir)
+
+	exec.Command("git", "-C", repoDir, "init").Run()
+	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
+	exec.Command("git", "-C", repoDir, "config", "user.name", "Test User").Run()
+
+	readmePath := filepath.Join(repoDir, "README.md")
+	os.WriteFile(readmePath, []byte("# Test\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Initial commit").Run()
+
+	repoDir, _ = filepath.EvalSymlinks(repoDir)
+
+	cfg := &config.Config{
+		DefaultBaseBranch: "main",
+		Repos: map[string]*config.RepoConfig{
+			repoDir: {
+				WorktreeBaseDir: worktreeBaseDir,
+			},
+		},
+	}
+	cfg.Save()
+
+	cleanup = func() {
+		os.Setenv("EZSTACK_HOME", originalHome)
+		os.RemoveAll(tmpDir)
+	}
+
+	return repoDir, worktreeBaseDir, cleanup
+}
+
+func TestNewManager(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	if mgr.GetRepoDir() == "" {
+		t.Error("GetRepoDir() returned empty string")
+	}
+}
+
+func TestManager_CreateBranch(t *testing.T) {
+	repoDir, worktreeDir, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+
+	branch, err := mgr.CreateBranch("feature-a", "main", "")
+	if err != nil {
+		t.Fatalf("CreateBranch() error = %v", err)
+	}
+
+	if branch.Name != "feature-a" {
+		t.Errorf("branch.Name = %q, want %q", branch.Name, "feature-a")
+	}
+
+	if branch.Parent != "main" {
+		t.Errorf("branch.Parent = %q, want %q", branch.Parent, "main")
+	}
+
+	expectedPath := filepath.Join(worktreeDir, "feature-a")
+	if branch.WorktreePath != expectedPath {
+		t.Errorf("branch.WorktreePath = %q, want %q", branch.WorktreePath, expectedPath)
+	}
+
+	if _, err := os.Stat(expectedPath); os.IsNotExist(err) {
+		t.Error("Worktree directory was not created")
+	}
+}
+
+func TestManager_GetBranch(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	branch := mgr.GetBranch("feature-a")
+	if branch == nil {
+		t.Fatal("GetBranch() returned nil for existing branch")
+	}
+
+	if branch.Name != "feature-a" {
+		t.Errorf("branch.Name = %q, want %q", branch.Name, "feature-a")
+	}
+
+	branch = mgr.GetBranch("nonexistent")
+	if branch != nil {
+		t.Error("GetBranch() should return nil for non-existing branch")
+	}
+}
+
+func TestManager_ListStacks(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+
+	stacks := mgr.ListStacks()
+	if len(stacks) != 0 {
+		t.Errorf("len(ListStacks()) = %d, want 0", len(stacks))
+	}
+
+	mgr.CreateBranch("feature-a", "main", "")
+
+	stacks = mgr.ListStacks()
+	if len(stacks) != 1 {
+		t.Errorf("len(ListStacks()) = %d, want 1", len(stacks))
+	}
+}
+
+func TestManager_IsMainBranch(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+
+	if !mgr.IsMainBranch("main") {
+		t.Error("IsMainBranch('main') should return true")
+	}
+
+	if !mgr.IsMainBranch("master") {
+		t.Error("IsMainBranch('master') should return true")
+	}
+
+	if mgr.IsMainBranch("feature") {
+		t.Error("IsMainBranch('feature') should return false")
+	}
+}
+
+func TestManager_GetChildren(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "feature-a", "")
+
+	mgr, _ = NewManager(repoDir)
+	children := mgr.GetChildren("feature-a")
+	if len(children) != 1 {
+		t.Fatalf("GetChildren() returned %d children, want 1", len(children))
+	}
+
+	if children[0].Name != "feature-b" {
+		t.Errorf("child.Name = %q, want %q", children[0].Name, "feature-b")
+	}
+
+	children = mgr.GetChildren("main")
+	if len(children) != 1 {
+		t.Errorf("GetChildren('main') returned %d children, want 1", len(children))
+	}
+}
+
+func TestManager_DeleteBranch(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+
+	if err := mgr.DeleteBranch("feature-a", false); err != nil {
+		t.Fatalf("DeleteBranch() error = %v", err)
+	}
+
+	mgr, _ = NewManager(repoDir)
+	branch := mgr.GetBranch("feature-a")
+	if branch != nil {
+		t.Error("Branch should have been deleted")
+	}
+}
+
+func TestManager_DeleteBranch_WithChildren_NoForce(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "feature-a", "")
+
+	mgr, _ = NewManager(repoDir)
+
+	if err := mgr.DeleteBranch("feature-a", false); err == nil {
+		t.Error("DeleteBranch() should fail when branch has children without force")
+	}
+}
+
+func TestManager_DeleteBranch_WithChildren_Force(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "feature-a", "")
+
+	mgr, _ = NewManager(repoDir)
+
+	if err := mgr.DeleteBranch("feature-a", true); err != nil {
+		t.Fatalf("DeleteBranch() with force error = %v", err)
+	}
+
+	mgr, _ = NewManager(repoDir)
+	if mgr.GetBranch("feature-a") != nil {
+		t.Error("feature-a should have been deleted")
+	}
+
+	child := mgr.GetBranch("feature-b")
+	if child == nil {
+		t.Fatal("feature-b should still exist")
+	}
+
+	if child.Parent != "main" {
+		t.Errorf("child.Parent = %q, want 'main'", child.Parent)
+	}
+}
+
+func TestManager_RegisterExistingBranch(t *testing.T) {
+	repoDir, worktreeDir, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+
+	branch, err := mgr.RegisterExistingBranch("existing-branch", worktreeDir+"/existing", "main")
+	if err != nil {
+		t.Fatalf("RegisterExistingBranch() error = %v", err)
+	}
+
+	if branch.Name != "existing-branch" {
+		t.Errorf("branch.Name = %q, want %q", branch.Name, "existing-branch")
+	}
+
+	_, err = mgr.RegisterExistingBranch("existing-branch", worktreeDir+"/other", "main")
+	if err == nil {
+		t.Error("RegisterExistingBranch() should fail for already registered branch")
+	}
+}
+
+func TestManager_RegisterRemoteBranch(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+
+	branch, err := mgr.RegisterRemoteBranch("remote-feature", "main", 42, "https://github.com/org/repo/pull/42")
+	if err != nil {
+		t.Fatalf("RegisterRemoteBranch() error = %v", err)
+	}
+
+	if !branch.IsRemote {
+		t.Error("IsRemote should be true")
+	}
+
+	if branch.PRNumber != 42 {
+		t.Errorf("PRNumber = %d, want 42", branch.PRNumber)
+	}
+
+	if branch.WorktreePath != "" {
+		t.Error("WorktreePath should be empty for remote branches")
+	}
+}
+
+func TestManager_GetStackDescription(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "feature-a", "")
+
+	mgr, _ = NewManager(repoDir)
+	stacks := mgr.ListStacks()
+	if len(stacks) == 0 {
+		t.Fatal("No stacks found")
+	}
+
+	desc := mgr.GetStackDescription(stacks[0], "feature-a")
+
+	if desc == "" {
+		t.Error("GetStackDescription() returned empty string")
+	}
+
+	if !strings.Contains(desc, "PR Stack") {
+		t.Error("Description should contain 'PR Stack'")
+	}
+}
+
+func TestManager_MarkBranchMerged(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+
+	err := mgr.MarkBranchMerged("feature-a")
+	if err != nil {
+		t.Fatalf("MarkBranchMerged() error = %v", err)
+	}
+
+	mgr, _ = NewManager(repoDir)
+	branch := mgr.GetBranch("feature-a")
+	if branch == nil {
+		t.Fatal("Branch should still exist in config")
+	}
+
+	if !branch.IsMerged {
+		t.Error("IsMerged should be true")
+	}
+
+	if branch.WorktreePath != "" {
+		t.Error("WorktreePath should be cleared")
+	}
+}
