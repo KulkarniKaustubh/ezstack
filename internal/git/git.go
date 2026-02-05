@@ -131,20 +131,67 @@ func (g *Git) ListWorktrees() ([]Worktree, error) {
 
 	var worktrees []Worktree
 	var current Worktree
+	var isDetached bool
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "worktree ") {
 			if current.Path != "" {
+				// If detached and no branch found, try to get branch from rebase state
+				if isDetached && current.Branch == "" {
+					current.Branch = getBranchFromRebaseState(current.Path)
+				}
 				worktrees = append(worktrees, current)
 			}
 			current = Worktree{Path: strings.TrimPrefix(line, "worktree ")}
+			isDetached = false
 		} else if strings.HasPrefix(line, "branch ") {
 			current.Branch = strings.TrimPrefix(line, "branch refs/heads/")
+		} else if line == "detached" {
+			isDetached = true
 		}
 	}
 	if current.Path != "" {
+		// Handle the last worktree
+		if isDetached && current.Branch == "" {
+			current.Branch = getBranchFromRebaseState(current.Path)
+		}
 		worktrees = append(worktrees, current)
 	}
 	return worktrees, nil
+}
+
+// getBranchFromRebaseState tries to get the original branch name from rebase state files
+// This is useful when a worktree is in the middle of a rebase (detached HEAD)
+func getBranchFromRebaseState(worktreePath string) string {
+	// For worktrees, the git dir is in .git file pointing to the actual git dir
+	gitDir := filepath.Join(worktreePath, ".git")
+
+	// Check if .git is a file (worktree) or directory (main repo)
+	info, err := os.Stat(gitDir)
+	if err != nil {
+		return ""
+	}
+
+	if !info.IsDir() {
+		// It's a worktree - read the gitdir from the .git file
+		content, err := os.ReadFile(gitDir)
+		if err != nil {
+			return ""
+		}
+		// Format: "gitdir: /path/to/git/worktrees/name"
+		gitDir = strings.TrimPrefix(strings.TrimSpace(string(content)), "gitdir: ")
+	}
+
+	// Try rebase-merge first (interactive rebase), then rebase-apply (git am style)
+	for _, rebaseDir := range []string{"rebase-merge", "rebase-apply"} {
+		headNameFile := filepath.Join(gitDir, rebaseDir, "head-name")
+		content, err := os.ReadFile(headNameFile)
+		if err == nil {
+			branchRef := strings.TrimSpace(string(content))
+			return strings.TrimPrefix(branchRef, "refs/heads/")
+		}
+	}
+
+	return ""
 }
 
 // Worktree represents a git worktree
