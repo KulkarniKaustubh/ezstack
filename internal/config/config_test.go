@@ -257,27 +257,41 @@ func TestStackConfig_LoadSave(t *testing.T) {
 		t.Fatalf("LoadStackConfig() error = %v", err)
 	}
 
-	// Add a stack
-	stackCfg.Stacks["feature-a"] = &Stack{
+	// Add a stack using the new tree format
+	stack := &Stack{
 		Name: "feature-a",
-		Branches: []*Branch{
-			{
-				Name:         "feature-a",
-				Parent:       "main",
-				WorktreePath: "/worktrees/feature-a",
-				BaseBranch:   "main",
-				PRNumber:     1,
-				PRUrl:        "https://github.com/org/repo/pull/1",
-			},
-			{
-				Name:         "feature-b",
-				Parent:       "feature-a",
-				WorktreePath: "/worktrees/feature-b",
-				BaseBranch:   "feature-a",
-				PRNumber:     2,
+		Root: "main",
+		Tree: BranchTree{
+			"feature-a": BranchTree{
+				"feature-b": BranchTree{},
 			},
 		},
 	}
+	stackCfg.Stacks["feature-a"] = stack
+
+	// Create cache with metadata
+	cache := &CacheConfig{
+		Branches: map[string]*BranchCache{
+			"feature-a": {
+				WorktreePath: "/worktrees/feature-a",
+				PRNumber:     1,
+				PRUrl:        "https://github.com/org/repo/pull/1",
+			},
+			"feature-b": {
+				WorktreePath: "/worktrees/feature-b",
+				PRNumber:     2,
+			},
+		},
+		repoDir: repoDir,
+	}
+	err = cache.Save(repoDir)
+	if err != nil {
+		t.Fatalf("Cache.Save() error = %v", err)
+	}
+
+	// Populate branches from tree
+	stack.cache = cache
+	stack.PopulateBranches()
 
 	// Save
 	err = stackCfg.Save(repoDir)

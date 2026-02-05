@@ -74,6 +74,10 @@ func (c *Config) GetCdAfterNew(repoPath string) bool {
 	return false
 }
 
+// BranchTree is a recursive map representing the stack hierarchy
+// Each key is a branch name, and its value is another BranchTree of its children
+type BranchTree map[string]BranchTree
+
 // stackConfigFile is the on-disk format that stores stacks for all repos
 type stackConfigFile struct {
 	Repos map[string]*StackConfig `json:"repos"`
@@ -85,22 +89,66 @@ type StackConfig struct {
 	repoDir string            // internal, not serialized - used for saving
 }
 
-// Stack represents a chain of stacked branches
+// Stack represents a chain of stacked branches as a tree
 type Stack struct {
-	Name     string    `json:"name"`
-	Branches []*Branch `json:"branches"`
+	Name     string       `json:"name"`
+	Root     string       `json:"root"` // The base branch (usually "main")
+	Tree     BranchTree   `json:"tree"` // The tree of branches
+	Branches []*Branch    `json:"-"`    // Runtime-only: populated from Tree for backward compatibility
+	cache    *CacheConfig // Runtime-only: reference to cache for metadata
 }
 
-// Branch represents a single branch in a stack
+// BranchCache holds cached metadata for a branch (stored in cache.json)
+type BranchCache struct {
+	WorktreePath string `json:"worktree_path,omitempty"`
+	PRNumber     int    `json:"pr_number,omitempty"`
+	PRUrl        string `json:"pr_url,omitempty"`
+	IsMerged     bool   `json:"is_merged,omitempty"`
+	IsRemote     bool   `json:"is_remote,omitempty"`
+}
+
+// CacheConfig holds cached branch metadata for a repo
+type CacheConfig struct {
+	Branches map[string]*BranchCache `json:"branches"`
+	repoDir  string
+}
+
+// Branch represents a single branch in a stack (used internally for compatibility)
+// This is constructed from the tree structure and cache at runtime
 type Branch struct {
 	Name         string `json:"name"`
 	Parent       string `json:"parent"`        // Parent branch name
 	WorktreePath string `json:"worktree_path"` // Path to the worktree
 	PRNumber     int    `json:"pr_number,omitempty"`
 	PRUrl        string `json:"pr_url,omitempty"`
-	BaseBranch   string `json:"base_branch"`         // The branch this PR targets
-	IsRemote     bool   `json:"is_remote,omitempty"` // True if this is someone else's branch (created via --from-remote)
-	IsMerged     bool   `json:"is_merged,omitempty"` // True if this branch's PR has been merged (worktree deleted but kept in config for display)
+	BaseBranch   string `json:"base_branch"`         // The branch this PR targets (same as Parent for display)
+	IsRemote     bool   `json:"is_remote,omitempty"` // True if this is someone else's branch
+	IsMerged     bool   `json:"is_merged,omitempty"` // True if this branch's PR has been merged
+}
+
+// legacyStackConfigFile represents the old config format for backward compatibility
+type legacyStackConfigFile struct {
+	Repos map[string]*legacyStackConfig `json:"repos"`
+}
+
+type legacyStackConfig struct {
+	Stacks map[string]*legacyStack `json:"stacks"`
+}
+
+type legacyStack struct {
+	Name     string          `json:"name"`
+	Branches []*legacyBranch `json:"branches"`
+}
+
+type legacyBranch struct {
+	Name         string `json:"name"`
+	Parent       string `json:"parent"`
+	WorktreePath string `json:"worktree_path"`
+	PRNumber     int    `json:"pr_number,omitempty"`
+	PRUrl        string `json:"pr_url,omitempty"`
+	BaseBranch   string `json:"base_branch"`
+	IsRemote     bool   `json:"is_remote,omitempty"`
+	IsMerged     bool   `json:"is_merged,omitempty"`
 }
 
 // ConfigDir returns the path to the ezstack config directory
@@ -190,6 +238,7 @@ func (c *Config) Save() error {
 }
 
 // LoadStackConfig loads stack metadata for a specific repo from $HOME/.ezstack/stacks.json
+// It handles migration from the legacy flat array format to the new tree format
 func LoadStackConfig(repoDir string) (*StackConfig, error) {
 	configDir, err := ConfigDir()
 	if err != nil {
@@ -213,6 +262,7 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		return nil, err
 	}
 
+	// Try to load as new format first
 	var file stackConfigFile
 	if err := json.Unmarshal(data, &file); err != nil {
 		return nil, err
@@ -233,6 +283,135 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		sc.Stacks = make(map[string]*Stack)
 	}
 	sc.repoDir = repoDir
+
+	// Check if this is a legacy format (stacks have nil Tree but we loaded something)
+	needsMigration := false
+	for _, stack := range sc.Stacks {
+		if stack.Tree == nil {
+			needsMigration = true
+			break
+		}
+	}
+
+	if needsMigration {
+		// Load as legacy format and migrate
+		var legacyFile legacyStackConfigFile
+		if err := json.Unmarshal(data, &legacyFile); err == nil {
+			if legacySC, ok := legacyFile.Repos[repoDir]; ok && legacySC != nil {
+				sc, err = migrateFromLegacy(legacySC, repoDir)
+				if err != nil {
+					return nil, err
+				}
+				// Save the migrated stacks.json immediately
+				_ = sc.Save(repoDir)
+			}
+		}
+	}
+
+	// Load cache and populate Branches slice for each stack
+	cache, _ := LoadCacheConfig(repoDir)
+	for _, stack := range sc.Stacks {
+		stack.cache = cache
+		stack.PopulateBranches()
+	}
+
+	return sc, nil
+}
+
+// PopulateBranches rebuilds the Branches slice from the Tree structure
+// This should be called after loading or after modifying the Tree
+func (s *Stack) PopulateBranches() {
+	s.Branches = s.GetBranches(s.cache)
+}
+
+// SetCache sets the cache for this stack, allowing branch metadata to be loaded
+func (s *Stack) SetCache(cache *CacheConfig) {
+	s.cache = cache
+}
+
+// PopulateBranchesWithCache rebuilds the Branches slice using the provided cache
+func (s *Stack) PopulateBranchesWithCache(cache *CacheConfig) {
+	s.cache = cache
+	s.Branches = s.GetBranches(cache)
+}
+
+// migrateFromLegacy converts legacy flat array format to new tree format
+func migrateFromLegacy(legacy *legacyStackConfig, repoDir string) (*StackConfig, error) {
+	sc := &StackConfig{
+		Stacks:  make(map[string]*Stack),
+		repoDir: repoDir,
+	}
+
+	// Also migrate cache data
+	cache := &CacheConfig{
+		Branches: make(map[string]*BranchCache),
+		repoDir:  repoDir,
+	}
+
+	for stackName, legacyStack := range legacy.Stacks {
+		// Build the tree from the flat array
+		// First, figure out the root (base branch that's not in the stack)
+		branchSet := make(map[string]bool)
+		for _, b := range legacyStack.Branches {
+			branchSet[b.Name] = true
+		}
+
+		// Find the root (usually "main") - the parent of branches that don't have parents in the stack
+		root := "main"
+		for _, b := range legacyStack.Branches {
+			if !branchSet[b.Parent] {
+				root = b.Parent
+				break
+			}
+		}
+
+		// Build children map
+		children := make(map[string][]string)
+		for _, b := range legacyStack.Branches {
+			parent := b.Parent
+			if !branchSet[parent] {
+				parent = root // External parent means it's a root-level branch
+			}
+			children[parent] = append(children[parent], b.Name)
+		}
+
+		// Build tree recursively
+		var buildTree func(parent string) BranchTree
+		buildTree = func(parent string) BranchTree {
+			tree := make(BranchTree)
+			for _, childName := range children[parent] {
+				tree[childName] = buildTree(childName)
+			}
+			return tree
+		}
+
+		tree := buildTree(root)
+
+		// Migrate branch metadata to cache FIRST (before populating Branches)
+		for _, b := range legacyStack.Branches {
+			cache.Branches[b.Name] = &BranchCache{
+				WorktreePath: b.WorktreePath,
+				PRNumber:     b.PRNumber,
+				PRUrl:        b.PRUrl,
+				IsMerged:     b.IsMerged,
+				IsRemote:     b.IsRemote,
+			}
+		}
+
+		stack := &Stack{
+			Name:  legacyStack.Name,
+			Root:  root,
+			Tree:  tree,
+			cache: cache,
+		}
+		stack.PopulateBranches()
+		sc.Stacks[stackName] = stack
+	}
+
+	// Save the migrated cache
+	if len(cache.Branches) > 0 {
+		_ = cache.Save(repoDir) // Best effort, don't fail migration if cache save fails
+	}
 
 	return sc, nil
 }
@@ -285,8 +464,383 @@ func (sc *StackConfig) Save(repoDir string) error {
 	return os.WriteFile(stackPath, newData, 0644)
 }
 
+// LoadCacheConfig loads cached branch metadata from $HOME/.ezstack/cache.json
+func LoadCacheConfig(repoDir string) (*CacheConfig, error) {
+	configDir, err := ConfigDir()
+	if err != nil {
+		return nil, err
+	}
+
+	cachePath := filepath.Join(configDir, "cache.json")
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return &CacheConfig{
+				Branches: make(map[string]*BranchCache),
+				repoDir:  repoDir,
+			}, nil
+		}
+		return nil, err
+	}
+
+	// Cache file stores all repos' cache data
+	var cacheFile map[string]*CacheConfig
+	if err := json.Unmarshal(data, &cacheFile); err != nil {
+		return nil, err
+	}
+
+	cc := cacheFile[repoDir]
+	if cc == nil {
+		cc = &CacheConfig{
+			Branches: make(map[string]*BranchCache),
+		}
+	}
+	if cc.Branches == nil {
+		cc.Branches = make(map[string]*BranchCache)
+	}
+	cc.repoDir = repoDir
+
+	return cc, nil
+}
+
+// Save saves the cache config for this repo to $HOME/.ezstack/cache.json
+func (cc *CacheConfig) Save(repoDir string) error {
+	configDir, err := ConfigDir()
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+
+	cachePath := filepath.Join(configDir, "cache.json")
+
+	// Load existing file to preserve other repos
+	var cacheFile map[string]*CacheConfig
+	data, err := os.ReadFile(cachePath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		cacheFile = make(map[string]*CacheConfig)
+	} else {
+		if err := json.Unmarshal(data, &cacheFile); err != nil {
+			cacheFile = make(map[string]*CacheConfig)
+		}
+	}
+
+	targetRepo := cc.repoDir
+	if targetRepo == "" {
+		targetRepo = repoDir
+	}
+
+	cacheFile[targetRepo] = cc
+
+	newData, err := json.MarshalIndent(cacheFile, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return os.WriteFile(cachePath, newData, 0644)
+}
+
+// GetBranchCache returns cached metadata for a branch
+func (cc *CacheConfig) GetBranchCache(branchName string) *BranchCache {
+	if cc.Branches == nil {
+		return nil
+	}
+	return cc.Branches[branchName]
+}
+
+// SetBranchCache sets cached metadata for a branch
+func (cc *CacheConfig) SetBranchCache(branchName string, cache *BranchCache) {
+	if cc.Branches == nil {
+		cc.Branches = make(map[string]*BranchCache)
+	}
+	cc.Branches[branchName] = cache
+}
+
+// GetBranches returns a flat list of branches from the tree structure
+// Branches are returned in depth-first order with siblings sorted alphabetically
+// The cache is used to populate metadata fields
+func (s *Stack) GetBranches(cache *CacheConfig) []*Branch {
+	var branches []*Branch
+	// Both treeParent and effectiveParent start as Root (e.g., "main")
+	s.walkTree(s.Root, s.Root, s.Tree, cache, &branches)
+	return branches
+}
+
+// walkTree recursively walks the tree in depth-first order
+// effectiveParent is the nearest non-merged ancestor (used for git operations)
+// treeParent is the actual tree parent (used for display hierarchy tracking)
+func (s *Stack) walkTree(treeParent, effectiveParent string, tree BranchTree, cache *CacheConfig, branches *[]*Branch) {
+	// Get sorted keys for consistent ordering
+	keys := make([]string, 0, len(tree))
+	for k := range tree {
+		keys = append(keys, k)
+	}
+	sortStrings(keys)
+
+	for _, branchName := range keys {
+		children := tree[branchName]
+
+		// Check if this branch is merged
+		isMerged := false
+		if cache != nil {
+			if bc := cache.GetBranchCache(branchName); bc != nil {
+				isMerged = bc.IsMerged
+			}
+		}
+
+		// Create branch object
+		// Parent is the effective parent (nearest non-merged ancestor) for git operations
+		// BaseBranch tracks the original tree parent for display purposes
+		branch := &Branch{
+			Name:       branchName,
+			Parent:     effectiveParent,
+			BaseBranch: treeParent,
+		}
+
+		// Populate from cache if available
+		if cache != nil {
+			if bc := cache.GetBranchCache(branchName); bc != nil {
+				branch.WorktreePath = bc.WorktreePath
+				branch.PRNumber = bc.PRNumber
+				branch.PRUrl = bc.PRUrl
+				branch.IsMerged = bc.IsMerged
+				branch.IsRemote = bc.IsRemote
+			}
+		}
+
+		*branches = append(*branches, branch)
+
+		// For children: if this branch is merged, they inherit our effective parent
+		// Otherwise, this branch becomes the effective parent
+		childEffectiveParent := branchName
+		if isMerged {
+			childEffectiveParent = effectiveParent
+		}
+
+		// Recurse into children
+		s.walkTree(branchName, childEffectiveParent, children, cache, branches)
+	}
+}
+
+// sortStrings sorts a slice of strings alphabetically (simple bubble sort)
+func sortStrings(s []string) {
+	for i := 0; i < len(s)-1; i++ {
+		for j := i + 1; j < len(s); j++ {
+			if s[i] > s[j] {
+				s[i], s[j] = s[j], s[i]
+			}
+		}
+	}
+}
+
+// AddBranch adds a branch to the stack tree under the specified parent
+func (s *Stack) AddBranch(branchName, parentName string) {
+	if s.Tree == nil {
+		s.Tree = make(BranchTree)
+	}
+
+	// If parent is the root (main), add directly to the tree
+	if parentName == s.Root {
+		s.Tree[branchName] = make(BranchTree)
+		return
+	}
+
+	// Find the parent in the tree and add the child
+	s.addBranchToTree(s.Tree, branchName, parentName)
+}
+
+// addBranchToTree recursively finds the parent and adds the child
+func (s *Stack) addBranchToTree(tree BranchTree, branchName, parentName string) bool {
+	for name, children := range tree {
+		if name == parentName {
+			if children == nil {
+				tree[name] = make(BranchTree)
+			}
+			tree[name][branchName] = make(BranchTree)
+			return true
+		}
+		if s.addBranchToTree(children, branchName, parentName) {
+			return true
+		}
+	}
+	return false
+}
+
+// RemoveBranch removes a branch from the stack tree
+// If the branch has children, they are moved up to the branch's parent
+func (s *Stack) RemoveBranch(branchName string) {
+	s.removeBranchFromTree(s.Tree, branchName, s.Root)
+}
+
+// removeBranchFromTree recursively finds and removes the branch
+func (s *Stack) removeBranchFromTree(tree BranchTree, branchName, parent string) bool {
+	for name, children := range tree {
+		if name == branchName {
+			// Move children up to this branch's parent (which is the current tree)
+			for childName, childTree := range children {
+				tree[childName] = childTree
+			}
+			delete(tree, branchName)
+			return true
+		}
+		if s.removeBranchFromTree(children, branchName, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// ReparentBranch moves a branch to be under a new parent
+// If newParent is empty or matches the root, the branch becomes a root-level branch
+func (s *Stack) ReparentBranch(branchName, newParent string) {
+	// First, find and remove the branch (keeping its children)
+	var branchChildren BranchTree
+	s.findAndExtractBranch(s.Tree, branchName, &branchChildren)
+
+	// Then add it under the new parent
+	if newParent == "" || newParent == s.Root {
+		// Make it a root-level branch
+		s.Tree[branchName] = branchChildren
+	} else {
+		s.addBranchWithChildren(s.Tree, branchName, newParent, branchChildren)
+	}
+}
+
+// findAndExtractBranch finds a branch and extracts it with its children
+func (s *Stack) findAndExtractBranch(tree BranchTree, branchName string, children *BranchTree) bool {
+	for name, subtree := range tree {
+		if name == branchName {
+			*children = subtree
+			delete(tree, branchName)
+			return true
+		}
+		if s.findAndExtractBranch(subtree, branchName, children) {
+			return true
+		}
+	}
+	return false
+}
+
+// addBranchWithChildren adds a branch with its existing children under a parent
+func (s *Stack) addBranchWithChildren(tree BranchTree, branchName, parentName string, children BranchTree) bool {
+	for name, subtree := range tree {
+		if name == parentName {
+			tree[name][branchName] = children
+			return true
+		}
+		if s.addBranchWithChildren(subtree, branchName, parentName, children) {
+			return true
+		}
+	}
+	return false
+}
+
+// FindBranch finds a branch in the tree and returns its parent name
+func (s *Stack) FindBranch(branchName string) (parent string, found bool) {
+	return s.findBranchInTree(s.Tree, branchName, s.Root)
+}
+
+// findBranchInTree recursively searches for a branch
+func (s *Stack) findBranchInTree(tree BranchTree, branchName, parent string) (string, bool) {
+	for name, children := range tree {
+		if name == branchName {
+			return parent, true
+		}
+		if p, found := s.findBranchInTree(children, branchName, name); found {
+			return p, true
+		}
+	}
+	return "", false
+}
+
+// HasBranch returns true if the branch exists in the stack
+func (s *Stack) HasBranch(branchName string) bool {
+	_, found := s.FindBranch(branchName)
+	return found
+}
+
+// GetChildren returns the immediate children of a branch
+func (s *Stack) GetChildren(branchName string) []string {
+	children := s.findChildrenInTree(s.Tree, branchName)
+	sortStrings(children)
+	return children
+}
+
+// findChildrenInTree finds children of a branch in the tree
+func (s *Stack) findChildrenInTree(tree BranchTree, branchName string) []string {
+	for name, children := range tree {
+		if name == branchName {
+			result := make([]string, 0, len(children))
+			for childName := range children {
+				result = append(result, childName)
+			}
+			return result
+		}
+		if result := s.findChildrenInTree(children, branchName); result != nil {
+			return result
+		}
+	}
+	return nil
+}
+
+// ExtractSubtree removes a branch and its entire subtree from the stack and returns the subtree
+func (s *Stack) ExtractSubtree(branchName string) BranchTree {
+	var subtree BranchTree
+	s.extractSubtreeFromTree(s.Tree, branchName, &subtree)
+	return subtree
+}
+
+// extractSubtreeFromTree recursively finds and extracts a subtree
+func (s *Stack) extractSubtreeFromTree(tree BranchTree, branchName string, subtree *BranchTree) bool {
+	for name, children := range tree {
+		if name == branchName {
+			// Found the branch - extract its entire subtree (including itself)
+			*subtree = children
+			delete(tree, branchName)
+			return true
+		}
+		if s.extractSubtreeFromTree(children, branchName, subtree) {
+			return true
+		}
+	}
+	return false
+}
+
+// AddSubtree adds a branch with its subtree under a parent
+func (s *Stack) AddSubtree(branchName string, subtree BranchTree, parentName string) {
+	if parentName == s.Root || parentName == "" {
+		// Add as root-level branch
+		s.Tree[branchName] = subtree
+	} else {
+		// Add under parent
+		s.addSubtreeUnderParent(s.Tree, branchName, subtree, parentName)
+	}
+}
+
+// addSubtreeUnderParent recursively finds parent and adds subtree
+func (s *Stack) addSubtreeUnderParent(tree BranchTree, branchName string, subtree BranchTree, parentName string) bool {
+	for name, children := range tree {
+		if name == parentName {
+			tree[name][branchName] = subtree
+			return true
+		}
+		if s.addSubtreeUnderParent(children, branchName, subtree, parentName) {
+			return true
+		}
+	}
+	return false
+}
+
 // SortBranchesTopologically sorts branches so parents come before children
 // This ensures the display shows the correct parent -> child order
+// IMPORTANT: When a parent branch is merged and its children are reparented to main,
+// the merged branch should still appear in its original position (before its former children).
+// We use BaseBranch to detect the original parent-child relationships.
 func SortBranchesTopologically(branches []*Branch) []*Branch {
 	if len(branches) <= 1 {
 		return branches
@@ -298,17 +852,51 @@ func SortBranchesTopologically(branches []*Branch) []*Branch {
 		branchMap[b.Name] = b
 	}
 
-	// Build children map
+	// Build children map using BOTH current Parent AND original BaseBranch
+	// This preserves the original hierarchy even after reparenting
 	children := make(map[string][]*Branch)
 	var roots []*Branch
 
 	for _, b := range branches {
-		// If parent is not in this stack (e.g., main or external), it's a root
-		if _, exists := branchMap[b.Parent]; !exists {
-			roots = append(roots, b)
-		} else {
+		// Check if parent is in this stack
+		_, parentInStack := branchMap[b.Parent]
+		// Also check if original base branch is in this stack (for reparented branches)
+		_, baseInStack := branchMap[b.BaseBranch]
+
+		if parentInStack {
+			// Current parent is in stack - use it
 			children[b.Parent] = append(children[b.Parent], b)
+		} else if baseInStack && b.BaseBranch != b.Parent {
+			// Branch was reparented (BaseBranch != Parent), but original parent is in stack
+			// Keep it as a child of the original parent for display purposes
+			children[b.BaseBranch] = append(children[b.BaseBranch], b)
+		} else {
+			// Parent is external (main) - this is a root
+			roots = append(roots, b)
 		}
+	}
+
+	// Build a map of branch name -> original index for stable sorting
+	originalIndex := make(map[string]int)
+	for i, b := range branches {
+		originalIndex[b.Name] = i
+	}
+
+	// Sort roots by original index to maintain stable order
+	sortByOriginalIndex := func(slice []*Branch) {
+		for i := 0; i < len(slice)-1; i++ {
+			for j := i + 1; j < len(slice); j++ {
+				if originalIndex[slice[i].Name] > originalIndex[slice[j].Name] {
+					slice[i], slice[j] = slice[j], slice[i]
+				}
+			}
+		}
+	}
+	sortByOriginalIndex(roots)
+
+	// Sort children by original index too
+	for parent := range children {
+		sortByOriginalIndex(children[parent])
 	}
 
 	// BFS to build sorted list

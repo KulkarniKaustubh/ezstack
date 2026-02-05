@@ -9,6 +9,41 @@ import (
 	"github.com/ezstack/ezstack/internal/github"
 )
 
+// syncCache holds the cache during sync operations to track and persist changes
+type syncCache struct {
+	cache   *config.CacheConfig
+	repoDir string
+	dirty   bool
+}
+
+func newSyncCache(repoDir string) *syncCache {
+	cache, _ := config.LoadCacheConfig(repoDir)
+	return &syncCache{
+		cache:   cache,
+		repoDir: repoDir,
+		dirty:   false,
+	}
+}
+
+func (sc *syncCache) markMerged(branchName string) {
+	bc := sc.cache.GetBranchCache(branchName)
+	if bc == nil {
+		bc = &config.BranchCache{}
+	}
+	if !bc.IsMerged {
+		bc.IsMerged = true
+		sc.cache.SetBranchCache(branchName, bc)
+		sc.dirty = true
+	}
+}
+
+func (sc *syncCache) save() error {
+	if sc.dirty {
+		return sc.cache.Save(sc.repoDir)
+	}
+	return nil
+}
+
 // RebaseResult represents the result of a rebase operation
 type RebaseResult struct {
 	Branch       string
@@ -270,6 +305,9 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 
 	var results []RebaseResult
 
+	// Load cache for tracking merged branches and repopulation
+	sc := newSyncCache(m.repoDir)
+
 	// Get the stacks to sync
 	var stacksToSync []*config.Stack
 	if currentStackOnly {
@@ -364,7 +402,10 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 			}
 
 			if isMerged {
-				// Parent was merged - determine new parent
+				// Parent was merged - mark it in cache and update tree structure
+				sc.markMerged(branch.Parent)
+
+				// Determine new parent
 				newParent := baseBranch
 				if i > 0 && !m.IsMainBranch(stack.Branches[i-1].Parent) {
 					prevMerged, _ := m.git.IsBranchMerged(stack.Branches[i-1].Name, "origin/"+baseBranch)
@@ -375,9 +416,17 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 
 				oldParent := branch.Parent
 				oldParentRef := m.getParentRef(oldParent) // Use origin/<name> for remote parents
-				branch.Parent = newParent
-				branch.BaseBranch = newParent
 				result.SyncedParent = newParent
+
+				// Update tree structure: reparent branch to new parent
+				// This properly persists the parent change in stacks.json
+				if newParent == baseBranch {
+					stack.ReparentBranch(branch.Name, "") // Empty = root level (under main)
+				} else {
+					stack.ReparentBranch(branch.Name, newParent)
+				}
+				// Repopulate branches from updated tree
+				stack.PopulateBranchesWithCache(sc.cache)
 
 				// Find the merge-base between current branch and old parent
 				// This is the point where we originally branched from the parent
@@ -397,12 +446,14 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 					result.HasConflict = true
 					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 					results = append(results, result)
+					sc.save()
 					m.stackConfig.Save(m.repoDir)
 					// Stop immediately on conflict - user must resolve before continuing
 					return results, nil
 				} else if rebaseResult.Error != nil {
 					result.Error = rebaseResult.Error
 					results = append(results, result)
+					sc.save()
 					m.stackConfig.Save(m.repoDir)
 					// Stop on error as well
 					return results, nil
@@ -412,6 +463,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 				// Call afterRebase callback to allow pushing before continuing to children
 				if afterRebase != nil {
 					if !afterRebase(result, g) {
+						sc.save()
 						return results, nil // Callback requested stop
 					}
 				}
@@ -508,7 +560,12 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 		}
 	}
 
-	// Save updated config
+	// Save cache (tracks merged branches)
+	if err := sc.save(); err != nil {
+		return results, fmt.Errorf("failed to save cache: %w", err)
+	}
+
+	// Save updated config (tree structure)
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
 		return results, fmt.Errorf("failed to save config: %w", err)
 	}
@@ -582,12 +639,23 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 	}
 
 	if isMerged {
-		// Parent was merged - rebase onto main
+		// Parent was merged - mark it in cache and update tree structure
+		sc := newSyncCache(m.repoDir)
+		sc.markMerged(branch.Parent)
+
 		oldParent := branch.Parent
 		oldParentRef := m.getParentRef(oldParent)
-		branch.Parent = baseBranch
-		branch.BaseBranch = baseBranch
 		result.SyncedParent = baseBranch
+
+		// Update tree structure: reparent branch to main (root level)
+		// Find the stack containing this branch
+		for _, stack := range m.stackConfig.Stacks {
+			if stack.HasBranch(branch.Name) {
+				stack.ReparentBranch(branch.Name, "") // Empty = root level (under main)
+				stack.PopulateBranchesWithCache(sc.cache)
+				break
+			}
+		}
 
 		mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
 		if err != nil {
@@ -598,14 +666,17 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 		if rebaseResult.HasConflict {
 			result.HasConflict = true
 			result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
+			sc.save()
 			m.stackConfig.Save(m.repoDir)
 			return result, nil
 		} else if rebaseResult.Error != nil {
 			result.Error = rebaseResult.Error
+			sc.save()
 			m.stackConfig.Save(m.repoDir)
 			return result, nil
 		}
 		result.Success = true
+		sc.save()
 		m.stackConfig.Save(m.repoDir)
 		return result, nil
 	}
