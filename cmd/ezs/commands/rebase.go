@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/ezstack/ezstack/internal/config"
+	"github.com/ezstack/ezstack/internal/git"
 	"github.com/ezstack/ezstack/internal/stack"
 	"github.com/ezstack/ezstack/internal/ui"
 )
@@ -97,6 +98,11 @@ func Rebase(args []string) error {
 
 // rebaseInteractive shows an interactive menu for rebase operations
 func rebaseInteractive(mgr *stack.Manager) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
 	currentStack, branch, err := mgr.GetCurrentStack()
 	if err != nil {
 		return fmt.Errorf("not in a stack. Create a branch first with: ezs new <branch-name>")
@@ -172,6 +178,8 @@ func rebaseInteractive(mgr *stack.Manager) error {
 			return err
 		}
 		ui.Success("Rebase complete")
+		// Offer to push
+		offerPush(cwd)
 	case "children":
 		if !ui.ConfirmTUI("Rebase child branches onto current") {
 			ui.Warn("Cancelled")
@@ -196,6 +204,20 @@ func rebaseInteractive(mgr *stack.Manager) error {
 	}
 
 	return nil
+}
+
+// offerPush offers to force push after a successful rebase
+func offerPush(cwd string) {
+	ui.Warn("Force push required to update remote branch")
+	if ui.ConfirmTUI("Force push (--force-with-lease)") {
+		g := git.New(cwd)
+		ui.Info("Pushing...")
+		if err := g.PushForce(); err != nil {
+			ui.Error(fmt.Sprintf("Push failed: %v", err))
+		} else {
+			ui.Success("Pushed successfully")
+		}
+	}
 }
 
 // Sync syncs the stack when parent branches are merged

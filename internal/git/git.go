@@ -193,6 +193,11 @@ func (g *Git) PullRebase() error {
 	return g.RunInteractive("pull", "--rebase")
 }
 
+// PushForce force pushes the current branch with lease (safer than --force)
+func (g *Git) PushForce() error {
+	return g.RunInteractive("push", "--force-with-lease")
+}
+
 // RemoveWorktree removes a worktree and optionally deletes the branch
 func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName string) error {
 	// First remove the worktree
