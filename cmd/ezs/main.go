@@ -58,6 +58,10 @@ func main() {
 	}
 
 	if err != nil {
+		// ErrBack from submenus when there's nothing to go back to is not an error
+		if err == ui.ErrBack {
+			return
+		}
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}

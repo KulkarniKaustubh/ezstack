@@ -28,6 +28,7 @@ func New(args []string) error {
     -c, --cd                  Change to the new worktree after creation
     -C, --no-cd               Don't change to the new worktree (overrides config)
     -f, --from-worktree       Register an existing worktree as a stack root
+    -r, --from-remote         Create a stack from a remote branch
     -h, --help                Show this help message
 
 %sNOTES%s
@@ -43,12 +44,14 @@ func New(args []string) error {
 	cdFlag := fs.Bool("cd", false, "Change to worktree")
 	noCdFlag := fs.Bool("no-cd", false, "Don't change to worktree")
 	fromWorktree := fs.Bool("from-worktree", false, "Select from worktree")
+	fromRemote := fs.Bool("from-remote", false, "Create stack from remote branch")
 	// Short flags
 	parentShort := fs.String("p", "", "Parent branch (short)")
 	worktreeShort := fs.String("w", "", "Worktree path (short)")
 	cdFlagShort := fs.Bool("c", false, "Change to worktree (short)")
 	noCdFlagShort := fs.Bool("C", false, "Don't change to worktree (short)")
 	fromWorktreeShort := fs.Bool("f", false, "Select from worktree (short)")
+	fromRemoteShort := fs.Bool("r", false, "Create stack from remote branch (short)")
 	helpFlag := fs.Bool("h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -78,6 +81,9 @@ func New(args []string) error {
 	if *fromWorktreeShort {
 		*fromWorktree = true
 	}
+	if *fromRemoteShort {
+		*fromRemote = true
+	}
 
 	// Get current directory
 	cwd, err := os.Getwd()
@@ -90,14 +96,16 @@ func New(args []string) error {
 	// Handle interactive mode: if no args and no --from-worktree flag, show menu
 	var parentBranch string
 	useFromWorktree := *fromWorktree
+	useFromRemote := *fromRemote
 	chooseParent := false
 
-	if fs.NArg() == 0 && !useFromWorktree && *parent == "" {
-		// Show interactive menu with 3 options
+	if fs.NArg() == 0 && !useFromWorktree && !useFromRemote && *parent == "" {
+		// Show interactive menu with 4 options
 		choice, err := ui.SelectOptionWithBack([]string{
 			"Create a new branch (use current branch as parent)",
 			"Create a new branch (choose parent branch)",
 			"Register an existing worktree as a stack root",
+			"Create a stack from a remote branch",
 		}, "What would you like to do?")
 		if err != nil {
 			if err == ui.ErrBack {
@@ -109,6 +117,8 @@ func New(args []string) error {
 			chooseParent = true
 		} else if choice == 2 {
 			useFromWorktree = true
+		} else if choice == 3 {
+			useFromRemote = true
 		}
 	}
 
@@ -197,6 +207,128 @@ func New(args []string) error {
 		}
 
 		ui.Success(fmt.Sprintf("Registered '%s' as a stack root", branch.Name))
+		ui.Info("You can now add child branches with: ezs new <branch-name>")
+		return nil
+	}
+
+	if useFromRemote {
+		// Create a stack from a remote branch with an open PR
+		remoteURL, err := g.GetRemote("origin")
+		if err != nil {
+			return fmt.Errorf("failed to get remote: %w", err)
+		}
+
+		gh, err := github.NewClient(remoteURL)
+		if err != nil {
+			return fmt.Errorf("failed to create GitHub client: %w", err)
+		}
+
+		ui.Info("Fetching open PRs...")
+		openPRs, err := gh.ListOpenPRs()
+		if err != nil {
+			return fmt.Errorf("failed to list open PRs: %w", err)
+		}
+
+		if len(openPRs) == 0 {
+			return fmt.Errorf("no open PRs found in this repository")
+		}
+
+		// Format PRs for display: "#123 branch-name - Title (author)"
+		prOptions := make([]string, len(openPRs))
+		for i, pr := range openPRs {
+			prOptions[i] = fmt.Sprintf("#%d %s - %s (%s)", pr.Number, pr.Branch, pr.Title, pr.Author)
+		}
+
+		// Let user select a PR
+		selectedIdx, err := ui.SelectOption(prOptions, "Select PR to create stack from")
+		if err != nil {
+			return err
+		}
+		selectedPR := openPRs[selectedIdx]
+
+		// Warn user about remote branch behavior
+		fmt.Fprintln(os.Stderr)
+		ui.Warn("Note: This remote branch will never be rebased since it is assumed")
+		ui.Warn("that it does not belong to you. Only your branches that are stacked")
+		ui.Warn("on this branch will be handled by ezstack.")
+		fmt.Fprintln(os.Stderr)
+
+		if !ui.ConfirmTUI("Proceed?") {
+			ui.Warn("Cancelled")
+			return nil
+		}
+
+		// Fetch and create local branch from remote
+		ui.Info("Fetching remote branch...")
+		if err := g.Fetch(); err != nil {
+			return fmt.Errorf("failed to fetch: %w", err)
+		}
+
+		localBranch, err := g.CreateBranchFromRemote("origin/" + selectedPR.Branch)
+		if err != nil {
+			return err
+		}
+
+		// Create manager
+		mgr, err := stack.NewManager(cwd)
+		if err != nil {
+			return err
+		}
+
+		// Get the base branch for this repo
+		cfg, err := config.Load()
+		if err != nil {
+			return err
+		}
+		baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
+
+		// Determine worktree path
+		worktreePath := *worktree
+		if worktreePath == "" {
+			worktreeBaseDir := cfg.GetWorktreeBaseDir(mgr.GetRepoDir())
+			if worktreeBaseDir != "" {
+				worktreePath = filepath.Join(worktreeBaseDir, localBranch)
+			} else {
+				repoDir := mgr.GetRepoDir()
+				if repoDir != "" {
+					worktreePath = filepath.Join(filepath.Dir(repoDir), localBranch)
+				} else {
+					return fmt.Errorf("no worktree path specified and no default configured")
+				}
+			}
+		}
+
+		// Create worktree for the branch
+		ui.Info(fmt.Sprintf("Creating worktree at %s", worktreePath))
+		if err := g.AddWorktree(localBranch, worktreePath); err != nil {
+			return fmt.Errorf("failed to create worktree: %w", err)
+		}
+
+		// Register as stack root
+		branch, err := mgr.RegisterExistingBranch(localBranch, worktreePath, baseBranch)
+		if err != nil {
+			return err
+		}
+
+		// Mark as remote branch and save PR info
+		branch.IsRemote = true
+		branch.PRNumber = selectedPR.Number
+		branch.PRUrl = selectedPR.URL
+
+		stackCfg, _ := config.LoadStackConfig(mgr.GetRepoDir())
+		for _, s := range stackCfg.Stacks {
+			for _, b := range s.Branches {
+				if b.Name == branch.Name {
+					b.IsRemote = true
+					b.PRNumber = selectedPR.Number
+					b.PRUrl = selectedPR.URL
+				}
+			}
+		}
+		stackCfg.Save(mgr.GetRepoDir())
+
+		ui.Success(fmt.Sprintf("Created stack from PR #%d (%s)", selectedPR.Number, branch.Name))
+		ui.Info(fmt.Sprintf("Worktree: %s", worktreePath))
 		ui.Info("You can now add child branches with: ezs new <branch-name>")
 		return nil
 	}

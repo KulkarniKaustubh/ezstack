@@ -38,22 +38,35 @@ func (m *Manager) RebaseStack(startFromCurrent bool) ([]RebaseResult, error) {
 	// Rebase each branch onto its parent
 	for i := startIndex; i < len(stack.Branches); i++ {
 		branch := stack.Branches[i]
-
-		// Create git wrapper for this worktree
 		g := git.New(branch.WorktreePath)
-
 		result := RebaseResult{Branch: branch.Name}
 
-		// Rebase onto parent
-		err := g.Rebase(branch.Parent)
-		if err != nil {
-			// Check if it's a conflict
+		if branch.IsRemote {
+			// Remote branch - just pull, don't rebase onto parent
+			if err := g.PullRebase(); err != nil {
+				hasConflict, _ := g.IsRebaseInProgress()
+				if hasConflict {
+					result.HasConflict = true
+					result.Error = fmt.Errorf("conflict pulling %s - resolve and run 'git rebase --continue'", branch.Name)
+					results = append(results, result)
+					return results, nil
+				}
+				result.Error = err
+				results = append(results, result)
+				continue
+			}
+			result.Success = true
+			results = append(results, result)
+			continue
+		}
+
+		// Local branch - rebase onto parent
+		if err := g.Rebase(branch.Parent); err != nil {
 			hasConflict, _ := g.IsRebaseInProgress()
 			if hasConflict {
 				result.HasConflict = true
 				result.Error = fmt.Errorf("rebase conflict in %s - resolve and run 'git rebase --continue'", branch.Name)
 				results = append(results, result)
-				// Stop here - user needs to resolve conflicts
 				return results, nil
 			}
 			result.Error = err
@@ -126,6 +139,18 @@ func (m *Manager) SyncWithMain() error {
 	// Check each stack for merged branches
 	for _, stack := range m.stackConfig.Stacks {
 		for i, branch := range stack.Branches {
+			g := git.New(branch.WorktreePath)
+
+			if branch.IsRemote {
+				// Remote branch - just pull, don't rebase
+				fmt.Printf("Pulling %s from remote\n", branch.Name)
+				if err := g.PullRebase(); err != nil {
+					fmt.Printf("Failed to pull %s: %v\n", branch.Name, err)
+					return err
+				}
+				continue
+			}
+
 			// Check if this branch's parent was merged
 			if m.IsMainBranch(branch.Parent) {
 				continue
@@ -142,7 +167,6 @@ func (m *Manager) SyncWithMain() error {
 				// Update this branch to target the new parent
 				newParent := baseBranch
 				if i > 0 && !m.IsMainBranch(stack.Branches[i-1].Parent) {
-					// Check if the previous branch in stack is also affected
 					prevMerged, _ := m.git.IsBranchMerged(stack.Branches[i-1].Name, "origin/"+baseBranch)
 					if !prevMerged {
 						newParent = stack.Branches[i-1].Name
@@ -153,14 +177,9 @@ func (m *Manager) SyncWithMain() error {
 				branch.Parent = newParent
 				branch.BaseBranch = newParent
 
-				// Rebase this branch onto its new parent
-				g := git.New(branch.WorktreePath)
 				fmt.Printf("Rebasing %s onto %s (was %s)\n", branch.Name, newParent, oldParent)
-
-				// Use rebase --onto to transplant commits
 				if err := g.RebaseOnto(newParent, oldParent); err != nil {
-					fmt.Printf("Rebase failed for %s. Please resolve conflicts manually in %s\n", branch.Name, branch.WorktreePath)
-					fmt.Printf("After resolving, run: cd %s && git rebase --continue\n", branch.WorktreePath)
+					fmt.Printf("Rebase failed for %s. Resolve in: %s\n", branch.Name, branch.WorktreePath)
 					return err
 				}
 			}
@@ -178,6 +197,15 @@ func (m *Manager) RebaseOnParent() error {
 		return err
 	}
 
+	if currentBranch.IsRemote {
+		// Remote branch - just pull, don't rebase onto parent
+		fmt.Printf("Pulling %s from remote\n", currentBranch.Name)
+		if err := m.git.PullRebase(); err != nil {
+			return fmt.Errorf("failed to pull: %w", err)
+		}
+		return nil
+	}
+
 	fmt.Printf("Rebasing %s onto %s\n", currentBranch.Name, currentBranch.Parent)
 	return m.git.Rebase(currentBranch.Parent)
 }
@@ -191,17 +219,32 @@ func (m *Manager) RebaseChildren() error {
 
 	children := m.GetChildren(currentBranch.Name)
 	for _, child := range children {
-		fmt.Printf("Rebasing child branch %s onto %s\n", child.Name, currentBranch.Name)
-
 		g := git.New(child.WorktreePath)
-		if err := g.Rebase(currentBranch.Name); err != nil {
-			hasConflict, _ := g.IsRebaseInProgress()
-			if hasConflict {
-				fmt.Printf("Conflict in %s. Resolve in: %s\n", child.Name, child.WorktreePath)
-				fmt.Fprintf(os.Stderr, "cd %s && git status\n", child.WorktreePath)
-				return fmt.Errorf("conflict in child branch %s", child.Name)
+
+		if child.IsRemote {
+			// Remote branch - just pull, don't rebase onto parent
+			fmt.Printf("Pulling %s from remote\n", child.Name)
+			if err := g.PullRebase(); err != nil {
+				hasConflict, _ := g.IsRebaseInProgress()
+				if hasConflict {
+					fmt.Printf("Conflict pulling %s. Resolve in: %s\n", child.Name, child.WorktreePath)
+					fmt.Fprintf(os.Stderr, "cd %s && git status\n", child.WorktreePath)
+					return fmt.Errorf("conflict pulling child branch %s", child.Name)
+				}
+				return err
 			}
-			return err
+		} else {
+			// Local branch - rebase onto parent
+			fmt.Printf("Rebasing child branch %s onto %s\n", child.Name, currentBranch.Name)
+			if err := g.Rebase(currentBranch.Name); err != nil {
+				hasConflict, _ := g.IsRebaseInProgress()
+				if hasConflict {
+					fmt.Printf("Conflict in %s. Resolve in: %s\n", child.Name, child.WorktreePath)
+					fmt.Fprintf(os.Stderr, "cd %s && git status\n", child.WorktreePath)
+					return fmt.Errorf("conflict in child branch %s", child.Name)
+				}
+				return err
+			}
 		}
 
 		// Recursively rebase this child's children
