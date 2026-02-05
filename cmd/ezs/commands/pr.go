@@ -83,10 +83,8 @@ func prInteractive() error {
 		return fmt.Errorf("not in a stack. Create a branch first with: ezs new <branch-name>")
 	}
 
-	// Show current stack status
 	ui.PrintStack(currentStack, branch.Name)
 
-	// Build options based on current state
 	options := []string{}
 	optionActions := []string{}
 
@@ -98,7 +96,6 @@ func prInteractive() error {
 		optionActions = append(optionActions, "update")
 	}
 
-	// Count PRs in stack
 	prCount := 0
 	for _, b := range currentStack.Branches {
 		if b.PRNumber > 0 {
@@ -110,7 +107,6 @@ func prInteractive() error {
 		optionActions = append(optionActions, "stack")
 	}
 
-	// Add option to create PRs for branches without PRs (skip remote branches)
 	branchesWithoutPR := 0
 	for _, b := range currentStack.Branches {
 		if b.PRNumber == 0 && !b.IsRemote {
@@ -163,7 +159,6 @@ func prCreateAll(currentStack *config.Stack) error {
 		return err
 	}
 
-	// Get main worktree for saving config
 	mainWorktree, _ := g.GetMainWorktree()
 	if mainWorktree == "" {
 		mainWorktree = cwd
@@ -243,7 +238,6 @@ func prCreateAll(currentStack *config.Stack) error {
 	}
 	stackCfg.Save(mainWorktree)
 
-	// Update stack descriptions (skip remote branches - those PRs belong to others)
 	ui.Info("Updating PR stack descriptions...")
 	skipBranches := getRemoteBranches(currentStack)
 	if err := gh.UpdateStackDescription(currentStack, "", skipBranches); err != nil {
@@ -277,11 +271,9 @@ func prCreate(args []string) error {
     -h, --help             Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	// Long flags
 	title := fs.String("title", "", "PR title")
 	body := fs.String("body", "", "PR body")
 	draft := fs.Bool("draft", false, "Create as draft PR")
-	// Short flags
 	titleShort := fs.String("t", "", "PR title (short)")
 	bodyShort := fs.String("b", "", "PR body (short)")
 	draftShort := fs.Bool("d", false, "Create as draft PR (short)")
@@ -298,7 +290,6 @@ func prCreate(args []string) error {
 		return nil
 	}
 
-	// Merge short and long flags
 	if *titleShort != "" {
 		*title = *titleShort
 	}
@@ -323,7 +314,6 @@ func prCreate(args []string) error {
 		return err
 	}
 
-	// Check if there are any commits on this branch that aren't in the base branch
 	commitsAhead, err := g.GetCommitsAhead(branch.Name, branch.BaseBranch)
 	if err != nil {
 		// If we can't determine, continue anyway (might be a new branch)
@@ -332,7 +322,6 @@ func prCreate(args []string) error {
 		return fmt.Errorf("no commits to create PR from. This branch has no commits ahead of '%s'.\nPlease make at least one commit first", branch.BaseBranch)
 	}
 
-	// Get remote URL for GitHub client
 	remoteURL, err := g.GetRemote("origin")
 	if err != nil {
 		return err
@@ -343,13 +332,11 @@ func prCreate(args []string) error {
 		return err
 	}
 
-	// Prompt for title if not provided, with branch name as default
 	prTitle := *title
 	if prTitle == "" {
 		prTitle = ui.Prompt("PR title", branch.Name)
 	}
 
-	// If body not provided, use template and optionally let user edit it
 	prBody := *body
 	if prBody == "" {
 		// Get PR template if available
@@ -369,7 +356,6 @@ func prCreate(args []string) error {
 		}
 	}
 
-	// Determine if commit starts with WIP for default suggestion
 	isDraft := *draft
 	if !isDraft {
 		commitMsg, err := g.GetLastCommitMessage()
@@ -390,25 +376,21 @@ func prCreate(args []string) error {
 		isDraft = choice == 0
 	}
 
-	// Show what we're about to do
 	prType := "PR"
 	if isDraft {
 		prType = "draft PR"
 	}
 	ui.Info(fmt.Sprintf("Will create %s '%s' with base branch: %s", prType, prTitle, branch.BaseBranch))
 
-	// Fetch to get latest remote state before checking divergence
 	if err := g.Fetch(); err != nil {
 		ui.Warn(fmt.Sprintf("Could not fetch from remote: %v", err))
 	}
 
-	// Check if remote branch exists and has diverged
 	hasDiverged, localAhead, remoteBehind, err := g.HasDivergedFromOrigin(branch.Name)
 	if err != nil {
 		ui.Warn(fmt.Sprintf("Could not check remote branch status: %v", err))
 	}
 
-	// Push the branch
 	ui.Info("Pushing branch to remote...")
 	if hasDiverged || remoteBehind > 0 {
 		// Remote branch exists with different commits - need force push
@@ -436,18 +418,15 @@ func prCreate(args []string) error {
 		}
 	}
 
-	// Create the PR
 	ui.Info(fmt.Sprintf("Creating %s with base branch: %s", prType, branch.BaseBranch))
 	pr, err := gh.CreatePR(prTitle, prBody, branch.Name, branch.BaseBranch, isDraft)
 	if err != nil {
 		return fmt.Errorf("failed to create PR: %w", err)
 	}
 
-	// Update branch metadata
 	branch.PRNumber = pr.Number
 	branch.PRUrl = pr.URL
 
-	// Save the updated config
 	mainWorktree, _ := g.GetMainWorktree()
 	if mainWorktree == "" {
 		mainWorktree = cwd
@@ -465,7 +444,6 @@ func prCreate(args []string) error {
 
 	ui.Success(fmt.Sprintf("Created %s #%d: %s", prType, pr.Number, pr.URL))
 
-	// Update stack description in all PRs (skip remote branches - those PRs belong to others)
 	ui.Info("Updating PR stack descriptions...")
 	skipBranches := getRemoteBranches(currentStack)
 	if err := gh.UpdateStackDescription(currentStack, branch.Name, skipBranches); err != nil {
@@ -525,14 +503,12 @@ func prUpdate(args []string) error {
 		return fmt.Errorf("no PR exists for this branch. Create one with: ezs pr create")
 	}
 
-	// Ask for confirmation
 	ui.Info(fmt.Sprintf("Will push changes to PR #%d", branch.PRNumber))
 	if !ui.ConfirmTUI(fmt.Sprintf("Push changes to PR #%d", branch.PRNumber)) {
 		ui.Warn("Cancelled")
 		return nil
 	}
 
-	// Push changes
 	ui.Info("Pushing changes...")
 	if err := g.Push(true); err != nil {
 		return fmt.Errorf("failed to push: %w", err)
@@ -592,7 +568,6 @@ func prStack(args []string) error {
 		return err
 	}
 
-	// Count PRs to be updated
 	prCount := 0
 	for _, b := range currentStack.Branches {
 		if b.PRNumber > 0 {
@@ -606,7 +581,6 @@ func prStack(args []string) error {
 		return nil
 	}
 
-	// Skip remote branches - those PRs belong to others
 	skipBranches := getRemoteBranches(currentStack)
 	ui.Info("Updating PR stack descriptions...")
 	if err := gh.UpdateStackDescription(currentStack, branch.Name, skipBranches); err != nil {

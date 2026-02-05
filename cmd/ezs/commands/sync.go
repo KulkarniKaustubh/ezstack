@@ -51,7 +51,6 @@ func Sync(args []string) error {
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 
-	// Flags
 	helpFlag := fs.Bool("h", false, "Show help")
 	allFlag := fs.Bool("all", false, "Sync current stack")
 	allShort := fs.Bool("a", false, "Sync current stack (short)")
@@ -88,27 +87,22 @@ func Sync(args []string) error {
 		return err
 	}
 
-	// Show current stack
 	currentStack, branch, err := mgr.GetCurrentStack()
 	if err != nil {
 		return fmt.Errorf("not in a stack. Create a branch first with: ezs new <branch-name>")
 	}
 
-	// Try to get GitHub client for checking squash/rebase merged PRs
 	var gh *github.Client
 	remoteURL, err := g.GetRemote("origin")
 	if err == nil {
 		gh, _ = github.NewClient(remoteURL)
 	}
 
-	// Show stack with status (like ezs status, not ezs ls)
 	statusMap := fetchBranchStatuses(g, currentStack)
 	ui.PrintStackWithStatus(currentStack, branch.Name, statusMap)
 
-	// deleteLocal is true by default (delete merged branches), false if --no-delete-local is set
 	deleteLocal := !*noDeleteLocal
 
-	// Handle flags
 	if *allStacksFlag {
 		return syncStacks(mgr, gh, cwd, deleteLocal, true)
 	}
@@ -125,7 +119,6 @@ func Sync(args []string) error {
 		return syncChildren(mgr, branch, cwd)
 	}
 
-	// Interactive mode - show menu
 	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal)
 }
 
@@ -134,15 +127,12 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 	options := []string{}
 	optionActions := []string{}
 
-	// Auto-sync current stack (detect merged parents / behind main)
 	options = append(options, fmt.Sprintf("%s  Auto-sync current stack (detect merged parents / behind main)", ui.IconSync))
 	optionActions = append(optionActions, "auto")
 
-	// Auto-sync all stacks
 	options = append(options, fmt.Sprintf("%s  Auto-sync ALL stacks", ui.IconSync))
 	optionActions = append(optionActions, "auto-all")
 
-	// Sync current branch only (if it needs syncing)
 	syncInfo := mgr.DetectSyncNeededForBranch(branch.Name, gh)
 	if syncInfo != nil && syncInfo.NeedsSync {
 		var reason string
@@ -157,13 +147,11 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 		optionActions = append(optionActions, "current")
 	}
 
-	// Rebase current branch onto parent (if parent is not main)
 	if branch.Parent != "" && !mgr.IsMainBranch(branch.Parent) {
 		options = append(options, fmt.Sprintf("%s  Rebase current branch onto parent (%s)", ui.IconUp, branch.Parent))
 		optionActions = append(optionActions, "parent")
 	}
 
-	// Rebase child branches onto current
 	allChildren := mgr.GetChildren(branch.Name)
 	localChildren := []*config.Branch{}
 	for _, c := range allChildren {
@@ -217,7 +205,6 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, allStacks bool) error {
 	ui.Info("Fetching latest changes...")
 
-	// Detect branches needing sync
 	var syncNeeded []stack.SyncInfo
 	var err error
 	if allStacks {
@@ -229,7 +216,6 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 		ui.Warn(fmt.Sprintf("Could not check for sync needed: %v", err))
 	}
 
-	// Detect merged branches for cleanup
 	var mergedBranches []stack.MergedBranchInfo
 	if deleteLocal && gh != nil {
 		if allStacks {
@@ -247,7 +233,6 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 		return nil
 	}
 
-	// Show what will be synced
 	if len(syncNeeded) > 0 {
 		ui.Info(fmt.Sprintf("Found %d branch(es) that need syncing:", len(syncNeeded)))
 		for _, info := range syncNeeded {
@@ -265,7 +250,6 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 		fmt.Fprintln(os.Stderr)
 	}
 
-	// Show merged branches that will be cleaned up
 	if len(mergedBranches) > 0 {
 		ui.Info(fmt.Sprintf("Found %d branch(es) with merged PRs (will be deleted):", len(mergedBranches)))
 		for _, info := range mergedBranches {
@@ -291,26 +275,20 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 			ui.Info("Syncing stack...")
 		}
 
-		// After each successful rebase, check if upstream needs updating and prompt for force push
-		// If user declines force push when it's needed, stop syncing - child branches cannot be
-		// correctly rebased without the parent being pushed first
 		afterRebase := func(result stack.RebaseResult, g *git.Git) bool {
 			fmt.Fprintln(os.Stderr)
 			ui.Success(fmt.Sprintf("Rebased %s", result.Branch))
 
-			// Check if local is ahead of origin (needs force push)
 			needsPush, err := g.IsLocalAheadOfOrigin(result.Branch)
 			if err != nil {
 				ui.Warn(fmt.Sprintf("Could not check if push is needed: %v", err))
-				needsPush = true // Assume it needs push after rebase
+				needsPush = true
 			}
 
 			if !needsPush {
-				// Already in sync with origin, no push needed
 				return true
 			}
 
-			// Force push is required
 			if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease)", result.Branch)) {
 				ui.Info("Pushing...")
 				if err := g.PushForce(); err != nil {
@@ -321,7 +299,6 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 				return true
 			}
 
-			// User declined force push - cannot continue syncing child branches
 			fmt.Fprintln(os.Stderr)
 			ui.Error("Cannot continue syncing child branches without pushing parent first.")
 			ui.Info("The rebased parent branch must be pushed before child branches can be synced.")
@@ -339,10 +316,8 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 			return err
 		}
 
-		// Print results summary
 		printSyncResults(results)
 
-		// Check if any branches had conflicts
 		hasConflicts := false
 		successCount := 0
 		for _, r := range results {
@@ -363,10 +338,7 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 		}
 	}
 
-	// Clean up merged branches
 	if len(mergedBranches) > 0 {
-		// Show the list of merged branches right before the confirmation prompt
-		// (the earlier list may have scrolled away during sync)
 		fmt.Fprintln(os.Stderr)
 		ui.Info(fmt.Sprintf("Found %d merged branch(es) to clean up:", len(mergedBranches)))
 		for _, info := range mergedBranches {
@@ -447,7 +419,6 @@ func syncChildren(mgr *stack.Manager, branch *config.Branch, cwd string) error {
 		return err
 	}
 
-	// Print results
 	hasConflicts := false
 	successCount := 0
 	for _, r := range results {
@@ -475,21 +446,18 @@ func syncChildren(mgr *stack.Manager, branch *config.Branch, cwd string) error {
 
 // syncCurrentBranch syncs only the current branch (wherever it is in the chain)
 func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Branch, cwd string) error {
-	// First fetch latest
 	ui.Info("Fetching latest changes...")
 	g := git.New(cwd)
 	if err := g.Fetch(); err != nil {
 		return fmt.Errorf("failed to fetch: %w", err)
 	}
 
-	// Check if current branch needs syncing
 	syncInfo := mgr.DetectSyncNeededForBranch(branch.Name, gh)
 	if syncInfo == nil || !syncInfo.NeedsSync {
 		ui.Success("Current branch is up to date. No sync needed.")
 		return nil
 	}
 
-	// Show what will be synced
 	if syncInfo.MergedParent != "" {
 		ui.Info(fmt.Sprintf("Parent %s was merged to main. Will rebase onto main.", syncInfo.MergedParent))
 	} else if syncInfo.BehindParent != "" {
@@ -509,7 +477,6 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 		return err
 	}
 
-	// Print result
 	if result.Success {
 		if result.BehindBy > 0 && result.SyncedParent != "" {
 			ui.Success(fmt.Sprintf("Synced %s (was %d commits behind %s)", result.Branch, result.BehindBy, result.SyncedParent))
@@ -550,7 +517,6 @@ func offerPush(cwd string) {
 // printSyncResults prints the results of a sync operation
 func printSyncResults(results []stack.RebaseResult) {
 	var conflicts []stack.RebaseResult
-
 	for _, r := range results {
 		if r.Success {
 			if r.BehindBy > 0 {
@@ -568,7 +534,6 @@ func printSyncResults(results []stack.RebaseResult) {
 		}
 	}
 
-	// Print conflict summary at the end if there are any
 	if len(conflicts) > 0 {
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintf(os.Stderr, "%s%s Branches with conflicts (%d):%s\n", ui.Yellow, ui.IconConflict, len(conflicts), ui.Reset)

@@ -12,7 +12,6 @@ const version = "0.1.0"
 
 func main() {
 	if len(os.Args) < 2 {
-		// Interactive mode - show menu
 		err := runInteractiveMenu()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -56,7 +55,6 @@ func main() {
 	}
 
 	if err != nil {
-		// ErrBack from submenus when there's nothing to go back to is not an error
 		if err == ui.ErrBack {
 			return
 		}
@@ -105,7 +103,6 @@ func runInteractiveMenu() error {
 			return nil
 		}
 
-		// If the command returned ErrBack, loop back to main menu
 		if cmdErr == ui.ErrBack {
 			continue
 		}

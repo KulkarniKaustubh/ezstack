@@ -39,14 +39,12 @@ func New(args []string) error {
         eval "$(ezs --shell-init)"
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	// Long flags
 	parent := fs.String("parent", "", "Parent branch")
 	worktree := fs.String("worktree", "", "Worktree path")
 	cdFlag := fs.Bool("cd", false, "Change to worktree")
 	noCdFlag := fs.Bool("no-cd", false, "Don't change to worktree")
 	fromWorktree := fs.Bool("from-worktree", false, "Select from worktree")
 	fromRemote := fs.Bool("from-remote", false, "Create stack from remote branch")
-	// Short flags
 	parentShort := fs.String("p", "", "Parent branch (short)")
 	worktreeShort := fs.String("w", "", "Worktree path (short)")
 	cdFlagShort := fs.Bool("c", false, "Change to worktree (short)")
@@ -66,7 +64,6 @@ func New(args []string) error {
 		return nil
 	}
 
-	// Merge short and long flags
 	if *parentShort != "" {
 		*parent = *parentShort
 	}
@@ -75,7 +72,6 @@ func New(args []string) error {
 	}
 	helpers.MergeFlags(cdFlagShort, cdFlag, noCdFlagShort, noCdFlag, fromWorktreeShort, fromWorktree, fromRemoteShort, fromRemote)
 
-	// Get current directory
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -83,14 +79,12 @@ func New(args []string) error {
 
 	g := git.New(cwd)
 
-	// Handle interactive mode: if no args and no --from-worktree flag, show menu
 	var parentBranch string
 	useFromWorktree := *fromWorktree
 	useFromRemote := *fromRemote
 	chooseParent := false
 
 	if fs.NArg() == 0 && !useFromWorktree && !useFromRemote && *parent == "" {
-		// Show interactive menu with 4 options
 		choice, err := ui.SelectOptionWithBack([]string{
 			"Create a new branch (use current branch as parent)",
 			"Create a new branch (choose parent branch)",
@@ -113,7 +107,6 @@ func New(args []string) error {
 	}
 
 	if useFromWorktree {
-		// Register an existing worktree as a stack root (no new branch created)
 		worktrees, err := g.ListWorktrees()
 		if err != nil {
 			return fmt.Errorf("failed to list worktrees: %w", err)
@@ -123,7 +116,6 @@ func New(args []string) error {
 			return fmt.Errorf("no worktrees found")
 		}
 
-		// Convert to UI format
 		wtInfos := make([]ui.WorktreeInfo, len(worktrees))
 		for i, wt := range worktrees {
 			wtInfos[i] = ui.WorktreeInfo{
@@ -137,20 +129,17 @@ func New(args []string) error {
 			return err
 		}
 
-		// Create manager and register the existing branch
 		mgr, err := stack.NewManager(cwd)
 		if err != nil {
 			return err
 		}
 
-		// Get the base branch (main/master) for this repo
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
 		baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
 
-		// Confirm registration
 		ui.Info(fmt.Sprintf("Registering '%s' as a stack root (base: %s)", selected.Branch, baseBranch))
 		ui.Info(fmt.Sprintf("Worktree path: %s", selected.Path))
 
@@ -164,18 +153,15 @@ func New(args []string) error {
 			return err
 		}
 
-		// Try to detect existing PR for this branch
 		remoteURL, err := g.GetRemote("origin")
 		if err == nil {
 			gh, err := github.NewClient(remoteURL)
 			if err == nil {
 				pr, err := gh.GetPRByBranch(selected.Branch)
 				if err == nil && pr != nil && pr.Number > 0 {
-					// Found an existing PR - update the branch metadata
 					branch.PRNumber = pr.Number
 					branch.PRUrl = pr.URL
 
-					// Save the updated stack config
 					stackCfg, err := config.LoadStackConfig(mgr.GetRepoDir())
 					if err == nil {
 						for _, s := range stackCfg.Stacks {
@@ -202,7 +188,6 @@ func New(args []string) error {
 	}
 
 	if useFromRemote {
-		// Create a stack from a remote branch with an open PR
 		remoteURL, err := g.GetRemote("origin")
 		if err != nil {
 			return fmt.Errorf("failed to get remote: %w", err)
@@ -223,20 +208,17 @@ func New(args []string) error {
 			return fmt.Errorf("no open PRs found in this repository")
 		}
 
-		// Format PRs for display: "#123 branch-name - Title (author)"
 		prOptions := make([]string, len(openPRs))
 		for i, pr := range openPRs {
 			prOptions[i] = fmt.Sprintf("#%d %s - %s (%s)", pr.Number, pr.Branch, pr.Title, pr.Author)
 		}
 
-		// Let user select a PR
 		selectedIdx, err := ui.SelectOption(prOptions, "Select PR to create stack from")
 		if err != nil {
 			return err
 		}
 		selectedPR := openPRs[selectedIdx]
 
-		// Warn user about remote branch behavior
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintf(os.Stderr, "%s────────────────────────────────────────────────────────────────%s\n", ui.Yellow, ui.Reset)
 		ui.Warn("Note: This remote branch will never be rebased since it is assumed")
@@ -245,35 +227,29 @@ func New(args []string) error {
 		fmt.Fprintf(os.Stderr, "%s────────────────────────────────────────────────────────────────%s\n", ui.Yellow, ui.Reset)
 		fmt.Fprintln(os.Stderr)
 
-		// Prompt for the user's new branch name
 		newBranchName := ui.PromptRequired("Enter name for your new branch (stacked on " + selectedPR.Branch + ")")
 
-		// Fetch remote
 		ui.Info("Fetching remote branch...")
 		if err := g.Fetch(); err != nil {
 			return fmt.Errorf("failed to fetch: %w", err)
 		}
 
-		// Create manager
 		mgr, err := stack.NewManager(cwd)
 		if err != nil {
 			return err
 		}
 
-		// Get the base branch for this repo
 		cfg, err := config.Load()
 		if err != nil {
 			return err
 		}
 		baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
 
-		// Register the remote branch (without a worktree)
 		_, err = mgr.RegisterRemoteBranch(selectedPR.Branch, baseBranch, selectedPR.Number, selectedPR.URL)
 		if err != nil {
 			return fmt.Errorf("failed to register remote branch: %w", err)
 		}
 
-		// Determine worktree path for the user's new branch
 		worktreePath := *worktree
 		if worktreePath == "" {
 			worktreeBaseDir := cfg.GetWorktreeBaseDir(mgr.GetRepoDir())
@@ -293,12 +269,10 @@ func New(args []string) error {
 		ui.Info(fmt.Sprintf("Creating branch '%s' based on remote '%s'", newBranchName, selectedPR.Branch))
 		ui.Info(fmt.Sprintf("Worktree path: %s", worktreePath))
 
-		// Create the user's worktree based on the remote branch
 		if err := g.CreateWorktree(newBranchName, worktreePath, "origin/"+selectedPR.Branch); err != nil {
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
 
-		// Add the user's branch to the stack
 		userBranch, err := mgr.AddBranchToStack(newBranchName, selectedPR.Branch, worktreePath)
 		if err != nil {
 			return fmt.Errorf("failed to add branch to stack: %w", err)
@@ -309,17 +283,14 @@ func New(args []string) error {
 		return nil
 	}
 
-	// Creating a new branch - determine parent branch
 	parentBranch = *parent
 	if parentBranch == "" {
 		if chooseParent {
-			// Let user choose from available branches
 			mgr, err := stack.NewManager(cwd)
 			if err != nil {
 				return err
 			}
 
-			// Collect all branches from stacks + base branch
 			cfg, err := config.Load()
 			if err != nil {
 				return err
@@ -333,7 +304,6 @@ func New(args []string) error {
 				}
 			}
 
-			// Use fzf-style selection
 			selectedIdx, err := ui.SelectOption(branchOptions, "Select parent branch")
 			if err != nil {
 				return err
@@ -347,12 +317,10 @@ func New(args []string) error {
 		}
 	}
 
-	// Get branch name - either from args or interactively
 	var branchName string
 	if fs.NArg() >= 1 {
 		branchName = fs.Arg(0)
 	} else {
-		// Interactive mode - prompt for branch name
 		branchName = ui.PromptRequired("Enter new branch name")
 	}
 
@@ -362,7 +330,6 @@ func New(args []string) error {
 		return err
 	}
 
-	// Determine worktree path
 	worktreePath := *worktree
 	if worktreePath == "" {
 		cfg, err := config.Load()
@@ -374,7 +341,6 @@ func New(args []string) error {
 		if worktreeBaseDir != "" {
 			worktreePath = filepath.Join(worktreeBaseDir, branchName)
 		} else {
-			// Try to use a default based on the repo location
 			if repoDir != "" {
 				worktreePath = filepath.Join(filepath.Dir(repoDir), branchName)
 			} else {
@@ -385,7 +351,6 @@ func New(args []string) error {
 
 	worktreePath = helpers.ExpandPath(worktreePath)
 
-	// Show what we're about to do and ask for confirmation
 	ui.Info(fmt.Sprintf("Creating branch '%s' from '%s'", branchName, parentBranch))
 	ui.Info(fmt.Sprintf("Worktree path: %s", worktreePath))
 
@@ -401,15 +366,12 @@ func New(args []string) error {
 
 	ui.Success(fmt.Sprintf("Created branch '%s' with worktree at '%s'", branch.Name, branch.WorktreePath))
 
-	// Determine if we should cd to the new worktree
-	// Priority: --no-cd flag > --cd flag > config setting
 	shouldCd := false
 	if *noCdFlag {
 		shouldCd = false
 	} else if *cdFlag {
 		shouldCd = true
 	} else {
-		// Check config
 		cfg, err := config.Load()
 		if err == nil {
 			shouldCd = cfg.GetCdAfterNew(mgr.GetRepoDir())
@@ -417,9 +379,7 @@ func New(args []string) error {
 	}
 
 	if shouldCd {
-		// Output cd command for shell wrapper to eval
 		fmt.Printf("cd %s\n", branch.WorktreePath)
-		// Check if shell function is likely not set up (we're outputting cd but it won't work without eval)
 		ui.Info("Note: If `ezs goto` doesn't work, add this to your ~/.bashrc or ~/.zshrc:")
 		ui.Info("  eval \"$(ezs --shell-init)\"")
 	} else {

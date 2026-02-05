@@ -33,10 +33,8 @@ func List(args []string) error {
     -h, --help    Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	// Long flags
 	all := fs.Bool("all", false, "Show all stacks")
 	debug := fs.Bool("debug", false, "Show debug output")
-	// Short flags
 	allShort := fs.Bool("a", false, "Show all stacks (short)")
 	debugShort := fs.Bool("d", false, "Show debug output (short)")
 	helpFlag := fs.Bool("h", false, "Show help")
@@ -83,10 +81,7 @@ func List(args []string) error {
 		return nil
 	}
 
-	// Helper to print stack (uses cached PR numbers only - no GitHub API calls)
 	printStack := func(s *config.Stack) {
-		// ezs ls should be instant - just use cached data, no GitHub API calls
-		// Pass nil statusMap - ezs ls doesn't show PR status or CI, just PR numbers
 		ui.PrintStackWithStatus(s, currentBranch, nil)
 	}
 
@@ -95,10 +90,8 @@ func List(args []string) error {
 			printStack(s)
 		}
 	} else {
-		// Show only current stack or all if not in a stack
 		currentStack, _, err := mgr.GetCurrentStack()
 		if err != nil {
-			// Not in a stack, show all
 			for _, s := range stacks {
 				printStack(s)
 			}
@@ -162,7 +155,6 @@ func Status(args []string) error {
 
 	currentStack, branch, err := mgr.GetCurrentStack()
 	if err != nil {
-		// Not in a stack - show all stacks like ezs ls does
 		stacks := mgr.ListStacks()
 		if len(stacks) == 0 {
 			ui.Info("No stacks found. Create one with: ezs new <branch-name>")
@@ -176,7 +168,6 @@ func Status(args []string) error {
 		return nil
 	}
 
-	// Fetch PR and CI status for all branches
 	spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
 	spinner.Start()
 	statusMap := fetchBranchStatuses(g, currentStack)
@@ -184,8 +175,6 @@ func Status(args []string) error {
 
 	ui.PrintStackWithStatus(currentStack, currentBranch, statusMap)
 
-	// Show commits unique to this branch
-	// Use origin/<parent> to get accurate commits (local parent may be behind remote)
 	parentRef := "origin/" + branch.Parent
 	commits, err := g.GetCommitsBetween(parentRef, currentBranch)
 	if err == nil && len(commits) > 0 {
@@ -196,7 +185,6 @@ func Status(args []string) error {
 		fmt.Fprintln(os.Stderr)
 	}
 
-	// Check for rebase status
 	inRebase, _ := g.IsRebaseInProgress()
 	if inRebase {
 		ui.Warn("Rebase in progress! Resolve conflicts and run: git rebase --continue")
@@ -208,7 +196,6 @@ func Status(args []string) error {
 // discoverAndCachePRs discovers PRs from GitHub for branches that don't have PR numbers cached
 // and saves them to the config. Returns a GitHub client for further use (or nil if unavailable).
 func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
-	// Try to get GitHub client
 	remoteURL, err := g.GetRemote("origin")
 	if err != nil {
 		if debugMode {
@@ -229,7 +216,6 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
 		return nil
 	}
 
-	// Track if we discovered any new PRs so we can save the config
 	discoveredPRs := false
 	ghAccessWarningShown := false
 	mainWorktree, _ := g.GetMainWorktree()
@@ -242,14 +228,12 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Checking branch %s (PRNumber=%d)\n", branch.Name, branch.PRNumber)
 		}
 
-		// If PRNumber is 0, try to discover PR from GitHub
 		if branch.PRNumber == 0 {
 			pr, err := gh.GetPRByBranch(branch.Name)
 			if err != nil {
 				if debugMode {
 					fmt.Fprintf(os.Stderr, "[DEBUG] GetPRByBranch(%s) error: %v\n", branch.Name, err)
 				}
-				// Show warning once if we can't access GitHub
 				if !ghAccessWarningShown {
 					errStr := err.Error()
 					if strings.Contains(errStr, "cannot access repository") ||
@@ -264,7 +248,6 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
 				if debugMode {
 					fmt.Fprintf(os.Stderr, "[DEBUG] Found PR #%d for branch %s\n", pr.Number, branch.Name)
 				}
-				// Found a PR for this branch - update the branch info
 				branch.PRNumber = pr.Number
 				branch.PRUrl = pr.URL
 				discoveredPRs = true
@@ -272,7 +255,6 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
 		}
 	}
 
-	// Save discovered PRs to config
 	if discoveredPRs {
 		stackCfg, err := config.LoadStackConfig(mainWorktree)
 		if err == nil {
@@ -303,7 +285,6 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 		fmt.Fprintf(os.Stderr, "[DEBUG] fetchBranchStatuses for stack %s with %d branches\n", s.Name, len(s.Branches))
 	}
 
-	// First discover and cache any missing PRs
 	gh := discoverAndCachePRs(g, s)
 	if gh == nil {
 		if debugMode {
@@ -312,7 +293,6 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 		return statusMap
 	}
 
-	// Now fetch detailed status for each branch with a PR
 	for _, branch := range s.Branches {
 		if debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] branch %s PRNumber=%d\n", branch.Name, branch.PRNumber)
@@ -323,7 +303,6 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 
 		status := &ui.BranchStatus{}
 
-		// Get PR info
 		pr, err := gh.GetPR(branch.PRNumber)
 		if err == nil {
 			if pr.Merged {
@@ -339,7 +318,6 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 			status.ReviewState = pr.ReviewState
 		}
 
-		// Get CI status
 		checks, err := gh.GetPRChecks(branch.PRNumber)
 		if debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] GetPRChecks(%d): state=%s summary=%s err=%v\n", branch.PRNumber, checks.State, checks.Summary, err)
