@@ -7,6 +7,7 @@ import (
 
 	"github.com/ezstack/ezstack/internal/config"
 	"github.com/ezstack/ezstack/internal/git"
+	"github.com/ezstack/ezstack/internal/github"
 	"github.com/ezstack/ezstack/internal/helpers"
 	"github.com/ezstack/ezstack/internal/stack"
 	"github.com/ezstack/ezstack/internal/ui"
@@ -289,15 +290,51 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 
 	ui.Success(fmt.Sprintf("Reparented '%s' to '%s'", branch.Name, branch.Parent))
 
-	// Show the updated stack
+	// Find the stack this branch belongs to
+	var currentStack *config.Stack
 	stacks := mgr.ListStacks()
 	for _, s := range stacks {
 		for _, b := range s.Branches {
 			if b.Name == branchName {
-				ui.PrintStack(s, branchName)
+				currentStack = s
 				break
 			}
 		}
+		if currentStack != nil {
+			break
+		}
+	}
+
+	// Update PR base branch on GitHub if the branch has a PR
+	if branch.PRNumber > 0 {
+		cwd, _ := os.Getwd()
+		g := git.New(cwd)
+		remoteURL, err := g.GetRemote("origin")
+		if err == nil {
+			gh, err := github.NewClient(remoteURL)
+			if err == nil {
+				ui.Info(fmt.Sprintf("Updating PR #%d base branch to '%s'...", branch.PRNumber, newParent))
+				if err := gh.UpdatePRBase(branch.PRNumber, newParent); err != nil {
+					ui.Warn(fmt.Sprintf("Failed to update PR base branch: %v", err))
+				} else {
+					ui.Success(fmt.Sprintf("Updated PR #%d base branch to '%s'", branch.PRNumber, newParent))
+				}
+
+				// Also update stack descriptions in all PRs
+				if currentStack != nil {
+					ui.Info("Updating PR stack descriptions...")
+					skipBranches := getRemoteBranches(currentStack)
+					if err := gh.UpdateStackDescription(currentStack, branchName, skipBranches); err != nil {
+						ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
+					}
+				}
+			}
+		}
+	}
+
+	// Show the updated stack
+	if currentStack != nil {
+		ui.PrintStack(currentStack, branchName)
 	}
 
 	return nil
