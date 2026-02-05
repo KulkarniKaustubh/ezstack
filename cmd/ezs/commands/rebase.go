@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ezstack/ezstack/internal/config"
 	"github.com/ezstack/ezstack/internal/stack"
 	"github.com/ezstack/ezstack/internal/ui"
 )
@@ -114,23 +115,35 @@ func rebaseInteractive(mgr *stack.Manager) error {
 		optionActions = append(optionActions, "parent")
 	}
 
-	// Option 2: Rebase child branches
-	children := mgr.GetChildren(branch.Name)
-	if len(children) > 0 {
+	// Option 2: Rebase child branches (exclude remote branches)
+	allChildren := mgr.GetChildren(branch.Name)
+	localChildren := []*config.Branch{}
+	for _, c := range allChildren {
+		if !c.IsRemote {
+			localChildren = append(localChildren, c)
+		}
+	}
+	if len(localChildren) > 0 {
 		childNames := ""
-		for i, c := range children {
+		for i, c := range localChildren {
 			if i > 0 {
 				childNames += ", "
 			}
 			childNames += c.Name
 		}
-		options = append(options, fmt.Sprintf("%s  Rebase %d child branch(es) onto current (%s)", ui.IconDown, len(children), childNames))
+		options = append(options, fmt.Sprintf("%s  Rebase %d child branch(es) onto current (%s)", ui.IconDown, len(localChildren), childNames))
 		optionActions = append(optionActions, "children")
 	}
 
-	// Option 3: Rebase entire stack
-	if len(currentStack.Branches) > 1 {
-		options = append(options, fmt.Sprintf("%s  Rebase entire stack (%d branches)", ui.IconSync, len(currentStack.Branches)))
+	// Option 3: Rebase entire stack (count only local branches)
+	localBranchCount := 0
+	for _, b := range currentStack.Branches {
+		if !b.IsRemote {
+			localBranchCount++
+		}
+	}
+	if localBranchCount > 1 {
+		options = append(options, fmt.Sprintf("%s  Rebase entire stack (%d branches)", ui.IconSync, localBranchCount))
 		optionActions = append(optionActions, "all")
 	}
 

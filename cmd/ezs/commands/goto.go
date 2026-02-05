@@ -80,6 +80,9 @@ func Goto(args []string) error {
 	}
 
 	if targetBranch.WorktreePath == "" {
+		if targetBranch.IsRemote {
+			return fmt.Errorf("cannot go to remote branch '%s' - it has no local worktree", targetBranch.Name)
+		}
 		return fmt.Errorf("no worktree path for branch '%s'", targetBranch.Name)
 	}
 

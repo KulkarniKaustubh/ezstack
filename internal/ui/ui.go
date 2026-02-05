@@ -59,6 +59,7 @@ const (
 	IconStack    = "\uf24d" // nf-fa-clone (stack of items)
 	IconRocket   = "\uf135" // nf-fa-rocket
 	IconBack     = "\uf060" // nf-fa-arrow_left
+	IconRemote   = "\uf0c1" // nf-fa-link (for remote branches)
 )
 
 // ErrBack is returned when the user selects the back option
@@ -152,10 +153,13 @@ func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string
 	yellow := "\\x1b[33m"
 	gray := "\\x1b[90m"
 	cyan := "\\x1b[36m"
+	magenta := "\\x1b[35m"
 
 	// Calculate max widths using runewidth
 	maxNameWidth := 0
 	maxPRWidth := 0
+	maxParentWidth := 0
+	hasRemoteBranches := false
 	for _, b := range targetStack.Branches {
 		displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
 		if w := runewidth.StringWidth(displayName); w > maxNameWidth {
@@ -170,6 +174,15 @@ func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string
 		}
 		if w := runewidth.StringWidth(prText); w > maxPRWidth {
 			maxPRWidth = w
+		}
+
+		parentText := fmt.Sprintf("(%s %s)", IconArrow, b.Parent)
+		if w := runewidth.StringWidth(parentText); w > maxParentWidth {
+			maxParentWidth = w
+		}
+
+		if b.IsRemote {
+			hasRemoteBranches = true
 		}
 	}
 
@@ -208,9 +221,19 @@ func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string
 		}
 		paddedPRText := padRight(prText, maxPRWidth)
 
-		preview.WriteString(fmt.Sprintf("%s%s%s %s%s%s  %s%s%s  (%s %s)%s\\n",
+		// Parent info (padded)
+		parentText := fmt.Sprintf("(%s %s)", IconArrow, b.Parent)
+		paddedParent := padRight(parentText, maxParentWidth)
+
+		// Remote tag (separate column at the end)
+		remoteTag := ""
+		if hasRemoteBranches && b.IsRemote {
+			remoteTag = fmt.Sprintf("  %s%s[remote]%s", magenta, IconRemote, reset)
+		}
+
+		preview.WriteString(fmt.Sprintf("%s%s%s %s%s%s  %s%s%s  %s%s%s\\n",
 			prefix, color, connector, bold, paddedName, reset,
-			prColor, paddedPRText, reset, IconArrow, b.Parent, reset))
+			prColor, paddedPRText, reset, paddedParent, reset, remoteTag))
 	}
 
 	return preview.String()
@@ -372,8 +395,8 @@ func truncateBranchName(name string, maxWidth int) string {
 
 // PrintStackWithStatus prints a visual representation of a stack with PR/CI status
 // Column layout:
-// - ezs ls (statusMap=nil): 3 columns - branch name, pr number, parent branch
-// - ezs status: 4 columns - branch name, pr number, ci status, parent branch
+// - ezs ls (statusMap=nil): 4 columns - branch name, pr number, parent branch, remote tag
+// - ezs status: 5 columns - branch name, pr number, ci status, parent branch, remote tag
 func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap map[string]*BranchStatus) {
 	fmt.Fprintf(os.Stderr, "\n%s%s Stack: %s%s\n\n", Bold, Cyan, stack.Name, Reset)
 
@@ -381,6 +404,8 @@ func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap m
 	maxNameWidth := 0
 	maxPRWidth := 0
 	maxStatusWidth := 0
+	maxParentWidth := 0
+	hasRemoteBranches := false
 
 	for _, branch := range stack.Branches {
 		name := truncateBranchName(branch.Name, MaxBranchNameWidth)
@@ -398,6 +423,15 @@ func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap m
 			if w := runewidth.StringWidth(statusText); w > maxStatusWidth {
 				maxStatusWidth = w
 			}
+		}
+
+		parentText := fmt.Sprintf("(%s %s)", IconArrow, branch.Parent)
+		if w := runewidth.StringWidth(parentText); w > maxParentWidth {
+			maxParentWidth = w
+		}
+
+		if branch.IsRemote {
+			hasRemoteBranches = true
 		}
 	}
 
@@ -425,28 +459,37 @@ func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap m
 		paddedPR := padRight(prText, maxPRWidth)
 		prColor := getPRColor(branch, statusMap)
 
-		// Parent info
+		// Parent info (padded)
 		parentInfo := fmt.Sprintf("(%s %s)", IconArrow, branch.Parent)
+		paddedParent := padRight(parentInfo, maxParentWidth)
+
+		// Remote indicator (separate column at the end)
+		remoteTag := ""
+		if hasRemoteBranches {
+			if branch.IsRemote {
+				remoteTag = fmt.Sprintf("  %s%s[remote]%s", Magenta, IconRemote, Reset)
+			}
+		}
 
 		if statusMap != nil {
-			// 4 columns: branch, PR, status, parent
+			// 5 columns: branch, PR, status, parent, remote
 			statusText := getStatusText(branch, statusMap)
 			paddedStatus := padRight(statusText, maxStatusWidth)
 			statusColored := getStatusIcons(branch, statusMap)
 			// Use paddedStatus length but display statusColored (with colors)
 			statusPadding := strings.Repeat(" ", runewidth.StringWidth(paddedStatus)-runewidth.StringWidth(statusText))
 
-			fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s%s%s  %s%s  %s%s\n",
+			fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s%s%s  %s%s  %s%s%s\n",
 				pointer, color, connector, Bold, paddedName, Reset,
 				prColor, paddedPR, Reset,
 				statusColored, statusPadding,
-				parentInfo, Reset)
+				paddedParent, Reset, remoteTag)
 		} else {
-			// 3 columns: branch, PR, parent
-			fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s%s%s  %s%s\n",
+			// 4 columns: branch, PR, parent, remote
+			fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s%s%s  %s%s%s\n",
 				pointer, color, connector, Bold, paddedName, Reset,
 				prColor, paddedPR, Reset,
-				parentInfo, Reset)
+				paddedParent, Reset, remoteTag)
 		}
 	}
 	fmt.Fprintln(os.Stderr)
