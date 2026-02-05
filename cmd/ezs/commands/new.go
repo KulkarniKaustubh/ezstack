@@ -248,25 +248,20 @@ func New(args []string) error {
 
 		// Warn user about remote branch behavior
 		fmt.Fprintln(os.Stderr)
+		fmt.Fprintf(os.Stderr, "%s────────────────────────────────────────────────────────────────%s\n", ui.Yellow, ui.Reset)
 		ui.Warn("Note: This remote branch will never be rebased since it is assumed")
-		ui.Warn("that it does not belong to you. Only your branches that are stacked")
+		ui.Warn(fmt.Sprintf("that it does not belong to you. Only %sYOUR%s branches that are stacked", ui.Bold, ui.Reset+ui.Yellow))
 		ui.Warn("on this branch will be handled by ezstack.")
+		fmt.Fprintf(os.Stderr, "%s────────────────────────────────────────────────────────────────%s\n", ui.Yellow, ui.Reset)
 		fmt.Fprintln(os.Stderr)
 
-		if !ui.ConfirmTUI("Proceed?") {
-			ui.Warn("Cancelled")
-			return nil
-		}
+		// Prompt for the user's new branch name
+		newBranchName := ui.PromptRequired("Enter name for your new branch (stacked on " + selectedPR.Branch + ")")
 
-		// Fetch and create local branch from remote
+		// Fetch remote
 		ui.Info("Fetching remote branch...")
 		if err := g.Fetch(); err != nil {
 			return fmt.Errorf("failed to fetch: %w", err)
-		}
-
-		localBranch, err := g.CreateBranchFromRemote("origin/" + selectedPR.Branch)
-		if err != nil {
-			return err
 		}
 
 		// Create manager
@@ -282,54 +277,45 @@ func New(args []string) error {
 		}
 		baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
 
-		// Determine worktree path
+		// Register the remote branch (without a worktree)
+		_, err = mgr.RegisterRemoteBranch(selectedPR.Branch, baseBranch, selectedPR.Number, selectedPR.URL)
+		if err != nil {
+			return fmt.Errorf("failed to register remote branch: %w", err)
+		}
+
+		// Determine worktree path for the user's new branch
 		worktreePath := *worktree
 		if worktreePath == "" {
 			worktreeBaseDir := cfg.GetWorktreeBaseDir(mgr.GetRepoDir())
 			if worktreeBaseDir != "" {
-				worktreePath = filepath.Join(worktreeBaseDir, localBranch)
+				worktreePath = filepath.Join(worktreeBaseDir, newBranchName)
 			} else {
 				repoDir := mgr.GetRepoDir()
 				if repoDir != "" {
-					worktreePath = filepath.Join(filepath.Dir(repoDir), localBranch)
+					worktreePath = filepath.Join(filepath.Dir(repoDir), newBranchName)
 				} else {
 					return fmt.Errorf("no worktree path specified and no default configured")
 				}
 			}
 		}
 
-		// Create worktree for the branch
-		ui.Info(fmt.Sprintf("Creating worktree at %s", worktreePath))
-		if err := g.AddWorktree(localBranch, worktreePath); err != nil {
+		// Create the user's branch based on the remote branch
+		ui.Info(fmt.Sprintf("Creating branch '%s' based on remote '%s'", newBranchName, selectedPR.Branch))
+		ui.Info(fmt.Sprintf("Worktree path: %s", worktreePath))
+
+		// Create the user's worktree based on the remote branch
+		if err := g.CreateWorktree(newBranchName, worktreePath, "origin/"+selectedPR.Branch); err != nil {
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
 
-		// Register as stack root
-		branch, err := mgr.RegisterExistingBranch(localBranch, worktreePath, baseBranch)
+		// Add the user's branch to the stack
+		userBranch, err := mgr.AddBranchToStack(newBranchName, selectedPR.Branch, worktreePath)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to add branch to stack: %w", err)
 		}
 
-		// Mark as remote branch and save PR info
-		branch.IsRemote = true
-		branch.PRNumber = selectedPR.Number
-		branch.PRUrl = selectedPR.URL
-
-		stackCfg, _ := config.LoadStackConfig(mgr.GetRepoDir())
-		for _, s := range stackCfg.Stacks {
-			for _, b := range s.Branches {
-				if b.Name == branch.Name {
-					b.IsRemote = true
-					b.PRNumber = selectedPR.Number
-					b.PRUrl = selectedPR.URL
-				}
-			}
-		}
-		stackCfg.Save(mgr.GetRepoDir())
-
-		ui.Success(fmt.Sprintf("Created stack from PR #%d (%s)", selectedPR.Number, branch.Name))
-		ui.Info(fmt.Sprintf("Worktree: %s", worktreePath))
-		ui.Info("You can now add child branches with: ezs new <branch-name>")
+		ui.Success(fmt.Sprintf("Created stack from PR #%d (%s)", selectedPR.Number, selectedPR.Branch))
+		ui.Success(fmt.Sprintf("Created your branch '%s' at %s", userBranch.Name, worktreePath))
 		return nil
 	}
 

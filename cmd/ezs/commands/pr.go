@@ -109,10 +109,10 @@ func prInteractive() error {
 		optionActions = append(optionActions, "stack")
 	}
 
-	// Add option to create PRs for branches without PRs
+	// Add option to create PRs for branches without PRs (skip remote branches)
 	branchesWithoutPR := 0
 	for _, b := range currentStack.Branches {
-		if b.PRNumber == 0 {
+		if b.PRNumber == 0 && !b.IsRemote {
 			branchesWithoutPR++
 		}
 	}
@@ -170,6 +170,10 @@ func prCreateAll(currentStack *config.Stack) error {
 
 	branchesToCreate := []*config.Branch{}
 	for _, b := range currentStack.Branches {
+		// Skip remote branches (they already have PRs and belong to someone else)
+		if b.IsRemote {
+			continue
+		}
 		if b.PRNumber == 0 {
 			branchesToCreate = append(branchesToCreate, b)
 		}

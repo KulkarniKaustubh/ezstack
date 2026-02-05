@@ -84,6 +84,70 @@ func (m *Manager) RegisterExistingBranch(branchName, worktreePath, baseBranch st
 	return branch, nil
 }
 
+// RegisterRemoteBranch registers a remote branch (someone else's PR) as the root of a new stack
+// Remote branches don't have local worktrees - only their child branches do
+func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber int, prURL string) (*config.Branch, error) {
+	// Check if branch is already registered
+	if existing := m.GetBranch(branchName); existing != nil {
+		return nil, fmt.Errorf("branch '%s' is already registered in a stack", branchName)
+	}
+
+	// Create branch metadata - no worktree path for remote branches
+	branch := &config.Branch{
+		Name:         branchName,
+		Parent:       baseBranch,
+		WorktreePath: "", // Remote branches don't have local worktrees
+		BaseBranch:   baseBranch,
+		IsRemote:     true,
+		PRNumber:     prNumber,
+		PRUrl:        prURL,
+	}
+
+	// Create a new stack with this branch as the root
+	m.stackConfig.Stacks[branchName] = &config.Stack{
+		Name:     branchName,
+		Branches: []*config.Branch{branch},
+	}
+
+	// Save the config
+	if err := m.stackConfig.Save(m.repoDir); err != nil {
+		return nil, fmt.Errorf("failed to save stack config: %w", err)
+	}
+
+	return branch, nil
+}
+
+// AddBranchToStack adds an existing branch to a stack (worktree should already exist)
+// This is used when the worktree was created externally (e.g., from a remote branch)
+func (m *Manager) AddBranchToStack(name, parentBranch, worktreeDir string) (*config.Branch, error) {
+	// Create branch metadata
+	branch := &config.Branch{
+		Name:         name,
+		Parent:       parentBranch,
+		WorktreePath: worktreeDir,
+		BaseBranch:   parentBranch,
+	}
+
+	// Find the stack for the parent
+	stackName := m.findStackForBranch(parentBranch)
+	if stackName == "" {
+		return nil, fmt.Errorf("parent branch '%s' not found in any stack", parentBranch)
+	}
+
+	// Add to existing stack
+	m.stackConfig.Stacks[stackName].Branches = append(
+		m.stackConfig.Stacks[stackName].Branches,
+		branch,
+	)
+
+	// Save the config
+	if err := m.stackConfig.Save(m.repoDir); err != nil {
+		return nil, fmt.Errorf("failed to save stack config: %w", err)
+	}
+
+	return branch, nil
+}
+
 // CreateBranch creates a new branch in the stack
 func (m *Manager) CreateBranch(name, parentBranch, worktreeDir string) (*config.Branch, error) {
 	// If no worktree dir specified, use the configured base dir for this repo
@@ -241,9 +305,11 @@ func (m *Manager) DeleteBranch(branchName string, force bool) error {
 		return fmt.Errorf("cannot delete branch '%s': has child branches: %s. Use --force to delete anyway", branchName, strings.Join(childNames, ", "))
 	}
 
-	// Remove the worktree and branch from git
-	if err := m.git.RemoveWorktree(branch.WorktreePath, true, branchName); err != nil {
-		return fmt.Errorf("failed to remove worktree: %w", err)
+	// Remove the worktree and branch from git (only if not a remote branch)
+	if !branch.IsRemote && branch.WorktreePath != "" {
+		if err := m.git.RemoveWorktree(branch.WorktreePath, true, branchName); err != nil {
+			return fmt.Errorf("failed to remove worktree: %w", err)
+		}
 	}
 
 	// Remove from stack config
