@@ -265,6 +265,12 @@ func (g *Git) RemoteBranchExists(branch string) bool {
 	return err == nil
 }
 
+// BranchExists checks if a local branch exists
+func (g *Git) BranchExists(branch string) bool {
+	_, err := g.run("rev-parse", "--verify", branch)
+	return err == nil
+}
+
 // HasDivergedFromOrigin checks if local and remote branches have diverged
 // Returns (hasDiverged, localAhead, remoteBehind, error)
 // hasDiverged is true if both local has commits not in remote AND remote has commits not in local
