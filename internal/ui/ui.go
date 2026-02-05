@@ -62,6 +62,15 @@ const (
 	IconRemote   = "\uf0c1" // nf-fa-link (for remote branches)
 )
 
+// Hyperlink wraps text in OSC 8 escape sequence for clickable terminal links
+func Hyperlink(url, text string) string {
+	if url == "" {
+		return text
+	}
+	// OSC 8 format: \033]8;;URL\033\\TEXT\033]8;;\033\\
+	return fmt.Sprintf("\033]8;;%s\033\\%s\033]8;;\033\\", url, text)
+}
+
 // ErrBack is returned when the user selects the back option
 var ErrBack = fmt.Errorf("back")
 
@@ -454,10 +463,8 @@ func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap m
 		name := truncateBranchName(branch.Name, MaxBranchNameWidth)
 		paddedName := padRight(name, maxNameWidth)
 
-		// PR info (padded)
-		prText := getPRText(branch, statusMap)
-		paddedPR := padRight(prText, maxPRWidth)
-		prColor := getPRColor(branch, statusMap)
+		// PR info (with color and hyperlink)
+		prFormatted := getPRFormatted(branch, statusMap, maxPRWidth)
 
 		// Parent info (padded)
 		parentInfo := fmt.Sprintf("(%s %s)", IconArrow, branch.Parent)
@@ -479,16 +486,16 @@ func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap m
 			// Use paddedStatus length but display statusColored (with colors)
 			statusPadding := strings.Repeat(" ", runewidth.StringWidth(paddedStatus)-runewidth.StringWidth(statusText))
 
-			fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s%s%s  %s%s  %s%s%s\n",
+			fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s  %s%s  %s%s%s\n",
 				pointer, color, connector, Bold, paddedName, Reset,
-				prColor, paddedPR, Reset,
+				prFormatted,
 				statusColored, statusPadding,
 				paddedParent, Reset, remoteTag)
 		} else {
 			// 4 columns: branch, PR, parent, remote
-			fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s%s%s  %s%s%s\n",
+			fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s  %s%s%s\n",
 				pointer, color, connector, Bold, paddedName, Reset,
-				prColor, paddedPR, Reset,
+				prFormatted,
 				paddedParent, Reset, remoteTag)
 		}
 	}
@@ -533,6 +540,19 @@ func getPRColor(branch *config.Branch, statusMap map[string]*BranchStatus) strin
 		}
 	}
 	return Yellow
+}
+
+// getPRFormatted returns the PR text with color and hyperlink applied
+func getPRFormatted(branch *config.Branch, statusMap map[string]*BranchStatus, paddedWidth int) string {
+	prText := getPRText(branch, statusMap)
+	paddedPR := padRight(prText, paddedWidth)
+	prColor := getPRColor(branch, statusMap)
+
+	// Wrap in hyperlink if URL is available
+	if branch.PRUrl != "" {
+		return prColor + Hyperlink(branch.PRUrl, paddedPR) + Reset
+	}
+	return prColor + paddedPR + Reset
 }
 
 // getStatusIcons returns CI/review status icons
