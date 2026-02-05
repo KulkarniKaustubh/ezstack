@@ -9,6 +9,7 @@ import (
 	"github.com/ezstack/ezstack/internal/config"
 	"github.com/ezstack/ezstack/internal/git"
 	"github.com/ezstack/ezstack/internal/github"
+	"github.com/ezstack/ezstack/internal/helpers"
 	"github.com/ezstack/ezstack/internal/stack"
 	"github.com/ezstack/ezstack/internal/ui"
 )
@@ -51,13 +52,7 @@ func List(args []string) error {
 		return nil
 	}
 
-	// Merge short and long flags
-	if *allShort {
-		*all = true
-	}
-	if *debugShort {
-		*debug = true
-	}
+	helpers.MergeFlags(allShort, all, debugShort, debug)
 	debugMode = *debug
 
 	cwd, err := os.Getwd()
@@ -146,9 +141,7 @@ func Status(args []string) error {
 		fs.Usage()
 		return nil
 	}
-	if *debugShort {
-		*debug = true
-	}
+	helpers.MergeFlags(debugShort, debug)
 	debugMode = *debug
 
 	cwd, err := os.Getwd()

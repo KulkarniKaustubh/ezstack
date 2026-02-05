@@ -9,6 +9,7 @@ import (
 	"github.com/ezstack/ezstack/internal/config"
 	"github.com/ezstack/ezstack/internal/git"
 	"github.com/ezstack/ezstack/internal/github"
+	"github.com/ezstack/ezstack/internal/helpers"
 	"github.com/ezstack/ezstack/internal/stack"
 	"github.com/ezstack/ezstack/internal/ui"
 )
@@ -72,18 +73,7 @@ func New(args []string) error {
 	if *worktreeShort != "" {
 		*worktree = *worktreeShort
 	}
-	if *cdFlagShort {
-		*cdFlag = true
-	}
-	if *noCdFlagShort {
-		*noCdFlag = true
-	}
-	if *fromWorktreeShort {
-		*fromWorktree = true
-	}
-	if *fromRemoteShort {
-		*fromRemote = true
-	}
+	helpers.MergeFlags(cdFlagShort, cdFlag, noCdFlagShort, noCdFlag, fromWorktreeShort, fromWorktree, fromRemoteShort, fromRemote)
 
 	// Get current directory
 	cwd, err := os.Getwd()
@@ -393,11 +383,7 @@ func New(args []string) error {
 		}
 	}
 
-	// Expand ~ in path
-	if len(worktreePath) > 0 && worktreePath[0] == '~' {
-		home, _ := os.UserHomeDir()
-		worktreePath = filepath.Join(home, worktreePath[1:])
-	}
+	worktreePath = helpers.ExpandPath(worktreePath)
 
 	// Show what we're about to do and ask for confirmation
 	ui.Info(fmt.Sprintf("Creating branch '%s' from '%s'", branchName, parentBranch))

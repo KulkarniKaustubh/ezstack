@@ -116,13 +116,6 @@ func runInteractiveMenu() error {
 	}
 }
 
-const (
-	bold   = "\033[1m"
-	cyan   = "\033[36m"
-	reset  = "\033[0m"
-	yellow = "\033[33m"
-)
-
 func printUsage() {
 	fmt.Printf(`%sezstack (ezs)%s - Manage stacked PRs with git worktrees
 
@@ -168,8 +161,8 @@ func printUsage() {
     ezs goto feature-part2
 
 Run 'ezs <command> --help' for more information on a command.
-`, bold, reset, cyan, reset, cyan, reset, cyan, reset, cyan, reset, cyan, reset,
-		yellow, reset, yellow, reset, yellow, reset, yellow, reset, yellow, reset, yellow, reset)
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset,
+		ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset)
 }
 
 func printShellInit() {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/ezstack/ezstack/internal/config"
 	"github.com/ezstack/ezstack/internal/git"
+	"github.com/ezstack/ezstack/internal/helpers"
 	"github.com/ezstack/ezstack/internal/ui"
 )
 
@@ -93,11 +94,7 @@ func configSet(key, value string) error {
 		return err
 	}
 
-	// Expand ~ in paths
-	if len(value) > 0 && value[0] == '~' {
-		home, _ := os.UserHomeDir()
-		value = filepath.Join(home, value[1:])
-	}
+	value = helpers.ExpandPath(value)
 
 	switch key {
 	case "worktree_base_dir":
@@ -258,11 +255,7 @@ func configInteractive() error {
 	worktreeBaseDir := ui.Prompt("Worktree base directory (where new worktrees will be created)", currentWorktreeBaseDir)
 
 	if worktreeBaseDir != "" {
-		// Expand ~ in path
-		if len(worktreeBaseDir) > 0 && worktreeBaseDir[0] == '~' {
-			home, _ := os.UserHomeDir()
-			worktreeBaseDir = filepath.Join(home, worktreeBaseDir[1:])
-		}
+		worktreeBaseDir = helpers.ExpandPath(worktreeBaseDir)
 
 		// Convert relative path to absolute path
 		if !filepath.IsAbs(worktreeBaseDir) {
