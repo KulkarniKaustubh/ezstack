@@ -9,8 +9,19 @@ import (
 	"strings"
 
 	"github.com/ezstack/ezstack/internal/config"
+	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 )
+
+// padRight pads a string to the specified display width using runewidth.
+// This correctly handles Unicode characters including Nerd Font icons.
+func padRight(s string, width int) string {
+	w := runewidth.StringWidth(s)
+	if w >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-w)
+}
 
 // Colors for terminal output
 const (
@@ -131,7 +142,6 @@ func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string
 	}
 
 	// Use escape codes that echo -e can interpret
-	// \x1b is the hex escape for ESC character
 	bold := "\\x1b[1m"
 	reset := "\\x1b[0m"
 	green := "\\x1b[32m"
@@ -139,15 +149,23 @@ func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string
 	gray := "\\x1b[90m"
 	cyan := "\\x1b[36m"
 
-	// Calculate max branch name width for alignment (capped at MaxBranchNameWidth)
-	maxNameLen := 0
+	// Calculate max widths using runewidth
+	maxNameWidth := 0
+	maxPRWidth := 0
 	for _, b := range targetStack.Branches {
-		nameLen := len(b.Name)
-		if nameLen > MaxBranchNameWidth {
-			nameLen = MaxBranchNameWidth
+		displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
+		if w := runewidth.StringWidth(displayName); w > maxNameWidth {
+			maxNameWidth = w
 		}
-		if nameLen > maxNameLen {
-			maxNameLen = nameLen
+
+		var prText string
+		if b.PRNumber > 0 {
+			prText = fmt.Sprintf("[PR #%d]", b.PRNumber)
+		} else {
+			prText = "[no PR]"
+		}
+		if w := runewidth.StringWidth(prText); w > maxPRWidth {
+			maxPRWidth = w
 		}
 	}
 
@@ -156,22 +174,14 @@ func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string
 	preview.WriteString(fmt.Sprintf("%s%s Stack: %s%s\\n\\n", bold, cyan, targetStack.Name, reset))
 
 	for i, b := range targetStack.Branches {
-		prefix := " "
+		// Build prefix (use ASCII ">" for guaranteed alignment)
+		var prefix string
 		color := ""
 		if b.Name == branch.Name {
-			prefix = IconPointer
+			prefix = "> "
 			color = green
-		}
-
-		// Truncate and pad branch name for alignment
-		displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
-		paddedName := fmt.Sprintf("%-*s", maxNameLen, displayName)
-
-		prInfo := ""
-		if b.PRNumber > 0 {
-			prInfo = fmt.Sprintf(" %s[PR #%d]%s", yellow, b.PRNumber, reset)
 		} else {
-			prInfo = fmt.Sprintf(" %s[no PR]%s", gray, reset)
+			prefix = "  "
 		}
 
 		connector := "├──"
@@ -179,8 +189,24 @@ func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string
 			connector = "└──"
 		}
 
-		preview.WriteString(fmt.Sprintf("%s%s%s %s%s%s%s (%s %s)%s\\n",
-			prefix, color, connector, bold, paddedName, reset, prInfo, IconArrow, b.Parent, reset))
+		// Truncate and pad branch name
+		displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
+		paddedName := padRight(displayName, maxNameWidth)
+
+		// Build PR info and pad it
+		var prText, prColor string
+		if b.PRNumber > 0 {
+			prText = fmt.Sprintf("[PR #%d]", b.PRNumber)
+			prColor = yellow
+		} else {
+			prText = "[no PR]"
+			prColor = gray
+		}
+		paddedPRText := padRight(prText, maxPRWidth)
+
+		preview.WriteString(fmt.Sprintf("%s%s%s %s%s%s  %s%s%s  (%s %s)%s\\n",
+			prefix, color, connector, bold, paddedName, reset,
+			prColor, paddedPRText, reset, IconArrow, b.Parent, reset))
 	}
 
 	return preview.String()
@@ -341,98 +367,201 @@ func truncateBranchName(name string, maxWidth int) string {
 }
 
 // PrintStackWithStatus prints a visual representation of a stack with PR/CI status
+// Column layout:
+// - ezs ls (statusMap=nil): 3 columns - branch name, pr number, parent branch
+// - ezs status: 4 columns - branch name, pr number, ci status, parent branch
 func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap map[string]*BranchStatus) {
 	fmt.Fprintf(os.Stderr, "\n%s%s Stack: %s%s\n\n", Bold, Cyan, stack.Name, Reset)
 
-	// Calculate max branch name width for alignment (capped at MaxBranchNameWidth)
-	maxNameLen := 0
+	// Calculate max widths for alignment using runewidth
+	maxNameWidth := 0
+	maxPRWidth := 0
+	maxStatusWidth := 0
+
 	for _, branch := range stack.Branches {
-		nameLen := len(branch.Name)
-		if nameLen > MaxBranchNameWidth {
-			nameLen = MaxBranchNameWidth
+		name := truncateBranchName(branch.Name, MaxBranchNameWidth)
+		if w := runewidth.StringWidth(name); w > maxNameWidth {
+			maxNameWidth = w
 		}
-		if nameLen > maxNameLen {
-			maxNameLen = nameLen
+
+		prText := getPRText(branch, statusMap)
+		if w := runewidth.StringWidth(prText); w > maxPRWidth {
+			maxPRWidth = w
+		}
+
+		if statusMap != nil {
+			statusText := getStatusText(branch, statusMap)
+			if w := runewidth.StringWidth(statusText); w > maxStatusWidth {
+				maxStatusWidth = w
+			}
 		}
 	}
 
 	for i, branch := range stack.Branches {
-		prefix := " "
+		// Pointer for current branch (fixed 2-char width)
+		pointer := "  "
 		color := ""
 		if branch.Name == currentBranch {
-			prefix = IconPointer
+			pointer = "> "
 			color = Green
 		}
 
-		// Truncate and pad branch name for alignment
-		displayName := truncateBranchName(branch.Name, MaxBranchNameWidth)
-		paddedName := fmt.Sprintf("%-*s", maxNameLen, displayName)
-
-		// Build PR info with status
-		prInfo := ""
-		statusInfo := ""
-		if branch.PRNumber == 0 {
-			prInfo = fmt.Sprintf(" %s[no PR]%s", Gray, Reset)
-		} else {
-			prInfo = fmt.Sprintf(" %s[PR #%d]%s", Yellow, branch.PRNumber, Reset)
-
-			// Add status if available
-			if statusMap != nil {
-				if status, ok := statusMap[branch.Name]; ok && status != nil {
-					// PR state (merged/open/closed/draft)
-					switch status.PRState {
-					case "MERGED":
-						prInfo = fmt.Sprintf(" %s[PR #%d MERGED]%s", Magenta, branch.PRNumber, Reset)
-					case "CLOSED":
-						prInfo = fmt.Sprintf(" %s[PR #%d CLOSED]%s", Red, branch.PRNumber, Reset)
-					case "DRAFT":
-						prInfo = fmt.Sprintf(" %s[PR #%d DRAFT]%s", Gray, branch.PRNumber, Reset)
-					}
-
-					// CI status
-					ciIcon := ""
-					ciColor := ""
-					switch status.CIState {
-					case "success":
-						ciIcon = IconSuccess
-						ciColor = Green
-					case "failure":
-						ciIcon = IconError
-						ciColor = Red
-					case "pending":
-						ciIcon = IconPending
-						ciColor = Yellow
-					}
-					if ciIcon != "" {
-						statusInfo += fmt.Sprintf(" %s%s%s", ciColor, ciIcon, Reset)
-					}
-
-					// Review state
-					switch status.ReviewState {
-					case "APPROVED":
-						statusInfo += fmt.Sprintf(" %s%s approved%s", Green, IconApproved, Reset)
-					case "CHANGES_REQUESTED":
-						statusInfo += fmt.Sprintf(" %s%s changes%s", Red, IconChanges, Reset)
-					}
-
-					// Merge conflicts
-					if status.Mergeable == "CONFLICTING" {
-						statusInfo += fmt.Sprintf(" %s%s conflict%s", Red, IconConflict, Reset)
-					}
-				}
-			}
-		}
-
-		// Draw the tree structure
+		// Tree connector
 		connector := "├──"
 		if i == len(stack.Branches)-1 {
 			connector = "└──"
 		}
 
-		fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s%s%s (%s %s)%s\n",
-			prefix, color, connector, Bold, paddedName, Reset, prInfo, statusInfo, IconArrow, branch.Parent, Reset)
+		// Branch name (truncated and padded)
+		name := truncateBranchName(branch.Name, MaxBranchNameWidth)
+		paddedName := padRight(name, maxNameWidth)
+
+		// PR info (padded)
+		prText := getPRText(branch, statusMap)
+		paddedPR := padRight(prText, maxPRWidth)
+		prColor := getPRColor(branch, statusMap)
+
+		// Parent info
+		parentInfo := fmt.Sprintf("(%s %s)", IconArrow, branch.Parent)
+
+		if statusMap != nil {
+			// 4 columns: branch, PR, status, parent
+			statusText := getStatusText(branch, statusMap)
+			paddedStatus := padRight(statusText, maxStatusWidth)
+			statusColored := getStatusIcons(branch, statusMap)
+			// Use paddedStatus length but display statusColored (with colors)
+			statusPadding := strings.Repeat(" ", runewidth.StringWidth(paddedStatus)-runewidth.StringWidth(statusText))
+
+			fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s%s%s  %s%s  %s%s\n",
+				pointer, color, connector, Bold, paddedName, Reset,
+				prColor, paddedPR, Reset,
+				statusColored, statusPadding,
+				parentInfo, Reset)
+		} else {
+			// 3 columns: branch, PR, parent
+			fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s%s%s  %s%s\n",
+				pointer, color, connector, Bold, paddedName, Reset,
+				prColor, paddedPR, Reset,
+				parentInfo, Reset)
+		}
 	}
 	fmt.Fprintln(os.Stderr)
+}
+
+// getPRText returns the PR text without color codes
+func getPRText(branch *config.Branch, statusMap map[string]*BranchStatus) string {
+	if branch.PRNumber == 0 {
+		return "[no PR]"
+	}
+	if statusMap != nil {
+		if status, ok := statusMap[branch.Name]; ok && status != nil {
+			switch status.PRState {
+			case "MERGED":
+				return fmt.Sprintf("[PR #%d MERGED]", branch.PRNumber)
+			case "CLOSED":
+				return fmt.Sprintf("[PR #%d CLOSED]", branch.PRNumber)
+			case "DRAFT":
+				return fmt.Sprintf("[PR #%d DRAFT]", branch.PRNumber)
+			}
+		}
+	}
+	return fmt.Sprintf("[PR #%d]", branch.PRNumber)
+}
+
+// getPRColor returns the color for PR text
+func getPRColor(branch *config.Branch, statusMap map[string]*BranchStatus) string {
+	if branch.PRNumber == 0 {
+		return Gray
+	}
+	if statusMap != nil {
+		if status, ok := statusMap[branch.Name]; ok && status != nil {
+			switch status.PRState {
+			case "MERGED":
+				return Magenta
+			case "CLOSED":
+				return Red
+			case "DRAFT":
+				return Gray
+			}
+		}
+	}
+	return Yellow
+}
+
+// getStatusIcons returns CI/review status icons
+func getStatusIcons(branch *config.Branch, statusMap map[string]*BranchStatus) string {
+	if statusMap == nil || branch.PRNumber == 0 {
+		return ""
+	}
+	status, ok := statusMap[branch.Name]
+	if !ok || status == nil {
+		return ""
+	}
+
+	var statusInfo string
+
+	// CI status
+	switch status.CIState {
+	case "success":
+		statusInfo += fmt.Sprintf(" %s%s%s", Green, IconSuccess, Reset)
+	case "failure":
+		statusInfo += fmt.Sprintf(" %s%s%s", Red, IconError, Reset)
+	case "pending":
+		statusInfo += fmt.Sprintf(" %s%s%s", Yellow, IconPending, Reset)
+	}
+
+	// Review state
+	switch status.ReviewState {
+	case "APPROVED":
+		statusInfo += fmt.Sprintf(" %s%s approved%s", Green, IconApproved, Reset)
+	case "CHANGES_REQUESTED":
+		statusInfo += fmt.Sprintf(" %s%s changes%s", Red, IconChanges, Reset)
+	}
+
+	// Merge conflicts
+	if status.Mergeable == "CONFLICTING" {
+		statusInfo += fmt.Sprintf(" %s%s conflict%s", Red, IconConflict, Reset)
+	}
+
+	return statusInfo
+}
+
+// getStatusText returns CI/review status text WITHOUT color codes (for width calculation)
+func getStatusText(branch *config.Branch, statusMap map[string]*BranchStatus) string {
+	if statusMap == nil || branch.PRNumber == 0 {
+		return ""
+	}
+	status, ok := statusMap[branch.Name]
+	if !ok || status == nil {
+		return ""
+	}
+
+	var statusText string
+
+	// CI status
+	switch status.CIState {
+	case "success":
+		statusText += " " + IconSuccess
+	case "failure":
+		statusText += " " + IconError
+	case "pending":
+		statusText += " " + IconPending
+	}
+
+	// Review state
+	switch status.ReviewState {
+	case "APPROVED":
+		statusText += " " + IconApproved + " approved"
+	case "CHANGES_REQUESTED":
+		statusText += " " + IconChanges + " changes"
+	}
+
+	// Merge conflicts
+	if status.Mergeable == "CONFLICTING" {
+		statusText += " " + IconConflict + " conflict"
+	}
+
+	return statusText
 }
 
 // Confirm asks the user for confirmation (simple text-based)
