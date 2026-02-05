@@ -88,10 +88,13 @@ func List(args []string) error {
 		return nil
 	}
 
-	// Helper to print stack (fetches PR status including DRAFT)
+	// Helper to print stack (uses cached PR numbers only - no GitHub API calls)
 	printStack := func(s *config.Stack) {
-		statusMap := fetchBranchStatuses(g, s)
-		ui.PrintStackWithStatus(s, currentBranch, statusMap)
+		// Only discover PRs for branches that don't have cached PR numbers
+		// This is the only GitHub call, and it's skipped if all PRs are already cached
+		discoverAndCachePRs(g, s)
+		// Pass nil statusMap - ezs ls doesn't show PR status or CI, just PR numbers
+		ui.PrintStackWithStatus(s, currentBranch, nil)
 	}
 
 	if *all {

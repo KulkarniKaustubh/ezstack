@@ -149,11 +149,15 @@ func (c *Client) GetPRChecks(number int) (*CheckStatus, error) {
 
 	for _, line := range lines {
 		lower := strings.ToLower(line)
-		if strings.Contains(lower, "pass") || strings.Contains(lower, "success") || strings.Contains(lower, "✓") {
+		trimmed := strings.TrimSpace(line)
+		// Check for success: ✓ at start of line, or contains "pass"/"success"
+		if strings.HasPrefix(trimmed, "✓") || strings.Contains(lower, "pass") || strings.Contains(lower, "success") {
 			passed++
-		} else if strings.Contains(lower, "fail") || strings.Contains(lower, "error") || strings.Contains(lower, "✗") || strings.Contains(lower, "x") {
+		} else if strings.HasPrefix(trimmed, "X") || strings.HasPrefix(trimmed, "✗") || strings.Contains(lower, "fail") || strings.Contains(lower, "error") {
+			// Check for failure: X or ✗ at start of line, or contains "fail"/"error"
 			failed++
-		} else if strings.Contains(lower, "pending") || strings.Contains(lower, "running") || strings.Contains(lower, "-") {
+		} else if strings.HasPrefix(trimmed, "-") || strings.Contains(lower, "pending") || strings.Contains(lower, "running") {
+			// Check for pending: - at start of line, or contains "pending"/"running"
 			pending++
 		}
 	}
