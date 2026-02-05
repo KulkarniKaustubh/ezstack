@@ -342,3 +342,39 @@ func (m *Manager) DeleteBranch(branchName string, force bool) error {
 
 	return nil
 }
+
+// MarkBranchMerged marks a branch as merged - deletes worktree and git branch but keeps metadata in config
+// This allows merged branches to still show up in ezs ls/status with strikethrough
+func (m *Manager) MarkBranchMerged(branchName string) error {
+	// Check if branch exists
+	branch := m.GetBranch(branchName)
+	if branch == nil {
+		return fmt.Errorf("branch '%s' not found in any stack", branchName)
+	}
+
+	// Remove the worktree and branch from git (only if not a remote branch)
+	if !branch.IsRemote && branch.WorktreePath != "" {
+		if err := m.git.RemoveWorktree(branch.WorktreePath, true, branchName); err != nil {
+			// Log error but continue - worktree might already be gone
+			// Don't fail the whole operation
+		}
+	}
+
+	// Mark as merged and clear worktree path
+	branch.IsMerged = true
+	branch.WorktreePath = ""
+
+	// Update children to point to this branch's parent (they need to rebase onto main now)
+	children := m.GetChildren(branchName)
+	for _, child := range children {
+		child.Parent = branch.Parent
+		child.BaseBranch = branch.Parent
+	}
+
+	// Save the config
+	if err := m.stackConfig.Save(m.repoDir); err != nil {
+		return fmt.Errorf("failed to save stack config: %w", err)
+	}
+
+	return nil
+}

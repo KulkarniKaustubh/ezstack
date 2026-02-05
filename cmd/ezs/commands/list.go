@@ -192,7 +192,9 @@ func Status(args []string) error {
 	ui.PrintStackWithStatus(currentStack, currentBranch, statusMap)
 
 	// Show commits unique to this branch
-	commits, err := g.GetCommitsBetween(branch.Parent, currentBranch)
+	// Use origin/<parent> to get accurate commits (local parent may be behind remote)
+	parentRef := "origin/" + branch.Parent
+	commits, err := g.GetCommitsBetween(parentRef, currentBranch)
 	if err == nil && len(commits) > 0 {
 		fmt.Fprintf(os.Stderr, "%s%sCommits in this branch:%s\n", ui.Bold, ui.Cyan, ui.Reset)
 		for _, c := range commits {

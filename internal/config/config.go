@@ -100,6 +100,7 @@ type Branch struct {
 	PRUrl        string `json:"pr_url,omitempty"`
 	BaseBranch   string `json:"base_branch"`         // The branch this PR targets
 	IsRemote     bool   `json:"is_remote,omitempty"` // True if this is someone else's branch (created via --from-remote)
+	IsMerged     bool   `json:"is_merged,omitempty"` // True if this branch's PR has been merged (worktree deleted but kept in config for display)
 }
 
 // ConfigDir returns the path to the ezstack config directory

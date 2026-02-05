@@ -618,7 +618,8 @@ func (m *Manager) DetectMergedBranches(gh *github.Client) ([]MergedBranchInfo, e
 	return results, nil
 }
 
-// CleanupMergedBranches deletes branches whose PRs have been merged
+// CleanupMergedBranches marks branches as merged - deletes worktrees and git branches but keeps metadata in config
+// This allows merged PRs to still show up in ezs ls/status with strikethrough styling
 // Returns detailed results for each branch cleanup operation
 func (m *Manager) CleanupMergedBranches(branches []MergedBranchInfo, currentDir string) []CleanupResult {
 	var results []CleanupResult
@@ -640,8 +641,8 @@ func (m *Manager) CleanupMergedBranches(branches []MergedBranchInfo, currentDir 
 			}
 		}
 
-		// Delete the branch (this handles worktree removal, git branch deletion, and config update)
-		if err := m.DeleteBranch(info.Branch, true); err != nil {
+		// Mark branch as merged (this handles worktree removal, git branch deletion, and marks in config)
+		if err := m.MarkBranchMerged(info.Branch); err != nil {
 			result.Error = err.Error()
 			results = append(results, result)
 			continue

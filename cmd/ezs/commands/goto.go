@@ -60,12 +60,20 @@ func Goto(args []string) error {
 		if targetBranch == nil {
 			return fmt.Errorf("branch '%s' not found in any stack", fs.Arg(0))
 		}
+		if targetBranch.IsMerged {
+			return fmt.Errorf("branch '%s' has been merged and its worktree was deleted", fs.Arg(0))
+		}
 	} else {
-		// Interactive selection with fzf
+		// Interactive selection with fzf - filter out merged branches
 		stacks := mgr.ListStacks()
 		var allBranches []*config.Branch
 		for _, s := range stacks {
-			allBranches = append(allBranches, s.Branches...)
+			for _, b := range s.Branches {
+				// Skip merged branches - they have no worktree to navigate to
+				if !b.IsMerged {
+					allBranches = append(allBranches, b)
+				}
+			}
 		}
 
 		if len(allBranches) == 0 {

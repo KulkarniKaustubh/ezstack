@@ -27,15 +27,16 @@ func padRight(s string, width int) string {
 
 // Colors for terminal output
 const (
-	Reset   = "\033[0m"
-	Bold    = "\033[1m"
-	Red     = "\033[31m"
-	Green   = "\033[32m"
-	Yellow  = "\033[33m"
-	Blue    = "\033[34m"
-	Magenta = "\033[35m"
-	Cyan    = "\033[36m"
-	Gray    = "\033[90m"
+	Reset         = "\033[0m"
+	Bold          = "\033[1m"
+	Strikethrough = "\033[9m"
+	Red           = "\033[31m"
+	Green         = "\033[32m"
+	Yellow        = "\033[33m"
+	Blue          = "\033[34m"
+	Magenta       = "\033[35m"
+	Cyan          = "\033[36m"
+	Gray          = "\033[90m"
 )
 
 // Nerd Font icons for consistent terminal rendering
@@ -447,6 +448,14 @@ func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap m
 	}
 
 	for i, branch := range stack.Branches {
+		// Check if branch is merged (from cached state or live status)
+		isMerged := branch.IsMerged
+		if !isMerged && statusMap != nil {
+			if status, ok := statusMap[branch.Name]; ok && status != nil {
+				isMerged = status.PRState == "MERGED" || status.PRState == "CLOSED"
+			}
+		}
+
 		// Pointer for current branch (fixed 2-char width)
 		pointer := "  "
 		color := ""
@@ -488,17 +497,38 @@ func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap m
 			// Use paddedStatus length but display statusColored (with colors)
 			statusPadding := strings.Repeat(" ", runewidth.StringWidth(paddedStatus)-runewidth.StringWidth(statusText))
 
-			fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s  %s%s  %s%s%s\n",
-				pointer, color, connector, Bold, paddedName, Reset,
-				prFormatted,
-				statusColored, statusPadding,
-				paddedParent, Reset, remoteTag)
+			if isMerged {
+				// For merged branches, apply strikethrough to entire line
+				// Replace all Reset codes with Reset+Strikethrough to maintain strikethrough
+				prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
+				statusWithStrike := strings.ReplaceAll(statusColored, Reset, Reset+Strikethrough)
+				fmt.Fprintf(os.Stderr, "%s%s%s%s %s%s%s  %s  %s%s  %s%s%s\n",
+					Strikethrough, pointer, color, connector, Bold, paddedName, Reset+Strikethrough,
+					prWithStrike,
+					statusWithStrike, statusPadding,
+					paddedParent, Reset, remoteTag)
+			} else {
+				fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s  %s%s  %s%s%s\n",
+					pointer, color, connector, Bold, paddedName, Reset,
+					prFormatted,
+					statusColored, statusPadding,
+					paddedParent, Reset, remoteTag)
+			}
 		} else {
 			// 4 columns: branch, PR, parent, remote
-			fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s  %s%s%s\n",
-				pointer, color, connector, Bold, paddedName, Reset,
-				prFormatted,
-				paddedParent, Reset, remoteTag)
+			if isMerged {
+				// For merged branches, apply strikethrough to entire line
+				prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
+				fmt.Fprintf(os.Stderr, "%s%s%s%s %s%s%s  %s  %s%s%s\n",
+					Strikethrough, pointer, color, connector, Bold, paddedName, Reset+Strikethrough,
+					prWithStrike,
+					paddedParent, Reset, remoteTag)
+			} else {
+				fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s  %s%s%s\n",
+					pointer, color, connector, Bold, paddedName, Reset,
+					prFormatted,
+					paddedParent, Reset, remoteTag)
+			}
 		}
 	}
 	fmt.Fprintln(os.Stderr)
@@ -509,6 +539,11 @@ func getPRText(branch *config.Branch, statusMap map[string]*BranchStatus) string
 	if branch.PRNumber == 0 {
 		return "[no PR]"
 	}
+	// Check cached IsMerged first (for ezs ls without API calls)
+	if branch.IsMerged {
+		return fmt.Sprintf("[PR #%d MERGED]", branch.PRNumber)
+	}
+	// Then check statusMap (for ezs status with live API data)
 	if statusMap != nil {
 		if status, ok := statusMap[branch.Name]; ok && status != nil {
 			switch status.PRState {
@@ -529,11 +564,16 @@ func getPRColor(branch *config.Branch, statusMap map[string]*BranchStatus) strin
 	if branch.PRNumber == 0 {
 		return Gray
 	}
+	// Check cached IsMerged first (for ezs ls without API calls)
+	if branch.IsMerged {
+		return Cyan // Light blue for merged PRs
+	}
+	// Then check statusMap (for ezs status with live API data)
 	if statusMap != nil {
 		if status, ok := statusMap[branch.Name]; ok && status != nil {
 			switch status.PRState {
 			case "MERGED":
-				return Magenta
+				return Cyan // Light blue for merged PRs
 			case "CLOSED":
 				return Red
 			case "DRAFT":
