@@ -263,21 +263,29 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 	}
 
 	if len(syncNeeded) > 0 {
-		confirmMsg := "Sync stack (rebase branches onto latest main)"
-		if allStacks {
-			confirmMsg = "Sync ALL stacks (rebase branches onto latest main)"
-		}
-		if !ui.ConfirmTUI(confirmMsg) {
-			ui.Warn("Cancelled")
-			return nil
+		fmt.Fprintln(os.Stderr)
+
+		// beforeRebase callback asks for confirmation before each branch sync
+		beforeRebase := func(info stack.SyncInfo) bool {
+			var msg string
+			if info.MergedParent != "" {
+				msg = fmt.Sprintf("Sync %s%s%s? (parent %s%s%s was merged)",
+					ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset)
+			} else if info.BehindParent != "" {
+				msg = fmt.Sprintf("Sync %s%s%s? (%s%d commits%s behind parent %s%s%s)",
+					ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
+			} else {
+				msg = fmt.Sprintf("Sync %s%s%s? (%s%d commits%s behind origin/main)",
+					ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset)
+			}
+			if ui.ConfirmTUI(msg) {
+				ui.Info("Rebasing...")
+				return true
+			}
+			return false
 		}
 
-		if allStacks {
-			ui.Info("Syncing all stacks...")
-		} else {
-			ui.Info("Syncing stack...")
-		}
-
+		// afterRebase callback handles pushing after each successful rebase
 		afterRebase := func(result stack.RebaseResult, g *git.Git) bool {
 			fmt.Fprintln(os.Stderr)
 			ui.Success(fmt.Sprintf("Rebased %s", result.Branch))
@@ -309,11 +317,16 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 			return false
 		}
 
+		callbacks := &stack.SyncCallbacks{
+			BeforeRebase: beforeRebase,
+			AfterRebase:  afterRebase,
+		}
+
 		var results []stack.RebaseResult
 		if allStacks {
-			results, err = mgr.SyncStackAll(gh, afterRebase)
+			results, err = mgr.SyncStackAll(gh, callbacks)
 		} else {
-			results, err = mgr.SyncStack(gh, afterRebase)
+			results, err = mgr.SyncStack(gh, callbacks)
 		}
 		if err != nil {
 			return err
@@ -337,7 +350,7 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 			ui.Warn("Some branches have conflicts. Resolve them and run 'git rebase --continue' in each worktree.")
 		}
 		if successCount > 0 {
-			ui.Success(fmt.Sprintf("Synced %d branch(es) with main!", successCount))
+			ui.Success(fmt.Sprintf("Synced %d branch(es)!", successCount))
 		}
 	}
 

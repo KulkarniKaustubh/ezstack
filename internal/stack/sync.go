@@ -85,6 +85,17 @@ type CleanupResult struct {
 // Returns true if sync should continue, false to stop
 type AfterRebaseCallback func(result RebaseResult, g *git.Git) bool
 
+// BeforeRebaseCallback is called before each rebase to ask for confirmation
+// It receives the sync info for the branch about to be synced
+// Returns true to proceed with rebase, false to skip this branch
+type BeforeRebaseCallback func(info SyncInfo) bool
+
+// SyncCallbacks contains optional callbacks for sync operations
+type SyncCallbacks struct {
+	BeforeRebase BeforeRebaseCallback
+	AfterRebase  AfterRebaseCallback
+}
+
 // getParentRef returns the git ref for a parent branch
 // For remote branches (IsRemote=true), returns origin/<name>
 // For local branches, returns the branch name
@@ -280,19 +291,18 @@ func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client
 // - Branches whose parent is main but are behind origin/main (simple rebase)
 // - Branches whose parent was merged (rebase onto main using --onto)
 // - Branches whose parent is not merged but has new commits (rebase onto parent)
-// If afterRebase callback is provided, it's called after each successful rebase
-// The callback can be used to push the branch before continuing to children
-func (m *Manager) SyncStack(gh *github.Client, afterRebase AfterRebaseCallback) ([]RebaseResult, error) {
-	return m.syncStackInternal(gh, afterRebase, true)
+// Callbacks can be used to ask for confirmation before each rebase and push after
+func (m *Manager) SyncStack(gh *github.Client, callbacks *SyncCallbacks) ([]RebaseResult, error) {
+	return m.syncStackInternal(gh, callbacks, true)
 }
 
 // SyncStackAll syncs branches in ALL stacks that need syncing
-func (m *Manager) SyncStackAll(gh *github.Client, afterRebase AfterRebaseCallback) ([]RebaseResult, error) {
-	return m.syncStackInternal(gh, afterRebase, false)
+func (m *Manager) SyncStackAll(gh *github.Client, callbacks *SyncCallbacks) ([]RebaseResult, error) {
+	return m.syncStackInternal(gh, callbacks, false)
 }
 
 // syncStackInternal is the internal implementation that can work on current stack or all stacks
-func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCallback, currentStackOnly bool) ([]RebaseResult, error) {
+func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks, currentStackOnly bool) ([]RebaseResult, error) {
 	// Fetch latest
 	if err := m.git.Fetch(); err != nil {
 		return nil, fmt.Errorf("failed to fetch: %w", err)
@@ -355,6 +365,18 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 				result.BehindBy = behindBy
 				result.SyncedParent = "origin/" + baseBranch
 
+				// Call beforeRebase callback to ask for confirmation
+				if callbacks != nil && callbacks.BeforeRebase != nil {
+					syncInfo := SyncInfo{
+						Branch:    branch.Name,
+						BehindBy:  behindBy,
+						NeedsSync: true,
+					}
+					if !callbacks.BeforeRebase(syncInfo) {
+						continue // User chose to skip this branch
+					}
+				}
+
 				// Use non-interactive rebase for better conflict detection
 				rebaseResult := g.RebaseNonInteractive("origin/" + baseBranch)
 				if rebaseResult.HasConflict {
@@ -372,8 +394,8 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 				result.Success = true
 				results = append(results, result)
 				// Call afterRebase callback to allow pushing before continuing to children
-				if afterRebase != nil {
-					if !afterRebase(result, g) {
+				if callbacks != nil && callbacks.AfterRebase != nil {
+					if !callbacks.AfterRebase(result, g) {
 						return results, nil // Callback requested stop
 					}
 				}
@@ -418,6 +440,18 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 				oldParentRef := m.getParentRef(oldParent) // Use origin/<name> for remote parents
 				result.SyncedParent = newParent
 
+				// Call beforeRebase callback to ask for confirmation
+				if callbacks != nil && callbacks.BeforeRebase != nil {
+					syncInfo := SyncInfo{
+						Branch:       branch.Name,
+						MergedParent: oldParent,
+						NeedsSync:    true,
+					}
+					if !callbacks.BeforeRebase(syncInfo) {
+						continue // User chose to skip this branch
+					}
+				}
+
 				// Update tree structure: reparent branch to new parent
 				// This properly persists the parent change in stacks.json
 				if newParent == baseBranch {
@@ -461,8 +495,8 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 				result.Success = true
 				results = append(results, result)
 				// Call afterRebase callback to allow pushing before continuing to children
-				if afterRebase != nil {
-					if !afterRebase(result, g) {
+				if callbacks != nil && callbacks.AfterRebase != nil {
+					if !callbacks.AfterRebase(result, g) {
 						sc.save()
 						return results, nil // Callback requested stop
 					}
@@ -480,6 +514,19 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 
 			result.BehindBy = behindBy
 			result.SyncedParent = branch.Parent
+
+			// Call beforeRebase callback to ask for confirmation
+			if callbacks != nil && callbacks.BeforeRebase != nil {
+				syncInfo := SyncInfo{
+					Branch:       branch.Name,
+					BehindBy:     behindBy,
+					BehindParent: branch.Parent,
+					NeedsSync:    true,
+				}
+				if !callbacks.BeforeRebase(syncInfo) {
+					continue // User chose to skip this branch
+				}
+			}
 
 			// Use the OLD parent HEAD (recorded before any rebasing) as the base for --onto
 			// This correctly handles the case where parent was rebased in this sync:
@@ -502,8 +549,8 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 					}
 					result.Success = true
 					results = append(results, result)
-					if afterRebase != nil {
-						if !afterRebase(result, g) {
+					if callbacks != nil && callbacks.AfterRebase != nil {
+						if !callbacks.AfterRebase(result, g) {
 							return results, nil
 						}
 					}
@@ -527,8 +574,8 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 				result.Success = true
 				results = append(results, result)
 				// Call afterRebase callback to allow pushing before continuing to children
-				if afterRebase != nil {
-					if !afterRebase(result, g) {
+				if callbacks != nil && callbacks.AfterRebase != nil {
+					if !callbacks.AfterRebase(result, g) {
 						return results, nil // Callback requested stop
 					}
 				}
@@ -552,8 +599,8 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 			result.Success = true
 			results = append(results, result)
 			// Call afterRebase callback to allow pushing before continuing to children
-			if afterRebase != nil {
-				if !afterRebase(result, g) {
+			if callbacks != nil && callbacks.AfterRebase != nil {
+				if !callbacks.AfterRebase(result, g) {
 					return results, nil // Callback requested stop
 				}
 			}
