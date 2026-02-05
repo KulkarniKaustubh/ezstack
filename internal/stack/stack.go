@@ -271,7 +271,10 @@ func (m *Manager) GetStackDescription(stack *config.Stack, currentBranch string)
 	var sb strings.Builder
 	sb.WriteString("## PR Stack\n\n")
 
-	for i, branch := range stack.Branches {
+	// Sort branches topologically (parent -> child order)
+	sortedBranches := config.SortBranchesTopologically(stack.Branches)
+
+	for i, branch := range sortedBranches {
 		prefix := ""
 		if branch.Name == currentBranch {
 			prefix = "➡️ "

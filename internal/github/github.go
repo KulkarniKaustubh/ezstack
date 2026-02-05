@@ -338,7 +338,10 @@ func generateStackSection(stack *config.Stack, currentPRBranch string) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n---\n## PR Stack\n\n")
 
-	for i, branch := range stack.Branches {
+	// Sort branches topologically (parent -> child order)
+	sortedBranches := config.SortBranchesTopologically(stack.Branches)
+
+	for i, branch := range sortedBranches {
 		// Use markdown list format - GitHub unfurls PR URLs in lists to show title
 		suffix := ""
 		if branch.Name == currentPRBranch {

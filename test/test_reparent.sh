@@ -160,7 +160,7 @@ git add a.txt
 git commit -m "Update feature A"
 
 log "Running sync on children..."
-"$EZS" sync --children
+echo "y" | "$EZS" sync --children
 
 log "Verifying feature-c has the new content from feature-a..."
 cd "$WORKTREE_DIR/feature-c"
