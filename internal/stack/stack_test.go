@@ -307,33 +307,6 @@ func TestManager_RegisterRemoteBranch(t *testing.T) {
 	}
 }
 
-func TestManager_GetStackDescription(t *testing.T) {
-	repoDir, _, cleanup := setupTestEnv(t)
-	defer cleanup()
-
-	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
-
-	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-b", "feature-a", "")
-
-	mgr, _ = NewManager(repoDir)
-	stacks := mgr.ListStacks()
-	if len(stacks) == 0 {
-		t.Fatal("No stacks found")
-	}
-
-	desc := mgr.GetStackDescription(stacks[0], "feature-a")
-
-	if desc == "" {
-		t.Error("GetStackDescription() returned empty string")
-	}
-
-	if !strings.Contains(desc, "PR Stack") {
-		t.Error("Description should contain 'PR Stack'")
-	}
-}
-
 func TestManager_MarkBranchMerged(t *testing.T) {
 	repoDir, _, cleanup := setupTestEnv(t)
 	defer cleanup()
@@ -515,45 +488,6 @@ func TestManager_WouldCreateCycle(t *testing.T) {
 	// c -> main should not create cycle
 	if mgr.wouldCreateCycle("c", "main") {
 		t.Error("wouldCreateCycle('c', 'main') should be false")
-	}
-}
-
-// TestManager_CollectDescendants tests collecting all descendants
-func TestManager_CollectDescendants(t *testing.T) {
-	repoDir, _, cleanup := setupTestEnv(t)
-	defer cleanup()
-
-	// Create a tree: main -> a -> b -> c
-	//                       \-> d
-	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("a", "main", "")
-
-	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("b", "a", "")
-
-	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("c", "b", "")
-
-	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("d", "a", "")
-
-	mgr, _ = NewManager(repoDir)
-	descendants := mgr.collectDescendants("a")
-
-	// Should have b, c, d as descendants
-	if len(descendants) != 3 {
-		t.Errorf("collectDescendants('a') returned %d, want 3", len(descendants))
-	}
-
-	// Check all expected descendants are present
-	names := make(map[string]bool)
-	for _, d := range descendants {
-		names[d.Name] = true
-	}
-	for _, expected := range []string{"b", "c", "d"} {
-		if !names[expected] {
-			t.Errorf("collectDescendants('a') missing %q", expected)
-		}
 	}
 }
 

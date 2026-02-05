@@ -417,23 +417,6 @@ func (m pathInputModel) View() string {
 	return sb.String()
 }
 
-// PromptTUI shows a nice Bubble Tea text input prompt
-// Returns the user input, or empty string if cancelled
-func PromptTUI(prompt, defaultVal string) (string, bool) {
-	return PromptPathTUI(prompt, defaultVal, false)
-}
-
-// PromptPathTUI shows a Bubble Tea text input with optional path tab completion
-func PromptPathTUI(prompt, defaultVal string, pathComplete bool) (string, bool) {
-	return PromptPathTUIWithValidatorAndHint(prompt, "", defaultVal, pathComplete, nil)
-}
-
-// PromptPathTUIWithValidator shows a Bubble Tea text input with path completion and validation
-// The validator is called when the user presses Enter; if it returns an error, it's displayed in-place
-func PromptPathTUIWithValidator(prompt, defaultVal string, pathComplete bool, validator PathValidator) (string, bool) {
-	return PromptPathTUIWithValidatorAndHint(prompt, "", defaultVal, pathComplete, validator)
-}
-
 // PromptPathTUIWithValidatorAndHint shows a Bubble Tea text input with path completion, validation, and a hint
 func PromptPathTUIWithValidatorAndHint(prompt, hint, defaultVal string, pathComplete bool, validator PathValidator) (string, bool) {
 	model := newPathInputModel(prompt, hint, defaultVal, pathComplete, validator)
@@ -457,18 +440,4 @@ func PromptPathTUIWithValidatorAndHint(prompt, hint, defaultVal string, pathComp
 	}
 
 	return value, true
-}
-
-// PromptTUIRequired shows a Bubble Tea text input that requires a non-empty value
-func PromptTUIRequired(prompt string) (string, bool) {
-	for {
-		value, ok := PromptTUI(prompt, "")
-		if !ok {
-			return "", false
-		}
-		if value != "" {
-			return value, true
-		}
-		fmt.Fprintf(os.Stderr, "%s  (required)%s\n", Red, Reset)
-	}
 }

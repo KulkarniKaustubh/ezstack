@@ -81,15 +81,6 @@ func (g *Git) GetRepoRoot() (string, error) {
 	return g.run("rev-parse", "--show-toplevel")
 }
 
-// IsWorktree checks if the current directory is a worktree
-func (g *Git) IsWorktree() (bool, error) {
-	gitDir, err := g.run("rev-parse", "--git-dir")
-	if err != nil {
-		return false, err
-	}
-	return strings.Contains(gitDir, "worktrees"), nil
-}
-
 // GetMainWorktree returns the path to the main worktree
 func (g *Git) GetMainWorktree() (string, error) {
 	gitCommonDir, err := g.run("rev-parse", "--git-common-dir")
@@ -127,12 +118,6 @@ func (g *Git) CreateWorktree(branchName, worktreePath, baseBranch string) error 
 		}
 	}
 	// Create the worktree
-	_, err := g.runWithSpinner(fmt.Sprintf("Creating worktree for %s...", branchName), "worktree", "add", worktreePath, branchName)
-	return err
-}
-
-// AddWorktree creates a worktree for an existing branch
-func (g *Git) AddWorktree(branchName, worktreePath string) error {
 	_, err := g.runWithSpinner(fmt.Sprintf("Creating worktree for %s...", branchName), "worktree", "add", worktreePath, branchName)
 	return err
 }
@@ -200,24 +185,6 @@ func (g *Git) IsBranchMerged(branch, target string) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-// IsBranchBehind checks if branch is behind target (target has commits not in branch)
-func (g *Git) IsBranchBehind(branch, target string) (bool, error) {
-	// Get the merge base
-	mergeBase, err := g.run("merge-base", branch, target)
-	if err != nil {
-		return false, err
-	}
-
-	// Get the commit of target
-	targetCommit, err := g.run("rev-parse", target)
-	if err != nil {
-		return false, err
-	}
-
-	// If merge base != target commit, then branch is behind target
-	return mergeBase != targetCommit, nil
 }
 
 // GetCommitsBehind returns the number of commits branch is behind target
@@ -375,11 +342,6 @@ func (g *Git) Rebase(target string) error {
 	return g.RunInteractive("rebase", target)
 }
 
-// RebaseOnto rebases commits from oldBase to current onto newBase
-func (g *Git) RebaseOnto(newBase, oldBase string) error {
-	return g.RunInteractive("rebase", "--onto", newBase, oldBase)
-}
-
 // ResetHard performs a hard reset to the given ref
 // This is used to fast-forward a branch that has no commits of its own
 func (g *Git) ResetHard(ref string) error {
@@ -390,11 +352,6 @@ func (g *Git) ResetHard(ref string) error {
 // GetRemote gets the remote URL
 func (g *Git) GetRemote(name string) (string, error) {
 	return g.run("remote", "get-url", name)
-}
-
-// PullRebase pulls and rebases the current branch from its upstream
-func (g *Git) PullRebase() error {
-	return g.RunInteractive("pull", "--rebase")
 }
 
 // PushForce force pushes the current branch with lease (safer than --force)
@@ -443,31 +400,6 @@ func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName 
 	}
 
 	return nil
-}
-
-// CreateBranchFromRemote creates a local branch tracking a remote branch and returns the local branch name
-func (g *Git) CreateBranchFromRemote(remoteBranch string) (string, error) {
-	// Extract the local branch name from remote ref (e.g., "origin/feature" -> "feature")
-	parts := strings.SplitN(remoteBranch, "/", 2)
-	if len(parts) != 2 {
-		return "", fmt.Errorf("invalid remote branch format: %s (expected origin/branch-name)", remoteBranch)
-	}
-	localBranch := parts[1]
-
-	// Check if local branch already exists
-	_, err := g.run("rev-parse", "--verify", localBranch)
-	if err == nil {
-		// Branch exists, just return the name
-		return localBranch, nil
-	}
-
-	// Create the local branch tracking the remote
-	_, err = g.run("branch", "--track", localBranch, remoteBranch)
-	if err != nil {
-		return "", fmt.Errorf("failed to create local branch from %s: %w", remoteBranch, err)
-	}
-
-	return localBranch, nil
 }
 
 // GetPRTemplate finds and reads the GitHub PR template from common locations.

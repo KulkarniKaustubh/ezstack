@@ -54,16 +54,6 @@ func (g *Git) GetCommitCount(base, head string) (int, error) {
 	return count, nil
 }
 
-// HasConflicts checks if there are merge conflicts
-func (g *Git) HasConflicts() (bool, error) {
-	output, err := g.run("diff", "--name-only", "--diff-filter=U")
-	if err != nil {
-		// If the command fails, check if we're in a rebase
-		return false, nil
-	}
-	return output != "", nil
-}
-
 // IsRebaseInProgress checks if a rebase is in progress
 func (g *Git) IsRebaseInProgress() (bool, error) {
 	output, err := g.run("status")
@@ -72,17 +62,6 @@ func (g *Git) IsRebaseInProgress() (bool, error) {
 	}
 	return strings.Contains(output, "rebase in progress") ||
 		strings.Contains(output, "interactive rebase in progress"), nil
-}
-
-// AbortRebase aborts an in-progress rebase
-func (g *Git) AbortRebase() error {
-	_, err := g.run("rebase", "--abort")
-	return err
-}
-
-// ContinueRebase continues a paused rebase
-func (g *Git) ContinueRebase() error {
-	return g.RunInteractive("rebase", "--continue")
 }
 
 // Push pushes the current branch to remote
