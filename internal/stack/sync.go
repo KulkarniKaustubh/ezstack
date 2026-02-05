@@ -323,11 +323,13 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 					result.HasConflict = true
 					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 					results = append(results, result)
-					continue
+					// Stop immediately on conflict - user must resolve before continuing
+					return results, nil
 				} else if rebaseResult.Error != nil {
 					result.Error = rebaseResult.Error
 					results = append(results, result)
-					continue
+					// Stop on error as well
+					return results, nil
 				}
 				result.Success = true
 				results = append(results, result)
@@ -396,12 +398,14 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 					results = append(results, result)
 					m.stackConfig.Save(m.repoDir)
-					continue
+					// Stop immediately on conflict - user must resolve before continuing
+					return results, nil
 				} else if rebaseResult.Error != nil {
 					result.Error = rebaseResult.Error
 					results = append(results, result)
 					m.stackConfig.Save(m.repoDir)
-					continue
+					// Stop on error as well
+					return results, nil
 				}
 				result.Success = true
 				results = append(results, result)
@@ -460,11 +464,13 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 					result.HasConflict = true
 					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 					results = append(results, result)
-					continue
+					// Stop immediately on conflict - user must resolve before continuing
+					return results, nil
 				} else if rebaseResult.Error != nil {
 					result.Error = rebaseResult.Error
 					results = append(results, result)
-					continue
+					// Stop on error as well
+					return results, nil
 				}
 				result.Success = true
 				results = append(results, result)
@@ -483,11 +489,13 @@ func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCa
 				result.HasConflict = true
 				result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 				results = append(results, result)
-				continue
+				// Stop immediately on conflict - user must resolve before continuing
+				return results, nil
 			} else if rebaseResult.Error != nil {
 				result.Error = rebaseResult.Error
 				results = append(results, result)
-				continue
+				// Stop on error as well
+				return results, nil
 			}
 			result.Success = true
 			results = append(results, result)
@@ -714,11 +722,13 @@ func (m *Manager) RebaseChildren() ([]RebaseResult, error) {
 				result.HasConflict = true
 				result.Error = fmt.Errorf("resolve conflicts in: %s", child.WorktreePath)
 				results = append(results, result)
-				continue
+				// Stop immediately on conflict - user must resolve before continuing
+				return results, nil
 			} else if rebaseResult.Error != nil {
 				result.Error = rebaseResult.Error
 				results = append(results, result)
-				continue
+				// Stop on error as well
+				return results, nil
 			}
 			result.Success = true
 			results = append(results, result)
