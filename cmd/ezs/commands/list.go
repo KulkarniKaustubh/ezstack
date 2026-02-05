@@ -88,10 +88,10 @@ func List(args []string) error {
 		return nil
 	}
 
-	// Helper to print stack (discovers PRs but doesn't fetch CI status)
+	// Helper to print stack (fetches PR status including DRAFT)
 	printStack := func(s *config.Stack) {
-		discoverAndCachePRs(g, s)
-		ui.PrintStackWithStatus(s, currentBranch, nil)
+		statusMap := fetchBranchStatuses(g, s)
+		ui.PrintStackWithStatus(s, currentBranch, statusMap)
 	}
 
 	if *all {

@@ -63,14 +63,26 @@ func (c *Client) CreatePR(title, body, head, base string, draft bool) (*PR, erro
 		"--body", body,
 		"--base", base,
 		"--head", head,
-		"--json", "number,url,title,body,state,baseRefName,headRefName",
 	}
 
 	if draft {
 		args = append(args, "--draft")
 	}
 
-	output, err := c.runGH(args...)
+	// gh pr create doesn't support --json, so we create first then fetch details
+	_, err := c.runGH(args...)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch the PR we just created using the head branch
+	return c.GetPRByBranch(head)
+}
+
+// GetPRByBranch gets a PR by its head branch name
+func (c *Client) GetPRByBranch(branch string) (*PR, error) {
+	output, err := c.runGH("pr", "view", branch,
+		"--json", "number,url,title,body,state,baseRefName,headRefName,mergedAt,mergeable,isDraft,reviewDecision")
 	if err != nil {
 		return nil, err
 	}
@@ -79,6 +91,7 @@ func (c *Client) CreatePR(title, body, head, base string, draft bool) (*PR, erro
 	if err := json.Unmarshal([]byte(output), &pr); err != nil {
 		return nil, err
 	}
+	pr.Merged = pr.MergedAt != ""
 	return &pr, nil
 }
 
@@ -215,8 +228,6 @@ func (c *Client) runGH(args ...string) (string, error) {
 
 // UpdateStackDescription updates PR descriptions with stack info
 func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch string) error {
-	stackSection := generateStackSection(stack, currentBranch)
-
 	for _, branch := range stack.Branches {
 		if branch.PRNumber == 0 {
 			continue
@@ -226,6 +237,9 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 		if err != nil {
 			continue
 		}
+
+		// Generate stack section with arrow pointing to THIS PR
+		stackSection := generateStackSection(stack, branch.Name)
 
 		// Update the body with the stack section
 		newBody := updateBodyWithStack(pr.Body, stackSection, branch.Name == currentBranch)
@@ -239,29 +253,23 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 	return nil
 }
 
-func generateStackSection(stack *config.Stack, currentBranch string) string {
+func generateStackSection(stack *config.Stack, currentPRBranch string) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n---\n## PR Stack\n\n")
 
-	// Calculate max branch name length for alignment
-	maxNameLen := 0
-	for _, branch := range stack.Branches {
-		if len(branch.Name) > maxNameLen {
-			maxNameLen = len(branch.Name)
-		}
-	}
-
 	for i, branch := range stack.Branches {
-		pointer := "   "
-		if branch.Name == currentBranch {
-			pointer = "→ "
+		// Use markdown list format - GitHub unfurls PR URLs in lists to show title
+		suffix := ""
+		if branch.Name == currentPRBranch {
+			suffix = " ← **This PR**"
 		}
 
-		// Pad branch name for alignment (using spaces in markdown)
 		if branch.PRUrl != "" {
-			sb.WriteString(fmt.Sprintf("%s%d. [%s](%s)\n", pointer, i+1, branch.Name, branch.PRUrl))
+			sb.WriteString(fmt.Sprintf("%d. %s%s\n", i+1, branch.PRUrl, suffix))
+		} else if branch.PRNumber > 0 {
+			sb.WriteString(fmt.Sprintf("%d. #%d%s\n", i+1, branch.PRNumber, suffix))
 		} else {
-			sb.WriteString(fmt.Sprintf("%s%d. `%s` _(no PR yet)_\n", pointer, i+1, branch.Name))
+			sb.WriteString(fmt.Sprintf("%d. `%s` _(no PR yet)_%s\n", i+1, branch.Name, suffix))
 		}
 	}
 	sb.WriteString("\n_This stack was created by `ezstack` (beta)_\n")
