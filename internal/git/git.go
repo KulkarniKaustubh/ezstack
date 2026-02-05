@@ -145,6 +145,11 @@ func (g *Git) GetBranchCommit(branch string) (string, error) {
 	return g.run("rev-parse", branch)
 }
 
+// GetLastCommitMessage returns the message of the last commit on the current branch
+func (g *Git) GetLastCommitMessage() (string, error) {
+	return g.run("log", "-1", "--format=%s")
+}
+
 // IsBranchMerged checks if a branch has been merged into target
 func (g *Git) IsBranchMerged(branch, target string) (bool, error) {
 	// Check if the branch commit is an ancestor of target
