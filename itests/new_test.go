@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ezstack/ezstack/cmd/ezs/commands"
+	"github.com/ezstack/ezstack/internal/config"
 	"github.com/ezstack/ezstack/internal/stack"
 )
 
@@ -106,5 +108,107 @@ func TestNewBranchWorktreePath(t *testing.T) {
 	expectedPath := filepath.Join(env.WorktreeDir, "worktree-test")
 	if branch.WorktreePath != expectedPath {
 		t.Errorf("WorktreePath = %q, want %q", branch.WorktreePath, expectedPath)
+	}
+}
+
+// TestValidateWorktreeBaseDirIntegration tests the validation of worktree base dir
+func TestValidateWorktreeBaseDirIntegration(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	tests := []struct {
+		name            string
+		worktreeBaseDir string
+		wantErr         bool
+	}{
+		{
+			name:            "valid - configured worktree dir",
+			worktreeBaseDir: env.WorktreeDir,
+			wantErr:         false,
+		},
+		{
+			name:            "valid - sibling of repo",
+			worktreeBaseDir: filepath.Join(filepath.Dir(env.RepoDir), "other-worktrees"),
+			wantErr:         false,
+		},
+		{
+			name:            "invalid - inside repo",
+			worktreeBaseDir: filepath.Join(env.RepoDir, "worktrees"),
+			wantErr:         true,
+		},
+		{
+			name:            "invalid - same as repo",
+			worktreeBaseDir: env.RepoDir,
+			wantErr:         true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := commands.ValidateWorktreeBaseDir(tt.worktreeBaseDir, env.RepoDir)
+			if tt.wantErr && err == nil {
+				t.Error("Expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestWorktreeBaseDirConfigSaved tests that worktree base dir is saved to config
+func TestWorktreeBaseDirConfigSaved(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	// Verify the config was saved correctly during setup
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	worktreeDir := cfg.GetWorktreeBaseDir(env.RepoDir)
+	if worktreeDir != env.WorktreeDir {
+		t.Errorf("WorktreeBaseDir = %q, want %q", worktreeDir, env.WorktreeDir)
+	}
+}
+
+// TestNewBranchWithoutWorktreeConfig tests behavior when worktree config is missing
+// Note: This tests the validation logic, not the interactive prompt
+func TestNewBranchWithoutWorktreeConfig(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	// Clear the worktree base dir from config
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Failed to load config: %v", err)
+	}
+
+	repoCfg := cfg.GetRepoConfig(env.RepoDir)
+	if repoCfg != nil {
+		repoCfg.WorktreeBaseDir = ""
+		cfg.SetRepoConfig(env.RepoDir, repoCfg)
+		cfg.Save()
+	}
+
+	// Verify config is cleared
+	cfg, _ = config.Load()
+	if cfg.GetWorktreeBaseDir(env.RepoDir) != "" {
+		t.Fatal("WorktreeBaseDir should be empty")
+	}
+
+	// Test that validation rejects paths inside the repo
+	insideRepo := filepath.Join(env.RepoDir, "worktrees")
+	err = commands.ValidateWorktreeBaseDir(insideRepo, env.RepoDir)
+	if err == nil {
+		t.Error("Expected error for worktree dir inside repo")
+	}
+
+	// Test that validation accepts paths outside the repo
+	outsideRepo := filepath.Join(filepath.Dir(env.RepoDir), "worktrees")
+	err = commands.ValidateWorktreeBaseDir(outsideRepo, env.RepoDir)
+	if err != nil {
+		t.Errorf("Unexpected error for worktree dir outside repo: %v", err)
 	}
 }
