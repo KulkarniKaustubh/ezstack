@@ -311,10 +311,10 @@ func prCreate(args []string) error {
 		return err
 	}
 
-	// Use branch name as title if not provided
+	// Prompt for title if not provided, with branch name as default
 	prTitle := *title
 	if prTitle == "" {
-		prTitle = branch.Name
+		prTitle = ui.Prompt("PR title", branch.Name)
 	}
 
 	// Check for WIP commit and auto-draft setting
