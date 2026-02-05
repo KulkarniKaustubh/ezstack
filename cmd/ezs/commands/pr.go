@@ -503,14 +503,69 @@ func prUpdate(args []string) error {
 		return fmt.Errorf("no PR exists for this branch. Create one with: ezs pr create")
 	}
 
-	ui.Info(fmt.Sprintf("Will push changes to PR #%d", branch.PRNumber))
-	if !ui.ConfirmTUI(fmt.Sprintf("Push changes to PR #%d", branch.PRNumber)) {
+	// Check if remote branch exists and detect divergence
+	hasDiverged, localAhead, remoteAhead, err := g.HasDivergedFromOrigin(branch.Name)
+	if err != nil {
+		ui.Warn(fmt.Sprintf("Could not check remote status: %v", err))
+	}
+
+	remoteBranchExists := g.RemoteBranchExists(branch.Name)
+
+	// Determine push type and get commits to show
+	var needsForcePush bool
+	var commits []git.Commit
+
+	if !remoteBranchExists {
+		// First push - no remote branch yet
+		commits, _ = g.GetCommitsBetween(branch.Parent, branch.Name)
+		ui.Info(fmt.Sprintf("Pushing new branch to PR #%d", branch.PRNumber))
+	} else if hasDiverged || remoteAhead > 0 {
+		// History has diverged (amended commits, rebase, etc.) - needs force push
+		needsForcePush = true
+		// Show commits that will be pushed
+		commits, _ = g.GetCommitsBetween("origin/"+branch.Name, branch.Name)
+		if len(commits) == 0 {
+			// If no new commits, show all local commits (amended case)
+			commits, _ = g.GetCommitsBetween(branch.Parent, branch.Name)
+		}
+	} else if localAhead > 0 {
+		// Simple case - local is ahead, regular push works
+		commits, _ = g.GetCommitsBetween("origin/"+branch.Name, branch.Name)
+	} else {
+		ui.Success("Already up to date. Nothing to push.")
+		return nil
+	}
+
+	// Show commits that will be pushed
+	if len(commits) > 0 {
+		fmt.Fprintln(os.Stderr)
+		if needsForcePush {
+			ui.Warn("History has changed (amended/rebased). Force push required.")
+			fmt.Fprintf(os.Stderr, "\n%sCommits to push:%s\n", ui.Cyan, ui.Reset)
+		} else {
+			fmt.Fprintf(os.Stderr, "%sNew commits to push:%s\n", ui.Cyan, ui.Reset)
+		}
+		for _, c := range commits {
+			fmt.Fprintf(os.Stderr, "  %s%.7s%s %s\n", ui.Yellow, c.Hash, ui.Reset, c.Subject)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
+	// Confirm with appropriate message
+	var confirmMsg string
+	if needsForcePush {
+		confirmMsg = fmt.Sprintf("Force push to PR #%d? (overwrites remote history)", branch.PRNumber)
+	} else {
+		confirmMsg = fmt.Sprintf("Push %d commit(s) to PR #%d?", len(commits), branch.PRNumber)
+	}
+
+	if !ui.ConfirmTUI(confirmMsg) {
 		ui.Warn("Cancelled")
 		return nil
 	}
 
 	ui.Info("Pushing changes...")
-	if err := g.Push(true); err != nil {
+	if err := g.Push(needsForcePush); err != nil {
 		return fmt.Errorf("failed to push: %w", err)
 	}
 

@@ -305,10 +305,28 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 		}
 	}
 
+	cwd, _ := os.Getwd()
+	g := git.New(cwd)
+
+	// If we rebased, offer to force-push the branch
+	if doRebase && branch.PRNumber > 0 {
+		ui.Info("Branch was rebased. Force-push required to update the PR.")
+		if ui.ConfirmTUI(fmt.Sprintf("Force-push '%s' to update PR #%d?", branchName, branch.PRNumber)) {
+			// Need to be in the branch's worktree to push
+			branchGit := g
+			if branch.WorktreePath != "" && branch.WorktreePath != cwd {
+				branchGit = git.New(branch.WorktreePath)
+			}
+			if err := branchGit.PushForce(); err != nil {
+				ui.Warn(fmt.Sprintf("Failed to force-push: %v", err))
+			} else {
+				ui.Success(fmt.Sprintf("Force-pushed '%s'", branchName))
+			}
+		}
+	}
+
 	// Update PR base branch on GitHub if the branch has a PR
 	if branch.PRNumber > 0 {
-		cwd, _ := os.Getwd()
-		g := git.New(cwd)
 		remoteURL, err := g.GetRemote("origin")
 		if err == nil {
 			gh, err := github.NewClient(remoteURL)
