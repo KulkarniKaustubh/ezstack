@@ -18,7 +18,7 @@ if [[ "${1:-}" == "--shell-init" ]]; then
 # ezs shell function for cd support
 ezs() {
     case "${1:-}" in
-        goto|go|new|n)
+        goto|go|new|n|delete|del|rm)
             # These commands may output "cd <path>" which we need to eval
             eval "$(command ezs-go "$@")"
             ;;

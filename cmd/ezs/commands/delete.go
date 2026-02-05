@@ -150,5 +150,9 @@ func Delete(args []string) error {
 	}
 
 	ui.Success(fmt.Sprintf("Deleted branch '%s' and its worktree", branchName))
+
+	// Output cd command to move shell to repo root (for shell wrapper to eval)
+	fmt.Printf("cd %s\n", repoRoot)
+
 	return nil
 }
