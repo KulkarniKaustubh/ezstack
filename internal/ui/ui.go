@@ -600,14 +600,20 @@ func getPRColor(branch *config.Branch, statusMap map[string]*BranchStatus) strin
 // getPRFormatted returns the PR text with color and hyperlink applied
 func getPRFormatted(branch *config.Branch, statusMap map[string]*BranchStatus, paddedWidth int) string {
 	prText := getPRText(branch, statusMap)
-	paddedPR := padRight(prText, paddedWidth)
 	prColor := getPRColor(branch, statusMap)
 
-	// Wrap in hyperlink if URL is available
-	if branch.PRUrl != "" {
-		return prColor + Hyperlink(branch.PRUrl, paddedPR) + Reset
+	// Calculate padding needed after the text
+	textWidth := runewidth.StringWidth(prText)
+	padding := ""
+	if paddedWidth > textWidth {
+		padding = strings.Repeat(" ", paddedWidth-textWidth)
 	}
-	return prColor + paddedPR + Reset
+
+	// Wrap only the actual text in hyperlink, add padding outside
+	if branch.PRUrl != "" {
+		return prColor + Hyperlink(branch.PRUrl, prText) + Reset + padding
+	}
+	return prColor + prText + Reset + padding
 }
 
 // getStatusIcons returns CI/review status icons
