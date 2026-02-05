@@ -92,9 +92,10 @@ func List(args []string) error {
 	} else {
 		currentStack, _, err := mgr.GetCurrentStack()
 		if err != nil {
-			// Current branch is not part of any stack
-			ui.Info(fmt.Sprintf("Branch '%s' is not part of any stack.", currentBranch))
-			ui.Info("Use 'ezs ls -a' to see all stacks, or 'ezs new' to create a new stack.")
+			// Current branch is not part of any stack - show all stacks
+			for _, s := range stacks {
+				printStack(s)
+			}
 		} else {
 			printStack(currentStack)
 		}
@@ -184,9 +185,8 @@ func Status(args []string) error {
 
 	currentStack, branch, err := mgr.GetCurrentStack()
 	if err != nil {
-		// Current branch is not part of any stack
-		ui.Info(fmt.Sprintf("Branch '%s' is not part of any stack.", currentBranch))
-		ui.Info("Use 'ezs status -a' to see all stacks, or 'ezs new' to create a new stack.")
+		// Current branch is not part of any stack - show all stacks
+		printAllStacksWithStatus()
 		return nil
 	}
 
