@@ -252,17 +252,17 @@ func New(args []string) error {
 
 		worktreePath := *worktree
 		if worktreePath == "" {
-			worktreeBaseDir := cfg.GetWorktreeBaseDir(mgr.GetRepoDir())
-			if worktreeBaseDir != "" {
-				worktreePath = filepath.Join(worktreeBaseDir, newBranchName)
-			} else {
-				repoDir := mgr.GetRepoDir()
-				if repoDir != "" {
-					worktreePath = filepath.Join(filepath.Dir(repoDir), newBranchName)
-				} else {
-					return fmt.Errorf("no worktree path specified and no default configured")
+			repoDir := mgr.GetRepoDir()
+			worktreeBaseDir := cfg.GetWorktreeBaseDir(repoDir)
+			if worktreeBaseDir == "" {
+				// Prompt user to set worktree base dir
+				var err error
+				worktreeBaseDir, err = promptWorktreeBaseDir(repoDir, cfg)
+				if err != nil {
+					return err
 				}
 			}
+			worktreePath = filepath.Join(worktreeBaseDir, newBranchName)
 		}
 
 		// Create the user's branch based on the remote branch
@@ -338,15 +338,14 @@ func New(args []string) error {
 		}
 		repoDir := mgr.GetRepoDir()
 		worktreeBaseDir := cfg.GetWorktreeBaseDir(repoDir)
-		if worktreeBaseDir != "" {
-			worktreePath = filepath.Join(worktreeBaseDir, branchName)
-		} else {
-			if repoDir != "" {
-				worktreePath = filepath.Join(filepath.Dir(repoDir), branchName)
-			} else {
-				return fmt.Errorf("no worktree path specified and no default configured for this repo. Run: ezs config set worktree_base_dir <path>")
+		if worktreeBaseDir == "" {
+			// Prompt user to set worktree base dir
+			worktreeBaseDir, err = promptWorktreeBaseDir(repoDir, cfg)
+			if err != nil {
+				return err
 			}
 		}
+		worktreePath = filepath.Join(worktreeBaseDir, branchName)
 	}
 
 	worktreePath = helpers.ExpandPath(worktreePath)
@@ -387,4 +386,92 @@ func New(args []string) error {
 	}
 
 	return nil
+}
+
+// ValidateWorktreeBaseDir validates that the worktree base directory is not inside the repo.
+// Returns an error if the path is invalid, nil if valid.
+func ValidateWorktreeBaseDir(worktreeBaseDir, repoDir string) error {
+	if repoDir == "" {
+		return nil
+	}
+
+	repoDir = filepath.Clean(repoDir)
+	worktreeBaseDir = filepath.Clean(worktreeBaseDir)
+
+	// Check if they're the same
+	if worktreeBaseDir == repoDir {
+		return fmt.Errorf("worktree base directory cannot be the repository itself")
+	}
+
+	// Check if worktreeBaseDir is inside repoDir
+	rel, err := filepath.Rel(repoDir, worktreeBaseDir)
+	if err == nil && !filepath.IsAbs(rel) && len(rel) > 0 && rel[0] != '.' {
+		return fmt.Errorf("worktree base directory cannot be inside the repository")
+	}
+
+	return nil
+}
+
+// promptWorktreeBaseDir prompts the user to set the worktree base directory
+// and saves it to the config. It validates that the path is not inside the repo.
+func promptWorktreeBaseDir(repoDir string, cfg *config.Config) (string, error) {
+	ui.Info("No worktree base directory configured for this repository.")
+	ui.Info("Worktrees should be stored OUTSIDE the repository (e.g., as sibling directories).")
+	fmt.Fprintln(os.Stderr)
+
+	// Suggest a default: parent directory of the repo
+	defaultDir := ""
+	if repoDir != "" {
+		defaultDir = filepath.Dir(repoDir)
+	}
+
+	for {
+		worktreeBaseDir := ui.Prompt("Worktree base directory", defaultDir)
+		if worktreeBaseDir == "" {
+			return "", fmt.Errorf("worktree base directory is required")
+		}
+
+		// Expand ~ in path
+		if len(worktreeBaseDir) > 0 && worktreeBaseDir[0] == '~' {
+			home, _ := os.UserHomeDir()
+			worktreeBaseDir = filepath.Join(home, worktreeBaseDir[1:])
+		}
+
+		// Convert relative path to absolute path
+		if !filepath.IsAbs(worktreeBaseDir) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return "", fmt.Errorf("failed to get current directory: %w", err)
+			}
+			worktreeBaseDir = filepath.Join(cwd, worktreeBaseDir)
+		}
+		// Clean the path
+		worktreeBaseDir = filepath.Clean(worktreeBaseDir)
+
+		// Validate: worktree base dir must NOT be inside the repo
+		if err := ValidateWorktreeBaseDir(worktreeBaseDir, repoDir); err != nil {
+			ui.Error(err.Error())
+			ui.Info(fmt.Sprintf("Repository: %s", repoDir))
+			ui.Info("Please choose a directory outside the repository.")
+			fmt.Fprintln(os.Stderr)
+			continue
+		}
+
+		// Save to config
+		repoCfg := cfg.GetRepoConfig(repoDir)
+		if repoCfg == nil {
+			repoCfg = &config.RepoConfig{}
+		}
+		repoCfg.WorktreeBaseDir = worktreeBaseDir
+		cfg.SetRepoConfig(repoDir, repoCfg)
+
+		if err := cfg.Save(); err != nil {
+			return "", fmt.Errorf("failed to save config: %w", err)
+		}
+
+		ui.Success(fmt.Sprintf("Saved worktree_base_dir = %s", worktreeBaseDir))
+		fmt.Fprintln(os.Stderr)
+
+		return worktreeBaseDir, nil
+	}
 }
