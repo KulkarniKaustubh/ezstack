@@ -293,4 +293,3 @@ func TestSyncStack_ContinuesWithoutConflict(t *testing.T) {
 		t.Errorf("Expected 2 successful syncs, got %d", successCount)
 	}
 }
-

@@ -32,4 +32,3 @@ type ClientInterface interface {
 
 // Ensure Client implements ClientInterface
 var _ ClientInterface = (*Client)(nil)
-

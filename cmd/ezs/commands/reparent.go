@@ -352,9 +352,8 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 
 	// Show the updated stack
 	if currentStack != nil {
-		ui.PrintStack(currentStack, branchName)
+		ui.PrintStack(currentStack, branchName, false, nil)
 	}
 
 	return nil
 }
-

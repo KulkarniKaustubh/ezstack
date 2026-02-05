@@ -348,4 +348,3 @@ func TestRebaseResult(t *testing.T) {
 		t.Error("Conflict result should have HasConflict=true")
 	}
 }
-

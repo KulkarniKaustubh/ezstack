@@ -158,110 +158,8 @@ func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string
 		return ""
 	}
 
-	// Use escape codes that echo -e can interpret
-	bold := "\\x1b[1m"
-	reset := "\\x1b[0m"
-	strikethrough := "\\x1b[9m"
-	green := "\\x1b[32m"
-	yellow := "\\x1b[33m"
-	gray := "\\x1b[90m"
-	cyan := "\\x1b[36m"
-	magenta := "\\x1b[35m"
-
-	// Calculate max widths using runewidth
-	maxNameWidth := 0
-	maxPRWidth := 0
-	maxParentWidth := 0
-	hasRemoteBranches := false
-	for _, b := range targetStack.Branches {
-		displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
-		if w := runewidth.StringWidth(displayName); w > maxNameWidth {
-			maxNameWidth = w
-		}
-
-		var prText string
-		if b.IsMerged {
-			prText = fmt.Sprintf("[PR #%d MERGED]", b.PRNumber)
-		} else if b.PRNumber > 0 {
-			prText = fmt.Sprintf("[PR #%d]", b.PRNumber)
-		} else {
-			prText = "[no PR]"
-		}
-		if w := runewidth.StringWidth(prText); w > maxPRWidth {
-			maxPRWidth = w
-		}
-
-		parentText := fmt.Sprintf("(%s %s)", IconArrow, b.Parent)
-		if w := runewidth.StringWidth(parentText); w > maxParentWidth {
-			maxParentWidth = w
-		}
-
-		if b.IsRemote {
-			hasRemoteBranches = true
-		}
-	}
-
-	// Generate preview matching PrintStack output
-	var preview strings.Builder
-	preview.WriteString(fmt.Sprintf("%s%s Stack: %s%s\\n\\n", bold, cyan, targetStack.Name, reset))
-
-	for i, b := range targetStack.Branches {
-		// Build prefix (use ASCII ">" for guaranteed alignment)
-		var prefix string
-		color := ""
-		if b.Name == branch.Name {
-			prefix = "> "
-			color = green
-		} else {
-			prefix = "  "
-		}
-
-		connector := "├──"
-		if i == len(targetStack.Branches)-1 {
-			connector = "└──"
-		}
-
-		// Truncate and pad branch name
-		displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
-		paddedName := padRight(displayName, maxNameWidth)
-
-		// Build PR info and pad it
-		var prText, prColor string
-		if b.IsMerged {
-			prText = fmt.Sprintf("[PR #%d MERGED]", b.PRNumber)
-			prColor = cyan // Light blue for merged
-		} else if b.PRNumber > 0 {
-			prText = fmt.Sprintf("[PR #%d]", b.PRNumber)
-			prColor = yellow
-		} else {
-			prText = "[no PR]"
-			prColor = gray
-		}
-		paddedPRText := padRight(prText, maxPRWidth)
-
-		// Parent info (padded)
-		parentText := fmt.Sprintf("(%s %s)", IconArrow, b.Parent)
-		paddedParent := padRight(parentText, maxParentWidth)
-
-		// Remote tag (separate column at the end)
-		remoteTag := ""
-		if hasRemoteBranches && b.IsRemote {
-			remoteTag = fmt.Sprintf("  %s%s[remote]%s", magenta, IconRemote, reset)
-		}
-
-		// For merged branches, wrap entire line in strikethrough
-		if b.IsMerged {
-			preview.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %s%s%s  %s%s%s\\n",
-				strikethrough, prefix, color, connector, bold, paddedName, reset+strikethrough,
-				prColor, paddedPRText, reset+strikethrough, paddedParent, reset, remoteTag))
-		} else {
-			preview.WriteString(fmt.Sprintf("%s%s%s %s%s%s  %s%s%s  %s%s%s\\n",
-				prefix, color, connector, bold, paddedName, reset,
-				prColor, paddedPRText, reset, paddedParent, reset, remoteTag))
-		}
-	}
-
-	return preview.String()
+	// Use formatStackString with escape codes for fzf preview
+	return formatStackString(targetStack, branch.Name)
 }
 
 // WorktreeInfo represents a worktree for UI selection
@@ -399,11 +297,6 @@ func runFzfWithPreview(input, prompt string, showPreview bool) (string, error) {
 	return result, nil
 }
 
-// PrintStack prints a visual representation of a stack to stderr (without status)
-func PrintStack(stack *config.Stack, currentBranch string) {
-	PrintStackWithStatus(stack, currentBranch, nil)
-}
-
 // MaxBranchNameWidth is the maximum width for branch names before truncation
 const MaxBranchNameWidth = 50
 
@@ -424,11 +317,120 @@ func sortBranchesTopologically(branches []*config.Branch) []*config.Branch {
 	return config.SortBranchesTopologically(branches)
 }
 
-// PrintStackWithStatus prints a visual representation of a stack with PR/CI status
+// formatStackString formats a stack as a string for fzf preview (with escape codes)
+// Always sorts branches topologically (parent -> child order)
+func formatStackString(stack *config.Stack, currentBranch string) string {
+	// Use escape codes that echo -e can interpret for fzf preview
+	bold := "\\x1b[1m"
+	reset := "\\x1b[0m"
+	strikethrough := "\\x1b[9m"
+	green := "\\x1b[32m"
+	yellow := "\\x1b[33m"
+	gray := "\\x1b[90m"
+	cyan := "\\x1b[36m"
+	magenta := "\\x1b[35m"
+
+	var output strings.Builder
+	output.WriteString(fmt.Sprintf("%s%s Stack: %s%s\\n\\n", bold, cyan, stack.Name, reset))
+
+	// Sort branches topologically (parent -> child order)
+	sortedBranches := sortBranchesTopologically(stack.Branches)
+
+	// Calculate max widths
+	maxNameWidth := 0
+	maxPRWidth := 0
+	hasRemoteBranches := false
+	for _, b := range sortedBranches {
+		displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
+		if w := runewidth.StringWidth(displayName); w > maxNameWidth {
+			maxNameWidth = w
+		}
+
+		var prText string
+		if b.IsMerged {
+			prText = fmt.Sprintf("[PR #%d MERGED]", b.PRNumber)
+		} else if b.PRNumber > 0 {
+			prText = fmt.Sprintf("[PR #%d]", b.PRNumber)
+		} else {
+			prText = "[no PR]"
+		}
+		if w := runewidth.StringWidth(prText); w > maxPRWidth {
+			maxPRWidth = w
+		}
+
+		if b.IsRemote {
+			hasRemoteBranches = true
+		}
+	}
+
+	maxParentWidth := 0
+	for _, b := range sortedBranches {
+		parentText := fmt.Sprintf("(%s %s)", IconArrow, b.Parent)
+		if w := runewidth.StringWidth(parentText); w > maxParentWidth {
+			maxParentWidth = w
+		}
+	}
+
+	// Format each branch
+	for i, b := range sortedBranches {
+		var prefix string
+		color := ""
+		if b.Name == currentBranch {
+			prefix = "> "
+			color = green
+		} else {
+			prefix = "  "
+		}
+
+		connector := "├──"
+		if i == len(sortedBranches)-1 {
+			connector = "└──"
+		}
+
+		displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
+		paddedName := padRight(displayName, maxNameWidth)
+
+		var prText, prColor string
+		if b.IsMerged {
+			prText = fmt.Sprintf("[PR #%d MERGED]", b.PRNumber)
+			prColor = cyan
+		} else if b.PRNumber > 0 {
+			prText = fmt.Sprintf("[PR #%d]", b.PRNumber)
+			prColor = yellow
+		} else {
+			prText = "[no PR]"
+			prColor = gray
+		}
+		paddedPRText := padRight(prText, maxPRWidth)
+
+		parentText := fmt.Sprintf("(%s %s)", IconArrow, b.Parent)
+		paddedParent := padRight(parentText, maxParentWidth)
+
+		remoteTag := ""
+		if hasRemoteBranches && b.IsRemote {
+			remoteTag = fmt.Sprintf("  %s%s[remote]%s", magenta, IconRemote, reset)
+		}
+
+		if b.IsMerged {
+			output.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %s%s%s  %s%s%s\\n",
+				strikethrough, prefix, color, connector, bold, paddedName, reset+strikethrough,
+				prColor, paddedPRText, reset+strikethrough, paddedParent, reset, remoteTag))
+		} else {
+			output.WriteString(fmt.Sprintf("%s%s%s %s%s%s  %s%s%s  %s%s%s\\n",
+				prefix, color, connector, bold, paddedName, reset,
+				prColor, paddedPRText, reset, paddedParent, reset, remoteTag))
+		}
+	}
+
+	return output.String()
+}
+
+// PrintStack prints a visual representation of a stack, always sorting topologically
+// If showStatus is true, includes CI/PR status column
 // Column layout:
-// - ezs ls (statusMap=nil): 4 columns - branch name, pr number, parent branch, remote tag
-// - ezs status: 5 columns - branch name, pr number, ci status, parent branch, remote tag
-func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap map[string]*BranchStatus) {
+// - showStatus=false: 4 columns - branch name, pr number, parent branch, remote tag
+// - showStatus=true: 5 columns - branch name, pr number, ci status, parent branch, remote tag
+func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, statusMap map[string]*BranchStatus) {
 	fmt.Fprintf(os.Stderr, "\n%s%s Stack: %s%s\n\n", Bold, Cyan, stack.Name, Reset)
 
 	// Sort branches topologically (parent -> child order)
@@ -452,7 +454,7 @@ func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap m
 			maxPRWidth = w
 		}
 
-		if statusMap != nil {
+		if showStatus && statusMap != nil {
 			statusText := getStatusText(branch, statusMap)
 			if w := runewidth.StringWidth(statusText); w > maxStatusWidth {
 				maxStatusWidth = w
@@ -488,7 +490,7 @@ func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap m
 
 		// Tree connector
 		connector := "├──"
-		if i == len(stack.Branches)-1 {
+		if i == len(sortedBranches)-1 {
 			connector = "└──"
 		}
 
@@ -511,7 +513,7 @@ func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap m
 			}
 		}
 
-		if statusMap != nil {
+		if showStatus && statusMap != nil {
 			// 5 columns: branch, PR, status, parent, remote
 			statusText := getStatusText(branch, statusMap)
 			paddedStatus := padRight(statusText, maxStatusWidth)

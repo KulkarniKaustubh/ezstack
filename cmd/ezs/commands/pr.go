@@ -83,7 +83,7 @@ func prInteractive() error {
 		return fmt.Errorf("not in a stack. Create a branch first with: ezs new <branch-name>")
 	}
 
-	ui.PrintStack(currentStack, branch.Name)
+	ui.PrintStack(currentStack, branch.Name, false, nil)
 
 	options := []string{}
 	optionActions := []string{}

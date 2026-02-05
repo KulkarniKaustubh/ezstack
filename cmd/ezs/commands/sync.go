@@ -102,7 +102,7 @@ func Sync(args []string) error {
 	spinner.Start()
 	statusMap := fetchBranchStatuses(g, currentStack)
 	spinner.Stop()
-	ui.PrintStackWithStatus(currentStack, branch.Name, statusMap)
+	ui.PrintStack(currentStack, branch.Name, true, statusMap)
 
 	deleteLocal := !*noDeleteLocal
 

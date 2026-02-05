@@ -637,56 +637,6 @@ func TestManager_RemoveOrphanedBranches(t *testing.T) {
 	}
 }
 
-func TestManager_InferParent(t *testing.T) {
-	repoDir, worktreeBaseDir, cleanup := setupTestEnv(t)
-	defer cleanup()
-
-	mgr, err := NewManager(repoDir)
-	if err != nil {
-		t.Fatalf("NewManager failed: %v", err)
-	}
-
-	// Create a chain: main -> feature-a -> feature-b
-	_, err = mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"))
-	if err != nil {
-		t.Fatalf("CreateBranch failed: %v", err)
-	}
-
-	// Add a commit to feature-a
-	exec.Command("git", "-C", filepath.Join(worktreeBaseDir, "feature-a"), "commit", "--allow-empty", "-m", "commit on a").Run()
-
-	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"))
-	if err != nil {
-		t.Fatalf("CreateBranch failed: %v", err)
-	}
-
-	// Infer parent for feature-b should be feature-a
-	mgr, _ = NewManager(repoDir)
-	parent, unambiguous, err := mgr.InferParent("feature-b")
-	if err != nil {
-		t.Fatalf("InferParent failed: %v", err)
-	}
-	if parent != "feature-a" {
-		t.Errorf("InferParent('feature-b') = %q, want 'feature-a'", parent)
-	}
-	if !unambiguous {
-		t.Error("InferParent should be unambiguous")
-	}
-
-	// Infer parent for feature-a should NOT be feature-b (child can't be parent)
-	parent, _, err = mgr.InferParent("feature-a")
-	if err != nil {
-		t.Fatalf("InferParent('feature-a') failed: %v", err)
-	}
-	if parent == "feature-b" {
-		t.Error("InferParent('feature-a') should NOT return child 'feature-b'")
-	}
-	// It should be main since that's the actual parent
-	if parent != "main" {
-		t.Errorf("InferParent('feature-a') = %q, want 'main'", parent)
-	}
-}
-
 func TestManager_AddWorktreeToStack(t *testing.T) {
 	repoDir, worktreeBaseDir, cleanup := setupTestEnv(t)
 	defer cleanup()

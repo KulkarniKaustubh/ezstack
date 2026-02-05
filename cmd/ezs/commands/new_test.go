@@ -102,7 +102,7 @@ func TestValidateWorktreeBaseDir(t *testing.T) {
 func TestValidateWorktreeBaseDirRelativePaths(t *testing.T) {
 	// Test with relative-like paths that get cleaned
 	repoDir := filepath.Clean("/home/user/repo")
-	
+
 	// Path that looks like it goes up and back in
 	worktreeDir := filepath.Clean("/home/user/repo/../worktrees")
 	err := ValidateWorktreeBaseDir(worktreeDir, repoDir)
@@ -123,4 +123,3 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
-
