@@ -166,19 +166,13 @@ func printShellInit() {
 	fmt.Print(`# ezs shell function for cd support
 # Add this to your shell config: eval "$(ezs --shell-init)"
 ezs() {
-    local ezs_bin
-    ezs_bin="$(command -v ezs 2>/dev/null)"
-
     case "${1:-}" in
-        --shell-init)
-            "$ezs_bin" --shell-init
-            ;;
         goto|go|new|n|delete|del|rm)
             # These commands may output "cd <path>" which we need to eval
-            eval "$("$ezs_bin" "$@")"
+            eval "$(command ezs-go "$@")"
             ;;
         *)
-            "$ezs_bin" "$@"
+            command ezs-go "$@"
             ;;
     esac
 }
