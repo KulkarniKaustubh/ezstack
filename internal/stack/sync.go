@@ -2,6 +2,7 @@ package stack
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/ezstack/ezstack/internal/git"
 	"github.com/ezstack/ezstack/internal/github"
@@ -35,6 +36,14 @@ type MergedBranchInfo struct {
 	PRNumber     int
 	WorktreePath string
 	StackName    string
+}
+
+// CleanupResult contains information about a branch cleanup operation
+type CleanupResult struct {
+	Branch             string
+	Success            bool
+	Error              string
+	WorktreeWasDeleted bool // True if worktree was already deleted before cleanup
 }
 
 // getParentRef returns the git ref for a parent branch
@@ -610,26 +619,37 @@ func (m *Manager) DetectMergedBranches(gh *github.Client) ([]MergedBranchInfo, e
 }
 
 // CleanupMergedBranches deletes branches whose PRs have been merged
-// Returns the number of successfully deleted branches and any errors encountered
-func (m *Manager) CleanupMergedBranches(branches []MergedBranchInfo, currentDir string) (int, []string) {
-	var errors []string
-	deletedCount := 0
+// Returns detailed results for each branch cleanup operation
+func (m *Manager) CleanupMergedBranches(branches []MergedBranchInfo, currentDir string) []CleanupResult {
+	var results []CleanupResult
 
 	for _, info := range branches {
+		result := CleanupResult{Branch: info.Branch}
+
 		// Check if we're currently in this worktree
 		if info.WorktreePath == currentDir {
-			errors = append(errors, fmt.Sprintf("Cannot delete %s: you are currently in this worktree. Please navigate elsewhere first.", info.Branch))
+			result.Error = "you are currently in this worktree. Please navigate elsewhere first."
+			results = append(results, result)
 			continue
+		}
+
+		// Check if worktree was already deleted before we try to clean up
+		if info.WorktreePath != "" {
+			if _, err := os.Stat(info.WorktreePath); os.IsNotExist(err) {
+				result.WorktreeWasDeleted = true
+			}
 		}
 
 		// Delete the branch (this handles worktree removal, git branch deletion, and config update)
 		if err := m.DeleteBranch(info.Branch, true); err != nil {
-			errors = append(errors, fmt.Sprintf("Failed to delete %s: %v", info.Branch, err))
+			result.Error = err.Error()
+			results = append(results, result)
 			continue
 		}
 
-		deletedCount++
+		result.Success = true
+		results = append(results, result)
 	}
 
-	return deletedCount, errors
+	return results
 }

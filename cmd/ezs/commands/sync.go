@@ -307,11 +307,22 @@ func syncEntireStack(mgr *stack.Manager, gh *github.Client, cwd string, deleteLo
 	if len(mergedBranches) > 0 {
 		if ui.ConfirmTUI(fmt.Sprintf("Delete %d merged branch(es) and their worktrees", len(mergedBranches))) {
 			ui.Info("Cleaning up merged branches...")
-			deletedCount, errors := mgr.CleanupMergedBranches(mergedBranches, cwd)
-			for _, e := range errors {
-				ui.Warn(e)
+			results := mgr.CleanupMergedBranches(mergedBranches, cwd)
+			deletedCount := 0
+			for _, r := range results {
+				if r.Success {
+					deletedCount++
+					if r.WorktreeWasDeleted {
+						ui.Success(fmt.Sprintf("Deleted %s (worktree was already removed)", r.Branch))
+					} else {
+						ui.Success(fmt.Sprintf("Deleted %s", r.Branch))
+					}
+				} else if r.Error != "" {
+					ui.Warn(fmt.Sprintf("Failed to delete %s: %s", r.Branch, r.Error))
+				}
 			}
 			if deletedCount > 0 {
+				fmt.Fprintln(os.Stderr)
 				ui.Success(fmt.Sprintf("Deleted %d merged branch(es)", deletedCount))
 			}
 		}
