@@ -161,9 +161,16 @@ func Status(args []string) error {
 			return nil
 		}
 
-		for _, s := range stacks {
-			statusMap := fetchBranchStatuses(g, s)
-			ui.PrintStackWithStatus(s, currentBranch, statusMap)
+		spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
+		spinner.Start()
+		statusMaps := make([]map[string]*ui.BranchStatus, len(stacks))
+		for i, s := range stacks {
+			statusMaps[i] = fetchBranchStatuses(g, s)
+		}
+		spinner.Stop()
+
+		for i, s := range stacks {
+			ui.PrintStackWithStatus(s, currentBranch, statusMaps[i])
 		}
 		return nil
 	}
