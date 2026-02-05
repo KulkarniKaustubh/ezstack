@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ezstack/ezstack/internal/git"
 	"github.com/ezstack/ezstack/internal/stack"
 )
 
@@ -137,5 +138,137 @@ func TestGotoExcludesMergedFromList(t *testing.T) {
 
 	if activeBranches != 1 {
 		t.Errorf("Expected 1 active branch, got %d", activeBranches)
+	}
+}
+
+// TestGotoUnstackedWorktree tests that goto can find unstacked worktrees via git
+func TestGotoUnstackedWorktree(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	mgr, err := stack.NewManager(env.RepoDir)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	// Create a worktree without adding to stack
+	worktreePath := filepath.Join(env.WorktreeDir, "unstacked-goto")
+	err = mgr.CreateWorktreeOnly("unstacked-goto", "main", worktreePath)
+	if err != nil {
+		t.Fatalf("CreateWorktreeOnly failed: %v", err)
+	}
+
+	// Verify it's not in any stack
+	if mgr.GetBranch("unstacked-goto") != nil {
+		t.Error("Branch should not be in any stack")
+	}
+
+	// But it should be findable via git worktree list
+	g := git.New(env.RepoDir)
+	worktrees, err := g.ListWorktrees()
+	if err != nil {
+		t.Fatalf("ListWorktrees failed: %v", err)
+	}
+
+	found := false
+	for _, wt := range worktrees {
+		if wt.Branch == "unstacked-goto" {
+			found = true
+			if wt.Path != worktreePath {
+				t.Errorf("Worktree path = %q, want %q", wt.Path, worktreePath)
+			}
+			break
+		}
+	}
+
+	if !found {
+		t.Error("Unstacked worktree should be found via git worktree list")
+	}
+}
+
+// TestGotoMixedStackedAndUnstacked tests goto with both stacked and unstacked worktrees
+func TestGotoMixedStackedAndUnstacked(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	mgr, err := stack.NewManager(env.RepoDir)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	// Create a stacked branch
+	CreateBranch(t, env, "stacked-branch", "main")
+
+	// Create an unstacked worktree
+	unstackedPath := filepath.Join(env.WorktreeDir, "unstacked-branch")
+	err = mgr.CreateWorktreeOnly("unstacked-branch", "main", unstackedPath)
+	if err != nil {
+		t.Fatalf("CreateWorktreeOnly failed: %v", err)
+	}
+
+	// Verify stacked branch is in stack
+	mgr, _ = stack.NewManager(env.RepoDir)
+	if mgr.GetBranch("stacked-branch") == nil {
+		t.Error("stacked-branch should be in a stack")
+	}
+
+	// Verify unstacked branch is NOT in stack
+	if mgr.GetBranch("unstacked-branch") != nil {
+		t.Error("unstacked-branch should NOT be in a stack")
+	}
+
+	// Both should be findable via git worktree list
+	g := git.New(env.RepoDir)
+	worktrees, err := g.ListWorktrees()
+	if err != nil {
+		t.Fatalf("ListWorktrees failed: %v", err)
+	}
+
+	foundStacked := false
+	foundUnstacked := false
+	for _, wt := range worktrees {
+		if wt.Branch == "stacked-branch" {
+			foundStacked = true
+		}
+		if wt.Branch == "unstacked-branch" {
+			foundUnstacked = true
+		}
+	}
+
+	if !foundStacked {
+		t.Error("stacked-branch should be found via git worktree list")
+	}
+	if !foundUnstacked {
+		t.Error("unstacked-branch should be found via git worktree list")
+	}
+}
+
+// TestGotoAllWorktreesIncludesMain tests that ListWorktrees includes the main worktree
+func TestGotoAllWorktreesIncludesMain(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	g := git.New(env.RepoDir)
+	worktrees, err := g.ListWorktrees()
+	if err != nil {
+		t.Fatalf("ListWorktrees failed: %v", err)
+	}
+
+	// Should have at least the main worktree
+	if len(worktrees) < 1 {
+		t.Error("Expected at least 1 worktree (main)")
+	}
+
+	// Main worktree should be the repo dir
+	foundMain := false
+	for _, wt := range worktrees {
+		if wt.Path == env.RepoDir {
+			foundMain = true
+			break
+		}
+	}
+
+	if !foundMain {
+		t.Errorf("Main worktree not found. Worktrees: %v", worktrees)
 	}
 }

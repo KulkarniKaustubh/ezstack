@@ -287,4 +287,3 @@ func selectUntrackedBranch(mgr *stack.Manager) (string, error) {
 
 	return branchNames[selected], nil
 }
-

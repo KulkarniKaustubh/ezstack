@@ -145,4 +145,3 @@ func dirExists(path string) bool {
 	cmd := exec.Command("test", "-d", path)
 	return cmd.Run() == nil
 }
-

@@ -154,3 +154,48 @@ func TestGetChildren(t *testing.T) {
 		t.Error("Expected child1 and child2 in children")
 	}
 }
+
+// TestGetCurrentStack_NotInStack tests GetCurrentStack when on a branch not in any stack
+func TestGetCurrentStack_NotInStack(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	// We're on main, which is not part of any stack
+	mgr, _ := stack.NewManager(env.RepoDir)
+	_, _, err := mgr.GetCurrentStack()
+
+	if err == nil {
+		t.Error("GetCurrentStack() should return error when not in any stack")
+	}
+}
+
+// TestGetCurrentStack_InStack tests GetCurrentStack when on a branch in a stack
+func TestGetCurrentStack_InStack(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranch(t, env, "feature-a", "main")
+
+	// Change to the worktree
+	g := NewGitInWorktree(env, "feature-a")
+	currentBranch, _ := g.CurrentBranch()
+
+	if currentBranch != "feature-a" {
+		t.Skipf("Not in feature-a worktree, skipping (current: %s)", currentBranch)
+	}
+
+	mgr, _ := stack.NewManager(env.WorktreeDir + "/feature-a")
+	s, branch, err := mgr.GetCurrentStack()
+
+	if err != nil {
+		t.Fatalf("GetCurrentStack() error = %v", err)
+	}
+
+	if s == nil {
+		t.Error("Expected stack to be returned")
+	}
+
+	if branch == nil || branch.Name != "feature-a" {
+		t.Error("Expected branch to be feature-a")
+	}
+}
