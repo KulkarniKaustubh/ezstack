@@ -134,16 +134,16 @@ func rebaseInteractive(mgr *stack.Manager) error {
 		optionActions = append(optionActions, "all")
 	}
 
-	options = append(options, fmt.Sprintf("%s  Cancel", ui.IconCancel))
-	optionActions = append(optionActions, "cancel")
-
-	if len(options) == 1 {
+	if len(options) == 0 {
 		ui.Info("No rebase operations available for current branch")
 		return nil
 	}
 
-	selected, err := ui.SelectOption(options, "What would you like to rebase?")
+	selected, err := ui.SelectOptionWithBack(options, "What would you like to rebase?")
 	if err != nil {
+		if err == ui.ErrBack {
+			return ui.ErrBack
+		}
 		return err
 	}
 
@@ -180,8 +180,6 @@ func rebaseInteractive(mgr *stack.Manager) error {
 			return err
 		}
 		printRebaseResults(results)
-	case "cancel":
-		return nil
 	}
 
 	return nil

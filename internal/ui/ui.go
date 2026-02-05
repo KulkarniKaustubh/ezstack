@@ -58,7 +58,11 @@ const (
 	IconPush     = "\uf093" // nf-fa-upload
 	IconStack    = "\uf24d" // nf-fa-clone (stack of items)
 	IconRocket   = "\uf135" // nf-fa-rocket
+	IconBack     = "\uf060" // nf-fa-arrow_left
 )
+
+// ErrBack is returned when the user selects the back option
+var ErrBack = fmt.Errorf("back")
 
 // BranchStatus contains status information for a branch
 type BranchStatus struct {
@@ -868,6 +872,41 @@ func SelectOption(options []string, prompt string) (int, error) {
 	selected, err := runFzf(input.String(), prompt)
 	if err != nil {
 		return -1, err
+	}
+
+	// Parse the selected option number
+	var idx int
+	if _, err := fmt.Sscanf(selected, "%d.", &idx); err != nil {
+		return -1, fmt.Errorf("failed to parse selection")
+	}
+
+	return idx - 1, nil
+}
+
+// SelectOptionWithBack uses fzf to select from a list of options with a back option.
+// Returns the 0-based index of the selected option, or ErrBack if back was selected.
+// The back option is displayed as an unnumbered "← back" at the end of the list.
+func SelectOptionWithBack(options []string, prompt string) (int, error) {
+	if len(options) == 0 {
+		return -1, fmt.Errorf("no options to select from")
+	}
+
+	var input strings.Builder
+	for i, opt := range options {
+		input.WriteString(fmt.Sprintf("%d. %s\n", i+1, opt))
+	}
+	// Add unnumbered back option
+	backOption := fmt.Sprintf("%s  back", IconBack)
+	input.WriteString(backOption + "\n")
+
+	selected, err := runFzf(input.String(), prompt)
+	if err != nil {
+		return -1, err
+	}
+
+	// Check if back was selected
+	if strings.HasPrefix(selected, IconBack) {
+		return -1, ErrBack
 	}
 
 	// Parse the selected option number

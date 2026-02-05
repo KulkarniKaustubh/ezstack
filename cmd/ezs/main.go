@@ -65,46 +65,56 @@ func main() {
 
 // runInteractiveMenu shows the main interactive menu
 func runInteractiveMenu() error {
-	options := []string{
-		ui.IconNew + "  new      - Create a new branch in the stack",
-		ui.IconInfo + "  status   - Show status of current stack",
-		ui.IconSync + "  rebase   - Rebase branches in the stack",
-		ui.IconDown + "  sync     - Sync stack when parent branches are merged",
-		ui.IconBranch + "  pr       - Manage pull requests",
-		ui.IconArrow + "  goto     - Navigate to a branch worktree",
-		ui.IconCancel + "  delete   - Delete a branch and its worktree",
-		ui.IconBullet + "  config   - Configure ezstack",
-		ui.IconInfo + "  help     - Show help",
-	}
+	for {
+		options := []string{
+			ui.IconNew + "  new      - Create a new branch in the stack",
+			ui.IconInfo + "  status   - Show status of current stack",
+			ui.IconSync + "  rebase   - Rebase branches in the stack",
+			ui.IconDown + "  sync     - Sync stack when parent branches are merged",
+			ui.IconBranch + "  pr       - Manage pull requests",
+			ui.IconArrow + "  goto     - Navigate to a branch worktree",
+			ui.IconCancel + "  delete   - Delete a branch and its worktree",
+			ui.IconBullet + "  config   - Configure ezstack",
+			ui.IconInfo + "  help     - Show help",
+		}
 
-	selected, err := ui.SelectOption(options, "Select a command:")
-	if err != nil {
-		return err
-	}
+		selected, err := ui.SelectOption(options, "Select a command:")
+		if err != nil {
+			return err
+		}
 
-	switch selected {
-	case 0:
-		return commands.New(nil)
-	case 1:
-		return commands.Status(nil)
-	case 2:
-		return commands.Rebase(nil)
-	case 3:
-		return commands.Sync(nil)
-	case 4:
-		return commands.PR(nil)
-	case 5:
-		return commands.Goto(nil)
-	case 6:
-		return commands.Delete(nil)
-	case 7:
-		return commands.Config(nil)
-	case 8:
-		printUsage()
+		var cmdErr error
+		switch selected {
+		case 0:
+			cmdErr = commands.New(nil)
+		case 1:
+			cmdErr = commands.Status(nil)
+		case 2:
+			cmdErr = commands.Rebase(nil)
+		case 3:
+			cmdErr = commands.Sync(nil)
+		case 4:
+			cmdErr = commands.PR(nil)
+		case 5:
+			cmdErr = commands.Goto(nil)
+		case 6:
+			cmdErr = commands.Delete(nil)
+		case 7:
+			cmdErr = commands.Config(nil)
+		case 8:
+			printUsage()
+			return nil
+		}
+
+		// If the command returned ErrBack, loop back to main menu
+		if cmdErr == ui.ErrBack {
+			continue
+		}
+		if cmdErr != nil {
+			return cmdErr
+		}
 		return nil
 	}
-
-	return nil
 }
 
 const (

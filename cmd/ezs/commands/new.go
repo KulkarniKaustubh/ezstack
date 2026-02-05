@@ -94,12 +94,15 @@ func New(args []string) error {
 
 	if fs.NArg() == 0 && !useFromWorktree && *parent == "" {
 		// Show interactive menu with 3 options
-		choice, err := ui.SelectOption([]string{
+		choice, err := ui.SelectOptionWithBack([]string{
 			"Create a new branch (use current branch as parent)",
 			"Create a new branch (choose parent branch)",
 			"Register an existing worktree as a stack root",
 		}, "What would you like to do?")
 		if err != nil {
+			if err == ui.ErrBack {
+				return ui.ErrBack
+			}
 			return err
 		}
 		if choice == 1 {
