@@ -35,9 +35,7 @@ func main() {
 		err = commands.List(args)
 	case "status", "st":
 		err = commands.Status(args)
-	case "rebase", "rb":
-		err = commands.Rebase(args)
-	case "sync":
+	case "sync", "rebase", "rb":
 		err = commands.Sync(args)
 	case "pr":
 		err = commands.PR(args)
@@ -73,8 +71,7 @@ func runInteractiveMenu() error {
 		options := []string{
 			ui.IconNew + "  new      - Create a new branch in the stack",
 			ui.IconInfo + "  status   - Show status of current stack",
-			ui.IconSync + "  rebase   - Rebase branches in the stack",
-			ui.IconDown + "  sync     - Sync stack when parent branches are merged",
+			ui.IconSync + "  sync     - Sync stack with remote (rebase onto main)",
 			ui.IconBranch + "  pr       - Manage pull requests",
 			ui.IconArrow + "  goto     - Navigate to a branch worktree",
 			ui.IconCancel + "  delete   - Delete a branch and its worktree",
@@ -94,18 +91,16 @@ func runInteractiveMenu() error {
 		case 1:
 			cmdErr = commands.Status(nil)
 		case 2:
-			cmdErr = commands.Rebase(nil)
-		case 3:
 			cmdErr = commands.Sync(nil)
-		case 4:
+		case 3:
 			cmdErr = commands.PR(nil)
-		case 5:
+		case 4:
 			cmdErr = commands.Goto(nil)
-		case 6:
+		case 5:
 			cmdErr = commands.Delete(nil)
-		case 7:
+		case 6:
 			cmdErr = commands.Config(nil)
-		case 8:
+		case 7:
 			printUsage()
 			return nil
 		}
@@ -138,8 +133,7 @@ func printUsage() {
     new, n        Create a new branch in the stack
     list, ls      List all stacks and branches
     status, st    Show status of current stack
-    rebase, rb    Rebase branches in the stack
-    sync          Sync stack when parent branches are merged
+    sync          Sync stack with remote (rebase onto main)
     goto, go      Navigate to a branch worktree
     delete, rm    Delete a branch and its worktree
     pr            Manage pull requests
@@ -164,6 +158,9 @@ func printUsage() {
     %s# View the stack%s
     ezs status
 
+    %s# Sync with remote (after parent merged or main updated)%s
+    ezs sync
+
     %s# Create PRs for the stack%s
     ezs pr create -t "Part 1: Add feature"
 
@@ -172,7 +169,7 @@ func printUsage() {
 
 Run 'ezs <command> --help' for more information on a command.
 `, bold, reset, cyan, reset, cyan, reset, cyan, reset, cyan, reset, cyan, reset,
-		yellow, reset, yellow, reset, yellow, reset, yellow, reset, yellow, reset)
+		yellow, reset, yellow, reset, yellow, reset, yellow, reset, yellow, reset, yellow, reset)
 }
 
 func printShellInit() {
