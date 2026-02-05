@@ -556,3 +556,168 @@ func TestManager_CollectDescendants(t *testing.T) {
 		}
 	}
 }
+
+func TestManager_DetectOrphanedBranches(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	// Create a branch with worktree
+	_, err = mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"))
+	if err != nil {
+		t.Fatalf("CreateBranch failed: %v", err)
+	}
+
+	// Initially no orphaned branches
+	orphaned := mgr.DetectOrphanedBranches()
+	if len(orphaned) != 0 {
+		t.Errorf("DetectOrphanedBranches() returned %d, want 0", len(orphaned))
+	}
+
+	// Delete the worktree and git branch (simulating manual deletion)
+	exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", filepath.Join(worktreeBaseDir, "feature-a")).Run()
+	exec.Command("git", "-C", repoDir, "branch", "-D", "feature-a").Run()
+
+	// Reload manager
+	mgr, _ = NewManager(repoDir)
+	orphaned = mgr.DetectOrphanedBranches()
+	if len(orphaned) != 1 {
+		t.Errorf("DetectOrphanedBranches() returned %d, want 1", len(orphaned))
+	}
+	if len(orphaned) > 0 && orphaned[0] != "feature-a" {
+		t.Errorf("DetectOrphanedBranches() returned %q, want 'feature-a'", orphaned[0])
+	}
+}
+
+func TestManager_RemoveOrphanedBranches(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	// Create branches
+	_, err = mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"))
+	if err != nil {
+		t.Fatalf("CreateBranch failed: %v", err)
+	}
+	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"))
+	if err != nil {
+		t.Fatalf("CreateBranch failed: %v", err)
+	}
+
+	// Delete feature-a from git
+	exec.Command("git", "-C", repoDir, "worktree", "remove", filepath.Join(worktreeBaseDir, "feature-a")).Run()
+	exec.Command("git", "-C", repoDir, "branch", "-D", "feature-a").Run()
+
+	// Remove orphaned branches
+	mgr, _ = NewManager(repoDir)
+	err = mgr.RemoveOrphanedBranches([]string{"feature-a"})
+	if err != nil {
+		t.Fatalf("RemoveOrphanedBranches failed: %v", err)
+	}
+
+	// Verify feature-a is gone and feature-b's parent is now main
+	mgr, _ = NewManager(repoDir)
+	if mgr.GetBranch("feature-a") != nil {
+		t.Error("feature-a should be removed")
+	}
+	branchB := mgr.GetBranch("feature-b")
+	if branchB == nil {
+		t.Fatal("feature-b should still exist")
+	}
+	if branchB.Parent != "main" {
+		t.Errorf("feature-b parent = %q, want 'main'", branchB.Parent)
+	}
+}
+
+func TestManager_InferParent(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	// Create a chain: main -> feature-a -> feature-b
+	_, err = mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"))
+	if err != nil {
+		t.Fatalf("CreateBranch failed: %v", err)
+	}
+
+	// Add a commit to feature-a
+	exec.Command("git", "-C", filepath.Join(worktreeBaseDir, "feature-a"), "commit", "--allow-empty", "-m", "commit on a").Run()
+
+	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"))
+	if err != nil {
+		t.Fatalf("CreateBranch failed: %v", err)
+	}
+
+	// Infer parent for feature-b should be feature-a
+	mgr, _ = NewManager(repoDir)
+	parent, unambiguous, err := mgr.InferParent("feature-b")
+	if err != nil {
+		t.Fatalf("InferParent failed: %v", err)
+	}
+	if parent != "feature-a" {
+		t.Errorf("InferParent('feature-b') = %q, want 'feature-a'", parent)
+	}
+	if !unambiguous {
+		t.Error("InferParent should be unambiguous")
+	}
+
+	// Infer parent for feature-a should NOT be feature-b (child can't be parent)
+	parent, _, err = mgr.InferParent("feature-a")
+	if err != nil {
+		t.Fatalf("InferParent('feature-a') failed: %v", err)
+	}
+	if parent == "feature-b" {
+		t.Error("InferParent('feature-a') should NOT return child 'feature-b'")
+	}
+	// It should be main since that's the actual parent
+	if parent != "main" {
+		t.Errorf("InferParent('feature-a') = %q, want 'main'", parent)
+	}
+}
+
+func TestManager_AddWorktreeToStack(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("NewManager failed: %v", err)
+	}
+
+	// Create a git branch and worktree manually (simulating user doing it outside ezs)
+	wtPath := filepath.Join(worktreeBaseDir, "manual-branch")
+	exec.Command("git", "-C", repoDir, "branch", "manual-branch").Run()
+	exec.Command("git", "-C", repoDir, "worktree", "add", wtPath, "manual-branch").Run()
+
+	// Add it to stack
+	branch, err := mgr.AddWorktreeToStack("manual-branch", wtPath, "main")
+	if err != nil {
+		t.Fatalf("AddWorktreeToStack failed: %v", err)
+	}
+
+	if branch.Name != "manual-branch" {
+		t.Errorf("branch.Name = %q, want 'manual-branch'", branch.Name)
+	}
+	if branch.Parent != "main" {
+		t.Errorf("branch.Parent = %q, want 'main'", branch.Parent)
+	}
+
+	// Verify it's in a stack
+	mgr, _ = NewManager(repoDir)
+	found := mgr.GetBranch("manual-branch")
+	if found == nil {
+		t.Error("manual-branch should be in a stack")
+	}
+}

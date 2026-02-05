@@ -46,6 +46,8 @@ func main() {
 		err = commands.Delete(args)
 	case "reparent", "rp":
 		err = commands.Reparent(args)
+	case "update", "up":
+		err = commands.Update(args)
 	case "-h", "--help":
 		printUsage()
 	case "-v", "--version":
@@ -75,6 +77,7 @@ func runInteractiveMenu() error {
 			ui.IconBranch + "  pr       - Manage pull requests",
 			ui.IconArrow + "  goto     - Navigate to a branch worktree",
 			ui.IconUp + "  reparent - Change the parent of a branch",
+			ui.IconSync + "  update   - Sync config with git (detect changes)",
 			ui.IconCancel + "  delete   - Delete a branch and its worktree",
 			ui.IconBullet + "  config   - Configure ezstack",
 			ui.IconInfo + "  help     - Show help",
@@ -100,10 +103,12 @@ func runInteractiveMenu() error {
 		case 5:
 			cmdErr = commands.Reparent(nil)
 		case 6:
-			cmdErr = commands.Delete(nil)
+			cmdErr = commands.Update(nil)
 		case 7:
-			cmdErr = commands.Config(nil)
+			cmdErr = commands.Delete(nil)
 		case 8:
+			cmdErr = commands.Config(nil)
+		case 9:
 			printUsage()
 			return nil
 		}
@@ -131,6 +136,7 @@ func printUsage() {
     sync          Sync stack with remote (rebase onto main)
     goto, go      Navigate to a branch worktree
     reparent, rp  Change the parent of a branch
+    update, up    Sync config with git (detect manual changes)
     delete, rm    Delete a branch and its worktree
     pr            Manage pull requests
     config        Configure ezstack

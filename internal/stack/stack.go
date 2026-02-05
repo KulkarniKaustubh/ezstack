@@ -628,6 +628,246 @@ func (m *Manager) GetUnregisteredWorktrees() ([]git.Worktree, error) {
 	return unregistered, nil
 }
 
+// UpdateResult contains the results of an update operation
+type UpdateResult struct {
+	// Branches that were removed from config because they no longer exist in git
+	RemovedBranches []string
+	// Worktrees that were discovered and added to stacks
+	AddedBranches []*config.Branch
+	// Branches whose parent was updated based on merge-base analysis
+	ReparentedBranches []ReparentInfo
+}
+
+// ReparentInfo contains info about a branch that was reparented
+type ReparentInfo struct {
+	BranchName string
+	OldParent  string
+	NewParent  string
+}
+
+// DetectOrphanedBranches finds branches in config that no longer exist in git
+func (m *Manager) DetectOrphanedBranches() []string {
+	var orphaned []string
+	for _, stack := range m.stackConfig.Stacks {
+		for _, branch := range stack.Branches {
+			// Skip merged branches - they're expected to not exist
+			if branch.IsMerged {
+				continue
+			}
+			// Check if branch exists in git
+			if !m.git.BranchExists(branch.Name) {
+				orphaned = append(orphaned, branch.Name)
+			}
+		}
+	}
+	return orphaned
+}
+
+// RemoveOrphanedBranches removes branches from config that no longer exist in git
+func (m *Manager) RemoveOrphanedBranches(branchNames []string) error {
+	for _, branchName := range branchNames {
+		// Find and remove from stack
+		for stackName, stack := range m.stackConfig.Stacks {
+			for i, branch := range stack.Branches {
+				if branch.Name == branchName {
+					// Update children to point to this branch's parent
+					children := m.GetChildren(branchName)
+					for _, child := range children {
+						child.Parent = branch.Parent
+						child.BaseBranch = branch.Parent
+					}
+					// Remove from slice
+					stack.Branches = append(stack.Branches[:i], stack.Branches[i+1:]...)
+					// If stack is now empty, remove it
+					if len(stack.Branches) == 0 {
+						delete(m.stackConfig.Stacks, stackName)
+					}
+					break
+				}
+			}
+		}
+	}
+	return m.stackConfig.Save(m.repoDir)
+}
+
+// InferParent uses merge-base to determine the most likely parent for a branch
+// Returns the parent branch name and whether it was unambiguous
+func (m *Manager) InferParent(branchName string) (string, bool, error) {
+	// Get all potential parents: main/master + all branches in stacks
+	var candidates []string
+
+	// Add main/master
+	baseBranch := m.config.GetBaseBranch(m.repoDir)
+	candidates = append(candidates, baseBranch)
+
+	// Build a set of descendants of this branch (children can't be parents)
+	descendants := make(map[string]bool)
+	descList := m.collectDescendants(branchName)
+	for _, d := range descList {
+		descendants[d.Name] = true
+	}
+
+	// Add all branches from stacks, excluding descendants
+	for _, stack := range m.stackConfig.Stacks {
+		for _, branch := range stack.Branches {
+			if branch.Name != branchName && !branch.IsMerged && !descendants[branch.Name] {
+				candidates = append(candidates, branch.Name)
+			}
+		}
+	}
+
+	if len(candidates) == 0 {
+		return baseBranch, true, nil
+	}
+
+	// Find the candidate with the closest merge-base (fewest commits away)
+	type candidateInfo struct {
+		name      string
+		mergeBase string
+		distance  int // commits from merge-base to branch
+	}
+
+	var infos []candidateInfo
+	branchCommit, err := m.git.GetBranchCommit(branchName)
+	if err != nil {
+		return baseBranch, true, nil
+	}
+
+	for _, candidate := range candidates {
+		mergeBase, err := m.git.GetMergeBase(branchName, candidate)
+		if err != nil {
+			continue
+		}
+		mergeBase = strings.TrimSpace(mergeBase)
+
+		// Count commits from merge-base to branch
+		commits, err := m.git.GetCommitsBetween(mergeBase, branchCommit)
+		if err != nil {
+			continue
+		}
+
+		infos = append(infos, candidateInfo{
+			name:      candidate,
+			mergeBase: mergeBase,
+			distance:  len(commits),
+		})
+	}
+
+	if len(infos) == 0 {
+		return baseBranch, true, nil
+	}
+
+	// Find the candidate with the smallest distance (closest merge-base)
+	best := infos[0]
+	ambiguous := false
+	for _, info := range infos[1:] {
+		if info.distance < best.distance {
+			best = info
+			ambiguous = false
+		} else if info.distance == best.distance && info.name != best.name {
+			// Same distance - check if merge-base is the same
+			if info.mergeBase != best.mergeBase {
+				ambiguous = true
+			} else {
+				// Same merge-base - prefer the more specific branch (not main)
+				if m.IsMainBranch(best.name) && !m.IsMainBranch(info.name) {
+					best = info
+				}
+			}
+		}
+	}
+
+	return best.name, !ambiguous, nil
+}
+
+// VerifyParentRelationships checks if current parent relationships match merge-base reality
+// Returns branches where the inferred parent differs from the stored parent
+func (m *Manager) VerifyParentRelationships() []ReparentInfo {
+	var mismatches []ReparentInfo
+
+	for _, stack := range m.stackConfig.Stacks {
+		for _, branch := range stack.Branches {
+			if branch.IsMerged {
+				continue
+			}
+
+			inferredParent, _, err := m.InferParent(branch.Name)
+			if err != nil {
+				continue
+			}
+
+			// Check if inferred parent differs from stored parent
+			if inferredParent != branch.Parent {
+				// Additional check: is the inferred parent actually "closer" than current?
+				// This handles cases where the branch was intentionally reparented
+				currentMergeBase, err1 := m.git.GetMergeBase(branch.Name, branch.Parent)
+				inferredMergeBase, err2 := m.git.GetMergeBase(branch.Name, inferredParent)
+
+				if err1 == nil && err2 == nil {
+					currentMergeBase = strings.TrimSpace(currentMergeBase)
+					inferredMergeBase = strings.TrimSpace(inferredMergeBase)
+
+					// Only suggest reparent if inferred merge-base is different and "better"
+					if currentMergeBase != inferredMergeBase {
+						branchCommit, _ := m.git.GetBranchCommit(branch.Name)
+						currentCommits, _ := m.git.GetCommitsBetween(currentMergeBase, branchCommit)
+						inferredCommits, _ := m.git.GetCommitsBetween(inferredMergeBase, branchCommit)
+
+						if len(inferredCommits) < len(currentCommits) {
+							mismatches = append(mismatches, ReparentInfo{
+								BranchName: branch.Name,
+								OldParent:  branch.Parent,
+								NewParent:  inferredParent,
+							})
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return mismatches
+}
+
+// AddWorktreeToStack adds an unregistered worktree to a stack with the specified parent
+func (m *Manager) AddWorktreeToStack(branchName, worktreePath, parentName string) (*config.Branch, error) {
+	// Check if already registered
+	if existing := m.GetBranch(branchName); existing != nil {
+		return nil, fmt.Errorf("branch '%s' is already registered", branchName)
+	}
+
+	// Create branch metadata
+	branch := &config.Branch{
+		Name:         branchName,
+		Parent:       parentName,
+		WorktreePath: worktreePath,
+		BaseBranch:   parentName,
+	}
+
+	// Find or create the stack
+	stackName := m.findStackForBranch(parentName)
+	if stackName == "" {
+		// Parent is main/master - create new stack
+		stackName = branchName
+		m.stackConfig.Stacks[stackName] = &config.Stack{
+			Name:     stackName,
+			Branches: []*config.Branch{branch},
+		}
+	} else {
+		// Add to existing stack
+		m.stackConfig.Stacks[stackName].Branches = append(
+			m.stackConfig.Stacks[stackName].Branches,
+			branch,
+		)
+	}
+
+	if err := m.stackConfig.Save(m.repoDir); err != nil {
+		return nil, fmt.Errorf("failed to save stack config: %w", err)
+	}
+
+	return branch, nil
+}
+
 // MarkBranchMerged marks a branch as merged - deletes worktree and git branch but keeps metadata in config
 // This allows merged branches to still show up in ezs ls/status with strikethrough
 func (m *Manager) MarkBranchMerged(branchName string) error {

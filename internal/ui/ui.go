@@ -418,12 +418,72 @@ func truncateBranchName(name string, maxWidth int) string {
 	return name[:maxWidth-3] + "..."
 }
 
+// sortBranchesTopologically sorts branches so parents come before children
+// This ensures the display shows the correct parent -> child order
+func sortBranchesTopologically(branches []*config.Branch) []*config.Branch {
+	if len(branches) <= 1 {
+		return branches
+	}
+
+	// Build a map of branch name -> branch for quick lookup
+	branchMap := make(map[string]*config.Branch)
+	for _, b := range branches {
+		branchMap[b.Name] = b
+	}
+
+	// Build children map
+	children := make(map[string][]*config.Branch)
+	var roots []*config.Branch
+
+	for _, b := range branches {
+		// If parent is not in this stack (e.g., main or external), it's a root
+		if _, exists := branchMap[b.Parent]; !exists {
+			roots = append(roots, b)
+		} else {
+			children[b.Parent] = append(children[b.Parent], b)
+		}
+	}
+
+	// BFS to build sorted list
+	var sorted []*config.Branch
+	queue := roots
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		sorted = append(sorted, current)
+
+		// Add children to queue
+		for _, child := range children[current.Name] {
+			queue = append(queue, child)
+		}
+	}
+
+	// If we didn't get all branches (shouldn't happen), append remaining
+	if len(sorted) < len(branches) {
+		inSorted := make(map[string]bool)
+		for _, b := range sorted {
+			inSorted[b.Name] = true
+		}
+		for _, b := range branches {
+			if !inSorted[b.Name] {
+				sorted = append(sorted, b)
+			}
+		}
+	}
+
+	return sorted
+}
+
 // PrintStackWithStatus prints a visual representation of a stack with PR/CI status
 // Column layout:
 // - ezs ls (statusMap=nil): 4 columns - branch name, pr number, parent branch, remote tag
 // - ezs status: 5 columns - branch name, pr number, ci status, parent branch, remote tag
 func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap map[string]*BranchStatus) {
 	fmt.Fprintf(os.Stderr, "\n%s%s Stack: %s%s\n\n", Bold, Cyan, stack.Name, Reset)
+
+	// Sort branches topologically (parent -> child order)
+	sortedBranches := sortBranchesTopologically(stack.Branches)
 
 	// Calculate max widths for alignment using runewidth
 	maxNameWidth := 0
@@ -432,7 +492,7 @@ func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap m
 	maxParentWidth := 0
 	hasRemoteBranches := false
 
-	for _, branch := range stack.Branches {
+	for _, branch := range sortedBranches {
 		name := truncateBranchName(branch.Name, MaxBranchNameWidth)
 		if w := runewidth.StringWidth(name); w > maxNameWidth {
 			maxNameWidth = w
@@ -460,7 +520,7 @@ func PrintStackWithStatus(stack *config.Stack, currentBranch string, statusMap m
 		}
 	}
 
-	for i, branch := range stack.Branches {
+	for i, branch := range sortedBranches {
 		// Check if branch is merged (from cached state or live status)
 		isMerged := branch.IsMerged
 		if !isMerged && statusMap != nil {
@@ -704,6 +764,12 @@ func Confirm(prompt string) bool {
 // Returns true if user confirms, false otherwise
 // Yes is selected by default
 func ConfirmTUI(prompt string) bool {
+	// Check if stdin is a terminal - if not, use simple confirm
+	// This enables tests to pipe input
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return Confirm(prompt)
+	}
+
 	// Save terminal state and set raw mode
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
@@ -808,6 +874,12 @@ func ConfirmTUI(prompt string) bool {
 // Returns true if user confirms, false otherwise
 // defaultYes controls which option is selected by default
 func ConfirmTUIWithDefault(prompt string, defaultYes bool) bool {
+	// Check if stdin is a terminal - if not, use simple confirm
+	// This enables tests to pipe input
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		return Confirm(prompt)
+	}
+
 	// Save terminal state and set raw mode
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
