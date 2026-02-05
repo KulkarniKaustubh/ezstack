@@ -56,7 +56,7 @@ type CheckStatus struct {
 }
 
 // CreatePR creates a new pull request
-func (c *Client) CreatePR(title, body, head, base string) (*PR, error) {
+func (c *Client) CreatePR(title, body, head, base string, draft bool) (*PR, error) {
 	args := []string{
 		"pr", "create",
 		"--title", title,
@@ -64,6 +64,10 @@ func (c *Client) CreatePR(title, body, head, base string) (*PR, error) {
 		"--base", base,
 		"--head", head,
 		"--json", "number,url,title,body,state,baseRefName,headRefName",
+	}
+
+	if draft {
+		args = append(args, "--draft")
 	}
 
 	output, err := c.runGH(args...)
@@ -239,25 +243,35 @@ func generateStackSection(stack *config.Stack, currentBranch string) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n---\n## PR Stack\n\n")
 
-	for i, branch := range stack.Branches {
-		pointer := "  "
-		if branch.Name == currentBranch {
-			pointer = "➡️"
-		}
-		if branch.PRUrl != "" {
-			sb.WriteString(fmt.Sprintf("%s %d. [%s](%s)\n", pointer, i+1, branch.Name, branch.PRUrl))
-		} else {
-			sb.WriteString(fmt.Sprintf("%s %d. `%s` (no PR yet)\n", pointer, i+1, branch.Name))
+	// Calculate max branch name length for alignment
+	maxNameLen := 0
+	for _, branch := range stack.Branches {
+		if len(branch.Name) > maxNameLen {
+			maxNameLen = len(branch.Name)
 		}
 	}
-	sb.WriteString("\n*Managed by [ezstack](https://github.com/ezstack/ezstack)*\n")
+
+	for i, branch := range stack.Branches {
+		pointer := "   "
+		if branch.Name == currentBranch {
+			pointer = "→ "
+		}
+
+		// Pad branch name for alignment (using spaces in markdown)
+		if branch.PRUrl != "" {
+			sb.WriteString(fmt.Sprintf("%s%d. [%s](%s)\n", pointer, i+1, branch.Name, branch.PRUrl))
+		} else {
+			sb.WriteString(fmt.Sprintf("%s%d. `%s` _(no PR yet)_\n", pointer, i+1, branch.Name))
+		}
+	}
+	sb.WriteString("\n_This stack was created by `ezstack` (beta)_\n")
 
 	return sb.String()
 }
 
 func updateBodyWithStack(body, stackSection string, isCurrent bool) string {
-	// Remove existing stack section
-	re := regexp.MustCompile(`(?s)\n*---\n## (?:📚 )?PR Stack\n.*?\*Managed by \[ezstack\].*?\*\n?`)
+	// Remove existing stack section (matches various footer formats: *text*, _text_)
+	re := regexp.MustCompile(`(?s)\n*---\n## (?:📚 )?PR Stack\n.*?[_*](?:Managed by|This stack was created by).*?ezstack.*?[_*]\n?`)
 	body = re.ReplaceAllString(body, "")
 
 	// Add new stack section

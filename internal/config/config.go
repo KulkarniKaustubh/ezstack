@@ -26,6 +26,8 @@ type RepoConfig struct {
 	DefaultBaseBranch string `json:"default_base_branch,omitempty"`
 	// CdAfterNew if true, outputs cd command after creating new worktree
 	CdAfterNew *bool `json:"cd_after_new,omitempty"`
+	// AutoDraftWipCommits if true, auto-creates draft PRs when commit starts with "wip"
+	AutoDraftWipCommits *bool `json:"auto_draft_wip_commits,omitempty"`
 }
 
 // GetRepoConfig returns the configuration for a specific repo path

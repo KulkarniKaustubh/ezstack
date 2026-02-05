@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/ezstack/ezstack/internal/config"
 	"github.com/ezstack/ezstack/internal/git"
@@ -190,8 +191,8 @@ func prCreateAll(currentStack *config.Stack) error {
 			continue
 		}
 
-		// Create the PR
-		pr, err := gh.CreatePR(b.Name, "", b.Name, b.BaseBranch)
+		// Create the PR (not as draft for bulk creation)
+		pr, err := gh.CreatePR(b.Name, "", b.Name, b.BaseBranch, false)
 		if err != nil {
 			ui.Warn(fmt.Sprintf("Failed to create PR for %s: %v", b.Name, err))
 			continue
@@ -247,15 +248,18 @@ func prCreate(args []string) error {
 %sOPTIONS%s
     -t, --title <title>    PR title (defaults to branch name)
     -b, --body <body>      PR body/description
+    -d, --draft            Create as draft PR
     -h, --help             Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	// Long flags
 	title := fs.String("title", "", "PR title")
 	body := fs.String("body", "", "PR body")
+	draft := fs.Bool("draft", false, "Create as draft PR")
 	// Short flags
 	titleShort := fs.String("t", "", "PR title (short)")
 	bodyShort := fs.String("b", "", "PR body (short)")
+	draftShort := fs.Bool("d", false, "Create as draft PR (short)")
 	helpFlag := fs.Bool("h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -275,6 +279,9 @@ func prCreate(args []string) error {
 	}
 	if *bodyShort != "" {
 		*body = *bodyShort
+	}
+	if *draftShort {
+		*draft = true
 	}
 
 	cwd, err := os.Getwd()
@@ -310,9 +317,53 @@ func prCreate(args []string) error {
 		prTitle = branch.Name
 	}
 
+	// Check for WIP commit and auto-draft setting
+	isDraft := *draft
+	if !isDraft {
+		commitMsg, err := g.GetLastCommitMessage()
+		if err == nil && startsWithWIP(commitMsg) {
+			// Check if auto-draft is enabled for this repo
+			cfg, _ := config.Load()
+			mainWorktree, _ := g.GetMainWorktree()
+			if mainWorktree == "" {
+				mainWorktree = cwd
+			}
+			repoCfg := cfg.GetRepoConfig(mainWorktree)
+
+			if repoCfg != nil && repoCfg.AutoDraftWipCommits != nil && *repoCfg.AutoDraftWipCommits {
+				// Auto-draft is enabled
+				isDraft = true
+				ui.Info("Auto-creating as draft (commit starts with 'wip')")
+			} else {
+				// Ask user if they want to create as draft
+				if ui.ConfirmTUI("Commit starts with 'wip'. Create as draft PR?") {
+					isDraft = true
+					// Ask if they want to save this preference
+					if ui.ConfirmTUI("Always auto-draft PRs when commit starts with 'wip'?") {
+						if repoCfg == nil {
+							repoCfg = &config.RepoConfig{RepoPath: mainWorktree}
+						}
+						autoDraft := true
+						repoCfg.AutoDraftWipCommits = &autoDraft
+						cfg.SetRepoConfig(mainWorktree, repoCfg)
+						if err := cfg.Save(); err != nil {
+							ui.Warn(fmt.Sprintf("Failed to save config: %v", err))
+						} else {
+							ui.Success("Saved preference: auto-draft WIP commits")
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Show what we're about to do and ask for confirmation
-	ui.Info(fmt.Sprintf("Will create PR '%s' with base branch: %s", prTitle, branch.BaseBranch))
-	if !ui.ConfirmTUI("Create pull request") {
+	prType := "PR"
+	if isDraft {
+		prType = "draft PR"
+	}
+	ui.Info(fmt.Sprintf("Will create %s '%s' with base branch: %s", prType, prTitle, branch.BaseBranch))
+	if !ui.ConfirmTUI(fmt.Sprintf("Create %s", prType)) {
 		ui.Warn("Cancelled")
 		return nil
 	}
@@ -324,8 +375,8 @@ func prCreate(args []string) error {
 	}
 
 	// Create the PR
-	ui.Info(fmt.Sprintf("Creating PR with base branch: %s", branch.BaseBranch))
-	pr, err := gh.CreatePR(prTitle, *body, branch.Name, branch.BaseBranch)
+	ui.Info(fmt.Sprintf("Creating %s with base branch: %s", prType, branch.BaseBranch))
+	pr, err := gh.CreatePR(prTitle, *body, branch.Name, branch.BaseBranch, isDraft)
 	if err != nil {
 		return fmt.Errorf("failed to create PR: %w", err)
 	}
@@ -350,7 +401,7 @@ func prCreate(args []string) error {
 	}
 	stackCfg.Save(mainWorktree)
 
-	ui.Success(fmt.Sprintf("Created PR #%d: %s", pr.Number, pr.URL))
+	ui.Success(fmt.Sprintf("Created %s #%d: %s", prType, pr.Number, pr.URL))
 
 	// Update stack description in all PRs
 	ui.Info("Updating PR stack descriptions...")
@@ -359,6 +410,12 @@ func prCreate(args []string) error {
 	}
 
 	return nil
+}
+
+// startsWithWIP checks if a string starts with "wip" (case-insensitive)
+func startsWithWIP(s string) bool {
+	s = strings.TrimSpace(strings.ToLower(s))
+	return strings.HasPrefix(s, "wip")
 }
 
 func prUpdate(args []string) error {
