@@ -984,13 +984,31 @@ func PromptRequired(prompt string) string {
 // SelectOption uses fzf to select from a list of options
 // Returns the 0-based index of the selected option
 func SelectOption(options []string, prompt string) (int, error) {
+	return SelectOptionWithSuggested(options, prompt, -1)
+}
+
+// SelectOptionWithSuggested uses fzf to select from a list of options
+// suggestedIdx is the 0-based index of the suggested option (-1 for none)
+// The suggested option will be marked with "(suggested)" and appear first
+// Returns the 0-based index of the selected option
+func SelectOptionWithSuggested(options []string, prompt string, suggestedIdx int) (int, error) {
 	if len(options) == 0 {
 		return -1, fmt.Errorf("no options to select from")
 	}
 
 	var input strings.Builder
-	for i, opt := range options {
-		input.WriteString(fmt.Sprintf("%d. %s\n", i+1, opt))
+	// If there's a suggested option, put it first
+	if suggestedIdx >= 0 && suggestedIdx < len(options) {
+		input.WriteString(fmt.Sprintf("%d. %s %s(suggested)%s\n", suggestedIdx+1, options[suggestedIdx], Gray, Reset))
+		for i, opt := range options {
+			if i != suggestedIdx {
+				input.WriteString(fmt.Sprintf("%d. %s\n", i+1, opt))
+			}
+		}
+	} else {
+		for i, opt := range options {
+			input.WriteString(fmt.Sprintf("%d. %s\n", i+1, opt))
+		}
 	}
 
 	selected, err := runFzf(input.String(), prompt)

@@ -175,12 +175,22 @@ func prCreateAll(currentStack *config.Stack) error {
 			continue
 		}
 		if b.PRNumber == 0 {
+			// Check if branch has commits ahead of its base
+			commitsAhead, err := g.GetCommitsAhead(b.Name, b.BaseBranch)
+			if err != nil {
+				ui.Warn(fmt.Sprintf("Could not check commits for %s: %v (skipping)", b.Name, err))
+				continue
+			}
+			if commitsAhead == 0 {
+				ui.Warn(fmt.Sprintf("Skipping %s: no commits ahead of '%s'", b.Name, b.BaseBranch))
+				continue
+			}
 			branchesToCreate = append(branchesToCreate, b)
 		}
 	}
 
 	if len(branchesToCreate) == 0 {
-		ui.Info("All branches already have PRs")
+		ui.Info("No branches to create PRs for (all have PRs or no commits)")
 		return nil
 	}
 
@@ -314,6 +324,15 @@ func prCreate(args []string) error {
 		return err
 	}
 
+	// Check if there are any commits on this branch that aren't in the base branch
+	commitsAhead, err := g.GetCommitsAhead(branch.Name, branch.BaseBranch)
+	if err != nil {
+		// If we can't determine, continue anyway (might be a new branch)
+		ui.Warn(fmt.Sprintf("Could not check commits: %v", err))
+	} else if commitsAhead == 0 {
+		return fmt.Errorf("no commits to create PR from. This branch has no commits ahead of '%s'.\nPlease make at least one commit first", branch.BaseBranch)
+	}
+
 	// Get remote URL for GitHub client
 	remoteURL, err := g.GetRemote("origin")
 	if err != nil {
@@ -350,40 +369,51 @@ func prCreate(args []string) error {
 		}
 	}
 
-	// Check for WIP commit and auto-draft setting
+	// Determine if commit starts with WIP for default suggestion
 	isDraft := *draft
 	if !isDraft {
 		commitMsg, err := g.GetLastCommitMessage()
-		if err == nil && startsWithWIP(commitMsg) {
-			// Check if auto-draft is enabled for this repo
-			cfg, _ := config.Load()
-			mainWorktree, _ := g.GetMainWorktree()
-			if mainWorktree == "" {
-				mainWorktree = cwd
-			}
-			repoCfg := cfg.GetRepoConfig(mainWorktree)
+		isWipCommit := err == nil && startsWithWIP(commitMsg)
 
-			if repoCfg != nil && repoCfg.AutoDraftWipCommits != nil && *repoCfg.AutoDraftWipCommits {
-				// Auto-draft is enabled
-				isDraft = true
-				ui.Info("Auto-creating as draft (commit starts with 'wip')")
-			} else {
-				// Ask user if they want to create as draft
-				if ui.ConfirmTUI("Commit starts with 'wip'. Create as draft PR?") {
-					isDraft = true
-					// Ask if they want to save this preference
-					if ui.ConfirmTUI("Always auto-draft PRs when commit starts with 'wip'?") {
-						if repoCfg == nil {
-							repoCfg = &config.RepoConfig{RepoPath: mainWorktree}
-						}
-						autoDraft := true
-						repoCfg.AutoDraftWipCommits = &autoDraft
-						cfg.SetRepoConfig(mainWorktree, repoCfg)
-						if err := cfg.Save(); err != nil {
-							ui.Warn(fmt.Sprintf("Failed to save config: %v", err))
-						} else {
-							ui.Success("Saved preference: auto-draft WIP commits")
-						}
+		// Check if auto-draft is enabled for this repo
+		cfg, _ := config.Load()
+		mainWorktree, _ := g.GetMainWorktree()
+		if mainWorktree == "" {
+			mainWorktree = cwd
+		}
+		repoCfg := cfg.GetRepoConfig(mainWorktree)
+
+		if isWipCommit && repoCfg != nil && repoCfg.AutoDraftWipCommits != nil && *repoCfg.AutoDraftWipCommits {
+			// Auto-draft is enabled
+			isDraft = true
+			ui.Info("Auto-creating as draft (commit starts with 'wip')")
+		} else {
+			// Ask user to choose PR type
+			// Suggest Draft if commit starts with wip
+			suggestedIdx := -1
+			if isWipCommit {
+				suggestedIdx = 0 // Draft is index 0
+			}
+			prTypeOptions := []string{"Draft", "Ready for review"}
+			choice, err := ui.SelectOptionWithSuggested(prTypeOptions, "Choose PR Type", suggestedIdx)
+			if err != nil {
+				return err
+			}
+			isDraft = choice == 0
+
+			// If user chose draft and commit starts with wip, offer to save preference
+			if isDraft && isWipCommit {
+				if ui.ConfirmTUI("Always auto-draft PRs when commit starts with 'wip'?") {
+					if repoCfg == nil {
+						repoCfg = &config.RepoConfig{RepoPath: mainWorktree}
+					}
+					autoDraft := true
+					repoCfg.AutoDraftWipCommits = &autoDraft
+					cfg.SetRepoConfig(mainWorktree, repoCfg)
+					if err := cfg.Save(); err != nil {
+						ui.Warn(fmt.Sprintf("Failed to save config: %v", err))
+					} else {
+						ui.Success("Saved preference: auto-draft WIP commits")
 					}
 				}
 			}
@@ -401,10 +431,43 @@ func prCreate(args []string) error {
 		return nil
 	}
 
-	// Push the branch first
+	// Fetch to get latest remote state before checking divergence
+	if err := g.Fetch(); err != nil {
+		ui.Warn(fmt.Sprintf("Could not fetch from remote: %v", err))
+	}
+
+	// Check if remote branch exists and has diverged
+	hasDiverged, localAhead, remoteBehind, err := g.HasDivergedFromOrigin(branch.Name)
+	if err != nil {
+		ui.Warn(fmt.Sprintf("Could not check remote branch status: %v", err))
+	}
+
+	// Push the branch
 	ui.Info("Pushing branch to remote...")
-	if err := g.PushSetUpstream(); err != nil {
-		return fmt.Errorf("failed to push: %w", err)
+	if hasDiverged || remoteBehind > 0 {
+		// Remote branch exists with different commits - need force push
+		if hasDiverged {
+			ui.Warn(fmt.Sprintf("Remote branch '%s' has diverged (local: %d ahead, remote: %d ahead)", branch.Name, localAhead, remoteBehind))
+		} else {
+			ui.Warn(fmt.Sprintf("Remote branch '%s' is ahead by %d commit(s)", branch.Name, remoteBehind))
+		}
+		if !ui.ConfirmTUI("Force push to overwrite remote branch?") {
+			ui.Warn("Cancelled - cannot create PR without pushing")
+			return nil
+		}
+		if err := g.PushForce(); err != nil {
+			return fmt.Errorf("failed to force push: %w", err)
+		}
+	} else if g.RemoteBranchExists(branch.Name) {
+		// Remote exists and local is ahead or in sync - regular push should work
+		if err := g.Push(false); err != nil {
+			return fmt.Errorf("failed to push: %w", err)
+		}
+	} else {
+		// Remote doesn't exist - set upstream
+		if err := g.PushSetUpstream(); err != nil {
+			return fmt.Errorf("failed to push: %w", err)
+		}
 	}
 
 	// Create the PR
