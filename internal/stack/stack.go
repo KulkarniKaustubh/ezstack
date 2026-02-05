@@ -2,6 +2,7 @@ package stack
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -766,6 +767,77 @@ func (m *Manager) RemoveOrphanedBranches(branchNames []string) error {
 
 				// Remove from cache
 				delete(cache.Branches, branchName)
+
+				break
+			}
+		}
+	}
+
+	// Save cache
+	cache.Save(m.repoDir)
+
+	return m.stackConfig.Save(m.repoDir)
+}
+
+// MissingWorktreeInfo contains info about a branch whose worktree was removed
+type MissingWorktreeInfo struct {
+	BranchName   string
+	WorktreePath string
+}
+
+// DetectMissingWorktrees finds branches whose worktree directories no longer exist on disk
+// This can happen when a user manually removes a worktree with `rm -rf`
+func (m *Manager) DetectMissingWorktrees() []MissingWorktreeInfo {
+	var missing []MissingWorktreeInfo
+	for _, stack := range m.stackConfig.Stacks {
+		for _, branch := range stack.Branches {
+			// Skip merged branches and remote branches (they don't have local worktrees)
+			if branch.IsMerged || branch.IsRemote {
+				continue
+			}
+			// Skip branches without a worktree path
+			if branch.WorktreePath == "" {
+				continue
+			}
+			// Check if the worktree directory exists
+			if _, err := os.Stat(branch.WorktreePath); os.IsNotExist(err) {
+				missing = append(missing, MissingWorktreeInfo{
+					BranchName:   branch.Name,
+					WorktreePath: branch.WorktreePath,
+				})
+			}
+		}
+	}
+	return missing
+}
+
+// HandleMissingWorktrees cleans up branches whose worktrees were manually removed
+// It removes the branches from the stack config (git worktree prune should be called first)
+func (m *Manager) HandleMissingWorktrees(branches []MissingWorktreeInfo) error {
+	if len(branches) == 0 {
+		return nil
+	}
+
+	// Load cache for repopulation
+	cache, _ := config.LoadCacheConfig(m.repoDir)
+
+	for _, info := range branches {
+		// Remove the branch from the stack config
+		for stackName, stack := range m.stackConfig.Stacks {
+			if stack.HasBranch(info.BranchName) {
+				// Remove branch (children are automatically reparented in tree)
+				stack.RemoveBranch(info.BranchName)
+
+				// Repopulate branches from tree
+				stack.PopulateBranchesWithCache(cache)
+
+				// If stack is now empty, remove it
+				if len(stack.Tree) == 0 {
+					delete(m.stackConfig.Stacks, stackName)
+				}
+
+				// Remove from cache
+				delete(cache.Branches, info.BranchName)
 
 				break
 			}

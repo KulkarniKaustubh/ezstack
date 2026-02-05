@@ -27,14 +27,13 @@ func Update(args []string) error {
     -h, --help        Show this help message
 
 %sDESCRIPTION%s
-    Scans git worktrees and branches to:
-    
-    1. Remove branches from config that no longer exist in git
-    2. Add untracked worktrees to stacks (auto-detects parent via merge-base)
-    3. Detect if parent relationships have changed (e.g., after manual rebase)
+    Syncs ezstack config with the actual state of git worktrees:
 
-    After running update, all ezs commands (ls, status, sync, etc.) will
-    work correctly with the current git state.
+    • Removes branches from config if their worktree folder was deleted
+    • Removes branches from config if the git branch no longer exists
+    • Offers to add worktrees that exist but aren't tracked by ezstack
+
+    After running update, all ezs commands will work correctly.
 
 %sEXAMPLES%s
     ezs update              Interactive mode - confirm each change
@@ -84,27 +83,40 @@ func Update(args []string) error {
 	var result stack.UpdateResult
 	hasChanges := false
 
-	// Step 1: Detect orphaned branches (in config but not in git)
-	orphaned := mgr.DetectOrphanedBranches()
-	if len(orphaned) > 0 {
-		hasChanges = true
-		ui.Warn(fmt.Sprintf("Found %d orphaned branch(es) in config:", len(orphaned)))
-		for _, name := range orphaned {
-			fmt.Fprintf(os.Stderr, "  • %s (no longer exists in git)\n", name)
-		}
+	// Step 1: Prune stale git worktrees first (cleans up after manual rm)
+	g.PruneWorktrees()
 
+	// Step 2: Remove branches from config whose worktrees no longer exist
+	missingWorktrees := mgr.DetectMissingWorktrees()
+	if len(missingWorktrees) > 0 {
+		hasChanges = true
+		for _, info := range missingWorktrees {
+			ui.Info(fmt.Sprintf("Removing '%s' from config (worktree deleted: %s)", info.BranchName, info.WorktreePath))
+			result.RemovedBranches = append(result.RemovedBranches, info.BranchName)
+		}
 		if !dryRun {
-			if autoMode || ui.ConfirmTUI("Remove these branches from config?") {
-				if err := mgr.RemoveOrphanedBranches(orphaned); err != nil {
-					return fmt.Errorf("failed to remove orphaned branches: %w", err)
-				}
-				result.RemovedBranches = orphaned
-				ui.Success(fmt.Sprintf("Removed %d orphaned branch(es)", len(orphaned)))
+			if err := mgr.HandleMissingWorktrees(missingWorktrees); err != nil {
+				return fmt.Errorf("failed to clean up missing worktrees: %w", err)
 			}
 		}
 	}
 
-	// Step 2: Detect untracked worktrees
+	// Step 3: Remove branches from config that no longer exist in git
+	orphaned := mgr.DetectOrphanedBranches()
+	if len(orphaned) > 0 {
+		hasChanges = true
+		for _, name := range orphaned {
+			ui.Info(fmt.Sprintf("Removing '%s' from config (branch deleted from git)", name))
+			result.RemovedBranches = append(result.RemovedBranches, name)
+		}
+		if !dryRun {
+			if err := mgr.RemoveOrphanedBranches(orphaned); err != nil {
+				return fmt.Errorf("failed to remove orphaned branches: %w", err)
+			}
+		}
+	}
+
+	// Step 4: Detect untracked worktrees (exist in git but not in config)
 	untracked, err := mgr.GetUnregisteredWorktrees()
 	if err != nil {
 		return fmt.Errorf("failed to get unregistered worktrees: %w", err)

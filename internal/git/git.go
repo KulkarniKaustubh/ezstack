@@ -364,6 +364,22 @@ func (g *Git) PushForce() error {
 	return g.RunInteractive("push", "--force-with-lease", "origin", branch)
 }
 
+// PruneWorktrees prunes stale worktree metadata from git
+func (g *Git) PruneWorktrees() error {
+	_, err := g.run("worktree", "prune")
+	return err
+}
+
+// DeleteBranch deletes a local git branch
+func (g *Git) DeleteBranch(branchName string, force bool) error {
+	flag := "-d"
+	if force {
+		flag = "-D"
+	}
+	_, err := g.run("branch", flag, branchName)
+	return err
+}
+
 // RemoveWorktree removes a worktree and optionally deletes the branch
 func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName string) error {
 	// Check if the worktree directory exists
