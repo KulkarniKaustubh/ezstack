@@ -99,6 +99,9 @@ func configSet(key, value string) error {
 			return fmt.Errorf("worktree_base_dir is a per-repo setting: %w", err)
 		}
 
+		// Expand ~ in path
+		value = helpers.ExpandPath(value)
+
 		if !filepath.IsAbs(value) {
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -107,6 +110,11 @@ func configSet(key, value string) error {
 			value = filepath.Join(cwd, value)
 		}
 		value = filepath.Clean(value)
+
+		// Validate: worktree base dir must NOT be inside the repo
+		if err := ValidateWorktreeBaseDir(value, repoPath); err != nil {
+			return err
+		}
 
 		repoCfg := cfg.GetRepoConfig(repoPath)
 		if repoCfg == nil {
@@ -238,13 +246,45 @@ func configInteractive() error {
 		}
 	}
 
+	// Generate suggested default: <repo parent>/<repo name>_worktrees
+	suggestedWorktreeDir := ""
+	if currentWorktreeBaseDir == "" {
+		repoParent := filepath.Dir(repoPath)
+		repoName := filepath.Base(repoPath)
+		suggestedWorktreeDir = filepath.Join(repoParent, repoName+"_worktrees")
+		currentWorktreeBaseDir = suggestedWorktreeDir
+	}
+
 	configChanged := false
 
-	worktreeBaseDir := ui.Prompt("Worktree base directory (where new worktrees will be created)", currentWorktreeBaseDir)
+	// Create a validator that checks worktree base dir is outside the repo
+	worktreeValidator := func(path string) error {
+		expandedPath := helpers.ExpandPath(path)
+		if !filepath.IsAbs(expandedPath) {
+			cwd, err := os.Getwd()
+			if err != nil {
+				return fmt.Errorf("failed to get current directory: %w", err)
+			}
+			expandedPath = filepath.Join(cwd, expandedPath)
+		}
+		expandedPath = filepath.Clean(expandedPath)
+		return ValidateWorktreeBaseDir(expandedPath, repoPath)
+	}
+
+	// Build prompt with hint if using suggested default
+	hintText := ""
+	if suggestedWorktreeDir != "" {
+		hintText = "↑ suggested location"
+	}
+
+	worktreeBaseDir, ok := ui.PromptPathTUIWithValidatorAndHint("Worktree base directory", hintText, currentWorktreeBaseDir, true, worktreeValidator)
+	if !ok {
+		ui.Warn("Cancelled")
+		return nil
+	}
 
 	if worktreeBaseDir != "" {
 		worktreeBaseDir = helpers.ExpandPath(worktreeBaseDir)
-
 		if !filepath.IsAbs(worktreeBaseDir) {
 			cwd, err := os.Getwd()
 			if err != nil {
