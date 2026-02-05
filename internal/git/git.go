@@ -173,6 +173,96 @@ func (g *Git) IsBranchMerged(branch, target string) (bool, error) {
 	return true, nil
 }
 
+// IsBranchBehind checks if branch is behind target (target has commits not in branch)
+func (g *Git) IsBranchBehind(branch, target string) (bool, error) {
+	// Get the merge base
+	mergeBase, err := g.run("merge-base", branch, target)
+	if err != nil {
+		return false, err
+	}
+
+	// Get the commit of target
+	targetCommit, err := g.run("rev-parse", target)
+	if err != nil {
+		return false, err
+	}
+
+	// If merge base != target commit, then branch is behind target
+	return mergeBase != targetCommit, nil
+}
+
+// GetCommitsBehind returns the number of commits branch is behind target
+func (g *Git) GetCommitsBehind(branch, target string) (int, error) {
+	output, err := g.run("rev-list", "--count", branch+".."+target)
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	fmt.Sscanf(output, "%d", &count)
+	return count, nil
+}
+
+// RebaseResult contains the result of a rebase operation
+type RebaseResult struct {
+	Success     bool
+	HasConflict bool
+	Error       error
+}
+
+// RebaseNonInteractive rebases current branch onto target without interactive mode
+// Returns structured result instead of just error for better conflict handling
+func (g *Git) RebaseNonInteractive(target string) RebaseResult {
+	cmd := exec.Command("git", "rebase", target)
+	cmd.Dir = g.RepoDir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		// Check if it's a conflict
+		stderrStr := stderr.String()
+		if strings.Contains(stderrStr, "CONFLICT") ||
+			strings.Contains(stderrStr, "could not apply") ||
+			strings.Contains(stderrStr, "Resolve all conflicts") {
+			return RebaseResult{HasConflict: true, Error: fmt.Errorf("rebase conflict")}
+		}
+		// Check if rebase is in progress
+		inProgress, _ := g.IsRebaseInProgress()
+		if inProgress {
+			return RebaseResult{HasConflict: true, Error: fmt.Errorf("rebase conflict")}
+		}
+		return RebaseResult{Error: fmt.Errorf("rebase failed: %s", stderrStr)}
+	}
+	return RebaseResult{Success: true}
+}
+
+// RebaseOntoNonInteractive rebases commits from oldBase to current onto newBase
+// Returns structured result for better conflict handling
+func (g *Git) RebaseOntoNonInteractive(newBase, oldBase string) RebaseResult {
+	cmd := exec.Command("git", "rebase", "--onto", newBase, oldBase)
+	cmd.Dir = g.RepoDir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		// Check if it's a conflict
+		stderrStr := stderr.String()
+		if strings.Contains(stderrStr, "CONFLICT") ||
+			strings.Contains(stderrStr, "could not apply") ||
+			strings.Contains(stderrStr, "Resolve all conflicts") {
+			return RebaseResult{HasConflict: true, Error: fmt.Errorf("rebase conflict")}
+		}
+		// Check if rebase is in progress
+		inProgress, _ := g.IsRebaseInProgress()
+		if inProgress {
+			return RebaseResult{HasConflict: true, Error: fmt.Errorf("rebase conflict")}
+		}
+		return RebaseResult{Error: fmt.Errorf("rebase failed: %s", stderrStr)}
+	}
+	return RebaseResult{Success: true}
+}
+
 // Rebase rebases current branch onto target
 func (g *Git) Rebase(target string) error {
 	return g.RunInteractive("rebase", target)
