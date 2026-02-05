@@ -98,7 +98,8 @@ type Branch struct {
 	WorktreePath string `json:"worktree_path"` // Path to the worktree
 	PRNumber     int    `json:"pr_number,omitempty"`
 	PRUrl        string `json:"pr_url,omitempty"`
-	BaseBranch   string `json:"base_branch"` // The branch this PR targets
+	BaseBranch   string `json:"base_branch"`         // The branch this PR targets
+	IsRemote     bool   `json:"is_remote,omitempty"` // True if this is someone else's branch (created via --from-remote)
 }
 
 // ConfigDir returns the path to the ezstack config directory

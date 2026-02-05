@@ -188,6 +188,48 @@ func (c *Client) UpdatePRBase(number int, base string) error {
 	return err
 }
 
+// OpenPR represents a minimal PR for listing
+type OpenPR struct {
+	Number int    `json:"number"`
+	Title  string `json:"title"`
+	Branch string `json:"headRefName"`
+	Author string `json:"author"`
+	URL    string `json:"url"`
+}
+
+// ListOpenPRs returns all open PRs in the repository
+func (c *Client) ListOpenPRs() ([]OpenPR, error) {
+	output, err := c.runGH("pr", "list", "--state", "open", "--json", "number,title,headRefName,url,author", "--limit", "100")
+	if err != nil {
+		return nil, err
+	}
+
+	var prs []struct {
+		Number int    `json:"number"`
+		Title  string `json:"title"`
+		Branch string `json:"headRefName"`
+		URL    string `json:"url"`
+		Author struct {
+			Login string `json:"login"`
+		} `json:"author"`
+	}
+	if err := json.Unmarshal([]byte(output), &prs); err != nil {
+		return nil, err
+	}
+
+	result := make([]OpenPR, len(prs))
+	for i, pr := range prs {
+		result[i] = OpenPR{
+			Number: pr.Number,
+			Title:  pr.Title,
+			Branch: pr.Branch,
+			Author: pr.Author.Login,
+			URL:    pr.URL,
+		}
+	}
+	return result, nil
+}
+
 // runGH executes a gh CLI command with the repository context
 func (c *Client) runGH(args ...string) (string, error) {
 	// Build args with -R flag after the subcommand (e.g., "pr view -R owner/repo ...")
@@ -227,9 +269,15 @@ func (c *Client) runGH(args ...string) (string, error) {
 }
 
 // UpdateStackDescription updates PR descriptions with stack info
-func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch string) error {
+// skipBranches is a set of branch names to skip (e.g., remote-tracking branches that belong to others)
+func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch string, skipBranches map[string]bool) error {
 	for _, branch := range stack.Branches {
 		if branch.PRNumber == 0 {
+			continue
+		}
+
+		// Skip branches that we shouldn't modify (e.g., remote-tracking branches)
+		if skipBranches != nil && skipBranches[branch.Name] {
 			continue
 		}
 

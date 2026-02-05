@@ -103,6 +103,12 @@ func (g *Git) CreateWorktree(branchName, worktreePath, baseBranch string) error 
 	return err
 }
 
+// AddWorktree creates a worktree for an existing branch
+func (g *Git) AddWorktree(branchName, worktreePath string) error {
+	_, err := g.run("worktree", "add", worktreePath, branchName)
+	return err
+}
+
 // ListWorktrees lists all worktrees
 func (g *Git) ListWorktrees() ([]Worktree, error) {
 	output, err := g.run("worktree", "list", "--porcelain")
@@ -182,6 +188,11 @@ func (g *Git) GetRemote(name string) (string, error) {
 	return g.run("remote", "get-url", name)
 }
 
+// PullRebase pulls and rebases the current branch from its upstream
+func (g *Git) PullRebase() error {
+	return g.RunInteractive("pull", "--rebase")
+}
+
 // RemoveWorktree removes a worktree and optionally deletes the branch
 func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName string) error {
 	// First remove the worktree
@@ -203,4 +214,29 @@ func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName 
 	}
 
 	return nil
+}
+
+// CreateBranchFromRemote creates a local branch tracking a remote branch and returns the local branch name
+func (g *Git) CreateBranchFromRemote(remoteBranch string) (string, error) {
+	// Extract the local branch name from remote ref (e.g., "origin/feature" -> "feature")
+	parts := strings.SplitN(remoteBranch, "/", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid remote branch format: %s (expected origin/branch-name)", remoteBranch)
+	}
+	localBranch := parts[1]
+
+	// Check if local branch already exists
+	_, err := g.run("rev-parse", "--verify", localBranch)
+	if err == nil {
+		// Branch exists, just return the name
+		return localBranch, nil
+	}
+
+	// Create the local branch tracking the remote
+	_, err = g.run("branch", "--track", localBranch, remoteBranch)
+	if err != nil {
+		return "", fmt.Errorf("failed to create local branch from %s: %w", remoteBranch, err)
+	}
+
+	return localBranch, nil
 }

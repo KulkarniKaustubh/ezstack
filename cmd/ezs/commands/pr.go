@@ -14,6 +14,17 @@ import (
 	"github.com/ezstack/ezstack/internal/ui"
 )
 
+// getRemoteBranches returns a map of branch names that are remote branches (someone else's)
+func getRemoteBranches(s *config.Stack) map[string]bool {
+	skipBranches := make(map[string]bool)
+	for _, branch := range s.Branches {
+		if branch.IsRemote {
+			skipBranches[branch.Name] = true
+		}
+	}
+	return skipBranches
+}
+
 func printPRUsage() {
 	fmt.Fprintf(os.Stderr, `%sManage pull requests%s
 
@@ -217,9 +228,10 @@ func prCreateAll(currentStack *config.Stack) error {
 	}
 	stackCfg.Save(mainWorktree)
 
-	// Update stack descriptions
+	// Update stack descriptions (skip remote branches - those PRs belong to others)
 	ui.Info("Updating PR stack descriptions...")
-	if err := gh.UpdateStackDescription(currentStack, ""); err != nil {
+	skipBranches := getRemoteBranches(currentStack)
+	if err := gh.UpdateStackDescription(currentStack, "", skipBranches); err != nil {
 		ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
 	}
 
@@ -401,9 +413,10 @@ func prCreate(args []string) error {
 
 	ui.Success(fmt.Sprintf("Created %s #%d: %s", prType, pr.Number, pr.URL))
 
-	// Update stack description in all PRs
+	// Update stack description in all PRs (skip remote branches - those PRs belong to others)
 	ui.Info("Updating PR stack descriptions...")
-	if err := gh.UpdateStackDescription(currentStack, branch.Name); err != nil {
+	skipBranches := getRemoteBranches(currentStack)
+	if err := gh.UpdateStackDescription(currentStack, branch.Name, skipBranches); err != nil {
 		ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
 	}
 
@@ -541,8 +554,10 @@ func prStack(args []string) error {
 		return nil
 	}
 
+	// Skip remote branches - those PRs belong to others
+	skipBranches := getRemoteBranches(currentStack)
 	ui.Info("Updating PR stack descriptions...")
-	if err := gh.UpdateStackDescription(currentStack, branch.Name); err != nil {
+	if err := gh.UpdateStackDescription(currentStack, branch.Name, skipBranches); err != nil {
 		return err
 	}
 
