@@ -168,9 +168,10 @@ type Worktree struct {
 	Branch string
 }
 
-// Fetch fetches from remote
+// Fetch fetches from origin remote
 func (g *Git) Fetch() error {
-	_, err := g.runWithSpinner("Fetching from remote...", "fetch", "--all", "--prune")
+	// Use "origin" instead of "--all" to avoid hanging on slow/unreachable remotes
+	_, err := g.runWithSpinner("Fetching from remote...", "fetch", "origin", "--prune")
 	return err
 }
 

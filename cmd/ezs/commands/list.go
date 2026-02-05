@@ -300,6 +300,7 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
 }
 
 // fetchBranchStatuses fetches PR and CI status for all branches in a stack (used by ezs status)
+// Also caches merged status to the config when detected
 func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 	statusMap := make(map[string]*ui.BranchStatus)
 
@@ -315,6 +316,9 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 		return statusMap
 	}
 
+	// Track if we discovered any newly merged branches to save config
+	discoveredMerged := false
+
 	for _, branch := range s.Branches {
 		if debugMode {
 			fmt.Fprintf(os.Stderr, "[DEBUG] branch %s PRNumber=%d\n", branch.Name, branch.PRNumber)
@@ -329,6 +333,14 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 		if err == nil {
 			if pr.Merged {
 				status.PRState = "MERGED"
+				// Cache merged status if not already set
+				if !branch.IsMerged {
+					branch.IsMerged = true
+					discoveredMerged = true
+					if debugMode {
+						fmt.Fprintf(os.Stderr, "[DEBUG] Marking branch %s as merged\n", branch.Name)
+					}
+				}
 			} else if pr.State == "CLOSED" {
 				status.PRState = "CLOSED"
 			} else if pr.IsDraft {
@@ -350,6 +362,28 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 		}
 
 		statusMap[branch.Name] = status
+	}
+
+	// Save config if we discovered newly merged branches
+	if discoveredMerged {
+		mainWorktree, err := g.GetMainWorktree()
+		if err == nil {
+			stackCfg, err := config.LoadStackConfig(mainWorktree)
+			if err == nil {
+				for _, existingStack := range stackCfg.Stacks {
+					if existingStack.Name == s.Name {
+						for _, b := range existingStack.Branches {
+							for _, updated := range s.Branches {
+								if b.Name == updated.Name && updated.IsMerged {
+									b.IsMerged = true
+								}
+							}
+						}
+					}
+				}
+				stackCfg.Save(mainWorktree)
+			}
+		}
 	}
 
 	return statusMap
