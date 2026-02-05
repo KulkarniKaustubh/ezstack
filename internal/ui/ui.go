@@ -1146,3 +1146,52 @@ func WithSpinner(message string, fn func() error) error {
 	defer spinner.Stop()
 	return fn()
 }
+
+// EditWithEditor opens the user's preferred editor with the initial content
+// and returns the edited content. If the user saves and exits, the content is returned.
+// If the user aborts (empty file or error), an error is returned.
+// The editor is determined by $EDITOR, $VISUAL, or falls back to "vim".
+func EditWithEditor(initialContent, fileExtension string) (string, error) {
+	// Get the editor from environment
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = os.Getenv("VISUAL")
+	}
+	if editor == "" {
+		editor = "vim"
+	}
+
+	// Create a temporary file with the specified extension
+	tmpFile, err := os.CreateTemp("", "ezstack-*"+fileExtension)
+	if err != nil {
+		return "", fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	// Write initial content to the file
+	if _, err := tmpFile.WriteString(initialContent); err != nil {
+		tmpFile.Close()
+		return "", fmt.Errorf("failed to write to temp file: %w", err)
+	}
+	tmpFile.Close()
+
+	// Open the editor
+	cmd := exec.Command(editor, tmpPath)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("editor exited with error: %w", err)
+	}
+
+	// Read the edited content
+	content, err := os.ReadFile(tmpPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to read edited file: %w", err)
+	}
+
+	result := strings.TrimSpace(string(content))
+	return result, nil
+}

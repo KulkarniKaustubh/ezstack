@@ -331,6 +331,25 @@ func prCreate(args []string) error {
 		prTitle = ui.Prompt("PR title", branch.Name)
 	}
 
+	// If body not provided, offer to edit description with PR template
+	prBody := *body
+	if prBody == "" {
+		if ui.ConfirmTUI("Edit PR description?") {
+			// Get PR template if available
+			template := g.GetPRTemplate()
+			if template == "" {
+				template = "<!-- Enter your PR description here -->\n\n"
+			}
+
+			editedBody, err := ui.EditWithEditor(template, ".md")
+			if err != nil {
+				ui.Warn(fmt.Sprintf("Editor failed: %v (continuing without description)", err))
+			} else {
+				prBody = editedBody
+			}
+		}
+	}
+
 	// Check for WIP commit and auto-draft setting
 	isDraft := *draft
 	if !isDraft {
@@ -390,7 +409,7 @@ func prCreate(args []string) error {
 
 	// Create the PR
 	ui.Info(fmt.Sprintf("Creating %s with base branch: %s", prType, branch.BaseBranch))
-	pr, err := gh.CreatePR(prTitle, *body, branch.Name, branch.BaseBranch, isDraft)
+	pr, err := gh.CreatePR(prTitle, prBody, branch.Name, branch.BaseBranch, isDraft)
 	if err != nil {
 		return fmt.Errorf("failed to create PR: %w", err)
 	}
