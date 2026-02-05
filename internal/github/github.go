@@ -113,8 +113,6 @@ func (c *Client) GetPR(number int) (*PR, error) {
 	return &pr, nil
 }
 
-
-
 // GetPRChecks gets the CI check status for a PR
 func (c *Client) GetPRChecks(number int) (*CheckStatus, error) {
 	output, err := c.runGH("pr", "checks", fmt.Sprintf("%d", number))

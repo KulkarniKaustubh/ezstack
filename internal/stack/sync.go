@@ -19,15 +19,13 @@ type RebaseResult struct {
 	BehindBy     int    // Number of commits behind (for branches that need sync with origin/main)
 }
 
-
-
 // SyncInfo contains information about a branch that needs syncing
 type SyncInfo struct {
-	Branch        string
-	MergedParent  string // Non-empty if parent was merged
-	BehindBy      int    // Number of commits behind target
-	BehindParent  string // Non-empty if behind a non-main parent
-	NeedsSync     bool   // True if branch needs to be synced
+	Branch       string
+	MergedParent string // Non-empty if parent was merged
+	BehindBy     int    // Number of commits behind target
+	BehindParent string // Non-empty if behind a non-main parent
+	NeedsSync    bool   // True if branch needs to be synced
 }
 
 // MergedBranchInfo contains information about a branch whose PR has been merged
