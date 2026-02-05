@@ -4,7 +4,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-EZS="$PROJECT_DIR/bin/ezs"
+EZS="$PROJECT_DIR/bin/ezs-go"
 TEST_DIR="$PROJECT_DIR/test/testrepo_reparent"
 WORKTREE_DIR="$PROJECT_DIR/test/worktrees_reparent"
 
@@ -45,7 +45,7 @@ cleanup
 
 log "Building ezstack..."
 cd "$PROJECT_DIR"
-go build -o bin/ezs ./cmd/ezs
+go build -o bin/ezs-go ./cmd/ezs
 
 log "Creating test repository at $TEST_DIR"
 mkdir -p "$TEST_DIR"
@@ -70,20 +70,20 @@ log ""
 log "=== Test 1: Reparent within same stack ==="
 
 log "Creating stack: main -> feature-a -> feature-b -> feature-c"
-"$EZS" new feature-a
+echo "y" | "$EZS" new feature-a
 
 cd "$WORKTREE_DIR/feature-a"
 echo "Feature A" > a.txt
 git add a.txt
 git commit -m "Add feature A"
 
-"$EZS" new feature-b
+echo "y" | "$EZS" new feature-b
 cd "$WORKTREE_DIR/feature-b"
 echo "Feature B" > b.txt
 git add b.txt
 git commit -m "Add feature B"
 
-"$EZS" new feature-c
+echo "y" | "$EZS" new feature-c
 cd "$WORKTREE_DIR/feature-c"
 echo "Feature C" > c.txt
 git add c.txt
