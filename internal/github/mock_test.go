@@ -166,4 +166,3 @@ func TestMockClient_UpdateStackDescription(t *testing.T) {
 		t.Error("PR 1 body should have been updated")
 	}
 }
-

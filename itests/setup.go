@@ -149,4 +149,3 @@ func findStubGhScript(t *testing.T) string {
 	t.Fatal("stub_gh.sh not found")
 	return ""
 }
-

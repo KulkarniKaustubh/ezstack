@@ -223,4 +223,3 @@ func (m *MockClient) UpdateStackDescription(stack *config.Stack, currentBranch s
 
 // Ensure MockClient implements ClientInterface
 var _ ClientInterface = (*MockClient)(nil)
-

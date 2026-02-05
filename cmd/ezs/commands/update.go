@@ -131,30 +131,6 @@ func Update(args []string) error {
 		}
 	}
 
-	// Step 3: Verify parent relationships
-	mismatches := mgr.VerifyParentRelationships()
-	if len(mismatches) > 0 {
-		hasChanges = true
-		ui.Info(fmt.Sprintf("Found %d branch(es) with different inferred parent:", len(mismatches)))
-		for _, m := range mismatches {
-			fmt.Fprintf(os.Stderr, "  • %s: %s → %s (based on merge-base)\n", m.BranchName, m.OldParent, m.NewParent)
-		}
-
-		if !dryRun {
-			for _, m := range mismatches {
-				if autoMode || ui.ConfirmTUI(fmt.Sprintf("Reparent '%s' from '%s' to '%s'?", m.BranchName, m.OldParent, m.NewParent)) {
-					_, err := mgr.ReparentBranch(m.BranchName, m.NewParent, false)
-					if err != nil {
-						ui.Warn(fmt.Sprintf("Failed to reparent %s: %v", m.BranchName, err))
-						continue
-					}
-					result.ReparentedBranches = append(result.ReparentedBranches, m)
-					ui.Success(fmt.Sprintf("Reparented '%s' to '%s'", m.BranchName, m.NewParent))
-				}
-			}
-		}
-	}
-
 	// Summary
 	if dryRun {
 		if hasChanges {
@@ -188,27 +164,23 @@ func Update(args []string) error {
 
 // addUntrackedWorktree adds an untracked worktree to a stack
 func addUntrackedWorktree(mgr *stack.Manager, g *git.Git, wt git.Worktree, baseBranch string, autoMode bool) (*config.Branch, error) {
-	// Infer parent using merge-base
-	inferredParent, unambiguous, err := mgr.InferParent(wt.Branch)
-	if err != nil {
-		inferredParent = baseBranch
-		unambiguous = true
-	}
-
 	var parentName string
-	if autoMode || unambiguous {
-		parentName = inferredParent
-		ui.Info(fmt.Sprintf("Adding '%s' with parent '%s' (inferred from merge-base)", wt.Branch, parentName))
+	var err error
+
+	if autoMode {
+		// In auto mode, default to base branch
+		parentName = baseBranch
+		ui.Info(fmt.Sprintf("Adding '%s' with parent '%s' (auto mode)", wt.Branch, parentName))
 	} else {
-		// Ambiguous - ask user to select parent
-		parentName, err = selectParentForWorktree(mgr, wt.Branch, inferredParent, baseBranch)
+		// Always ask user to select parent
+		parentName, err = selectParentForWorktree(mgr, wt.Branch, baseBranch)
 		if err != nil {
 			return nil, err
 		}
-	}
 
-	if !autoMode && !ui.ConfirmTUI(fmt.Sprintf("Add '%s' to stack with parent '%s'?", wt.Branch, parentName)) {
-		return nil, nil
+		if !ui.ConfirmTUI(fmt.Sprintf("Add '%s' to stack with parent '%s'?", wt.Branch, parentName)) {
+			return nil, nil
+		}
 	}
 
 	branch, err := mgr.AddWorktreeToStack(wt.Branch, wt.Path, parentName)
@@ -221,26 +193,20 @@ func addUntrackedWorktree(mgr *stack.Manager, g *git.Git, wt git.Worktree, baseB
 }
 
 // selectParentForWorktree shows a selection UI for choosing the parent of an untracked worktree
-func selectParentForWorktree(mgr *stack.Manager, branchName, suggestedParent, baseBranch string) (string, error) {
+func selectParentForWorktree(mgr *stack.Manager, branchName, baseBranch string) (string, error) {
 	allBranches := mgr.GetAllBranchesInAllStacks()
 	stacks := mgr.ListStacks()
 
 	var options []string
 	var parentNames []string
 
-	// Add suggested parent first if it's not main
-	if suggestedParent != baseBranch {
-		options = append(options, fmt.Sprintf("%s (suggested by merge-base)", suggestedParent))
-		parentNames = append(parentNames, suggestedParent)
-	}
-
-	// Add main/master
+	// Add base branch first (default)
 	options = append(options, fmt.Sprintf("%s (base branch)", baseBranch))
 	parentNames = append(parentNames, baseBranch)
 
-	// Add other branches from stacks
+	// Add other branches from stacks, excluding the current branch
 	for _, b := range allBranches {
-		if b.Name == branchName || b.Name == suggestedParent || b.IsMerged {
+		if b.Name == branchName || b.IsMerged {
 			continue
 		}
 
@@ -270,4 +236,3 @@ func selectParentForWorktree(mgr *stack.Manager, branchName, suggestedParent, ba
 
 	return parentNames[selected], nil
 }
-

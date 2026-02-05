@@ -147,4 +147,3 @@ func AssertCommitsAhead(t *testing.T, env *TestEnv, branch, base string, expecte
 		t.Errorf("Commits ahead = %d, want %d", ahead, expected)
 	}
 }
-

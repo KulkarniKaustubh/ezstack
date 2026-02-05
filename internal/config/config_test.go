@@ -43,10 +43,10 @@ func TestConfigDir(t *testing.T) {
 
 func TestConfig_GetBaseBranch(t *testing.T) {
 	tests := []struct {
-		name        string
-		config      *Config
-		repoPath    string
-		wantBranch  string
+		name       string
+		config     *Config
+		repoPath   string
+		wantBranch string
 	}{
 		{
 			name: "repo-specific override",
@@ -374,4 +374,3 @@ func TestBranch_Fields(t *testing.T) {
 		t.Error("IsMerged should be false")
 	}
 }
-

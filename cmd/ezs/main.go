@@ -3,31 +3,105 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/ezstack/ezstack/cmd/ezs/commands"
+	"github.com/ezstack/ezstack/internal/config"
+	"github.com/ezstack/ezstack/internal/git"
 	"github.com/ezstack/ezstack/internal/ui"
 )
 
 const version = "0.1.0"
 
-func main() {
-	if len(os.Args) < 2 {
-		err := runInteractiveMenu()
+// checkRepoRoot checks if we're in a git repo root and returns the repo path.
+// Returns ("", false) if not in a git repo.
+func checkRepoRoot() (string, bool) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	g := git.New(cwd)
+
+	// Try to get main worktree first (handles worktree case)
+	mainWorktree, err := g.GetMainWorktree()
+	if err != nil {
+		// Try to get repo root instead
+		repoRoot, err := g.GetRepoRoot()
 		if err != nil {
+			return "", false
+		}
+		// Resolve symlinks for consistency
+		resolved, err := filepath.EvalSymlinks(repoRoot)
+		if err == nil {
+			repoRoot = resolved
+		}
+		return repoRoot, true
+	}
+	return mainWorktree, true
+}
+
+// hasRepoConfig checks if the current repo has been configured in ezstack
+func hasRepoConfig(repoPath string) bool {
+	cfg, err := config.Load()
+	if err != nil {
+		return false
+	}
+	repoCfg := cfg.GetRepoConfig(repoPath)
+	return repoCfg != nil && repoCfg.WorktreeBaseDir != ""
+}
+
+func main() {
+	cmd := ""
+	args := []string{}
+	if len(os.Args) >= 2 {
+		cmd = os.Args[1]
+		args = os.Args[2:]
+	}
+
+	// Commands that don't require repo check
+	switch cmd {
+	case "--shell-init":
+		printShellInit()
+		return
+	case "-h", "--help":
+		printUsage()
+		return
+	case "-v", "--version":
+		fmt.Printf("ezstack version %s\n", version)
+		return
+	}
+
+	// Check if we're in a git repo for all other commands
+	repoPath, inRepo := checkRepoRoot()
+	if !inRepo {
+		ui.Error("ezs must be run from a git repository root (or a worktree)")
+		os.Exit(1)
+	}
+
+	// If no command given (interactive mode) and no config, guide through setup
+	if cmd == "" {
+		if !hasRepoConfig(repoPath) {
+			ui.Info("Welcome to ezstack! Let's set up this repository.")
+			fmt.Println()
+			if err := commands.Config(nil); err != nil {
+				if err == ui.ErrBack {
+					return
+				}
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+		// Config exists, show interactive menu
+		if err := runInteractiveMenu(); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			os.Exit(1)
 		}
 		return
 	}
 
-	cmd := os.Args[1]
-	args := os.Args[2:]
-
 	var err error
 	switch cmd {
-	case "--shell-init":
-		printShellInit()
-		return
 	case "new", "n":
 		err = commands.New(args)
 	case "list", "ls":
@@ -48,10 +122,6 @@ func main() {
 		err = commands.Reparent(args)
 	case "update", "up":
 		err = commands.Update(args)
-	case "-h", "--help":
-		printUsage()
-	case "-v", "--version":
-		fmt.Printf("ezstack version %s\n", version)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		printUsage()

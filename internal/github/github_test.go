@@ -175,8 +175,6 @@ func convertTestStack(s *Stack) *config.Stack {
 	}
 }
 
-
-
 func TestUpdateBodyWithStack(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -273,4 +271,3 @@ func TestGetPRChecksParser(t *testing.T) {
 		})
 	}
 }
-

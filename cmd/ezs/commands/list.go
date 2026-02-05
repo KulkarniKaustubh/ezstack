@@ -82,7 +82,7 @@ func List(args []string) error {
 	}
 
 	printStack := func(s *config.Stack) {
-		ui.PrintStackWithStatus(s, currentBranch, nil)
+		ui.PrintStack(s, currentBranch, false, nil)
 	}
 
 	if *all {
@@ -170,7 +170,7 @@ func Status(args []string) error {
 		spinner.Stop()
 
 		for i, s := range stacks {
-			ui.PrintStackWithStatus(s, currentBranch, statusMaps[i])
+			ui.PrintStack(s, currentBranch, true, statusMaps[i])
 		}
 		return nil
 	}
@@ -180,7 +180,7 @@ func Status(args []string) error {
 	statusMap := fetchBranchStatuses(g, currentStack)
 	spinner.Stop()
 
-	ui.PrintStackWithStatus(currentStack, currentBranch, statusMap)
+	ui.PrintStack(currentStack, currentBranch, true, statusMap)
 
 	parentRef := "origin/" + branch.Parent
 	commits, err := g.GetCommitsBetween(parentRef, currentBranch)
