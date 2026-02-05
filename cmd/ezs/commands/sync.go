@@ -22,10 +22,12 @@ func Sync(args []string) error {
     ezs sync [options]
 
 %sOPTIONS%s
-    -a, --all         Sync entire stack (auto-detect what needs syncing)
-    -p, --parent      Rebase current branch onto its parent
-    -c, --children    Rebase child branches onto current branch
-    -h, --help        Show this help message
+    -a, --all              Sync entire stack (auto-detect what needs syncing)
+    -cur, --current        Sync current branch only (auto-detect what it needs)
+    -p, --parent           Rebase current branch onto its parent
+    -c, --children         Rebase child branches onto current branch
+    --no-delete-local      Don't delete local branches after their PRs are merged
+    -h, --help             Show this help message
 
 %sDESCRIPTION%s
     Syncs your stack branches with the remote. Without flags, shows an
@@ -33,12 +35,14 @@ func Sync(args []string) error {
 
     1. Detect and sync branches with merged parents (rebase onto main)
     2. Detect and sync branches behind origin/main
-    3. Rebase current branch onto its parent
-    4. Rebase child branches onto current branch
+    3. Sync only the current branch (wherever it is in the chain)
+    4. Rebase current branch onto its parent
+    5. Rebase child branches onto current branch
 
 %sEXAMPLES%s
     ezs sync              Interactive menu
     ezs sync -a           Auto-sync entire stack
+    ezs sync -cur         Sync current branch only
     ezs sync -p           Rebase current onto parent
     ezs sync -c           Rebase children onto current
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
@@ -48,10 +52,13 @@ func Sync(args []string) error {
 	helpFlag := fs.Bool("h", false, "Show help")
 	allFlag := fs.Bool("all", false, "Sync entire stack")
 	allShort := fs.Bool("a", false, "Sync entire stack (short)")
+	currentFlag := fs.Bool("current", false, "Sync current branch only")
+	currentShort := fs.Bool("cur", false, "Sync current branch only (short)")
 	parentFlag := fs.Bool("parent", false, "Rebase onto parent")
 	parentShort := fs.Bool("p", false, "Rebase onto parent (short)")
 	childrenFlag := fs.Bool("children", false, "Rebase children")
 	childrenShort := fs.Bool("c", false, "Rebase children (short)")
+	noDeleteLocal := fs.Bool("no-delete-local", false, "Don't delete local branches after their PRs are merged")
 
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -67,6 +74,9 @@ func Sync(args []string) error {
 	// Merge short and long flags
 	if *allShort {
 		*allFlag = true
+	}
+	if *currentShort {
+		*currentFlag = true
 	}
 	if *parentShort {
 		*parentFlag = true
@@ -92,8 +102,6 @@ func Sync(args []string) error {
 		return fmt.Errorf("not in a stack. Create a branch first with: ezs new <branch-name>")
 	}
 
-	ui.PrintStack(currentStack, branch.Name)
-
 	// Try to get GitHub client for checking squash/rebase merged PRs
 	var gh *github.Client
 	remoteURL, err := g.GetRemote("origin")
@@ -101,9 +109,19 @@ func Sync(args []string) error {
 		gh, _ = github.NewClient(remoteURL)
 	}
 
+	// Show stack with status (like ezs status, not ezs ls)
+	statusMap := fetchBranchStatuses(g, currentStack)
+	ui.PrintStackWithStatus(currentStack, branch.Name, statusMap)
+
+	// deleteLocal is true by default (delete merged branches), false if --no-delete-local is set
+	deleteLocal := !*noDeleteLocal
+
 	// Handle flags
 	if *allFlag {
-		return syncEntireStack(mgr, gh, cwd)
+		return syncEntireStack(mgr, gh, cwd, deleteLocal)
+	}
+	if *currentFlag {
+		return syncCurrentBranch(mgr, gh, branch, cwd)
 	}
 	if *parentFlag {
 		return syncOntoParent(mgr, branch, cwd)
@@ -113,11 +131,11 @@ func Sync(args []string) error {
 	}
 
 	// Interactive mode - show menu
-	return syncInteractive(mgr, gh, currentStack, branch, cwd)
+	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal)
 }
 
 // syncInteractive shows an interactive menu for sync operations
-func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config.Stack, branch *config.Branch, cwd string) error {
+func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config.Stack, branch *config.Branch, cwd string, deleteLocal bool) error {
 	options := []string{}
 	optionActions := []string{}
 
@@ -125,13 +143,28 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 	options = append(options, fmt.Sprintf("%s  Auto-sync stack (detect merged parents / behind main)", ui.IconSync))
 	optionActions = append(optionActions, "auto")
 
-	// Option 2: Rebase current branch onto parent (if parent is not main)
+	// Option 2: Sync current branch only (if it needs syncing)
+	syncInfo := mgr.DetectSyncNeededForBranch(branch.Name, gh)
+	if syncInfo != nil && syncInfo.NeedsSync {
+		var reason string
+		if syncInfo.MergedParent != "" {
+			reason = fmt.Sprintf("parent %s merged", syncInfo.MergedParent)
+		} else if syncInfo.BehindParent != "" {
+			reason = fmt.Sprintf("%d commits behind %s", syncInfo.BehindBy, syncInfo.BehindParent)
+		} else if syncInfo.BehindBy > 0 {
+			reason = fmt.Sprintf("%d commits behind main", syncInfo.BehindBy)
+		}
+		options = append(options, fmt.Sprintf("%s  Sync current branch only (%s)", ui.IconSync, reason))
+		optionActions = append(optionActions, "current")
+	}
+
+	// Option 3: Rebase current branch onto parent (if parent is not main)
 	if branch.Parent != "" && !mgr.IsMainBranch(branch.Parent) {
 		options = append(options, fmt.Sprintf("%s  Rebase current branch onto parent (%s)", ui.IconUp, branch.Parent))
 		optionActions = append(optionActions, "parent")
 	}
 
-	// Option 3: Rebase child branches onto current
+	// Option 4: Rebase child branches onto current
 	allChildren := mgr.GetChildren(branch.Name)
 	localChildren := []*config.Branch{}
 	for _, c := range allChildren {
@@ -167,7 +200,9 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 	action := optionActions[selected]
 	switch action {
 	case "auto":
-		return syncEntireStack(mgr, gh, cwd)
+		return syncEntireStack(mgr, gh, cwd, deleteLocal)
+	case "current":
+		return syncCurrentBranch(mgr, gh, branch, cwd)
 	case "parent":
 		return syncOntoParent(mgr, branch, cwd)
 	case "children":
@@ -178,7 +213,7 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 }
 
 // syncEntireStack syncs the entire stack (auto-detect what needs syncing)
-func syncEntireStack(mgr *stack.Manager, gh *github.Client, cwd string) error {
+func syncEntireStack(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool) error {
 	// Check for branches that need syncing
 	ui.Info("Fetching latest changes...")
 	syncNeeded, err := mgr.DetectSyncNeeded(gh)
@@ -186,62 +221,99 @@ func syncEntireStack(mgr *stack.Manager, gh *github.Client, cwd string) error {
 		ui.Warn(fmt.Sprintf("Could not check for sync needed: %v", err))
 	}
 
-	if len(syncNeeded) == 0 {
+	// Check for merged branches that can be cleaned up
+	var mergedBranches []stack.MergedBranchInfo
+	if deleteLocal && gh != nil {
+		mergedBranches, err = mgr.DetectMergedBranches(gh)
+		if err != nil {
+			ui.Warn(fmt.Sprintf("Could not check for merged branches: %v", err))
+		}
+	}
+
+	if len(syncNeeded) == 0 && len(mergedBranches) == 0 {
 		ui.Success("All branches are up to date. No sync needed.")
 		return nil
 	}
 
 	// Show what will be synced
-	ui.Info(fmt.Sprintf("Found %d branch(es) that need syncing:", len(syncNeeded)))
-	for _, info := range syncNeeded {
-		if info.MergedParent != "" {
-			fmt.Fprintf(os.Stderr, "  %s %s%s%s: parent %s%s%s was merged to main\n",
-				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset)
-		} else if info.BehindParent != "" {
-			fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind parent %s%s%s\n",
-				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
-		} else if info.BehindBy > 0 {
-			fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind origin/main\n",
-				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset)
+	if len(syncNeeded) > 0 {
+		ui.Info(fmt.Sprintf("Found %d branch(es) that need syncing:", len(syncNeeded)))
+		for _, info := range syncNeeded {
+			if info.MergedParent != "" {
+				fmt.Fprintf(os.Stderr, "  %s %s%s%s: parent %s%s%s was merged to main\n",
+					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset)
+			} else if info.BehindParent != "" {
+				fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind parent %s%s%s\n",
+					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
+			} else if info.BehindBy > 0 {
+				fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind origin/main\n",
+					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset)
+			}
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
+	// Show merged branches that will be cleaned up
+	if len(mergedBranches) > 0 {
+		ui.Info(fmt.Sprintf("Found %d branch(es) with merged PRs (will be deleted):", len(mergedBranches)))
+		for _, info := range mergedBranches {
+			fmt.Fprintf(os.Stderr, "  %s %s%s%s: PR #%d merged\n",
+				ui.IconSuccess, ui.Bold, info.Branch, ui.Reset, info.PRNumber)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
+	if len(syncNeeded) > 0 {
+		if !ui.ConfirmTUI("Sync stack (rebase branches onto latest main)") {
+			ui.Warn("Cancelled")
+			return nil
+		}
+
+		ui.Info("Syncing stack...")
+		results, err := mgr.SyncStack(gh)
+		if err != nil {
+			return err
+		}
+
+		// Print results summary
+		printSyncResults(results)
+
+		// Check if any branches had conflicts
+		hasConflicts := false
+		successCount := 0
+		for _, r := range results {
+			if r.HasConflict {
+				hasConflicts = true
+			}
+			if r.Success {
+				successCount++
+			}
+		}
+
+		fmt.Fprintln(os.Stderr)
+		if hasConflicts {
+			ui.Warn("Some branches have conflicts. Resolve them and run 'git rebase --continue' in each worktree.")
+		}
+		if successCount > 0 {
+			ui.Success(fmt.Sprintf("Synced %d branch(es) with main!", successCount))
+			// Offer to force push if there were successful rebases
+			if !hasConflicts {
+				offerPush(cwd)
+			}
 		}
 	}
-	fmt.Fprintln(os.Stderr)
 
-	if !ui.ConfirmTUI("Sync stack (rebase branches onto latest main)") {
-		ui.Warn("Cancelled")
-		return nil
-	}
-
-	ui.Info("Syncing stack...")
-	results, err := mgr.SyncStack(gh)
-	if err != nil {
-		return err
-	}
-
-	// Print results summary
-	printSyncResults(results)
-
-	// Check if any branches had conflicts
-	hasConflicts := false
-	successCount := 0
-	for _, r := range results {
-		if r.HasConflict {
-			hasConflicts = true
-		}
-		if r.Success {
-			successCount++
-		}
-	}
-
-	fmt.Fprintln(os.Stderr)
-	if hasConflicts {
-		ui.Warn("Some branches have conflicts. Resolve them and run 'git rebase --continue' in each worktree.")
-	}
-	if successCount > 0 {
-		ui.Success(fmt.Sprintf("Synced %d branch(es) with main!", successCount))
-		// Offer to force push if there were successful rebases
-		if !hasConflicts {
-			offerPush(cwd)
+	// Clean up merged branches
+	if len(mergedBranches) > 0 {
+		if ui.ConfirmTUI(fmt.Sprintf("Delete %d merged branch(es) and their worktrees", len(mergedBranches))) {
+			ui.Info("Cleaning up merged branches...")
+			deletedCount, errors := mgr.CleanupMergedBranches(mergedBranches, cwd)
+			for _, e := range errors {
+				ui.Warn(e)
+			}
+			if deletedCount > 0 {
+				ui.Success(fmt.Sprintf("Deleted %d merged branch(es)", deletedCount))
+			}
 		}
 	}
 
@@ -316,6 +388,65 @@ func syncChildren(mgr *stack.Manager, branch *config.Branch, cwd string) error {
 	}
 	if successCount > 0 {
 		ui.Success(fmt.Sprintf("Rebased %d child branch(es)!", successCount))
+	}
+
+	return nil
+}
+
+// syncCurrentBranch syncs only the current branch (wherever it is in the chain)
+func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Branch, cwd string) error {
+	// First fetch latest
+	ui.Info("Fetching latest changes...")
+	g := git.New(cwd)
+	if err := g.Fetch(); err != nil {
+		return fmt.Errorf("failed to fetch: %w", err)
+	}
+
+	// Check if current branch needs syncing
+	syncInfo := mgr.DetectSyncNeededForBranch(branch.Name, gh)
+	if syncInfo == nil || !syncInfo.NeedsSync {
+		ui.Success("Current branch is up to date. No sync needed.")
+		return nil
+	}
+
+	// Show what will be synced
+	if syncInfo.MergedParent != "" {
+		ui.Info(fmt.Sprintf("Parent %s was merged to main. Will rebase onto main.", syncInfo.MergedParent))
+	} else if syncInfo.BehindParent != "" {
+		ui.Info(fmt.Sprintf("Current branch is %d commits behind %s.", syncInfo.BehindBy, syncInfo.BehindParent))
+	} else if syncInfo.BehindBy > 0 {
+		ui.Info(fmt.Sprintf("Current branch is %d commits behind origin/main.", syncInfo.BehindBy))
+	}
+
+	if !ui.ConfirmTUI("Sync current branch") {
+		ui.Warn("Cancelled")
+		return nil
+	}
+
+	ui.Info("Syncing current branch...")
+	result, err := mgr.SyncBranch(branch.Name, gh)
+	if err != nil {
+		return err
+	}
+
+	// Print result
+	if result.Success {
+		if result.BehindBy > 0 && result.SyncedParent != "" {
+			ui.Success(fmt.Sprintf("Synced %s (was %d commits behind %s)", result.Branch, result.BehindBy, result.SyncedParent))
+		} else if result.SyncedParent != "" {
+			ui.Success(fmt.Sprintf("Synced %s (parent merged, now based on %s)", result.Branch, result.SyncedParent))
+		} else {
+			ui.Success(fmt.Sprintf("Synced %s", result.Branch))
+		}
+		offerPush(cwd)
+	} else if result.HasConflict {
+		ui.Warn(fmt.Sprintf("Conflict in %s", result.Branch))
+		if result.WorktreePath != "" {
+			fmt.Fprintf(os.Stderr, "%sResolve in:%s %s\n", ui.Gray, ui.Reset, result.WorktreePath)
+		}
+		fmt.Fprintf(os.Stderr, "%sTo resolve: fix conflicts, then run 'git rebase --continue'%s\n", ui.Gray, ui.Reset)
+	} else if result.Error != nil {
+		ui.Error(fmt.Sprintf("Failed to sync %s: %v", result.Branch, result.Error))
 	}
 
 	return nil

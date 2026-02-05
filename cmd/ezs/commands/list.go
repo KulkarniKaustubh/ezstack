@@ -184,7 +184,10 @@ func Status(args []string) error {
 	}
 
 	// Fetch PR and CI status for all branches
+	spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
+	spinner.Start()
 	statusMap := fetchBranchStatuses(g, currentStack)
+	spinner.Stop()
 
 	ui.PrintStackWithStatus(currentStack, currentBranch, statusMap)
 
@@ -246,10 +249,10 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
 
 		// If PRNumber is 0, try to discover PR from GitHub
 		if branch.PRNumber == 0 {
-			pr, err := gh.GetPRForBranch(branch.Name)
+			pr, err := gh.GetPRByBranch(branch.Name)
 			if err != nil {
 				if debugMode {
-					fmt.Fprintf(os.Stderr, "[DEBUG] GetPRForBranch(%s) error: %v\n", branch.Name, err)
+					fmt.Fprintf(os.Stderr, "[DEBUG] GetPRByBranch(%s) error: %v\n", branch.Name, err)
 				}
 				// Show warning once if we can't access GitHub
 				if !ghAccessWarningShown {

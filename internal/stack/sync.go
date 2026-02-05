@@ -29,6 +29,14 @@ type SyncInfo struct {
 	NeedsSync     bool   // True if branch needs to be synced
 }
 
+// MergedBranchInfo contains information about a branch whose PR has been merged
+type MergedBranchInfo struct {
+	Branch       string
+	PRNumber     int
+	WorktreePath string
+	StackName    string
+}
+
 // getParentRef returns the git ref for a parent branch
 // For remote branches (IsRemote=true), returns origin/<name>
 // For local branches, returns the branch name
@@ -124,6 +132,73 @@ func (m *Manager) DetectSyncNeeded(gh *github.Client) ([]SyncInfo, error) {
 	}
 
 	return results, nil
+}
+
+// DetectSyncNeededForBranch checks if a specific branch needs syncing
+// Returns SyncInfo if the branch needs syncing, nil otherwise
+func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client) *SyncInfo {
+	branch := m.GetBranch(branchName)
+	if branch == nil || branch.IsRemote {
+		return nil
+	}
+
+	baseBranch := m.config.DefaultBaseBranch
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+
+	// Case 1: Parent is main - check if behind origin/main
+	if m.IsMainBranch(branch.Parent) {
+		behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+baseBranch)
+		if err == nil && behindBy > 0 {
+			return &SyncInfo{
+				Branch:    branch.Name,
+				BehindBy:  behindBy,
+				NeedsSync: true,
+			}
+		}
+		return nil
+	}
+
+	// Case 2: Parent is not main - check if parent was merged
+	isMerged := false
+	parentRef := m.getParentRef(branch.Parent)
+
+	merged, err := m.git.IsBranchMerged(parentRef, "origin/"+baseBranch)
+	if err == nil && merged {
+		isMerged = true
+	}
+
+	if !isMerged && gh != nil {
+		parentBranch := m.GetBranch(branch.Parent)
+		if parentBranch != nil && parentBranch.PRNumber > 0 {
+			pr, err := gh.GetPR(parentBranch.PRNumber)
+			if err == nil && pr.Merged {
+				isMerged = true
+			}
+		}
+	}
+
+	if isMerged {
+		return &SyncInfo{
+			Branch:       branch.Name,
+			MergedParent: branch.Parent,
+			NeedsSync:    true,
+		}
+	}
+
+	// Case 3: Parent is not main and not merged - check if behind parent
+	behindBy, err := m.git.GetCommitsBehind(branch.Name, parentRef)
+	if err == nil && behindBy > 0 {
+		return &SyncInfo{
+			Branch:       branch.Name,
+			BehindBy:     behindBy,
+			BehindParent: branch.Parent,
+			NeedsSync:    true,
+		}
+	}
+
+	return nil
 }
 
 // SyncStack syncs all branches in the stack that need syncing
@@ -284,6 +359,123 @@ func (m *Manager) SyncStack(gh *github.Client) ([]RebaseResult, error) {
 	return results, nil
 }
 
+// SyncBranch syncs a specific branch, handling all 3 cases:
+// 1. Branch is behind origin/main (parent is main)
+// 2. Parent branch was merged (rebase --onto main)
+// 3. Branch is behind its parent (rebase onto parent)
+func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResult, error) {
+	branch := m.GetBranch(branchName)
+	if branch == nil {
+		return nil, fmt.Errorf("branch '%s' not found", branchName)
+	}
+
+	if branch.IsRemote {
+		return nil, fmt.Errorf("cannot sync remote branch '%s'", branchName)
+	}
+
+	baseBranch := m.config.DefaultBaseBranch
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+
+	result := &RebaseResult{Branch: branch.Name, WorktreePath: branch.WorktreePath}
+	g := git.New(branch.WorktreePath)
+
+	// Case 1: Parent is main - check if behind origin/main
+	if m.IsMainBranch(branch.Parent) {
+		behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+baseBranch)
+		if err != nil || behindBy == 0 {
+			result.Success = true
+			return result, nil // Already up to date
+		}
+
+		result.BehindBy = behindBy
+		result.SyncedParent = "origin/" + baseBranch
+
+		rebaseResult := g.RebaseNonInteractive("origin/" + baseBranch)
+		if rebaseResult.HasConflict {
+			result.HasConflict = true
+			result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
+			return result, nil
+		} else if rebaseResult.Error != nil {
+			result.Error = rebaseResult.Error
+			return result, nil
+		}
+		result.Success = true
+		return result, nil
+	}
+
+	// Case 2: Parent is not main - check if parent was merged
+	isMerged := false
+	parentRef := m.getParentRef(branch.Parent)
+
+	merged, err := m.git.IsBranchMerged(parentRef, "origin/"+baseBranch)
+	if err == nil && merged {
+		isMerged = true
+	}
+
+	if !isMerged && gh != nil {
+		parentBranch := m.GetBranch(branch.Parent)
+		if parentBranch != nil && parentBranch.PRNumber > 0 {
+			pr, err := gh.GetPR(parentBranch.PRNumber)
+			if err == nil && pr.Merged {
+				isMerged = true
+			}
+		}
+	}
+
+	if isMerged {
+		// Parent was merged - rebase onto main
+		oldParent := branch.Parent
+		oldParentRef := m.getParentRef(oldParent)
+		branch.Parent = baseBranch
+		branch.BaseBranch = baseBranch
+		result.SyncedParent = baseBranch
+
+		mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
+		if err != nil {
+			mergeBase = oldParentRef
+		}
+
+		rebaseResult := g.RebaseOntoNonInteractive("origin/"+baseBranch, mergeBase)
+		if rebaseResult.HasConflict {
+			result.HasConflict = true
+			result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
+			m.stackConfig.Save(m.repoDir)
+			return result, nil
+		} else if rebaseResult.Error != nil {
+			result.Error = rebaseResult.Error
+			m.stackConfig.Save(m.repoDir)
+			return result, nil
+		}
+		result.Success = true
+		m.stackConfig.Save(m.repoDir)
+		return result, nil
+	}
+
+	// Case 3: Parent is not main and not merged - check if behind parent
+	behindBy, err := m.git.GetCommitsBehind(branch.Name, parentRef)
+	if err != nil || behindBy == 0 {
+		result.Success = true
+		return result, nil // Already up to date
+	}
+
+	result.BehindBy = behindBy
+	result.SyncedParent = branch.Parent
+
+	rebaseResult := g.RebaseNonInteractive(parentRef)
+	if rebaseResult.HasConflict {
+		result.HasConflict = true
+		result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
+		return result, nil
+	} else if rebaseResult.Error != nil {
+		result.Error = rebaseResult.Error
+		return result, nil
+	}
+	result.Success = true
+	return result, nil
+}
+
 // RebaseOnParent rebases the current branch onto its updated parent
 func (m *Manager) RebaseOnParent() error {
 	currentStack, currentBranch, err := m.GetCurrentStack()
@@ -352,4 +544,92 @@ func (m *Manager) RebaseChildren() ([]RebaseResult, error) {
 	}
 
 	return results, nil
+}
+
+// DetectMergedBranches finds branches whose PRs have been merged to main
+// These are candidates for cleanup (deleting local branch and worktree)
+func (m *Manager) DetectMergedBranches(gh *github.Client) ([]MergedBranchInfo, error) {
+	if gh == nil {
+		return nil, nil
+	}
+
+	baseBranch := m.config.DefaultBaseBranch
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+
+	var results []MergedBranchInfo
+
+	// Check each stack for branches with merged PRs
+	for stackName, stack := range m.stackConfig.Stacks {
+		for _, branch := range stack.Branches {
+			// Skip branches without PRs
+			if branch.PRNumber == 0 {
+				continue
+			}
+
+			// Skip remote branches (they don't have local worktrees to clean up)
+			if branch.IsRemote {
+				continue
+			}
+
+			// Check if the PR is merged
+			pr, err := gh.GetPR(branch.PRNumber)
+			if err != nil {
+				continue
+			}
+
+			if pr.Merged {
+				// Make sure this branch has no unmerged children
+				hasUnmergedChildren := false
+				for _, child := range m.GetChildren(branch.Name) {
+					if child.PRNumber == 0 {
+						hasUnmergedChildren = true
+						break
+					}
+					childPR, err := gh.GetPR(child.PRNumber)
+					if err != nil || !childPR.Merged {
+						hasUnmergedChildren = true
+						break
+					}
+				}
+
+				if !hasUnmergedChildren {
+					results = append(results, MergedBranchInfo{
+						Branch:       branch.Name,
+						PRNumber:     branch.PRNumber,
+						WorktreePath: branch.WorktreePath,
+						StackName:    stackName,
+					})
+				}
+			}
+		}
+	}
+
+	return results, nil
+}
+
+// CleanupMergedBranches deletes branches whose PRs have been merged
+// Returns the number of successfully deleted branches and any errors encountered
+func (m *Manager) CleanupMergedBranches(branches []MergedBranchInfo, currentDir string) (int, []string) {
+	var errors []string
+	deletedCount := 0
+
+	for _, info := range branches {
+		// Check if we're currently in this worktree
+		if info.WorktreePath == currentDir {
+			errors = append(errors, fmt.Sprintf("Cannot delete %s: you are currently in this worktree. Please navigate elsewhere first.", info.Branch))
+			continue
+		}
+
+		// Delete the branch (this handles worktree removal, git branch deletion, and config update)
+		if err := m.DeleteBranch(info.Branch, true); err != nil {
+			errors = append(errors, fmt.Sprintf("Failed to delete %s: %v", info.Branch, err))
+			continue
+		}
+
+		deletedCount++
+	}
+
+	return deletedCount, errors
 }
