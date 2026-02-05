@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/ezstack/ezstack/internal/config"
-	"github.com/ezstack/ezstack/internal/ui"
 )
 
 // Client wraps GitHub operations using gh CLI
@@ -287,18 +286,6 @@ func (c *Client) runGH(args ...string) (string, error) {
 		return "", fmt.Errorf("gh %s failed: %s\n%s", strings.Join(fullArgs, " "), err, stderrStr)
 	}
 	return stdout.String(), nil
-}
-
-// runGHWithSpinner executes a gh CLI command with a delayed loading spinner
-// The spinner only shows if the command takes longer than ui.SpinnerDelay
-func (c *Client) runGHWithSpinner(message string, args ...string) (string, error) {
-	var result string
-	err := ui.WithSpinner(message, func() error {
-		var err error
-		result, err = c.runGH(args...)
-		return err
-	})
-	return result, err
 }
 
 // UpdateStackDescription updates PR descriptions with stack info

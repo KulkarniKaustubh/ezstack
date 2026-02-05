@@ -86,82 +86,6 @@ type BranchStatus struct {
 	ReviewState string // "APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""
 }
 
-// SelectBranch uses fzf to select a branch from a list
-func SelectBranch(branches []*config.Branch, prompt string) (*config.Branch, error) {
-	return SelectBranchWithStacks(branches, nil, prompt)
-}
-
-// SelectBranchWithStacks uses fzf to select a branch with optional stack preview
-func SelectBranchWithStacks(branches []*config.Branch, stacks []*config.Stack, prompt string) (*config.Branch, error) {
-	if len(branches) == 0 {
-		return nil, fmt.Errorf("no branches to select from")
-	}
-
-	// Build fzf input with preview data embedded
-	// Format: branchName|previewData (IconArrow parent) [PR #N]
-	var input strings.Builder
-	for _, b := range branches {
-		prInfo := ""
-		if b.PRNumber > 0 {
-			prInfo = fmt.Sprintf(" [PR #%d]", b.PRNumber)
-		}
-		// Embed preview data as hidden field using tab separator
-		preview := generateBranchPreview(b, stacks)
-		// Use format: display_text\tpreview_data
-		displayText := fmt.Sprintf("%s (%s %s)%s", b.Name, IconArrow, b.Parent, prInfo)
-		input.WriteString(fmt.Sprintf("%s\t%s\n", displayText, preview))
-	}
-
-	selected, err := runFzfWithPreview(input.String(), prompt, stacks != nil)
-	if err != nil {
-		return nil, err
-	}
-
-	// Parse the selected branch name (first field before space)
-	parts := strings.SplitN(selected, " ", 2)
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("no branch selected")
-	}
-	branchName := parts[0]
-
-	for _, b := range branches {
-		if b.Name == branchName {
-			return b, nil
-		}
-	}
-
-	return nil, fmt.Errorf("branch not found: %s", branchName)
-}
-
-// generateBranchPreview creates a stack preview matching ezs ls output
-// Uses escape codes that printf/echo -e can interpret for ANSI colors
-func generateBranchPreview(branch *config.Branch, stacks []*config.Stack) string {
-	if stacks == nil {
-		return ""
-	}
-
-	// Find which stack contains this branch
-	var targetStack *config.Stack
-	for _, s := range stacks {
-		for _, b := range s.Branches {
-			if b.Name == branch.Name {
-				targetStack = s
-				break
-			}
-		}
-		if targetStack != nil {
-			break
-		}
-	}
-
-	if targetStack == nil {
-		return ""
-	}
-
-	// Use formatStackString with escape codes for fzf preview
-	return formatStackString(targetStack, branch.Name)
-}
-
 // WorktreeInfo represents a worktree for UI selection
 type WorktreeInfo struct {
 	Path   string
@@ -253,37 +177,6 @@ func SelectWorktreeWithStackPreview(worktrees []WorktreeInfo, stacks []*config.S
 	}
 
 	return nil, fmt.Errorf("worktree not found: %s", branchName)
-}
-
-// SelectStack uses fzf to select a stack
-func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
-	if len(stacks) == 0 {
-		return nil, fmt.Errorf("no stacks to select from")
-	}
-
-	var input strings.Builder
-	for _, s := range stacks {
-		input.WriteString(fmt.Sprintf("%s (%d branches)\n", s.Name, len(s.Branches)))
-	}
-
-	selected, err := runFzf(input.String(), prompt)
-	if err != nil {
-		return nil, err
-	}
-
-	parts := strings.SplitN(selected, " ", 2)
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("no stack selected")
-	}
-	stackName := parts[0]
-
-	for _, s := range stacks {
-		if s.Name == stackName {
-			return s, nil
-		}
-	}
-
-	return nil, fmt.Errorf("stack not found: %s", stackName)
 }
 
 // runFzf executes fzf with the given input and returns the selected line

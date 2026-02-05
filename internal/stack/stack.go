@@ -315,29 +315,6 @@ func (m *Manager) IsMainBranch(name string) bool {
 	return name == "main" || name == "master" || name == baseBranch
 }
 
-// GetStackDescription generates a markdown description of the stack
-func (m *Manager) GetStackDescription(stack *config.Stack, currentBranch string) string {
-	var sb strings.Builder
-	sb.WriteString("## PR Stack\n\n")
-
-	// Sort branches topologically (parent -> child order)
-	sortedBranches := config.SortBranchesTopologically(stack.Branches)
-
-	for i, branch := range sortedBranches {
-		prefix := ""
-		if branch.Name == currentBranch {
-			prefix = "➡️ "
-		}
-		if branch.PRUrl != "" {
-			sb.WriteString(fmt.Sprintf("%s%d. [%s](%s)\n", prefix, i+1, branch.Name, branch.PRUrl))
-		} else {
-			sb.WriteString(fmt.Sprintf("%s%d. %s\n", prefix, i+1, branch.Name))
-		}
-	}
-
-	return sb.String()
-}
-
 // DeleteBranch removes a branch from the stack and deletes its worktree
 // Returns an error if the branch has child branches
 func (m *Manager) DeleteBranch(branchName string, force bool) error {
@@ -700,17 +677,6 @@ func (m *Manager) moveBranchToStack(branchName, fromStackName, toStackName strin
 	toStack.PopulateBranchesWithCache(cache)
 
 	return nil
-}
-
-// collectDescendants returns all descendant branches of a given branch
-func (m *Manager) collectDescendants(branchName string) []*config.Branch {
-	var descendants []*config.Branch
-	children := m.GetChildren(branchName)
-	for _, child := range children {
-		descendants = append(descendants, child)
-		descendants = append(descendants, m.collectDescendants(child.Name)...)
-	}
-	return descendants
 }
 
 // GetAllBranchesInAllStacks returns all branches across all stacks
