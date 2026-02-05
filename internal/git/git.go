@@ -426,3 +426,38 @@ func (g *Git) CreateBranchFromRemote(remoteBranch string) (string, error) {
 
 	return localBranch, nil
 }
+
+// GetPRTemplate finds and reads the GitHub PR template from common locations.
+// Returns the template content or empty string if no template is found.
+// GitHub looks for templates in these locations (in order of priority):
+// 1. .github/pull_request_template.md
+// 2. .github/PULL_REQUEST_TEMPLATE.md
+// 3. docs/pull_request_template.md
+// 4. pull_request_template.md
+// 5. PULL_REQUEST_TEMPLATE.md
+func (g *Git) GetPRTemplate() string {
+	// Get the repo root
+	repoRoot, err := g.GetRepoRoot()
+	if err != nil {
+		return ""
+	}
+
+	// List of possible template locations (in order of priority)
+	templatePaths := []string{
+		filepath.Join(repoRoot, ".github", "pull_request_template.md"),
+		filepath.Join(repoRoot, ".github", "PULL_REQUEST_TEMPLATE.md"),
+		filepath.Join(repoRoot, "docs", "pull_request_template.md"),
+		filepath.Join(repoRoot, "docs", "PULL_REQUEST_TEMPLATE.md"),
+		filepath.Join(repoRoot, "pull_request_template.md"),
+		filepath.Join(repoRoot, "PULL_REQUEST_TEMPLATE.md"),
+	}
+
+	for _, path := range templatePaths {
+		content, err := os.ReadFile(path)
+		if err == nil {
+			return string(content)
+		}
+	}
+
+	return ""
+}
