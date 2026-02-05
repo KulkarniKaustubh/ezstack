@@ -284,3 +284,60 @@ func (sc *StackConfig) Save(repoDir string) error {
 
 	return os.WriteFile(stackPath, newData, 0644)
 }
+
+// SortBranchesTopologically sorts branches so parents come before children
+// This ensures the display shows the correct parent -> child order
+func SortBranchesTopologically(branches []*Branch) []*Branch {
+	if len(branches) <= 1 {
+		return branches
+	}
+
+	// Build a map of branch name -> branch for quick lookup
+	branchMap := make(map[string]*Branch)
+	for _, b := range branches {
+		branchMap[b.Name] = b
+	}
+
+	// Build children map
+	children := make(map[string][]*Branch)
+	var roots []*Branch
+
+	for _, b := range branches {
+		// If parent is not in this stack (e.g., main or external), it's a root
+		if _, exists := branchMap[b.Parent]; !exists {
+			roots = append(roots, b)
+		} else {
+			children[b.Parent] = append(children[b.Parent], b)
+		}
+	}
+
+	// BFS to build sorted list
+	var sorted []*Branch
+	queue := roots
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		sorted = append(sorted, current)
+
+		// Add children to queue
+		for _, child := range children[current.Name] {
+			queue = append(queue, child)
+		}
+	}
+
+	// If we didn't get all branches (shouldn't happen), append remaining
+	if len(sorted) < len(branches) {
+		inSorted := make(map[string]bool)
+		for _, b := range sorted {
+			inSorted[b.Name] = true
+		}
+		for _, b := range branches {
+			if !inSorted[b.Name] {
+				sorted = append(sorted, b)
+			}
+		}
+	}
+
+	return sorted
+}
