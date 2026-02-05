@@ -14,19 +14,19 @@ import (
 
 // Styles for the path input prompt
 var (
-	tiPromptStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true) // Pink/magenta ?
-	tiLabelStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Bold(true) // Bright white
-	tiInputStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
-	tiPlaceholderStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
-	tiHintStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))             // Subtle gray for footer
-	tiSuggestedStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Italic(true) // Cyan for suggested hint
-	tiCursorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))             // Match prompt color
-	tiChevronStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))             // Match prompt color
-	tiBorderStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))             // Slightly brighter border
-	tiOptionStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
-	tiOptionSelectedBg  = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("212")).Bold(true)
-	tiOptionDimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	tiErrorStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
+	tiPromptStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("212")).Bold(true) // Pink/magenta ?
+	tiLabelStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("255")).Bold(true) // Bright white
+	tiInputStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("255"))
+	tiPlaceholderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("242"))
+	tiHintStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))             // Subtle gray for footer
+	tiSuggestedStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("75")).Italic(true) // Cyan for suggested hint
+	tiCursorStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))             // Match prompt color
+	tiChevronStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("212"))             // Match prompt color
+	tiBorderStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))             // Slightly brighter border
+	tiOptionStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("75"))
+	tiOptionSelectedBg = lipgloss.NewStyle().Background(lipgloss.Color("236")).Foreground(lipgloss.Color("212")).Bold(true)
+	tiOptionDimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	tiErrorStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("196")).Bold(true)
 )
 
 // PathValidator is a function that validates a path and returns an error message if invalid
@@ -35,8 +35,8 @@ type PathValidator func(path string) error
 type pathInputModel struct {
 	textInput      textinput.Model
 	prompt         string
-	hint           string        // optional hint text shown below prompt (e.g., "suggested")
-	originalValue  string        // original default value to detect modifications
+	hint           string // optional hint text shown below prompt (e.g., "suggested")
+	originalValue  string // original default value to detect modifications
 	submitted      bool
 	cancelled      bool
 	width          int
@@ -283,8 +283,6 @@ func (m *pathInputModel) getCompletionOptions() ([]string, string) {
 	return matches, dir
 }
 
-
-
 func (m pathInputModel) View() string {
 	var sb strings.Builder
 
@@ -474,4 +472,3 @@ func PromptTUIRequired(prompt string) (string, bool) {
 		fmt.Fprintf(os.Stderr, "%s  (required)%s\n", Red, Reset)
 	}
 }
-
