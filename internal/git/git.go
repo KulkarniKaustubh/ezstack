@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/ezstack/ezstack/internal/ui"
 )
 
 // Git wraps git operations
@@ -21,6 +23,24 @@ func New(repoDir string) *Git {
 
 // run executes a git command and returns the output
 func (g *Git) run(args ...string) (string, error) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = g.RepoDir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err != nil {
+		return "", fmt.Errorf("git %s failed: %s\n%s", strings.Join(args, " "), err, stderr.String())
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// runWithSpinner executes a git command with a loading spinner
+func (g *Git) runWithSpinner(message string, args ...string) (string, error) {
+	spinner := ui.NewSpinner(message)
+	spinner.Start()
+	defer spinner.Stop()
+
 	cmd := exec.Command("git", args...)
 	cmd.Dir = g.RepoDir
 	var stdout, stderr bytes.Buffer
@@ -99,13 +119,13 @@ func (g *Git) CreateWorktree(branchName, worktreePath, baseBranch string) error 
 		}
 	}
 	// Create the worktree
-	_, err := g.run("worktree", "add", worktreePath, branchName)
+	_, err := g.runWithSpinner(fmt.Sprintf("Creating worktree for %s...", branchName), "worktree", "add", worktreePath, branchName)
 	return err
 }
 
 // AddWorktree creates a worktree for an existing branch
 func (g *Git) AddWorktree(branchName, worktreePath string) error {
-	_, err := g.run("worktree", "add", worktreePath, branchName)
+	_, err := g.runWithSpinner(fmt.Sprintf("Creating worktree for %s...", branchName), "worktree", "add", worktreePath, branchName)
 	return err
 }
 
@@ -142,7 +162,7 @@ type Worktree struct {
 
 // Fetch fetches from remote
 func (g *Git) Fetch() error {
-	_, err := g.run("fetch", "--all", "--prune")
+	_, err := g.runWithSpinner("Fetching from remote...", "fetch", "--all", "--prune")
 	return err
 }
 
@@ -212,6 +232,10 @@ type RebaseResult struct {
 // RebaseNonInteractive rebases current branch onto target without interactive mode
 // Returns structured result instead of just error for better conflict handling
 func (g *Git) RebaseNonInteractive(target string) RebaseResult {
+	spinner := ui.NewSpinner(fmt.Sprintf("Rebasing onto %s...", target))
+	spinner.Start()
+	defer spinner.Stop()
+
 	cmd := exec.Command("git", "rebase", target)
 	cmd.Dir = g.RepoDir
 	var stderr bytes.Buffer
@@ -239,6 +263,10 @@ func (g *Git) RebaseNonInteractive(target string) RebaseResult {
 // RebaseOntoNonInteractive rebases commits from oldBase to current onto newBase
 // Returns structured result for better conflict handling
 func (g *Git) RebaseOntoNonInteractive(newBase, oldBase string) RebaseResult {
+	spinner := ui.NewSpinner(fmt.Sprintf("Rebasing onto %s...", newBase))
+	spinner.Start()
+	defer spinner.Stop()
+
 	cmd := exec.Command("git", "rebase", "--onto", newBase, oldBase)
 	cmd.Dir = g.RepoDir
 	var stderr bytes.Buffer

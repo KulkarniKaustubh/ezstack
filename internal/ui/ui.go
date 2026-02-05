@@ -7,6 +7,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/ezstack/ezstack/internal/config"
 	"github.com/mattn/go-runewidth"
@@ -979,4 +981,47 @@ func SelectOptionWithBack(options []string, prompt string) (int, error) {
 	}
 
 	return idx - 1, nil
+}
+
+// Spinner represents a simple loading spinner
+type Spinner struct {
+	message string
+	stop    chan bool
+	wg      sync.WaitGroup
+}
+
+// NewSpinner creates a new spinner with the given message
+func NewSpinner(message string) *Spinner {
+	return &Spinner{
+		message: message,
+		stop:    make(chan bool),
+	}
+}
+
+// Start begins the spinner animation
+func (s *Spinner) Start() {
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		frames := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		i := 0
+		for {
+			select {
+			case <-s.stop:
+				// Clear the spinner line
+				fmt.Fprintf(os.Stderr, "\r\033[K")
+				return
+			default:
+				fmt.Fprintf(os.Stderr, "\r%s%s%s %s", Cyan, frames[i], Reset, s.message)
+				i = (i + 1) % len(frames)
+				time.Sleep(80 * time.Millisecond)
+			}
+		}
+	}()
+}
+
+// Stop stops the spinner
+func (s *Spinner) Stop() {
+	close(s.stop)
+	s.wg.Wait()
 }
