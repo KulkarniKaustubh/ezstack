@@ -87,11 +87,15 @@ func (g *Git) ContinueRebase() error {
 
 // Push pushes the current branch to remote
 func (g *Git) Push(force bool) error {
+	branch, err := g.CurrentBranch()
+	if err != nil {
+		return fmt.Errorf("failed to get current branch: %w", err)
+	}
 	args := []string{"push"}
 	if force {
 		args = append(args, "--force-with-lease")
 	}
-	args = append(args, "origin", "HEAD")
+	args = append(args, "origin", branch)
 	return g.RunInteractive(args...)
 }
 
