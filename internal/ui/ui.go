@@ -778,16 +778,12 @@ func ConfirmTUI(prompt string) bool {
 				// Move cursor down past the dialog and clear
 				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
 				return selected == 0
-			case 3, 27: // Ctrl+C or Escape (single byte)
-				if n == 1 && buf[0] == 27 {
-					// Could be start of escape sequence, try to read more
-					// with a short timeout - but for single ESC, treat as cancel
-					// We'll check if more bytes follow
-				}
-				if buf[0] == 3 { // Ctrl+C
-					fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
-					return false
-				}
+			case 3: // Ctrl+C - exit immediately
+				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				os.Exit(130) // Standard exit code for Ctrl+C
+			case 27: // Escape (single byte - could be start of escape sequence)
+				// Will be handled below if it's a single ESC
 			case 'k', 'K': // vim-style up
 				selected = 0
 				renderConfirm()
@@ -891,11 +887,12 @@ func ConfirmTUIWithDefault(prompt string, defaultYes bool) bool {
 				// Move cursor down past the dialog and clear
 				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
 				return selected == 0
-			case 3, 27: // Ctrl+C or Escape (single byte)
-				if buf[0] == 3 { // Ctrl+C
-					fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
-					return defaultYes // Return default on cancel
-				}
+			case 3: // Ctrl+C - exit immediately
+				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				os.Exit(130) // Standard exit code for Ctrl+C
+			case 27: // Escape (single byte - could be start of escape sequence)
+				// Will be handled below if it's a single ESC
 			case 'k', 'K': // vim-style up
 				selected = 0
 				renderConfirm()
@@ -999,9 +996,10 @@ func SelectTUI(options []string, prompt string, defaultIdx int) int {
 				// Move cursor down past the dialog and clear
 				fmt.Fprintf(os.Stderr, "\033[%dB\r\033[K", totalLines+1)
 				return selected
-			case 3: // Ctrl+C
+			case 3: // Ctrl+C - exit immediately
 				fmt.Fprintf(os.Stderr, "\033[%dB\r\033[K", totalLines+1)
-				return -1
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				os.Exit(130) // Standard exit code for Ctrl+C
 			case 'k', 'K': // vim-style up
 				if selected > 0 {
 					selected--
