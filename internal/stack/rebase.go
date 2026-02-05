@@ -48,8 +48,17 @@ func (m *Manager) RebaseStack(startFromCurrent bool) ([]RebaseResult, error) {
 		result := RebaseResult{Branch: branch.Name}
 		g := git.New(branch.WorktreePath)
 
+		// Check if parent is a remote branch - if so, use origin/<parent>
+		parentRef := branch.Parent
+		for _, b := range stack.Branches {
+			if b.Name == branch.Parent && b.IsRemote {
+				parentRef = "origin/" + branch.Parent
+				break
+			}
+		}
+
 		// Local branch - rebase onto parent
-		if err := g.Rebase(branch.Parent); err != nil {
+		if err := g.Rebase(parentRef); err != nil {
 			hasConflict, _ := g.IsRebaseInProgress()
 			if hasConflict {
 				result.HasConflict = true
@@ -179,7 +188,7 @@ func (m *Manager) SyncWithMain() error {
 
 // RebaseOnParent rebases the current branch onto its updated parent
 func (m *Manager) RebaseOnParent() error {
-	_, currentBranch, err := m.GetCurrentStack()
+	currentStack, currentBranch, err := m.GetCurrentStack()
 	if err != nil {
 		return err
 	}
@@ -189,8 +198,17 @@ func (m *Manager) RebaseOnParent() error {
 		return fmt.Errorf("cannot rebase remote branch '%s' - it has no local worktree", currentBranch.Name)
 	}
 
-	fmt.Printf("Rebasing %s onto %s\n", currentBranch.Name, currentBranch.Parent)
-	return m.git.Rebase(currentBranch.Parent)
+	// Check if parent is a remote branch - if so, use origin/<parent>
+	parentRef := currentBranch.Parent
+	for _, b := range currentStack.Branches {
+		if b.Name == currentBranch.Parent && b.IsRemote {
+			parentRef = "origin/" + currentBranch.Parent
+			break
+		}
+	}
+
+	fmt.Printf("Rebasing %s onto %s\n", currentBranch.Name, parentRef)
+	return m.git.Rebase(parentRef)
 }
 
 // RebaseChildren rebases all child branches after updating the current branch
