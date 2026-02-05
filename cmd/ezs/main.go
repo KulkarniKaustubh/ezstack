@@ -183,7 +183,7 @@ ezs() {
         --shell-init)
             "$ezs_bin" --shell-init
             ;;
-        goto|go|new|n)
+        goto|go|new|n|delete|del|rm)
             # These commands may output "cd <path>" which we need to eval
             eval "$("$ezs_bin" "$@")"
             ;;

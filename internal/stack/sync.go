@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ezstack/ezstack/internal/config"
 	"github.com/ezstack/ezstack/internal/git"
 	"github.com/ezstack/ezstack/internal/github"
 )
@@ -44,6 +45,11 @@ type CleanupResult struct {
 	WorktreeWasDeleted bool // True if worktree was already deleted before cleanup
 }
 
+// AfterRebaseCallback is called after each successful rebase
+// It receives the result and the git instance for the worktree
+// Returns true if sync should continue, false to stop
+type AfterRebaseCallback func(result RebaseResult, g *git.Git) bool
+
 // getParentRef returns the git ref for a parent branch
 // For remote branches (IsRemote=true), returns origin/<name>
 // For local branches, returns the branch name
@@ -55,10 +61,22 @@ func (m *Manager) getParentRef(parentName string) string {
 	return parentName
 }
 
-// DetectSyncNeeded checks for branches that need syncing:
+// DetectSyncNeeded checks for branches that need syncing in the CURRENT stack only:
 // 1. Branches whose parents have been merged to main
 // 2. Branches whose parent is main but are behind origin/main
 func (m *Manager) DetectSyncNeeded(gh *github.Client) ([]SyncInfo, error) {
+	return m.detectSyncNeededInternal(gh, true)
+}
+
+// DetectSyncNeededAllStacks checks for branches that need syncing across ALL stacks:
+// 1. Branches whose parents have been merged to main
+// 2. Branches whose parent is main but are behind origin/main
+func (m *Manager) DetectSyncNeededAllStacks(gh *github.Client) ([]SyncInfo, error) {
+	return m.detectSyncNeededInternal(gh, false)
+}
+
+// detectSyncNeededInternal is the internal implementation that can work on current stack or all stacks
+func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly bool) ([]SyncInfo, error) {
 	// Fetch latest
 	if err := m.git.Fetch(); err != nil {
 		return nil, fmt.Errorf("failed to fetch: %w", err)
@@ -71,8 +89,22 @@ func (m *Manager) DetectSyncNeeded(gh *github.Client) ([]SyncInfo, error) {
 
 	var results []SyncInfo
 
-	// Check each stack for branches needing sync
-	for _, stack := range m.stackConfig.Stacks {
+	// Get the stacks to check
+	var stacksToCheck []*config.Stack
+	if currentStackOnly {
+		currentStack, _, err := m.GetCurrentStack()
+		if err != nil {
+			return nil, fmt.Errorf("not in a stack: %w", err)
+		}
+		stacksToCheck = []*config.Stack{currentStack}
+	} else {
+		for _, stack := range m.stackConfig.Stacks {
+			stacksToCheck = append(stacksToCheck, stack)
+		}
+	}
+
+	// Check branches in selected stacks
+	for _, stack := range stacksToCheck {
 		for _, branch := range stack.Branches {
 			// Skip remote branches (we can't rebase them anyway)
 			if branch.IsRemote {
@@ -208,12 +240,24 @@ func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client
 	return nil
 }
 
-// SyncStack syncs all branches in the stack that need syncing
+// SyncStack syncs branches in the CURRENT stack only that need syncing
 // This handles three cases:
 // 1. Branches whose parent is main but are behind origin/main (simple rebase)
 // 2. Branches whose parent was merged (rebase onto main using --onto)
 // 3. Branches whose parent is not merged but has new commits (rebase onto parent)
-func (m *Manager) SyncStack(gh *github.Client) ([]RebaseResult, error) {
+// If afterRebase callback is provided, it's called after each successful rebase
+// The callback can be used to push the branch before continuing to children
+func (m *Manager) SyncStack(gh *github.Client, afterRebase AfterRebaseCallback) ([]RebaseResult, error) {
+	return m.syncStackInternal(gh, afterRebase, true)
+}
+
+// SyncStackAll syncs branches in ALL stacks that need syncing
+func (m *Manager) SyncStackAll(gh *github.Client, afterRebase AfterRebaseCallback) ([]RebaseResult, error) {
+	return m.syncStackInternal(gh, afterRebase, false)
+}
+
+// syncStackInternal is the internal implementation that can work on current stack or all stacks
+func (m *Manager) syncStackInternal(gh *github.Client, afterRebase AfterRebaseCallback, currentStackOnly bool) ([]RebaseResult, error) {
 	// Fetch latest
 	if err := m.git.Fetch(); err != nil {
 		return nil, fmt.Errorf("failed to fetch: %w", err)
@@ -226,8 +270,36 @@ func (m *Manager) SyncStack(gh *github.Client) ([]RebaseResult, error) {
 
 	var results []RebaseResult
 
-	// Check each stack for branches needing sync
-	for _, stack := range m.stackConfig.Stacks {
+	// Get the stacks to sync
+	var stacksToSync []*config.Stack
+	if currentStackOnly {
+		currentStack, _, err := m.GetCurrentStack()
+		if err != nil {
+			return nil, fmt.Errorf("not in a stack: %w", err)
+		}
+		stacksToSync = []*config.Stack{currentStack}
+	} else {
+		for _, stack := range m.stackConfig.Stacks {
+			stacksToSync = append(stacksToSync, stack)
+		}
+	}
+
+	// Record old HEAD commits for branches in selected stacks BEFORE any rebasing
+	// This is needed for Case 3: when parent is rebased, we need to know
+	// the old parent HEAD to correctly rebase children onto the new parent
+	oldHeads := make(map[string]string)
+	for _, stack := range stacksToSync {
+		for _, branch := range stack.Branches {
+			if !branch.IsRemote {
+				if commit, err := m.git.GetBranchCommit(branch.Name); err == nil {
+					oldHeads[branch.Name] = commit
+				}
+			}
+		}
+	}
+
+	// Sync branches in selected stacks
+	for _, stack := range stacksToSync {
 		for i, branch := range stack.Branches {
 			if branch.IsRemote {
 				continue
@@ -260,6 +332,12 @@ func (m *Manager) SyncStack(gh *github.Client) ([]RebaseResult, error) {
 				}
 				result.Success = true
 				results = append(results, result)
+				// Call afterRebase callback to allow pushing before continuing to children
+				if afterRebase != nil {
+					if !afterRebase(result, g) {
+						return results, nil // Callback requested stop
+					}
+				}
 				continue
 			}
 
@@ -328,11 +406,18 @@ func (m *Manager) SyncStack(gh *github.Client) ([]RebaseResult, error) {
 				}
 				result.Success = true
 				results = append(results, result)
+				// Call afterRebase callback to allow pushing before continuing to children
+				if afterRebase != nil {
+					if !afterRebase(result, g) {
+						return results, nil // Callback requested stop
+					}
+				}
 				continue
 			}
 
 			// Case 3: Parent is not main and not merged - check if behind parent
 			// This handles the case where parent branch was updated with new commits
+			// (e.g., parent was just rebased onto main in this same sync operation)
 			behindBy, err := m.git.GetCommitsBehind(branch.Name, parentRef)
 			if err != nil || behindBy == 0 {
 				continue // Not behind parent, skip
@@ -341,7 +426,59 @@ func (m *Manager) SyncStack(gh *github.Client) ([]RebaseResult, error) {
 			result.BehindBy = behindBy
 			result.SyncedParent = branch.Parent
 
-			// Simple rebase onto parent
+			// Use the OLD parent HEAD (recorded before any rebasing) as the base for --onto
+			// This correctly handles the case where parent was rebased in this sync:
+			// - Parent was at oldParentHead, child was based on it
+			// - Parent got rebased to newParentHead (current parentRef)
+			// - We need: git rebase --onto newParentHead oldParentHead
+			// This transplants commits from oldParentHead..childHead onto newParentHead
+			oldParentHead, hasOldHead := oldHeads[branch.Parent]
+			if hasOldHead {
+				// Check if child has any commits of its own (beyond the old parent)
+				// If child HEAD == oldParentHead, there are no commits to rebase
+				// In this case, just fast-forward the child to the new parent HEAD
+				childHead, err := m.git.GetBranchCommit(branch.Name)
+				if err == nil && childHead == oldParentHead {
+					// No commits in child - just reset to new parent HEAD
+					if err := g.ResetHard(parentRef); err != nil {
+						result.Error = fmt.Errorf("failed to fast-forward: %w", err)
+						results = append(results, result)
+						continue
+					}
+					result.Success = true
+					results = append(results, result)
+					if afterRebase != nil {
+						if !afterRebase(result, g) {
+							return results, nil
+						}
+					}
+					continue
+				}
+
+				// Use rebase --onto with the old parent HEAD
+				rebaseResult := g.RebaseOntoNonInteractive(parentRef, oldParentHead)
+				if rebaseResult.HasConflict {
+					result.HasConflict = true
+					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
+					results = append(results, result)
+					continue
+				} else if rebaseResult.Error != nil {
+					result.Error = rebaseResult.Error
+					results = append(results, result)
+					continue
+				}
+				result.Success = true
+				results = append(results, result)
+				// Call afterRebase callback to allow pushing before continuing to children
+				if afterRebase != nil {
+					if !afterRebase(result, g) {
+						return results, nil // Callback requested stop
+					}
+				}
+				continue
+			}
+
+			// Fallback: no old HEAD recorded, try simple rebase
 			rebaseResult := g.RebaseNonInteractive(parentRef)
 			if rebaseResult.HasConflict {
 				result.HasConflict = true
@@ -355,6 +492,12 @@ func (m *Manager) SyncStack(gh *github.Client) ([]RebaseResult, error) {
 			}
 			result.Success = true
 			results = append(results, result)
+			// Call afterRebase callback to allow pushing before continuing to children
+			if afterRebase != nil {
+				if !afterRebase(result, g) {
+					return results, nil // Callback requested stop
+				}
+			}
 		}
 	}
 
@@ -461,6 +604,7 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 	}
 
 	// Case 3: Parent is not main and not merged - check if behind parent
+	// This handles the case where parent branch was force-pushed (rebased)
 	behindBy, err := m.git.GetCommitsBehind(branch.Name, parentRef)
 	if err != nil || behindBy == 0 {
 		result.Success = true
@@ -470,6 +614,25 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 	result.BehindBy = behindBy
 	result.SyncedParent = branch.Parent
 
+	// Count commits in the child branch that are not in the parent
+	// git rev-list --count parent..branch
+	commitCount, err := m.git.GetCommitCount(parentRef, branch.Name)
+	if err != nil {
+		result.Error = fmt.Errorf("failed to count commits: %w", err)
+		return result, nil
+	}
+
+	if commitCount == 0 {
+		// No commits in child - just reset to parent (fast-forward)
+		if err := g.ResetHard(parentRef); err != nil {
+			result.Error = fmt.Errorf("failed to fast-forward: %w", err)
+			return result, nil
+		}
+		result.Success = true
+		return result, nil
+	}
+
+	// Has commits - rebase normally, let conflicts bubble up
 	rebaseResult := g.RebaseNonInteractive(parentRef)
 	if rebaseResult.HasConflict {
 		result.HasConflict = true
@@ -527,19 +690,40 @@ func (m *Manager) RebaseChildren() ([]RebaseResult, error) {
 		result := RebaseResult{Branch: child.Name, WorktreePath: child.WorktreePath}
 		g := git.New(child.WorktreePath)
 
-		rebaseResult := g.RebaseNonInteractive(currentBranch.Name)
-		if rebaseResult.HasConflict {
-			result.HasConflict = true
-			result.Error = fmt.Errorf("resolve conflicts in: %s", child.WorktreePath)
-			results = append(results, result)
-			continue
-		} else if rebaseResult.Error != nil {
-			result.Error = rebaseResult.Error
+		// Count commits in the child branch that are not in the parent
+		// git rev-list --count parent..child
+		commitCount, err := m.git.GetCommitCount(currentBranch.Name, child.Name)
+		if err != nil {
+			result.Error = fmt.Errorf("failed to count commits: %w", err)
 			results = append(results, result)
 			continue
 		}
-		result.Success = true
-		results = append(results, result)
+
+		if commitCount == 0 {
+			// No commits in child - just reset to parent (fast-forward)
+			if err := g.ResetHard(currentBranch.Name); err != nil {
+				result.Error = fmt.Errorf("failed to fast-forward: %w", err)
+				results = append(results, result)
+				continue
+			}
+			result.Success = true
+			results = append(results, result)
+		} else {
+			// Has commits - rebase normally, let conflicts bubble up
+			rebaseResult := g.RebaseNonInteractive(currentBranch.Name)
+			if rebaseResult.HasConflict {
+				result.HasConflict = true
+				result.Error = fmt.Errorf("resolve conflicts in: %s", child.WorktreePath)
+				results = append(results, result)
+				continue
+			} else if rebaseResult.Error != nil {
+				result.Error = rebaseResult.Error
+				results = append(results, result)
+				continue
+			}
+			result.Success = true
+			results = append(results, result)
+		}
 
 		// Recursively rebase this child's children
 		childMgr, err := NewManager(child.WorktreePath)
@@ -553,9 +737,19 @@ func (m *Manager) RebaseChildren() ([]RebaseResult, error) {
 	return results, nil
 }
 
-// DetectMergedBranches finds branches whose PRs have been merged to main
+// DetectMergedBranches finds branches in the CURRENT stack whose PRs have been merged to main
 // These are candidates for cleanup (deleting local branch and worktree)
 func (m *Manager) DetectMergedBranches(gh *github.Client) ([]MergedBranchInfo, error) {
+	return m.detectMergedBranchesInternal(gh, true)
+}
+
+// DetectMergedBranchesAllStacks finds branches across ALL stacks whose PRs have been merged to main
+func (m *Manager) DetectMergedBranchesAllStacks(gh *github.Client) ([]MergedBranchInfo, error) {
+	return m.detectMergedBranchesInternal(gh, false)
+}
+
+// detectMergedBranchesInternal is the internal implementation that can work on current stack or all stacks
+func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOnly bool) ([]MergedBranchInfo, error) {
 	if gh == nil {
 		return nil, nil
 	}
@@ -567,8 +761,22 @@ func (m *Manager) DetectMergedBranches(gh *github.Client) ([]MergedBranchInfo, e
 
 	var results []MergedBranchInfo
 
-	// Check each stack for branches with merged PRs
-	for stackName, stack := range m.stackConfig.Stacks {
+	// Get the stacks to check
+	stacksToCheck := make(map[string]*config.Stack)
+	if currentStackOnly {
+		currentStack, _, err := m.GetCurrentStack()
+		if err != nil {
+			return nil, fmt.Errorf("not in a stack: %w", err)
+		}
+		stacksToCheck[currentStack.Name] = currentStack
+	} else {
+		for stackName, stack := range m.stackConfig.Stacks {
+			stacksToCheck[stackName] = stack
+		}
+	}
+
+	// Check branches in selected stacks for merged PRs
+	for stackName, stack := range stacksToCheck {
 		for _, branch := range stack.Branches {
 			// Skip branches without PRs
 			if branch.PRNumber == 0 {

@@ -230,6 +230,34 @@ func (g *Git) GetCommitsBehind(branch, target string) (int, error) {
 	return count, nil
 }
 
+// GetCommitsAhead returns the number of commits branch is ahead of target
+func (g *Git) GetCommitsAhead(branch, target string) (int, error) {
+	output, err := g.run("rev-list", "--count", target+".."+branch)
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	fmt.Sscanf(output, "%d", &count)
+	return count, nil
+}
+
+// IsLocalAheadOfOrigin checks if the local branch has commits not in origin
+// Returns true if local is ahead (needs push), false if in sync or behind
+func (g *Git) IsLocalAheadOfOrigin(branch string) (bool, error) {
+	originBranch := "origin/" + branch
+	// Check if origin branch exists
+	_, err := g.run("rev-parse", "--verify", originBranch)
+	if err != nil {
+		// Origin branch doesn't exist - local is ahead (needs first push)
+		return true, nil
+	}
+	ahead, err := g.GetCommitsAhead(branch, originBranch)
+	if err != nil {
+		return false, err
+	}
+	return ahead > 0, nil
+}
+
 // RebaseResult contains the result of a rebase operation
 type RebaseResult struct {
 	Success     bool
@@ -309,6 +337,13 @@ func (g *Git) RebaseOnto(newBase, oldBase string) error {
 	return g.RunInteractive("rebase", "--onto", newBase, oldBase)
 }
 
+// ResetHard performs a hard reset to the given ref
+// This is used to fast-forward a branch that has no commits of its own
+func (g *Git) ResetHard(ref string) error {
+	_, err := g.run("reset", "--hard", ref)
+	return err
+}
+
 // GetRemote gets the remote URL
 func (g *Git) GetRemote(name string) (string, error) {
 	return g.run("remote", "get-url", name)
@@ -320,8 +355,13 @@ func (g *Git) PullRebase() error {
 }
 
 // PushForce force pushes the current branch with lease (safer than --force)
+// Explicitly specifies origin and branch name to handle branches without upstream
 func (g *Git) PushForce() error {
-	return g.RunInteractive("push", "--force-with-lease")
+	branch, err := g.CurrentBranch()
+	if err != nil {
+		return fmt.Errorf("failed to get current branch: %w", err)
+	}
+	return g.RunInteractive("push", "--force-with-lease", "origin", branch)
 }
 
 // RemoveWorktree removes a worktree and optionally deletes the branch

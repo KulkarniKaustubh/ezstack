@@ -1,6 +1,7 @@
 package git
 
 import (
+	"fmt"
 	"strings"
 )
 
@@ -39,6 +40,18 @@ func (g *Git) GetCommitsBetween(base, head string) ([]Commit, error) {
 // GetMergeBase finds the common ancestor between two branches
 func (g *Git) GetMergeBase(branch1, branch2 string) (string, error) {
 	return g.run("merge-base", branch1, branch2)
+}
+
+// GetCommitCount returns the number of commits between base and head
+// This is useful to check if a branch has any commits of its own
+func (g *Git) GetCommitCount(base, head string) (int, error) {
+	output, err := g.run("rev-list", "--count", base+".."+head)
+	if err != nil {
+		return 0, err
+	}
+	var count int
+	fmt.Sscanf(output, "%d", &count)
+	return count, nil
 }
 
 // HasConflicts checks if there are merge conflicts

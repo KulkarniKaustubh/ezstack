@@ -103,6 +103,18 @@ func Delete(args []string) error {
 		return nil
 	}
 
+	// Change to repo root before deleting, in case we're deleting the current worktree
+	repoRoot := mgr.GetRepoDir()
+	if err := os.Chdir(repoRoot); err != nil {
+		return fmt.Errorf("failed to change to repo root: %w", err)
+	}
+
+	// Reinitialize manager from repo root to ensure git commands work
+	mgr, err = stack.NewManager(repoRoot)
+	if err != nil {
+		return err
+	}
+
 	// Perform the deletion
 	if err := mgr.DeleteBranch(branchName, *force); err != nil {
 		return err
