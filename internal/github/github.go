@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/ezstack/ezstack/internal/config"
+	"github.com/ezstack/ezstack/internal/ui"
 )
 
 // Client wraps GitHub operations using gh CLI
@@ -112,22 +113,7 @@ func (c *Client) GetPR(number int) (*PR, error) {
 	return &pr, nil
 }
 
-// GetPRForBranch gets the PR for a branch
-func (c *Client) GetPRForBranch(branch string) (*PR, error) {
-	output, err := c.runGH("pr", "view", branch,
-		"--json", "number,url,title,body,state,baseRefName,headRefName,mergedAt,mergeable,isDraft,reviewDecision")
-	if err != nil {
-		return nil, err
-	}
 
-	var pr PR
-	if err := json.Unmarshal([]byte(output), &pr); err != nil {
-		return nil, err
-	}
-	// Set Merged based on whether mergedAt is present
-	pr.Merged = pr.MergedAt != ""
-	return &pr, nil
-}
 
 // GetPRChecks gets the CI check status for a PR
 func (c *Client) GetPRChecks(number int) (*CheckStatus, error) {
@@ -303,6 +289,18 @@ func (c *Client) runGH(args ...string) (string, error) {
 		return "", fmt.Errorf("gh %s failed: %s\n%s", strings.Join(fullArgs, " "), err, stderrStr)
 	}
 	return stdout.String(), nil
+}
+
+// runGHWithSpinner executes a gh CLI command with a delayed loading spinner
+// The spinner only shows if the command takes longer than ui.SpinnerDelay
+func (c *Client) runGHWithSpinner(message string, args ...string) (string, error) {
+	var result string
+	err := ui.WithSpinner(message, func() error {
+		var err error
+		result, err = c.runGH(args...)
+		return err
+	})
+	return result, err
 }
 
 // UpdateStackDescription updates PR descriptions with stack info

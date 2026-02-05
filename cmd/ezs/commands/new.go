@@ -179,7 +179,7 @@ func New(args []string) error {
 		if err == nil {
 			gh, err := github.NewClient(remoteURL)
 			if err == nil {
-				pr, err := gh.GetPRForBranch(selected.Branch)
+				pr, err := gh.GetPRByBranch(selected.Branch)
 				if err == nil && pr != nil && pr.Number > 0 {
 					// Found an existing PR - update the branch metadata
 					branch.PRNumber = pr.Number

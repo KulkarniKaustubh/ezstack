@@ -35,22 +35,30 @@ func (g *Git) run(args ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-// runWithSpinner executes a git command with a loading spinner
+// runWithSpinner executes a git command with a delayed loading spinner
+// The spinner only shows if the command takes longer than ui.SpinnerDelay
 func (g *Git) runWithSpinner(message string, args ...string) (string, error) {
-	spinner := ui.NewSpinner(message)
-	spinner.Start()
-	defer spinner.Stop()
+	var result string
+	var cmdErr error
 
-	cmd := exec.Command("git", args...)
-	cmd.Dir = g.RepoDir
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
+	err := ui.WithSpinner(message, func() error {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = g.RepoDir
+		var stdout, stderr bytes.Buffer
+		cmd.Stdout = &stdout
+		cmd.Stderr = &stderr
+		cmdErr = cmd.Run()
+		if cmdErr != nil {
+			return fmt.Errorf("git %s failed: %s\n%s", strings.Join(args, " "), cmdErr, stderr.String())
+		}
+		result = strings.TrimSpace(stdout.String())
+		return nil
+	})
+
 	if err != nil {
-		return "", fmt.Errorf("git %s failed: %s\n%s", strings.Join(args, " "), err, stderr.String())
+		return "", err
 	}
-	return strings.TrimSpace(stdout.String()), nil
+	return result, nil
 }
 
 // RunInteractive runs a git command interactively (for rebase with conflicts)
@@ -232,7 +240,7 @@ type RebaseResult struct {
 // RebaseNonInteractive rebases current branch onto target without interactive mode
 // Returns structured result instead of just error for better conflict handling
 func (g *Git) RebaseNonInteractive(target string) RebaseResult {
-	spinner := ui.NewSpinner(fmt.Sprintf("Rebasing onto %s...", target))
+	spinner := ui.NewDelayedSpinner(fmt.Sprintf("Rebasing onto %s...", target))
 	spinner.Start()
 	defer spinner.Stop()
 
@@ -263,7 +271,7 @@ func (g *Git) RebaseNonInteractive(target string) RebaseResult {
 // RebaseOntoNonInteractive rebases commits from oldBase to current onto newBase
 // Returns structured result for better conflict handling
 func (g *Git) RebaseOntoNonInteractive(newBase, oldBase string) RebaseResult {
-	spinner := ui.NewSpinner(fmt.Sprintf("Rebasing onto %s...", newBase))
+	spinner := ui.NewDelayedSpinner(fmt.Sprintf("Rebasing onto %s...", newBase))
 	spinner.Start()
 	defer spinner.Stop()
 
@@ -318,13 +326,25 @@ func (g *Git) PushForce() error {
 
 // RemoveWorktree removes a worktree and optionally deletes the branch
 func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName string) error {
-	// First remove the worktree
-	_, err := g.run("worktree", "remove", worktreePath)
-	if err != nil {
-		// Try force remove if regular remove fails
-		_, err = g.run("worktree", "remove", "--force", worktreePath)
+	// Check if the worktree directory exists
+	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+		// Worktree directory doesn't exist - just prune stale worktrees and delete branch
+		g.run("worktree", "prune")
+	} else {
+		// First remove the worktree
+		_, err := g.run("worktree", "remove", worktreePath)
 		if err != nil {
-			return fmt.Errorf("failed to remove worktree: %w", err)
+			// Try force remove if regular remove fails
+			_, err = g.run("worktree", "remove", "--force", worktreePath)
+			if err != nil {
+				// Check if the error is because it's not a working tree (already removed)
+				if strings.Contains(err.Error(), "is not a working tree") {
+					// Worktree already removed, just prune
+					g.run("worktree", "prune")
+				} else {
+					return fmt.Errorf("failed to remove worktree: %w", err)
+				}
+			}
 		}
 	}
 
@@ -332,7 +352,10 @@ func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName 
 	if deleteBranch && branchName != "" {
 		_, err := g.run("branch", "-D", branchName)
 		if err != nil {
-			return fmt.Errorf("worktree removed but failed to delete branch: %w", err)
+			// Branch might already be deleted or not exist
+			if !strings.Contains(err.Error(), "not found") {
+				return fmt.Errorf("worktree removed but failed to delete branch: %w", err)
+			}
 		}
 	}
 
