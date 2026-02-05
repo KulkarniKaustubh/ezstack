@@ -350,19 +350,20 @@ func prCreate(args []string) error {
 		prTitle = ui.Prompt("PR title", branch.Name)
 	}
 
-	// If body not provided, offer to edit description with PR template
+	// If body not provided, use template and optionally let user edit it
 	prBody := *body
 	if prBody == "" {
-		if ui.ConfirmTUI("Edit PR description?") {
-			// Get PR template if available
-			template := g.GetPRTemplate()
-			if template == "" {
-				template = "<!-- Enter your PR description here -->\n\n"
-			}
+		// Get PR template if available
+		template := g.GetPRTemplate()
+		if template == "" {
+			template = "<!-- Enter your PR description here -->\n\n"
+		}
+		prBody = template
 
+		if ui.ConfirmTUI("Edit PR description?") {
 			editedBody, err := ui.EditWithEditor(template, ".md")
 			if err != nil {
-				ui.Warn(fmt.Sprintf("Editor failed: %v (continuing without description)", err))
+				ui.Warn(fmt.Sprintf("Editor failed: %v (keeping template)", err))
 			} else {
 				prBody = editedBody
 			}
@@ -375,61 +376,27 @@ func prCreate(args []string) error {
 		commitMsg, err := g.GetLastCommitMessage()
 		isWipCommit := err == nil && startsWithWIP(commitMsg)
 
-		// Check if auto-draft is enabled for this repo
-		cfg, _ := config.Load()
-		mainWorktree, _ := g.GetMainWorktree()
-		if mainWorktree == "" {
-			mainWorktree = cwd
+		// Ask user to choose PR type
+		// Default to Draft if commit starts with wip, otherwise Ready for review
+		defaultIdx := 1 // Ready for review
+		if isWipCommit {
+			defaultIdx = 0 // Draft
 		}
-		repoCfg := cfg.GetRepoConfig(mainWorktree)
-
-		if isWipCommit && repoCfg != nil && repoCfg.AutoDraftWipCommits != nil && *repoCfg.AutoDraftWipCommits {
-			// Auto-draft is enabled
-			isDraft = true
-			ui.Info("Auto-creating as draft (commit starts with 'wip')")
-		} else {
-			// Ask user to choose PR type
-			// Suggest Draft if commit starts with wip
-			suggestedIdx := -1
-			if isWipCommit {
-				suggestedIdx = 0 // Draft is index 0
-			}
-			prTypeOptions := []string{"Draft", "Ready for review"}
-			choice, err := ui.SelectOptionWithSuggested(prTypeOptions, "Choose PR Type", suggestedIdx)
-			if err != nil {
-				return err
-			}
-			isDraft = choice == 0
-
-			// If user chose draft and commit starts with wip, offer to save preference
-			if isDraft && isWipCommit {
-				if ui.ConfirmTUI("Always auto-draft PRs when commit starts with 'wip'?") {
-					if repoCfg == nil {
-						repoCfg = &config.RepoConfig{RepoPath: mainWorktree}
-					}
-					autoDraft := true
-					repoCfg.AutoDraftWipCommits = &autoDraft
-					cfg.SetRepoConfig(mainWorktree, repoCfg)
-					if err := cfg.Save(); err != nil {
-						ui.Warn(fmt.Sprintf("Failed to save config: %v", err))
-					} else {
-						ui.Success("Saved preference: auto-draft WIP commits")
-					}
-				}
-			}
+		prTypeOptions := []string{"Draft", "Ready for review", "Cancel"}
+		choice := ui.SelectTUI(prTypeOptions, "Choose PR Type", defaultIdx)
+		if choice == -1 || choice == 2 {
+			ui.Warn("Cancelled")
+			return nil
 		}
+		isDraft = choice == 0
 	}
 
-	// Show what we're about to do and ask for confirmation
+	// Show what we're about to do
 	prType := "PR"
 	if isDraft {
 		prType = "draft PR"
 	}
 	ui.Info(fmt.Sprintf("Will create %s '%s' with base branch: %s", prType, prTitle, branch.BaseBranch))
-	if !ui.ConfirmTUI(fmt.Sprintf("Create %s", prType)) {
-		ui.Warn("Cancelled")
-		return nil
-	}
 
 	// Fetch to get latest remote state before checking divergence
 	if err := g.Fetch(); err != nil {
