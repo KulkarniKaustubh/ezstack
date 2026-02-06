@@ -3,6 +3,7 @@ module github.com/ezstack/ezstack
 go 1.25.1
 
 require (
+	github.com/chzyer/readline v1.5.1
 	github.com/mattn/go-runewidth v0.0.19
 	golang.org/x/term v0.39.0
 )

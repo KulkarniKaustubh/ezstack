@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/chzyer/readline"
 	"github.com/ezstack/ezstack/internal/config"
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
@@ -1136,6 +1138,96 @@ func Prompt(prompt, defaultVal string) string {
 		return defaultVal
 	}
 	return response
+}
+
+// PromptPath asks for a file path with tab completion support
+// Returns the user input or the default if empty input is given
+func PromptPath(promptText, defaultVal string) string {
+	// Print the question on its own line first
+	fmt.Fprintf(os.Stderr, "%s%s?%s %s\n", Bold, Yellow, Reset, promptText)
+
+	// Build the actual readline prompt (just the hint line)
+	var promptStr string
+	if defaultVal != "" {
+		promptStr = fmt.Sprintf("%s(Enter for %s)%s: ", Gray, defaultVal, Reset)
+	} else {
+		promptStr = ": "
+	}
+
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:          promptStr,
+		AutoComplete:    readline.NewPrefixCompleter(pathCompleterFunc("")),
+		InterruptPrompt: "^C",
+		EOFPrompt:       "",
+		Stdin:           os.Stdin,
+		Stdout:          os.Stderr,
+		Stderr:          os.Stderr,
+	})
+	if err != nil {
+		// Fallback to regular prompt if readline fails
+		return Prompt(promptText, defaultVal)
+	}
+	defer rl.Close()
+
+	// Set custom completer that updates dynamically
+	rl.Config.AutoComplete = &pathCompleter{}
+
+	line, err := rl.Readline()
+	if err != nil {
+		return defaultVal
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return defaultVal
+	}
+	return line
+}
+
+// pathCompleter implements readline.AutoCompleter for file path completion
+type pathCompleter struct{}
+
+func (p *pathCompleter) Do(line []rune, pos int) (newLine [][]rune, length int) {
+	lineStr := string(line[:pos])
+
+	// Expand ~ to home directory
+	searchPath := lineStr
+	if strings.HasPrefix(searchPath, "~") {
+		home, _ := os.UserHomeDir()
+		searchPath = home + searchPath[1:]
+	}
+
+	// Get directory and prefix
+	dir := searchPath
+	prefix := ""
+	if !strings.HasSuffix(searchPath, "/") {
+		dir = filepath.Dir(searchPath)
+		prefix = filepath.Base(searchPath)
+	}
+
+	// Read directory entries
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, 0
+	}
+
+	var matches [][]rune
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(name, prefix) {
+			suffix := name[len(prefix):]
+			if entry.IsDir() {
+				suffix += "/"
+			}
+			matches = append(matches, []rune(suffix))
+		}
+	}
+
+	return matches, len(prefix)
+}
+
+// pathCompleterFunc is a helper for readline.NewPrefixCompleter
+func pathCompleterFunc(prefix string) *readline.PrefixCompleter {
+	return readline.PcItem(prefix)
 }
 
 // PromptRequired asks for text input and keeps asking until a non-empty value is provided

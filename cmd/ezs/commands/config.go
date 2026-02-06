@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/ezstack/ezstack/internal/config"
 	"github.com/ezstack/ezstack/internal/git"
@@ -221,6 +222,16 @@ func valueOrDefault(val, def string) string {
 	return val
 }
 
+// isInsidePath checks if child path is inside or equal to parent path
+func isInsidePath(child, parent string) bool {
+	rel, err := filepath.Rel(parent, child)
+	if err != nil {
+		return false
+	}
+	// If relative path starts with "..", it's outside parent
+	return !strings.HasPrefix(rel, "..") && rel != ".."
+}
+
 // configInteractive walks through config options interactively
 func configInteractive() error {
 	repoPath, err := getCurrentRepoPath()
@@ -246,27 +257,43 @@ func configInteractive() error {
 		}
 	}
 
+	// Generate default worktree dir: ../<repo_name>_worktrees
+	if currentWorktreeBaseDir == "" {
+		repoName := filepath.Base(repoPath)
+		currentWorktreeBaseDir = filepath.Join(filepath.Dir(repoPath), repoName+"_worktrees")
+	}
+
 	configChanged := false
 
-	worktreeBaseDir := ui.Prompt("Worktree base directory (where new worktrees will be created)", currentWorktreeBaseDir)
+	// Loop until valid path is provided
+	for {
+		worktreeBaseDir := ui.PromptPath("Worktree base directory (where new worktrees will be created)", currentWorktreeBaseDir)
 
-	if worktreeBaseDir != "" {
-		worktreeBaseDir = helpers.ExpandPath(worktreeBaseDir)
-		if !filepath.IsAbs(worktreeBaseDir) {
-			cwd, err := os.Getwd()
-			if err != nil {
-				return fmt.Errorf("failed to get current directory: %w", err)
+		if worktreeBaseDir != "" {
+			worktreeBaseDir = helpers.ExpandPath(worktreeBaseDir)
+			if !filepath.IsAbs(worktreeBaseDir) {
+				cwd, err := os.Getwd()
+				if err != nil {
+					return fmt.Errorf("failed to get current directory: %w", err)
+				}
+				worktreeBaseDir = filepath.Join(cwd, worktreeBaseDir)
 			}
-			worktreeBaseDir = filepath.Join(cwd, worktreeBaseDir)
-		}
-		worktreeBaseDir = filepath.Clean(worktreeBaseDir)
+			worktreeBaseDir = filepath.Clean(worktreeBaseDir)
 
-		if repoCfg == nil {
-			repoCfg = &config.RepoConfig{}
+			// Check if path is inside repo root
+			if isInsidePath(worktreeBaseDir, repoPath) {
+				ui.Error("Worktree directory cannot be inside the repository root")
+				continue
+			}
+
+			if repoCfg == nil {
+				repoCfg = &config.RepoConfig{}
+			}
+			repoCfg.WorktreeBaseDir = worktreeBaseDir
+			configChanged = true
+			ui.Success(fmt.Sprintf("Set worktree_base_dir = %s", worktreeBaseDir))
 		}
-		repoCfg.WorktreeBaseDir = worktreeBaseDir
-		configChanged = true
-		ui.Success(fmt.Sprintf("Set worktree_base_dir = %s", worktreeBaseDir))
+		break
 	}
 
 	cdAfterNew := ui.ConfirmTUIWithDefault("Auto-cd into new worktrees after creation", currentCdAfterNew)
