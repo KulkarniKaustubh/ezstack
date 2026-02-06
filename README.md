@@ -2,12 +2,15 @@
 
 # ezstack
 
-**Manage stacked PRs with git worktrees**
+**Manage stacked PRs with git worktrees (beta)**
 
 [![Go Version](https://img.shields.io/badge/Go-1.25.1+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Beta](https://img.shields.io/badge/Status-Beta-orange.svg)]()
 
 </div>
+
+> ⚠️ **BETA SOFTWARE**: This tool is currently in beta and under heavy development. It is subject to major changes at any time.
 
 ---
 
