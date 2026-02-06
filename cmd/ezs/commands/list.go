@@ -6,12 +6,12 @@ import (
 	"os"
 	"strings"
 
-	"github.com/ezstack/ezstack/internal/config"
-	"github.com/ezstack/ezstack/internal/git"
-	"github.com/ezstack/ezstack/internal/github"
-	"github.com/ezstack/ezstack/internal/helpers"
-	"github.com/ezstack/ezstack/internal/stack"
-	"github.com/ezstack/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/github"
+	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
+	"github.com/KulkarniKaustubh/ezstack/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
 // debugMode is set by --debug flag to show verbose output

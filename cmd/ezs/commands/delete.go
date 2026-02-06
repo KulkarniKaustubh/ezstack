@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ezstack/ezstack/internal/helpers"
-	"github.com/ezstack/ezstack/internal/stack"
-	"github.com/ezstack/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
+	"github.com/KulkarniKaustubh/ezstack/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
 // Delete deletes a branch and its worktree

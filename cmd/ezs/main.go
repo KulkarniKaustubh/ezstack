@@ -5,10 +5,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/ezstack/ezstack/cmd/ezs/commands"
-	"github.com/ezstack/ezstack/internal/config"
-	"github.com/ezstack/ezstack/internal/git"
-	"github.com/ezstack/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
 const version = "0.1.0"
@@ -263,10 +263,10 @@ ezs() {
     case "${1:-}" in
         goto|go|new|n|delete|del|rm)
             # These commands may output "cd <path>" which we need to eval
-            eval "$(command ezs-go "$@")"
+            eval "$(command ezs "$@")"
             ;;
         *)
-            command ezs-go "$@"
+            command ezs "$@"
             ;;
     esac
 }

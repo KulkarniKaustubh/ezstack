@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ezstack/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
 )
 
 func TestNewClient(t *testing.T) {

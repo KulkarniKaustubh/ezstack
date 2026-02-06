@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ezstack/ezstack/internal/config"
-	"github.com/ezstack/ezstack/internal/git"
-	"github.com/ezstack/ezstack/internal/github"
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/github"
 )
 
 // syncCache holds the cache during sync operations to track and persist changes

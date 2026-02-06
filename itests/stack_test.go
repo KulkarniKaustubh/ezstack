@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ezstack/ezstack/internal/git"
-	"github.com/ezstack/ezstack/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 )
 
 // TestUnstackBranch tests removing a branch from tracking without deleting it

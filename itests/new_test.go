@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ezstack/ezstack/cmd/ezs/commands"
-	"github.com/ezstack/ezstack/internal/config"
-	"github.com/ezstack/ezstack/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 )
 
 // TestNewBranch tests creating a new branch with ezs new

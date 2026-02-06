@@ -1,6 +1,6 @@
 package github
 
-import "github.com/ezstack/ezstack/internal/config"
+import "github.com/KulkarniKaustubh/ezstack/internal/config"
 
 // ClientInterface defines the interface for GitHub operations
 // This allows for mocking in tests

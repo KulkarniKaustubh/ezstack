@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/ezstack/ezstack/internal/config"
-	"github.com/ezstack/ezstack/internal/git"
-	"github.com/ezstack/ezstack/internal/helpers"
-	"github.com/ezstack/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
+	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
 func printConfigUsage() {

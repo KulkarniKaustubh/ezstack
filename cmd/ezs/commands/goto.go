@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ezstack/ezstack/internal/git"
-	"github.com/ezstack/ezstack/internal/stack"
-	"github.com/ezstack/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
 // Goto navigates to a branch worktree

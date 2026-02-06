@@ -1,37 +1,39 @@
-.PHONY: build build-mac build-linux install clean test deploy-linux
+.PHONY: build build-mac build-linux install-mac install-linux clean test
 
-# macOS binaries
+# macOS binary
 MAC_DIR=bin/mac
-MAC_BINARY_GO=$(MAC_DIR)/ezs-go
-MAC_WRAPPER=$(MAC_DIR)/ezs
+MAC_BINARY=$(MAC_DIR)/ezs
 
-# Linux binaries
+# Linux binary
 LINUX_DIR=bin/linux
-LINUX_BINARY_GO=$(LINUX_DIR)/ezs-go
-LINUX_WRAPPER=$(LINUX_DIR)/ezs
+LINUX_BINARY=$(LINUX_DIR)/ezs
 
-INSTALL_PATH=$(HOME)/bin
+# XDG convention
+INSTALL_PATH=$(HOME)/.local/bin
 
 build: build-mac build-linux
 
 build-mac:
 	mkdir -p $(MAC_DIR)
-	GOOS=darwin GOARCH=arm64 go build -o $(MAC_BINARY_GO) ./cmd/ezs
-	cp scripts/ezs-wrapper.sh $(MAC_WRAPPER)
-	chmod +x $(MAC_WRAPPER)
+	GOOS=darwin GOARCH=arm64 go build -o $(MAC_BINARY) ./cmd/ezs
 
 build-linux:
 	mkdir -p $(LINUX_DIR)
-	GOOS=linux GOARCH=amd64 go build -o $(LINUX_BINARY_GO) ./cmd/ezs
-	cp scripts/ezs-wrapper.sh $(LINUX_WRAPPER)
-	chmod +x $(LINUX_WRAPPER)
+	GOOS=linux GOARCH=amd64 go build -o $(LINUX_BINARY) ./cmd/ezs
 
-install: build
+install-mac: build-mac
 	mkdir -p $(INSTALL_PATH)
-	cp $(MAC_BINARY_GO) $(INSTALL_PATH)/ezs-go
-	cp $(MAC_WRAPPER) $(INSTALL_PATH)/ezs
-	@echo "Installed ezs and ezs-go to $(INSTALL_PATH)"
+	cp $(MAC_BINARY) $(INSTALL_PATH)/ezs
+	@echo "Installed ezs to $(INSTALL_PATH)"
 	@echo "Make sure $(INSTALL_PATH) is in your PATH"
+	@echo "Add to your shell config: eval \"\$$(ezs --shell-init)\""
+
+install-linux: build-linux
+	mkdir -p $(INSTALL_PATH)
+	cp $(LINUX_BINARY) $(INSTALL_PATH)/ezs
+	@echo "Installed ezs to $(INSTALL_PATH)"
+	@echo "Make sure $(INSTALL_PATH) is in your PATH"
+	@echo "Add to your shell config: eval \"\$$(ezs --shell-init)\""
 
 clean:
 	rm -rf bin

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/chzyer/readline"
-	"github.com/ezstack/ezstack/internal/config"
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"
 )
