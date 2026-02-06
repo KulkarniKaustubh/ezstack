@@ -1,0 +1,70 @@
+# yaml-language-server: $schema=https://goreleaser.com/static/schema.json
+version: 2
+
+project_name: ezstack
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: ezs
+    main: ./cmd/ezs
+    binary: ezs
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+
+archives:
+  - id: ezstack
+    builds:
+      - ezs
+    files:
+      - README.md
+      - LICENSE
+    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: 'checksums.txt'
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+release:
+  github:
+    owner: KulkarniKaustubh
+    name: ezstack
+  draft: false
+  prerelease: auto
+  name_template: "v{{.Version}}"
+
+brews:
+  - name: ezstack
+    repository:
+      owner: KulkarniKaustubh
+      name: homebrew-ezstack
+    homepage: "https://github.com/KulkarniKaustubh/ezstack"
+    description: "Manage stacked PRs with git worktrees"
+    license: "MIT"
+    install: |
+      bin.install "ezs"
+    caveats: |
+      To enable shell integration (required for cd functionality), add to your shell config:
+
+        eval "$(ezs --shell-init)"
+    test: |
+      assert_match version.to_s, shell_output("#{bin}/ezs --version")
+

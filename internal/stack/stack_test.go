@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ezstack/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
 )
 
 // setupTestEnv creates a temporary git repository and config directory for testing

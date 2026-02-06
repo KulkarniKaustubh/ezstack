@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/ezstack/ezstack/internal/config"
-	"github.com/ezstack/ezstack/internal/git"
-	"github.com/ezstack/ezstack/internal/stack"
-	"github.com/ezstack/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
 // Stack adds a branch to a stack (alias for reparent with standalone branch)

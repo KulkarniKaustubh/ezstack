@@ -3,8 +3,8 @@ package itests
 import (
 	"testing"
 
-	"github.com/ezstack/ezstack/internal/config"
-	"github.com/ezstack/ezstack/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 )
 
 // TestConfigBaseBranch tests getting the base branch from config

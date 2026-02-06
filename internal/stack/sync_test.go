@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/ezstack/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
 )
 
 // setupSyncTestEnv creates a temporary git repository for sync testing

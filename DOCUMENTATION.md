@@ -47,10 +47,16 @@ make build
 
 **Shell integration**
 
-Add to `~/.bashrc` or `~/.zshrc`:
+Add to your shell configuration
 
+For `bash`:
+```
+echo 'eval "$(ezs --shell-init)"' >> ~/.bashrc
+```
+
+For `zsh`:
 ```bash
-eval "$(ezs --shell-init)"
+echo 'eval "$(ezs --shell-init)"' >> ~/.zshrc
 ```
 
 This enables automatic directory changes when using `goto`, `new`, and `delete` commands.

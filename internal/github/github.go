@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/ezstack/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
 )
 
 // Client wraps GitHub operations using gh CLI

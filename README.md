@@ -13,24 +13,42 @@
 
 ## Requirements
 
-- [Go](https://go.dev/) 1.25.1+
 - [Git](https://git-scm.com/) 2.20+
 - [fzf](https://github.com/junegunn/fzf) for interactive selection
 - [GitHub CLI](https://cli.github.com/) (`gh`) for PR operations
 
 ## Installation
 
+### Homebrew (macOS/Linux)
+
 ```bash
-git clone https://github.com/ezstack/ezstack.git
-cd ezstack
-make build
+brew tap KulkarniKaustubh/ezstack
+brew install ezstack
 ```
+
+### Go Install
+
+```bash
+go install github.com/KulkarniKaustubh/ezstack/cmd/ezs@latest
+```
+
+### From Source
+
+```bash
+git clone https://github.com/KulkarniKaustubh/ezstack.git
+cd ezstack
+make install
+```
+
+### Shell Integration (Required)
 
 Add to your `~/.bashrc` or `~/.zshrc`:
 
 ```bash
 eval "$(ezs --shell-init)"
 ```
+
+This creates a shell function that wraps the `ezs` binary, enabling commands like `ezs goto` to change your shell's directory.
 
 ## Quick Start
 
