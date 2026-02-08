@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
@@ -168,9 +169,17 @@ func Status(args []string) error {
 		spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
 		spinner.Start()
 		statusMaps := make([]map[string]*ui.BranchStatus, len(stacks))
+		var wg sync.WaitGroup
+
 		for i, s := range stacks {
-			statusMaps[i] = fetchBranchStatuses(g, s)
+			wg.Add(1)
+			go func(idx int, stack *config.Stack) {
+				defer wg.Done()
+				statusMaps[idx] = fetchBranchStatuses(g, stack)
+			}(i, s)
 		}
+
+		wg.Wait()
 		spinner.Stop()
 
 		for i, s := range stacks {
@@ -317,7 +326,12 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 	}
 
 	// Track if we discovered any newly merged branches to save config
-	discoveredMerged := false
+	var discoveredMerged bool
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	// Semaphore to limit concurrent gh CLI calls
+	sem := make(chan struct{}, 10)
 
 	for _, branch := range s.Branches {
 		if debugMode {
@@ -327,42 +341,79 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 			continue
 		}
 
-		status := &ui.BranchStatus{}
+		wg.Add(1)
+		go func(b *config.Branch) {
+			defer wg.Done()
 
-		pr, err := gh.GetPR(branch.PRNumber)
-		if err == nil {
-			if pr.Merged {
-				status.PRState = "MERGED"
-				// Cache merged status if not already set
-				if !branch.IsMerged {
-					branch.IsMerged = true
-					discoveredMerged = true
-					if debugMode {
-						fmt.Fprintf(os.Stderr, "[DEBUG] Marking branch %s as merged\n", branch.Name)
+			status := &ui.BranchStatus{}
+
+			// Fetch PR and checks in parallel for this branch
+			var prData *github.PR
+			var checksData *github.CheckStatus
+			var prErr, checksErr error
+			var innerWg sync.WaitGroup
+
+			innerWg.Add(2)
+
+			// Fetch PR details
+			go func() {
+				defer innerWg.Done()
+				sem <- struct{}{}        // Acquire semaphore
+				defer func() { <-sem }() // Release semaphore
+				prData, prErr = gh.GetPR(b.PRNumber)
+			}()
+
+			// Fetch PR checks
+			go func() {
+				defer innerWg.Done()
+				sem <- struct{}{}        // Acquire semaphore
+				defer func() { <-sem }() // Release semaphore
+				checksData, checksErr = gh.GetPRChecks(b.PRNumber)
+			}()
+
+			innerWg.Wait()
+
+			// Process PR data
+			if prErr == nil {
+				if prData.Merged {
+					status.PRState = "MERGED"
+					// Cache merged status if not already set
+					if !b.IsMerged {
+						mu.Lock()
+						b.IsMerged = true
+						discoveredMerged = true
+						mu.Unlock()
+						if debugMode {
+							fmt.Fprintf(os.Stderr, "[DEBUG] Marking branch %s as merged\n", b.Name)
+						}
 					}
+				} else if prData.State == "CLOSED" {
+					status.PRState = "CLOSED"
+				} else if prData.IsDraft {
+					status.PRState = "DRAFT"
+				} else {
+					status.PRState = "OPEN"
 				}
-			} else if pr.State == "CLOSED" {
-				status.PRState = "CLOSED"
-			} else if pr.IsDraft {
-				status.PRState = "DRAFT"
-			} else {
-				status.PRState = "OPEN"
+				status.Mergeable = prData.Mergeable
+				status.ReviewState = prData.ReviewState
 			}
-			status.Mergeable = pr.Mergeable
-			status.ReviewState = pr.ReviewState
-		}
 
-		checks, err := gh.GetPRChecks(branch.PRNumber)
-		if debugMode {
-			fmt.Fprintf(os.Stderr, "[DEBUG] GetPRChecks(%d): state=%s summary=%s err=%v\n", branch.PRNumber, checks.State, checks.Summary, err)
-		}
-		if err == nil && checks != nil {
-			status.CIState = checks.State
-			status.CISummary = checks.Summary
-		}
+			// Process checks data
+			if checksErr == nil && checksData != nil {
+				if debugMode {
+					fmt.Fprintf(os.Stderr, "[DEBUG] GetPRChecks(%d): state=%s summary=%s\n", b.PRNumber, checksData.State, checksData.Summary)
+				}
+				status.CIState = checksData.State
+				status.CISummary = checksData.Summary
+			}
 
-		statusMap[branch.Name] = status
+			mu.Lock()
+			statusMap[b.Name] = status
+			mu.Unlock()
+		}(branch)
 	}
+
+	wg.Wait()
 
 	// Save config if we discovered newly merged branches
 	if discoveredMerged {
