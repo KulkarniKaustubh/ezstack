@@ -412,7 +412,12 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				// Call afterRebase callback to allow pushing before continuing to children
 				if callbacks != nil && callbacks.AfterRebase != nil {
 					if !callbacks.AfterRebase(result, g) {
-						return results, nil // Callback requested stop
+						if currentStackOnly {
+							return results, nil // Callback requested stop for single stack
+						}
+						// For all stacks, mark this stack as having an issue and continue to next stack
+						stackHasConflict = true
+						continue
 					}
 				}
 				continue
@@ -524,7 +529,12 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				if callbacks != nil && callbacks.AfterRebase != nil {
 					if !callbacks.AfterRebase(result, g) {
 						sc.save()
-						return results, nil // Callback requested stop
+						if currentStackOnly {
+							return results, nil // Callback requested stop for single stack
+						}
+						// For all stacks, mark this stack as having an issue and continue to next stack
+						stackHasConflict = true
+						continue
 					}
 				}
 				continue
@@ -577,7 +587,12 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					results = append(results, result)
 					if callbacks != nil && callbacks.AfterRebase != nil {
 						if !callbacks.AfterRebase(result, g) {
-							return results, nil
+							if currentStackOnly {
+								return results, nil // Callback requested stop for single stack
+							}
+							// For all stacks, mark this stack as having an issue and continue to next stack
+							stackHasConflict = true
+							continue
 						}
 					}
 					continue
@@ -612,7 +627,12 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				// Call afterRebase callback to allow pushing before continuing to children
 				if callbacks != nil && callbacks.AfterRebase != nil {
 					if !callbacks.AfterRebase(result, g) {
-						return results, nil // Callback requested stop
+						if currentStackOnly {
+							return results, nil // Callback requested stop for single stack
+						}
+						// For all stacks, mark this stack as having an issue and continue to next stack
+						stackHasConflict = true
+						continue
 					}
 				}
 				continue
@@ -647,7 +667,12 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			// Call afterRebase callback to allow pushing before continuing to children
 			if callbacks != nil && callbacks.AfterRebase != nil {
 				if !callbacks.AfterRebase(result, g) {
-					return results, nil // Callback requested stop
+					if currentStackOnly {
+						return results, nil // Callback requested stop for single stack
+					}
+					// For all stacks, mark this stack as having an issue and continue to next stack
+					stackHasConflict = true
+					continue
 				}
 			}
 		}

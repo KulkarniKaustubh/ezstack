@@ -291,10 +291,16 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 			ui.Success(fmt.Sprintf("Rebased %s", result.Branch))
 
 			if !OfferForcePush(result.Branch, result.WorktreePath) {
-				fmt.Fprintln(os.Stderr)
-				ui.Error("Cannot continue syncing child branches without pushing parent first.")
-				ui.Info("The rebased parent branch must be pushed before child branches can be synced.")
-				ui.Info("Run 'ezs sync' again after pushing to continue.")
+				if !allStacks {
+					// Single stack sync - must push to continue
+					fmt.Fprintln(os.Stderr)
+					ui.Error("Cannot continue syncing child branches without pushing parent first.")
+					ui.Info("The rebased parent branch must be pushed before child branches can be synced.")
+					ui.Info("Run 'ezs sync' again after pushing to continue.")
+					return false
+				}
+				// All stacks sync - skip rest of this stack but don't stop entirely
+				ui.Warn("Skipping remaining branches in this stack (push required for children)")
 				return false
 			}
 
