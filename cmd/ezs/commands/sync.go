@@ -290,31 +290,15 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 			fmt.Fprintln(os.Stderr)
 			ui.Success(fmt.Sprintf("Rebased %s", result.Branch))
 
-			needsPush, err := g.IsLocalAheadOfOrigin(result.Branch)
-			if err != nil {
-				ui.Warn(fmt.Sprintf("Could not check if push is needed: %v", err))
-				needsPush = true
+			if !OfferForcePush(result.Branch, result.WorktreePath) {
+				fmt.Fprintln(os.Stderr)
+				ui.Error("Cannot continue syncing child branches without pushing parent first.")
+				ui.Info("The rebased parent branch must be pushed before child branches can be synced.")
+				ui.Info("Run 'ezs sync' again after pushing to continue.")
+				return false
 			}
 
-			if !needsPush {
-				return true
-			}
-
-			if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease)", result.Branch)) {
-				ui.Info("Pushing...")
-				if err := g.PushForce(); err != nil {
-					ui.Error(fmt.Sprintf("Push failed: %v", err))
-					return false
-				}
-				ui.Success("Pushed successfully")
-				return true
-			}
-
-			fmt.Fprintln(os.Stderr)
-			ui.Error("Cannot continue syncing child branches without pushing parent first.")
-			ui.Info("The rebased parent branch must be pushed before child branches can be synced.")
-			ui.Info("Run 'ezs sync' again after pushing to continue.")
-			return false
+			return true
 		}
 
 		callbacks := &stack.SyncCallbacks{
@@ -405,7 +389,7 @@ func syncOntoParent(mgr *stack.Manager, branch *config.Branch, cwd string) error
 		return err
 	}
 	ui.Success("Rebase complete")
-	offerPush(cwd)
+	OfferForcePush(branch.Name, branch.WorktreePath)
 	return nil
 }
 
@@ -437,10 +421,12 @@ func syncChildren(mgr *stack.Manager, branch *config.Branch, cwd string) error {
 
 	hasConflicts := false
 	successCount := 0
+	var successfulBranches []string
 	for _, r := range results {
 		if r.Success {
 			ui.Success(fmt.Sprintf("Rebased %s", r.Branch))
 			successCount++
+			successfulBranches = append(successfulBranches, r.Branch)
 		} else if r.HasConflict {
 			ui.Warn(fmt.Sprintf("Conflict in %s", r.Branch))
 			hasConflicts = true
@@ -455,6 +441,17 @@ func syncChildren(mgr *stack.Manager, branch *config.Branch, cwd string) error {
 	}
 	if successCount > 0 {
 		ui.Success(fmt.Sprintf("Rebased %d child branch(es)!", successCount))
+
+		// Offer to push successfully rebased branches
+		if len(successfulBranches) > 0 {
+			OfferForcePushMultiple(successfulBranches, func(branchName string) string {
+				childBranch := mgr.GetBranch(branchName)
+				if childBranch == nil {
+					return ""
+				}
+				return childBranch.WorktreePath
+			})
+		}
 	}
 
 	return nil
@@ -501,7 +498,7 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 		} else {
 			ui.Success(fmt.Sprintf("Synced %s", result.Branch))
 		}
-		offerPush(cwd)
+		OfferForcePush(result.Branch, result.WorktreePath)
 	} else if result.HasConflict {
 		ui.Warn(fmt.Sprintf("Conflict in %s", result.Branch))
 		if result.WorktreePath != "" {
@@ -513,21 +510,6 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 	}
 
 	return nil
-}
-
-// offerPush offers to force push after a successful rebase
-func offerPush(cwd string) {
-	fmt.Fprintln(os.Stderr)
-	ui.Warn("Force push required to update remote branch")
-	if ui.ConfirmTUI("Force push (--force-with-lease)") {
-		g := git.New(cwd)
-		ui.Info("Pushing...")
-		if err := g.PushForce(); err != nil {
-			ui.Error(fmt.Sprintf("Push failed: %v", err))
-		} else {
-			ui.Success("Pushed successfully")
-		}
-	}
 }
 
 // printSyncResults prints the results of a sync operation

@@ -347,8 +347,14 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 
 	// Sync branches in selected stacks
 	for _, stack := range stacksToSync {
+		stackHasConflict := false // Track if this stack hit a conflict
 		for i, branch := range stack.Branches {
 			if branch.IsRemote {
+				continue
+			}
+
+			// If this stack already hit a conflict and we're syncing all stacks, skip rest of this stack
+			if stackHasConflict && !currentStackOnly {
 				continue
 			}
 
@@ -383,13 +389,23 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					result.HasConflict = true
 					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 					results = append(results, result)
-					// Stop immediately on conflict - user must resolve before continuing
-					return results, nil
+					if currentStackOnly {
+						// Stop immediately on conflict when syncing single stack
+						return results, nil
+					}
+					// Mark this stack as having a conflict and continue to next stack
+					stackHasConflict = true
+					continue
 				} else if rebaseResult.Error != nil {
 					result.Error = rebaseResult.Error
 					results = append(results, result)
-					// Stop on error as well
-					return results, nil
+					if currentStackOnly {
+						// Stop on error when syncing single stack
+						return results, nil
+					}
+					// Mark this stack as having an error and continue to next stack
+					stackHasConflict = true
+					continue
 				}
 				result.Success = true
 				results = append(results, result)
@@ -482,15 +498,25 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					results = append(results, result)
 					sc.save()
 					m.stackConfig.Save(m.repoDir)
-					// Stop immediately on conflict - user must resolve before continuing
-					return results, nil
+					if currentStackOnly {
+						// Stop immediately on conflict when syncing single stack
+						return results, nil
+					}
+					// Mark this stack as having a conflict and continue to next stack
+					stackHasConflict = true
+					continue
 				} else if rebaseResult.Error != nil {
 					result.Error = rebaseResult.Error
 					results = append(results, result)
 					sc.save()
 					m.stackConfig.Save(m.repoDir)
-					// Stop on error as well
-					return results, nil
+					if currentStackOnly {
+						// Stop on error when syncing single stack
+						return results, nil
+					}
+					// Mark this stack as having an error and continue to next stack
+					stackHasConflict = true
+					continue
 				}
 				result.Success = true
 				results = append(results, result)
@@ -563,13 +589,23 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					result.HasConflict = true
 					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 					results = append(results, result)
-					// Stop immediately on conflict - user must resolve before continuing
-					return results, nil
+					if currentStackOnly {
+						// Stop immediately on conflict when syncing single stack
+						return results, nil
+					}
+					// Mark this stack as having a conflict and continue to next stack
+					stackHasConflict = true
+					continue
 				} else if rebaseResult.Error != nil {
 					result.Error = rebaseResult.Error
 					results = append(results, result)
-					// Stop on error as well
-					return results, nil
+					if currentStackOnly {
+						// Stop on error when syncing single stack
+						return results, nil
+					}
+					// Mark this stack as having an error and continue to next stack
+					stackHasConflict = true
+					continue
 				}
 				result.Success = true
 				results = append(results, result)
@@ -588,13 +624,23 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				result.HasConflict = true
 				result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 				results = append(results, result)
-				// Stop immediately on conflict - user must resolve before continuing
-				return results, nil
+				if currentStackOnly {
+					// Stop immediately on conflict when syncing single stack
+					return results, nil
+				}
+				// Mark this stack as having a conflict and continue to next stack
+				stackHasConflict = true
+				continue
 			} else if rebaseResult.Error != nil {
 				result.Error = rebaseResult.Error
 				results = append(results, result)
-				// Stop on error as well
-				return results, nil
+				if currentStackOnly {
+					// Stop on error when syncing single stack
+					return results, nil
+				}
+				// Mark this stack as having an error and continue to next stack
+				stackHasConflict = true
+				continue
 			}
 			result.Success = true
 			results = append(results, result)
