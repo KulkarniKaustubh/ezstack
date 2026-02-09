@@ -142,22 +142,19 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
 	}
 
 	if discoveredPRs {
-		stackCfg, err := config.LoadStackConfig(mainWorktree)
-		if err == nil {
-			for _, existingStack := range stackCfg.Stacks {
-				if existingStack.Name == s.Name {
-					for _, b := range existingStack.Branches {
-						for _, updated := range s.Branches {
-							if b.Name == updated.Name && updated.PRNumber > 0 {
-								b.PRNumber = updated.PRNumber
-								b.PRUrl = updated.PRUrl
-							}
-						}
-					}
+		cache, _ := config.LoadCacheConfig(mainWorktree)
+		for _, branch := range s.Branches {
+			if branch.PRNumber > 0 {
+				bc := cache.GetBranchCache(branch.Name)
+				if bc == nil {
+					bc = &config.BranchCache{}
 				}
+				bc.PRNumber = branch.PRNumber
+				bc.PRUrl = branch.PRUrl
+				cache.SetBranchCache(branch.Name, bc)
 			}
-			stackCfg.Save(mainWorktree)
 		}
+		cache.Save(mainWorktree)
 	}
 
 	return gh
@@ -274,20 +271,19 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 	if discoveredMerged {
 		mainWorktree, err := g.GetMainWorktree()
 		if err == nil {
-			stackCfg, err := config.LoadStackConfig(mainWorktree)
+			cache, err := config.LoadCacheConfig(mainWorktree)
 			if err == nil {
-				for _, existingStack := range stackCfg.Stacks {
-					if existingStack.Name == s.Name {
-						for _, b := range existingStack.Branches {
-							for _, updated := range s.Branches {
-								if b.Name == updated.Name && updated.IsMerged {
-									b.IsMerged = true
-								}
-							}
+				for _, branch := range s.Branches {
+					if branch.IsMerged {
+						bc := cache.GetBranchCache(branch.Name)
+						if bc == nil {
+							bc = &config.BranchCache{}
 						}
+						bc.IsMerged = true
+						cache.SetBranchCache(branch.Name, bc)
 					}
 				}
-				stackCfg.Save(mainWorktree)
+				cache.Save(mainWorktree)
 			}
 		}
 	}

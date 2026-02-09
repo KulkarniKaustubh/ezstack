@@ -162,17 +162,16 @@ func New(args []string) error {
 					branch.PRNumber = pr.Number
 					branch.PRUrl = pr.URL
 
-					stackCfg, err := config.LoadStackConfig(mgr.GetRepoDir())
+					cache, err := config.LoadCacheConfig(mgr.GetRepoDir())
 					if err == nil {
-						for _, s := range stackCfg.Stacks {
-							for _, b := range s.Branches {
-								if b.Name == branch.Name {
-									b.PRNumber = pr.Number
-									b.PRUrl = pr.URL
-								}
-							}
+						bc := cache.GetBranchCache(branch.Name)
+						if bc == nil {
+							bc = &config.BranchCache{}
 						}
-						stackCfg.Save(mgr.GetRepoDir())
+						bc.PRNumber = pr.Number
+						bc.PRUrl = pr.URL
+						cache.SetBranchCache(branch.Name, bc)
+						cache.Save(mgr.GetRepoDir())
 					}
 
 					ui.Success(fmt.Sprintf("Registered '%s' as a stack root (found existing PR #%d)", branch.Name, pr.Number))

@@ -222,21 +222,20 @@ func prCreateAll(currentStack *config.Stack) error {
 		ui.Success(fmt.Sprintf("Created PR #%d for %s: %s", pr.Number, b.Name, pr.URL))
 	}
 
-	// Save the updated config
-	stackCfg, _ := config.LoadStackConfig(mainWorktree)
-	for _, s := range stackCfg.Stacks {
-		if s.Name == currentStack.Name {
-			for _, b := range s.Branches {
-				for _, updated := range branchesToCreate {
-					if b.Name == updated.Name {
-						b.PRNumber = updated.PRNumber
-						b.PRUrl = updated.PRUrl
-					}
-				}
+	// Save PR numbers to cache
+	cache, _ := config.LoadCacheConfig(mainWorktree)
+	for _, updated := range branchesToCreate {
+		if updated.PRNumber > 0 {
+			bc := cache.GetBranchCache(updated.Name)
+			if bc == nil {
+				bc = &config.BranchCache{}
 			}
+			bc.PRNumber = updated.PRNumber
+			bc.PRUrl = updated.PRUrl
+			cache.SetBranchCache(updated.Name, bc)
 		}
 	}
-	stackCfg.Save(mainWorktree)
+	cache.Save(mainWorktree)
 
 	ui.Info("Updating PR stack descriptions...")
 	skipBranches := getRemoteBranches(currentStack)
@@ -431,16 +430,16 @@ func prCreate(args []string) error {
 	if mainWorktree == "" {
 		mainWorktree = cwd
 	}
-	stackCfg, _ := config.LoadStackConfig(mainWorktree)
-	for _, s := range stackCfg.Stacks {
-		for _, b := range s.Branches {
-			if b.Name == branch.Name {
-				b.PRNumber = pr.Number
-				b.PRUrl = pr.URL
-			}
-		}
+
+	cache, _ := config.LoadCacheConfig(mainWorktree)
+	bc := cache.GetBranchCache(branch.Name)
+	if bc == nil {
+		bc = &config.BranchCache{}
 	}
-	stackCfg.Save(mainWorktree)
+	bc.PRNumber = pr.Number
+	bc.PRUrl = pr.URL
+	cache.SetBranchCache(branch.Name, bc)
+	cache.Save(mainWorktree)
 
 	ui.Success(fmt.Sprintf("Created %s #%d: %s", prType, pr.Number, pr.URL))
 
