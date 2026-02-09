@@ -157,6 +157,11 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 				continue
 			}
 
+			// Skip already-merged branches (they don't need syncing)
+			if branch.IsMerged {
+				continue
+			}
+
 			// Parent is main - check if behind origin/main
 			if m.IsMainBranch(branch.Parent) {
 				behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+baseBranch)
@@ -223,7 +228,7 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 // Returns SyncInfo if the branch needs syncing, nil otherwise
 func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client) *SyncInfo {
 	branch := m.GetBranch(branchName)
-	if branch == nil || branch.IsRemote {
+	if branch == nil || branch.IsRemote || branch.IsMerged {
 		return nil
 	}
 
@@ -348,8 +353,13 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 	// Sync branches in selected stacks
 	for _, stack := range stacksToSync {
 		stackHasConflict := false // Track if this stack hit a conflict
-		for i, branch := range stack.Branches {
+		for _, branch := range stack.Branches {
 			if branch.IsRemote {
+				continue
+			}
+
+			// Skip already-merged branches (they don't need syncing)
+			if branch.IsMerged {
 				continue
 			}
 
@@ -445,20 +455,32 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			}
 
 			if isMerged {
-				// Parent was merged - mark it in cache and update tree structure
-				sc.markMerged(branch.Parent)
-
-				// Determine new parent
-				newParent := baseBranch
-				if i > 0 && !m.IsMainBranch(stack.Branches[i-1].Parent) {
-					prevMerged, _ := m.git.IsBranchMerged(stack.Branches[i-1].Name, "origin/"+baseBranch)
-					if !prevMerged {
-						newParent = stack.Branches[i-1].Name
-					}
-				}
-
+				// Parent was merged - mark it in cache but DON'T change tree structure.
+				// The tree order is preserved; walkTree computes effective parents at runtime
+				// by skipping merged ancestors.
 				oldParent := branch.Parent
 				oldParentRef := m.getParentRef(oldParent) // Use origin/<name> for remote parents
+
+				sc.markMerged(oldParent)
+
+				// Repopulate branches so walkTree recalculates effective parents
+				// (children of merged branches will now have their Parent field
+				// pointing to the nearest non-merged ancestor)
+				stack.PopulateBranchesWithCache(sc.cache)
+
+				// Re-fetch the branch since Branches slice was rebuilt
+				var updatedBranch *config.Branch
+				for _, b := range stack.Branches {
+					if b.Name == branch.Name {
+						updatedBranch = b
+						break
+					}
+				}
+				if updatedBranch == nil {
+					continue
+				}
+
+				newParent := updatedBranch.Parent // effective parent (nearest non-merged ancestor)
 				result.SyncedParent = newParent
 
 				// Call beforeRebase callback to ask for confirmation
@@ -473,30 +495,21 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					}
 				}
 
-				// Update tree structure: reparent branch to new parent
-				// This properly persists the parent change in stacks.json
-				if newParent == baseBranch {
-					stack.ReparentBranch(branch.Name, "") // Empty = root level (under main)
-				} else {
-					stack.ReparentBranch(branch.Name, newParent)
-				}
-				// Repopulate branches from updated tree
-				stack.PopulateBranchesWithCache(sc.cache)
-
 				// Find the merge-base between current branch and old parent
 				// This is the point where we originally branched from the parent
-				// We need to use this as the oldBase for rebase --onto, not the branch name
-				// Use m.git (main repo) to get merge-base since branch names are repo-wide
 				mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
 				if err != nil {
 					// Fallback to using oldParentRef if we can't get merge-base
 					mergeBase = oldParentRef
 				}
 
-				// Use non-interactive rebase --onto for better conflict detection
-				// git rebase --onto origin/main <merge-base>
-				// This takes commits from merge-base..HEAD and replays onto origin/main
-				rebaseResult := g.RebaseOntoNonInteractive("origin/"+newParent, mergeBase)
+				// Rebase --onto the effective parent (e.g., origin/main)
+				rebaseTarget := "origin/" + newParent
+				if m.IsMainBranch(newParent) {
+					rebaseTarget = "origin/" + baseBranch
+				}
+
+				rebaseResult := g.RebaseOntoNonInteractive(rebaseTarget, mergeBase)
 				if rebaseResult.HasConflict {
 					result.HasConflict = true
 					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
