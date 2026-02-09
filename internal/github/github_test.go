@@ -206,6 +206,14 @@ func TestUpdateBodyWithStack(t *testing.T) {
 			wantContains: []string{"New PR"},
 			wantMissing:  []string{"Old PR"},
 		},
+		{
+			name:         "Replace stack section with hyperlink footer",
+			body:         "Description\n\n---\n## PR Stack\n\n1. Old PR\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack) (beta)_\n",
+			stackSection: "\n\n---\n## PR Stack\n\n1. New PR\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack) (beta)_\n",
+			isCurrent:    true,
+			wantContains: []string{"New PR"},
+			wantMissing:  []string{"Old PR"},
+		},
 	}
 
 	for _, tt := range tests {

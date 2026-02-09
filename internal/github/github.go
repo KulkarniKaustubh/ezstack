@@ -301,12 +301,14 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 			continue
 		}
 
+		// Fetch current PR body to update it
 		pr, err := c.GetPR(branch.PRNumber)
 		if err != nil {
 			continue
 		}
 
 		// Generate stack section with arrow pointing to THIS PR
+		// Uses PR numbers/URLs from the config cache (.ezstack.json)
 		stackSection := generateStackSection(stack, branch.Name)
 
 		// Update the body with the stack section
@@ -343,14 +345,14 @@ func generateStackSection(stack *config.Stack, currentPRBranch string) string {
 			sb.WriteString(fmt.Sprintf("%d. `%s` _(no PR yet)_%s\n", i+1, branch.Name, suffix))
 		}
 	}
-	sb.WriteString("\n_This stack was created by `ezstack` (beta)_\n")
+	sb.WriteString("\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack) (beta)_\n")
 
 	return sb.String()
 }
 
 func updateBodyWithStack(body, stackSection string, isCurrent bool) string {
 	// Remove existing stack section (matches various footer formats: *text*, _text_)
-	re := regexp.MustCompile(`(?s)\n*---\n## (?:📚 )?PR Stack\n.*?[_*](?:Managed by|This stack was created by).*?ezstack.*?[_*]\n?`)
+	re := regexp.MustCompile(`(?s)\n*---\n## (?:📚 )?PR Stack\n.*?[_*](?:Managed by|This stack was created by).*?(?:\[)?ezstack(?:\](?:\([^)]*\)))?.*?[_*]\n?`)
 	body = re.ReplaceAllString(body, "")
 
 	// Add new stack section
