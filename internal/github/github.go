@@ -351,9 +351,18 @@ func generateStackSection(stack *config.Stack, currentPRBranch string) string {
 }
 
 func updateBodyWithStack(body, stackSection string, isCurrent bool) string {
-	// Remove existing stack section (matches various footer formats: *text*, _text_)
-	re := regexp.MustCompile(`(?s)\n*---\n## (?:📚 )?PR Stack\n.*?[_*](?:Managed by|This stack was created by).*?(?:\[)?ezstack(?:\](?:\([^)]*\)))?.*?[_*]\n?`)
-	body = re.ReplaceAllString(body, "")
+	// Normalize line endings (GitHub API may return \r\n)
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	body = strings.ReplaceAll(body, "\r", "\n")
+
+	// Remove existing stack section - it's always appended at the end,
+	// so we just truncate from the first "---\n## PR Stack" marker onwards
+	for _, marker := range []string{"---\n## PR Stack", "---\n## 📚 PR Stack"} {
+		if idx := strings.Index(body, marker); idx != -1 {
+			body = body[:idx]
+			break
+		}
+	}
 
 	// Add new stack section
 	return strings.TrimSpace(body) + stackSection

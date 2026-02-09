@@ -214,6 +214,14 @@ func TestUpdateBodyWithStack(t *testing.T) {
 			wantContains: []string{"New PR"},
 			wantMissing:  []string{"Old PR"},
 		},
+		{
+			name:         "Replace stack section with CRLF line endings",
+			body:         "Description\r\n\r\n---\r\n## PR Stack\r\n\r\n1. Old PR\r\n\r\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack) (beta)_\r\n",
+			stackSection: "\n\n---\n## PR Stack\n\n1. New PR\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack) (beta)_\n",
+			isCurrent:    true,
+			wantContains: []string{"New PR"},
+			wantMissing:  []string{"Old PR"},
+		},
 	}
 
 	for _, tt := range tests {
