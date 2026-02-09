@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
@@ -55,32 +56,40 @@ func Delete(args []string) error {
 		return err
 	}
 
+	g := git.New(cwd)
+
 	var branchName string
 	if fs.NArg() < 1 {
-		stacks := mgr.ListStacks()
-		var allBranches []ui.BranchWithChildInfo
-		for _, s := range stacks {
-			for _, b := range s.Branches {
-				if b.IsMerged || mgr.IsMainBranch(b.Name) {
-					continue
-				}
-				children := mgr.GetChildren(b.Name)
-				allBranches = append(allBranches, ui.BranchWithChildInfo{
-					Branch:      b,
-					HasChildren: len(children) > 0,
-				})
-			}
+		worktrees, err := g.ListWorktrees()
+		if err != nil {
+			return fmt.Errorf("failed to list worktrees: %w", err)
 		}
 
-		if len(allBranches) == 0 {
+		// Filter out main branch
+		var wtInfos []ui.WorktreeInfo
+		for _, wt := range worktrees {
+			if mgr.IsMainBranch(wt.Branch) {
+				continue
+			}
+			wtInfos = append(wtInfos, ui.WorktreeInfo{
+				Path:   wt.Path,
+				Branch: wt.Branch,
+			})
+		}
+
+		if len(wtInfos) == 0 {
 			return fmt.Errorf("no branches found. Create one with: ezs new <branch-name>")
 		}
 
-		selectedBranch, hasChildren, err := ui.SelectBranchForDeletion(allBranches, "Select branch to delete")
+		stacks := mgr.ListStacks()
+		selected, err := ui.SelectWorktreeWithStackPreview(wtInfos, stacks, "Select branch to delete")
 		if err != nil {
 			return err
 		}
-		branchName = selectedBranch.Name
+		branchName = selected.Branch
+
+		children := mgr.GetChildren(branchName)
+		hasChildren := len(children) > 0
 
 		if hasChildren && !*force {
 			ui.Error(fmt.Sprintf("Branch '%s' has child branches", branchName))
