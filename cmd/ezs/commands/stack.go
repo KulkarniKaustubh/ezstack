@@ -7,6 +7,7 @@ import (
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/github"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
@@ -122,6 +123,45 @@ func Stack(args []string) error {
 	}
 
 	ui.Success(fmt.Sprintf("Added '%s' to stack with parent '%s'", branch.Name, branch.Parent))
+
+	// Update PR base branch on GitHub if the branch has a PR
+	if branch.PRNumber > 0 {
+		remoteURL, err := g.GetRemote("origin")
+		if err == nil {
+			gh, err := github.NewClient(remoteURL)
+			if err == nil {
+				ui.Info(fmt.Sprintf("Updating PR #%d base branch to '%s'...", branch.PRNumber, parentName))
+				if err := gh.UpdatePRBase(branch.PRNumber, parentName); err != nil {
+					ui.Warn(fmt.Sprintf("Failed to update PR base branch: %v", err))
+				} else {
+					ui.Success(fmt.Sprintf("Updated PR #%d base branch to '%s'", branch.PRNumber, parentName))
+				}
+
+				// Also update stack descriptions in all PRs
+				var currentStack *config.Stack
+				stacks := mgr.ListStacks()
+				for _, s := range stacks {
+					for _, b := range s.Branches {
+						if b.Name == branchName {
+							currentStack = s
+							break
+						}
+					}
+					if currentStack != nil {
+						break
+					}
+				}
+				if currentStack != nil {
+					ui.Info("Updating PR stack descriptions...")
+					skipBranches := getRemoteBranches(currentStack)
+					if err := gh.UpdateStackDescription(currentStack, branchName, skipBranches); err != nil {
+						ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
+					}
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
