@@ -141,12 +141,43 @@ func Delete(args []string) error {
 		return err
 	}
 
+	// Try stack-aware delete first; if the branch isn't in any stack,
+	// fall back to direct worktree + branch removal.
 	if err := mgr.DeleteBranch(branchName, *force); err != nil {
-		return err
+		if mgr.GetBranch(branchName) != nil {
+			return err
+		}
+
+		if err := deleteNonStackBranch(repoRoot, branchName); err != nil {
+			return err
+		}
 	}
 
 	ui.Success(fmt.Sprintf("Deleted branch '%s' and its worktree", branchName))
 	fmt.Printf("cd %s\n", repoRoot)
 
 	return nil
+}
+
+// deleteNonStackBranch removes a worktree and branch that aren't tracked in any stack.
+func deleteNonStackBranch(repoRoot, branchName string) error {
+	g := git.New(repoRoot)
+
+	worktrees, err := g.ListWorktrees()
+	if err != nil {
+		return fmt.Errorf("failed to list worktrees: %w", err)
+	}
+
+	for _, wt := range worktrees {
+		if wt.Branch == branchName {
+			return g.RemoveWorktree(wt.Path, true, branchName)
+		}
+	}
+
+	// No worktree found - try deleting just the branch
+	if g.BranchExists(branchName) {
+		return g.DeleteBranch(branchName, true)
+	}
+
+	return fmt.Errorf("branch '%s' not found", branchName)
 }
