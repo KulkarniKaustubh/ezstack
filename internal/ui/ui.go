@@ -265,7 +265,11 @@ func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 
 	var input strings.Builder
 	for _, s := range stacks {
-		input.WriteString(fmt.Sprintf("%s (%d branches)\n", s.Name, len(s.Branches)))
+		hashDisplay := s.Hash
+		if hashDisplay == "" {
+			hashDisplay = s.Name
+		}
+		input.WriteString(fmt.Sprintf("%s (%d branches)\n", hashDisplay, len(s.Branches)))
 	}
 
 	selected, err := runFzf(input.String(), prompt)
@@ -277,15 +281,19 @@ func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 	if len(parts) == 0 {
 		return nil, fmt.Errorf("no stack selected")
 	}
-	stackName := parts[0]
+	selectedID := parts[0]
 
 	for _, s := range stacks {
-		if s.Name == stackName {
+		hashDisplay := s.Hash
+		if hashDisplay == "" {
+			hashDisplay = s.Name
+		}
+		if hashDisplay == selectedID {
 			return s, nil
 		}
 	}
 
-	return nil, fmt.Errorf("stack not found: %s", stackName)
+	return nil, fmt.Errorf("stack not found: %s", selectedID)
 }
 
 // runFzf executes fzf with the given input and returns the selected line
@@ -388,7 +396,11 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 	magenta := "\\x1b[35m"
 
 	var output strings.Builder
-	output.WriteString(fmt.Sprintf("%s%s Stack: %s%s\\n\\n", bold, cyan, stack.Name, reset))
+	hashDisplay := stack.Hash
+	if hashDisplay == "" {
+		hashDisplay = stack.Name
+	}
+	output.WriteString(fmt.Sprintf("%s%s Stack %s%s\\n\\n", bold, cyan, hashDisplay, reset))
 
 	// Sort branches topologically (parent -> child order)
 	sortedBranches := sortBranchesTopologically(stack.Branches)
@@ -488,7 +500,11 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 // - showStatus=false: 4 columns - branch name, pr number, parent branch, remote tag
 // - showStatus=true: 5 columns - branch name, pr number, ci status, parent branch, remote tag
 func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, statusMap map[string]*BranchStatus) {
-	fmt.Fprintf(os.Stderr, "\n%s%s Stack: %s%s\n\n", Bold, Cyan, stack.Name, Reset)
+	hashDisplay := stack.Hash
+	if hashDisplay == "" {
+		hashDisplay = stack.Name
+	}
+	fmt.Fprintf(os.Stderr, "\n%s%s Stack %s%s\n\n", Bold, Cyan, hashDisplay, Reset)
 
 	// Sort branches topologically (parent -> child order)
 	sortedBranches := sortBranchesTopologically(stack.Branches)
