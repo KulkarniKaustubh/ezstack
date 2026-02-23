@@ -14,14 +14,15 @@ type syncCache struct {
 	cache   *config.CacheConfig
 	repoDir string
 	dirty   bool
+	sc      *config.StackConfig // reference to stack config for saving
 }
 
-func newSyncCache(repoDir string) *syncCache {
-	cache, _ := config.LoadCacheConfig(repoDir)
+func newSyncCache(stackConfig *config.StackConfig, repoDir string) *syncCache {
 	return &syncCache{
-		cache:   cache,
+		cache:   stackConfig.Cache,
 		repoDir: repoDir,
 		dirty:   false,
+		sc:      stackConfig,
 	}
 }
 
@@ -39,7 +40,7 @@ func (sc *syncCache) markMerged(branchName string) {
 
 func (sc *syncCache) save() error {
 	if sc.dirty {
-		return sc.cache.Save(sc.repoDir)
+		return sc.sc.Save(sc.repoDir)
 	}
 	return nil
 }
@@ -74,10 +75,11 @@ type MergedBranchInfo struct {
 
 // CleanupResult contains information about a branch cleanup operation
 type CleanupResult struct {
-	Branch             string
-	Success            bool
-	Error              string
-	WorktreeWasDeleted bool // True if worktree was already deleted before cleanup
+	Branch              string
+	Success             bool
+	Error               string
+	WorktreeWasDeleted  bool // True if worktree was already deleted before cleanup
+	WasCurrentWorktree  bool // True if this was the worktree we were in when cleanup started
 }
 
 // AfterRebaseCallback is called after each successful rebase
@@ -111,18 +113,23 @@ func (m *Manager) getParentRef(parentName string) string {
 // - Branches whose parents have been merged to main
 // - Branches whose parent is main but are behind origin/main
 func (m *Manager) DetectSyncNeeded(gh *github.Client) ([]SyncInfo, error) {
-	return m.detectSyncNeededInternal(gh, true)
+	return m.detectSyncNeededInternal(gh, true, nil)
 }
 
 // DetectSyncNeededAllStacks checks for branches that need syncing across ALL stacks:
 // - Branches whose parents have been merged to main
 // - Branches whose parent is main but are behind origin/main
 func (m *Manager) DetectSyncNeededAllStacks(gh *github.Client) ([]SyncInfo, error) {
-	return m.detectSyncNeededInternal(gh, false)
+	return m.detectSyncNeededInternal(gh, false, nil)
 }
 
-// detectSyncNeededInternal is the internal implementation that can work on current stack or all stacks
-func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly bool) ([]SyncInfo, error) {
+// DetectSyncNeededForStacks checks for branches that need syncing in specific stacks
+func (m *Manager) DetectSyncNeededForStacks(gh *github.Client, stacks []*config.Stack) ([]SyncInfo, error) {
+	return m.detectSyncNeededInternal(gh, false, stacks)
+}
+
+// detectSyncNeededInternal is the internal implementation that can work on current stack, all stacks, or specific stacks
+func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly bool, specificStacks []*config.Stack) ([]SyncInfo, error) {
 	// Fetch latest
 	if err := m.git.Fetch(); err != nil {
 		return nil, fmt.Errorf("failed to fetch: %w", err)
@@ -137,7 +144,9 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 
 	// Get the stacks to check
 	var stacksToCheck []*config.Stack
-	if currentStackOnly {
+	if specificStacks != nil {
+		stacksToCheck = specificStacks
+	} else if currentStackOnly {
 		currentStack, _, err := m.GetCurrentStack()
 		if err != nil {
 			return nil, fmt.Errorf("not in a stack: %w", err)
@@ -298,16 +307,21 @@ func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client
 // - Branches whose parent is not merged but has new commits (rebase onto parent)
 // Callbacks can be used to ask for confirmation before each rebase and push after
 func (m *Manager) SyncStack(gh *github.Client, callbacks *SyncCallbacks) ([]RebaseResult, error) {
-	return m.syncStackInternal(gh, callbacks, true)
+	return m.syncStackInternal(gh, callbacks, true, nil)
 }
 
 // SyncStackAll syncs branches in ALL stacks that need syncing
 func (m *Manager) SyncStackAll(gh *github.Client, callbacks *SyncCallbacks) ([]RebaseResult, error) {
-	return m.syncStackInternal(gh, callbacks, false)
+	return m.syncStackInternal(gh, callbacks, false, nil)
 }
 
-// syncStackInternal is the internal implementation that can work on current stack or all stacks
-func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks, currentStackOnly bool) ([]RebaseResult, error) {
+// SyncSpecificStacks syncs branches in the given stacks
+func (m *Manager) SyncSpecificStacks(stacks []*config.Stack, gh *github.Client, callbacks *SyncCallbacks) ([]RebaseResult, error) {
+	return m.syncStackInternal(gh, callbacks, false, stacks)
+}
+
+// syncStackInternal is the internal implementation that can work on current stack, all stacks, or specific stacks
+func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks, currentStackOnly bool, specificStacks []*config.Stack) ([]RebaseResult, error) {
 	// Fetch latest
 	if err := m.git.Fetch(); err != nil {
 		return nil, fmt.Errorf("failed to fetch: %w", err)
@@ -320,12 +334,14 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 
 	var results []RebaseResult
 
-	// Load cache for tracking merged branches and repopulation
-	sc := newSyncCache(m.repoDir)
+	// Use combined cache from stack config
+	sc := newSyncCache(m.stackConfig, m.repoDir)
 
 	// Get the stacks to sync
 	var stacksToSync []*config.Stack
-	if currentStackOnly {
+	if specificStacks != nil {
+		stacksToSync = specificStacks
+	} else if currentStackOnly {
 		currentStack, _, err := m.GetCurrentStack()
 		if err != nil {
 			return nil, fmt.Errorf("not in a stack: %w", err)
@@ -350,6 +366,8 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 		}
 	}
 
+	allStacks := !currentStackOnly
+
 	// Sync branches in selected stacks
 	for _, stack := range stacksToSync {
 		stackHasConflict := false // Track if this stack hit a conflict
@@ -364,7 +382,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			}
 
 			// If this stack already hit a conflict and we're syncing all stacks, skip rest of this stack
-			if stackHasConflict && !currentStackOnly {
+			if stackHasConflict && allStacks {
 				continue
 			}
 
@@ -399,7 +417,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					result.HasConflict = true
 					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 					results = append(results, result)
-					if currentStackOnly {
+					if !allStacks {
 						// Stop immediately on conflict when syncing single stack
 						return results, nil
 					}
@@ -409,7 +427,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				} else if rebaseResult.Error != nil {
 					result.Error = rebaseResult.Error
 					results = append(results, result)
-					if currentStackOnly {
+					if !allStacks {
 						// Stop on error when syncing single stack
 						return results, nil
 					}
@@ -422,7 +440,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				// Call afterRebase callback to allow pushing before continuing to children
 				if callbacks != nil && callbacks.AfterRebase != nil {
 					if !callbacks.AfterRebase(result, g) {
-						if currentStackOnly {
+						if !allStacks {
 							return results, nil // Callback requested stop for single stack
 						}
 						// For all stacks, mark this stack as having an issue and continue to next stack
@@ -516,7 +534,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					results = append(results, result)
 					sc.save()
 					m.stackConfig.Save(m.repoDir)
-					if currentStackOnly {
+					if !allStacks {
 						// Stop immediately on conflict when syncing single stack
 						return results, nil
 					}
@@ -528,7 +546,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					results = append(results, result)
 					sc.save()
 					m.stackConfig.Save(m.repoDir)
-					if currentStackOnly {
+					if !allStacks {
 						// Stop on error when syncing single stack
 						return results, nil
 					}
@@ -542,7 +560,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				if callbacks != nil && callbacks.AfterRebase != nil {
 					if !callbacks.AfterRebase(result, g) {
 						sc.save()
-						if currentStackOnly {
+						if !allStacks {
 							return results, nil // Callback requested stop for single stack
 						}
 						// For all stacks, mark this stack as having an issue and continue to next stack
@@ -600,7 +618,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					results = append(results, result)
 					if callbacks != nil && callbacks.AfterRebase != nil {
 						if !callbacks.AfterRebase(result, g) {
-							if currentStackOnly {
+							if !allStacks {
 								return results, nil // Callback requested stop for single stack
 							}
 							// For all stacks, mark this stack as having an issue and continue to next stack
@@ -617,7 +635,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					result.HasConflict = true
 					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 					results = append(results, result)
-					if currentStackOnly {
+					if !allStacks {
 						// Stop immediately on conflict when syncing single stack
 						return results, nil
 					}
@@ -627,7 +645,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				} else if rebaseResult.Error != nil {
 					result.Error = rebaseResult.Error
 					results = append(results, result)
-					if currentStackOnly {
+					if !allStacks {
 						// Stop on error when syncing single stack
 						return results, nil
 					}
@@ -640,7 +658,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				// Call afterRebase callback to allow pushing before continuing to children
 				if callbacks != nil && callbacks.AfterRebase != nil {
 					if !callbacks.AfterRebase(result, g) {
-						if currentStackOnly {
+						if !allStacks {
 							return results, nil // Callback requested stop for single stack
 						}
 						// For all stacks, mark this stack as having an issue and continue to next stack
@@ -657,7 +675,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				result.HasConflict = true
 				result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 				results = append(results, result)
-				if currentStackOnly {
+				if !allStacks {
 					// Stop immediately on conflict when syncing single stack
 					return results, nil
 				}
@@ -667,7 +685,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			} else if rebaseResult.Error != nil {
 				result.Error = rebaseResult.Error
 				results = append(results, result)
-				if currentStackOnly {
+				if !allStacks {
 					// Stop on error when syncing single stack
 					return results, nil
 				}
@@ -680,7 +698,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			// Call afterRebase callback to allow pushing before continuing to children
 			if callbacks != nil && callbacks.AfterRebase != nil {
 				if !callbacks.AfterRebase(result, g) {
-					if currentStackOnly {
+					if !allStacks {
 						return results, nil // Callback requested stop for single stack
 					}
 					// For all stacks, mark this stack as having an issue and continue to next stack
@@ -771,8 +789,13 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 
 	if isMerged {
 		// Parent was merged - mark it in cache and update tree structure
-		sc := newSyncCache(m.repoDir)
-		sc.markMerged(branch.Parent)
+		cache := m.stackConfig.Cache
+		bc := cache.GetBranchCache(branch.Parent)
+		if bc == nil {
+			bc = &config.BranchCache{}
+		}
+		bc.IsMerged = true
+		cache.SetBranchCache(branch.Parent, bc)
 
 		oldParent := branch.Parent
 		oldParentRef := m.getParentRef(oldParent)
@@ -783,7 +806,7 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 		for _, stack := range m.stackConfig.Stacks {
 			if stack.HasBranch(branch.Name) {
 				stack.ReparentBranch(branch.Name, "") // Empty = root level (under main)
-				stack.PopulateBranchesWithCache(sc.cache)
+				stack.PopulateBranchesWithCache(cache)
 				break
 			}
 		}
@@ -797,17 +820,14 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 		if rebaseResult.HasConflict {
 			result.HasConflict = true
 			result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
-			sc.save()
 			m.stackConfig.Save(m.repoDir)
 			return result, nil
 		} else if rebaseResult.Error != nil {
 			result.Error = rebaseResult.Error
-			sc.save()
 			m.stackConfig.Save(m.repoDir)
 			return result, nil
 		}
 		result.Success = true
-		sc.save()
 		m.stackConfig.Save(m.repoDir)
 		return result, nil
 	}
@@ -951,16 +971,21 @@ func (m *Manager) RebaseChildren() ([]RebaseResult, error) {
 // DetectMergedBranches finds branches in the CURRENT stack whose PRs have been merged to main
 // These are candidates for cleanup (deleting local branch and worktree)
 func (m *Manager) DetectMergedBranches(gh *github.Client) ([]MergedBranchInfo, error) {
-	return m.detectMergedBranchesInternal(gh, true)
+	return m.detectMergedBranchesInternal(gh, true, nil)
 }
 
 // DetectMergedBranchesAllStacks finds branches across ALL stacks whose PRs have been merged to main
 func (m *Manager) DetectMergedBranchesAllStacks(gh *github.Client) ([]MergedBranchInfo, error) {
-	return m.detectMergedBranchesInternal(gh, false)
+	return m.detectMergedBranchesInternal(gh, false, nil)
 }
 
-// detectMergedBranchesInternal is the internal implementation that can work on current stack or all stacks
-func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOnly bool) ([]MergedBranchInfo, error) {
+// DetectMergedBranchesForStacks finds branches in specific stacks whose PRs have been merged
+func (m *Manager) DetectMergedBranchesForStacks(gh *github.Client, stacks []*config.Stack) ([]MergedBranchInfo, error) {
+	return m.detectMergedBranchesInternal(gh, false, stacks)
+}
+
+// detectMergedBranchesInternal is the internal implementation that can work on current stack, all stacks, or specific stacks
+func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOnly bool, specificStacks []*config.Stack) ([]MergedBranchInfo, error) {
 	if gh == nil {
 		return nil, nil
 	}
@@ -974,7 +999,11 @@ func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOn
 
 	// Get the stacks to check
 	stacksToCheck := make(map[string]*config.Stack)
-	if currentStackOnly {
+	if specificStacks != nil {
+		for _, s := range specificStacks {
+			stacksToCheck[s.Name] = s
+		}
+	} else if currentStackOnly {
 		currentStack, _, err := m.GetCurrentStack()
 		if err != nil {
 			return nil, fmt.Errorf("not in a stack: %w", err)
@@ -1059,11 +1088,14 @@ func (m *Manager) CleanupMergedBranches(branches []MergedBranchInfo, currentDir 
 	for _, info := range branches {
 		result := CleanupResult{Branch: info.Branch}
 
-		// Check if we're currently in this worktree
+		// If we're currently in this worktree, move to the main worktree first
 		if info.WorktreePath == currentDir {
-			result.Error = "you are currently in this worktree. Please navigate elsewhere first."
-			results = append(results, result)
-			continue
+			if err := os.Chdir(m.repoDir); err != nil {
+				result.Error = fmt.Sprintf("failed to change to main worktree: %v", err)
+				results = append(results, result)
+				continue
+			}
+			result.WasCurrentWorktree = true
 		}
 
 		// Check if worktree was already deleted before we try to clean up

@@ -60,33 +60,39 @@ func Delete(args []string) error {
 
 	var branchName string
 	if fs.NArg() < 1 {
-		worktrees, err := g.ListWorktrees()
-		if err != nil {
-			return fmt.Errorf("failed to list worktrees: %w", err)
-		}
-
-		// Filter out main branch
-		var wtInfos []ui.WorktreeInfo
-		for _, wt := range worktrees {
-			if mgr.IsMainBranch(wt.Branch) {
-				continue
+		// Default to the current branch if we're in a non-main branch worktree
+		currentBranch, cbErr := g.CurrentBranch()
+		if cbErr == nil && currentBranch != "" && !mgr.IsMainBranch(currentBranch) {
+			branchName = currentBranch
+		} else {
+			worktrees, err := g.ListWorktrees()
+			if err != nil {
+				return fmt.Errorf("failed to list worktrees: %w", err)
 			}
-			wtInfos = append(wtInfos, ui.WorktreeInfo{
-				Path:   wt.Path,
-				Branch: wt.Branch,
-			})
-		}
 
-		if len(wtInfos) == 0 {
-			return fmt.Errorf("no branches found. Create one with: ezs new <branch-name>")
-		}
+			// Filter out main branch
+			var wtInfos []ui.WorktreeInfo
+			for _, wt := range worktrees {
+				if mgr.IsMainBranch(wt.Branch) {
+					continue
+				}
+				wtInfos = append(wtInfos, ui.WorktreeInfo{
+					Path:   wt.Path,
+					Branch: wt.Branch,
+				})
+			}
 
-		stacks := mgr.ListStacks()
-		selected, err := ui.SelectWorktreeWithStackPreview(wtInfos, stacks, "Select branch to delete")
-		if err != nil {
-			return err
+			if len(wtInfos) == 0 {
+				return fmt.Errorf("no branches found. Create one with: ezs new <branch-name>")
+			}
+
+			stacks := mgr.ListStacks()
+			selected, err := ui.SelectWorktreeWithStackPreview(wtInfos, stacks, "Select branch to delete")
+			if err != nil {
+				return err
+			}
+			branchName = selected.Branch
 		}
-		branchName = selected.Branch
 
 		children := mgr.GetChildren(branchName)
 		hasChildren := len(children) > 0

@@ -21,6 +21,7 @@ func Sync(args []string) error {
 
 %sUSAGE%s
     ezs sync [options]
+    ezs sync <hash-prefix>
 
 %sOPTIONS%s
     -a, --all              Sync current stack (auto-detect what needs syncing)
@@ -41,8 +42,13 @@ func Sync(args []string) error {
     4. Rebase current branch onto its parent
     5. Rebase child branches onto current branch
 
+    When run from main (not in a stack worktree), shows a menu to choose
+    which stack to sync. You can also pass a stack hash prefix to sync
+    a specific stack from anywhere.
+
 %sEXAMPLES%s
     ezs sync              Interactive menu
+    ezs sync a1b2c        Sync stack matching hash prefix
     ezs sync -a           Auto-sync current stack
     ezs sync --all-stacks Auto-sync all stacks
     ezs sync -cur         Sync current branch only
@@ -87,24 +93,41 @@ func Sync(args []string) error {
 		return err
 	}
 
-	currentStack, branch, err := mgr.GetCurrentStack()
-	if err != nil {
-		return fmt.Errorf("not in a stack. Create a branch first with: ezs new <branch-name>")
-	}
-
 	var gh *github.Client
 	remoteURL, err := g.GetRemote("origin")
 	if err == nil {
 		gh, _ = github.NewClient(remoteURL)
 	}
 
+	deleteLocal := !*noDeleteLocal
+
+	// Check for positional arg (hash prefix)
+	positionalArgs := fs.Args()
+	if len(positionalArgs) > 0 {
+		hashPrefix := positionalArgs[0]
+		targetStack, err := mgr.GetStackByHash(hashPrefix)
+		if err != nil {
+			return err
+		}
+		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack})
+	}
+
+	// Try to get current stack (may fail if on main)
+	currentStack, branch, err := mgr.GetCurrentStack()
+	if err != nil {
+		// On main or not in a stack - show main menu
+		if *allStacksFlag || *allFlag {
+			return syncStacks(mgr, gh, cwd, deleteLocal, true)
+		}
+		return syncFromMain(mgr, gh, cwd, deleteLocal)
+	}
+
+	// In a stack worktree - existing behavior
 	spinner := ui.NewDelayedSpinner("Fetching branch status...")
 	spinner.Start()
 	statusMap := fetchBranchStatuses(g, currentStack)
 	spinner.Stop()
 	ui.PrintStack(currentStack, branch.Name, true, statusMap)
-
-	deleteLocal := !*noDeleteLocal
 
 	if *allStacksFlag {
 		return syncStacks(mgr, gh, cwd, deleteLocal, true)
@@ -123,6 +146,189 @@ func Sync(args []string) error {
 	}
 
 	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal)
+}
+
+// syncFromMain shows an interactive menu when running sync from main (not in a stack worktree)
+func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool) error {
+	stacks := mgr.ListStacks()
+	if len(stacks) == 0 {
+		ui.Info("No stacks found. Create a branch first with: ezs new <branch-name>")
+		return nil
+	}
+
+	options := []string{
+		fmt.Sprintf("%s  Auto-sync ALL stacks (detect merged parents / behind main)", ui.IconSync),
+		fmt.Sprintf("%s  Choose a stack to sync", ui.IconStack),
+	}
+
+	selected, err := ui.SelectOptionWithBack(options, "Sync from main - what would you like to do?")
+	if err != nil {
+		if err == ui.ErrBack {
+			return ui.ErrBack
+		}
+		return err
+	}
+
+	switch selected {
+	case 0:
+		return syncStacks(mgr, gh, cwd, deleteLocal, true)
+	case 1:
+		targetStack, err := ui.SelectStack(stacks, "Select a stack to sync")
+		if err != nil {
+			return err
+		}
+		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack})
+	}
+
+	return nil
+}
+
+// syncSpecificStacks syncs a specific set of stacks
+func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, stacks []*config.Stack) error {
+	ui.Info("Fetching latest changes...")
+
+	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, stacks)
+	if err != nil {
+		ui.Warn(fmt.Sprintf("Could not check for sync needed: %v", err))
+	}
+
+	var mergedBranches []stack.MergedBranchInfo
+	if deleteLocal && gh != nil {
+		mergedBranches, err = mgr.DetectMergedBranchesForStacks(gh, stacks)
+		if err != nil {
+			ui.Warn(fmt.Sprintf("Could not check for merged branches: %v", err))
+		}
+	}
+
+	if len(syncNeeded) == 0 && len(mergedBranches) == 0 {
+		ui.Success("All branches are up to date. No sync needed.")
+		return nil
+	}
+
+	if len(syncNeeded) > 0 {
+		ui.Info(fmt.Sprintf("Found %d branch(es) that need syncing:", len(syncNeeded)))
+		for _, info := range syncNeeded {
+			if info.MergedParent != "" {
+				fmt.Fprintf(os.Stderr, "  %s %s%s%s: parent %s%s%s was merged to main\n",
+					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset)
+			} else if info.BehindParent != "" {
+				fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind parent %s%s%s\n",
+					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
+			} else if info.BehindBy > 0 {
+				fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind origin/main\n",
+					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset)
+			}
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
+	if len(mergedBranches) > 0 {
+		ui.Info(fmt.Sprintf("Found %d branch(es) with merged PRs (will be deleted):", len(mergedBranches)))
+		for _, info := range mergedBranches {
+			fmt.Fprintf(os.Stderr, "  %s %s%s%s: PR #%d merged\n",
+				ui.IconSuccess, ui.Bold, info.Branch, ui.Reset, info.PRNumber)
+		}
+		fmt.Fprintln(os.Stderr)
+	}
+
+	if len(syncNeeded) > 0 {
+		fmt.Fprintln(os.Stderr)
+
+		beforeRebase := func(info stack.SyncInfo) bool {
+			var msg string
+			if info.MergedParent != "" {
+				msg = fmt.Sprintf("Sync %s%s%s? (parent %s%s%s was merged)",
+					ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset)
+			} else if info.BehindParent != "" {
+				msg = fmt.Sprintf("Sync %s%s%s? (%s%d commits%s behind parent %s%s%s)",
+					ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
+			} else {
+				msg = fmt.Sprintf("Sync %s%s%s? (%s%d commits%s behind origin/main)",
+					ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset)
+			}
+			if ui.ConfirmTUI(msg) {
+				ui.Info("Rebasing...")
+				return true
+			}
+			return false
+		}
+
+		afterRebase := func(result stack.RebaseResult, g *git.Git) bool {
+			fmt.Fprintln(os.Stderr)
+			ui.Success(fmt.Sprintf("Rebased %s", result.Branch))
+
+			if !OfferForcePush(result.Branch, result.WorktreePath) {
+				ui.Warn("Skipping remaining branches in this stack (push required for children)")
+				return false
+			}
+
+			return true
+		}
+
+		callbacks := &stack.SyncCallbacks{
+			BeforeRebase: beforeRebase,
+			AfterRebase:  afterRebase,
+		}
+
+		results, err := mgr.SyncSpecificStacks(stacks, gh, callbacks)
+		if err != nil {
+			return err
+		}
+
+		printSyncResults(results)
+
+		hasConflicts := false
+		successCount := 0
+		for _, r := range results {
+			if r.HasConflict {
+				hasConflicts = true
+			}
+			if r.Success {
+				successCount++
+			}
+		}
+
+		fmt.Fprintln(os.Stderr)
+		if hasConflicts {
+			ui.Warn("Some branches have conflicts. Resolve them and run 'git rebase --continue' in each worktree.")
+		}
+		if successCount > 0 {
+			ui.Success(fmt.Sprintf("Synced %d branch(es)!", successCount))
+		}
+	}
+
+	if len(mergedBranches) > 0 {
+		fmt.Fprintln(os.Stderr)
+		ui.Info(fmt.Sprintf("Found %d merged branch(es) to clean up:", len(mergedBranches)))
+		for _, info := range mergedBranches {
+			fmt.Fprintf(os.Stderr, "  %s %s%s%s: PR #%d merged\n",
+				ui.IconSuccess, ui.Bold, info.Branch, ui.Reset, info.PRNumber)
+		}
+		fmt.Fprintln(os.Stderr)
+		if ui.ConfirmTUI(fmt.Sprintf("Delete %d merged branch(es) and their worktrees", len(mergedBranches))) {
+			ui.Info("Cleaning up merged branches...")
+			results := mgr.CleanupMergedBranches(mergedBranches, cwd)
+			deletedCount := 0
+			for _, r := range results {
+				if r.Success {
+					deletedCount++
+					if r.WorktreeWasDeleted {
+						ui.Success(fmt.Sprintf("Deleted %s (worktree was already removed)", r.Branch))
+					} else {
+						ui.Success(fmt.Sprintf("Deleted %s", r.Branch))
+					}
+				} else if r.Error != "" {
+					ui.Warn(fmt.Sprintf("Failed to delete %s: %s", r.Branch, r.Error))
+				}
+			}
+			if deletedCount > 0 {
+				fmt.Fprintln(os.Stderr)
+				ui.Success(fmt.Sprintf("Deleted %d merged branch(es)", deletedCount))
+			}
+		}
+	}
+
+	return nil
 }
 
 // syncInteractive shows an interactive menu for sync operations
@@ -356,9 +562,13 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 			ui.Info("Cleaning up merged branches...")
 			results := mgr.CleanupMergedBranches(mergedBranches, cwd)
 			deletedCount := 0
+			needsCd := false
 			for _, r := range results {
 				if r.Success {
 					deletedCount++
+					if r.WasCurrentWorktree {
+						needsCd = true
+					}
 					if r.WorktreeWasDeleted {
 						ui.Success(fmt.Sprintf("Deleted %s (worktree was already removed)", r.Branch))
 					} else {
@@ -371,6 +581,9 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 			if deletedCount > 0 {
 				fmt.Fprintln(os.Stderr)
 				ui.Success(fmt.Sprintf("Deleted %d merged branch(es)", deletedCount))
+			}
+			if needsCd {
+				fmt.Printf("cd %s\n", mgr.GetRepoDir())
 			}
 		}
 	}

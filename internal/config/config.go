@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 )
@@ -78,27 +80,47 @@ func (c *Config) GetCdAfterNew(repoPath string) bool {
 // Each key is a branch name, and its value is another BranchTree of its children
 type BranchTree map[string]BranchTree
 
+// repoData stores all stack and branch data for a single repo on disk
+type repoData struct {
+	Stacks   map[string]*Stack       `json:"stacks"`
+	Branches map[string]*BranchCache `json:"branches"`
+}
+
+// currentStackConfigVersion is the latest version of the stacks.json format.
+// Bump this when adding a new migration.
+const currentStackConfigVersion = 2
+
 // stackConfigFile is the on-disk format that stores stacks for all repos
 type stackConfigFile struct {
-	Repos map[string]*StackConfig `json:"repos"`
+	Version int                      `json:"version"`
+	Repos   map[string]*repoData    `json:"repos"`
 }
 
 // StackConfig holds metadata about stacks for a single repo
 type StackConfig struct {
 	Stacks  map[string]*Stack `json:"stacks"`
+	Cache   *CacheConfig      `json:"-"` // loaded alongside stacks, not serialized separately
 	repoDir string            // internal, not serialized - used for saving
 }
 
 // Stack represents a chain of stacked branches as a tree
 type Stack struct {
 	Name     string       `json:"name"`
-	Root     string       `json:"root"` // The base branch (usually "main")
-	Tree     BranchTree   `json:"tree"` // The tree of branches
-	Branches []*Branch    `json:"-"`    // Runtime-only: populated from Tree for backward compatibility
+	Hash     string       `json:"hash"`           // 7-char hex hash for identification
+	Root     string       `json:"root"`            // The base branch (usually "main")
+	Tree     BranchTree   `json:"tree"`            // The tree of branches
+	Branches []*Branch    `json:"-"`               // Runtime-only: populated from Tree for backward compatibility
 	cache    *CacheConfig // Runtime-only: reference to cache for metadata
 }
 
-// BranchCache holds cached metadata for a branch (stored in cache.json)
+// GenerateStackHash generates a 7-char hex hash from a stack name using FNV-32a
+func GenerateStackHash(name string) string {
+	h := fnv.New32a()
+	h.Write([]byte(name))
+	return fmt.Sprintf("%07x", h.Sum32())
+}
+
+// BranchCache holds cached metadata for a branch
 type BranchCache struct {
 	WorktreePath string `json:"worktree_path,omitempty"`
 	PRNumber     int    `json:"pr_number,omitempty"`
@@ -174,6 +196,240 @@ type legacyConfig struct {
 	GitHubToken       string `json:"github_token,omitempty"`
 }
 
+// atomicWriteFile writes data to a file atomically by writing to a temp file
+// in the same directory and then renaming it.
+func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".ezstack-tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return os.Rename(tmpPath, path)
+}
+
+// migrateStackConfig migrates stacks.json data from srcVersion to dstVersion.
+// Each step runs the migration for that version (e.g., 0→1, then 1→2).
+// Returns the migrated JSON bytes.
+func migrateStackConfig(data []byte, srcVersion, dstVersion int) ([]byte, error) {
+	// migrations[i] migrates from version i to version i+1
+	migrations := []func([]byte) ([]byte, error){
+		migrateV0ToV1,
+		migrateV1ToV2,
+	}
+
+	for v := srcVersion; v < dstVersion; v++ {
+		if v < 0 || v >= len(migrations) {
+			return nil, fmt.Errorf("no migration defined for version %d → %d", v, v+1)
+		}
+		var err error
+		data, err = migrations[v](data)
+		if err != nil {
+			return nil, fmt.Errorf("migration v%d → v%d failed: %w", v, v+1, err)
+		}
+	}
+	return data, nil
+}
+
+// migrateV0ToV1 converts legacy flat-array stacks to tree format.
+// v0: stacks have "branches" as a flat array of objects
+// v1: stacks have "root" + "tree" structure, branch metadata moves to repo-level "branches"
+func migrateV0ToV1(data []byte) ([]byte, error) {
+	var legacyFile legacyStackConfigFile
+	if err := json.Unmarshal(data, &legacyFile); err != nil {
+		return nil, err
+	}
+
+	if legacyFile.Repos == nil {
+		// Nothing to migrate, just set version
+		result := stackConfigFile{
+			Version: 1,
+			Repos:   make(map[string]*repoData),
+		}
+		return json.MarshalIndent(result, "", "  ")
+	}
+
+	result := stackConfigFile{
+		Version: 1,
+		Repos:   make(map[string]*repoData),
+	}
+
+	for repoPath, legacySC := range legacyFile.Repos {
+		if legacySC == nil {
+			continue
+		}
+
+		rd := &repoData{
+			Stacks:   make(map[string]*Stack),
+			Branches: make(map[string]*BranchCache),
+		}
+
+		for stackName, legacyStack := range legacySC.Stacks {
+			if legacyStack == nil {
+				continue
+			}
+
+			// Build set of branch names in this stack
+			branchSet := make(map[string]bool)
+			for _, b := range legacyStack.Branches {
+				branchSet[b.Name] = true
+			}
+
+			// Find the root (parent not in the stack)
+			root := "main"
+			for _, b := range legacyStack.Branches {
+				if !branchSet[b.Parent] {
+					root = b.Parent
+					break
+				}
+			}
+
+			// Build children map
+			children := make(map[string][]string)
+			for _, b := range legacyStack.Branches {
+				parent := b.Parent
+				if !branchSet[parent] {
+					parent = root
+				}
+				children[parent] = append(children[parent], b.Name)
+			}
+
+			// Build tree recursively
+			var buildTree func(parent string) BranchTree
+			buildTree = func(parent string) BranchTree {
+				tree := make(BranchTree)
+				for _, childName := range children[parent] {
+					tree[childName] = buildTree(childName)
+				}
+				return tree
+			}
+
+			tree := buildTree(root)
+
+			// Move branch metadata to repo-level cache
+			for _, b := range legacyStack.Branches {
+				rd.Branches[b.Name] = &BranchCache{
+					WorktreePath: b.WorktreePath,
+					PRNumber:     b.PRNumber,
+					PRUrl:        b.PRUrl,
+					IsMerged:     b.IsMerged,
+					IsRemote:     b.IsRemote,
+				}
+			}
+
+			rd.Stacks[stackName] = &Stack{
+				Name: legacyStack.Name,
+				Root: root,
+				Tree: tree,
+			}
+		}
+
+		result.Repos[repoPath] = rd
+	}
+
+	return json.MarshalIndent(result, "", "  ")
+}
+
+// migrateV1ToV2 merges cache.json data into stacks.json and generates stack hashes.
+// v1: tree format, no hashes, cache may be in separate cache.json
+// v2: tree format + hash field on stacks + cache.json merged into branches
+func migrateV1ToV2(data []byte) ([]byte, error) {
+	var file stackConfigFile
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil, err
+	}
+
+	file.Version = 2
+	if file.Repos == nil {
+		file.Repos = make(map[string]*repoData)
+	}
+
+	// Merge cache.json if it exists
+	configDir, err := ConfigDir()
+	if err == nil {
+		cachePath := filepath.Join(configDir, "cache.json")
+		cacheData, err := os.ReadFile(cachePath)
+		if err == nil {
+			var cacheFile map[string]json.RawMessage
+			if json.Unmarshal(cacheData, &cacheFile) == nil {
+				emptied := true
+				for repoPath, rawCC := range cacheFile {
+					var cc CacheConfig
+					if json.Unmarshal(rawCC, &cc) != nil || len(cc.Branches) == 0 {
+						continue
+					}
+
+					rd := file.Repos[repoPath]
+					if rd == nil {
+						rd = &repoData{
+							Stacks:   make(map[string]*Stack),
+							Branches: make(map[string]*BranchCache),
+						}
+						file.Repos[repoPath] = rd
+					}
+					if rd.Branches == nil {
+						rd.Branches = make(map[string]*BranchCache)
+					}
+
+					for name, bc := range cc.Branches {
+						if _, exists := rd.Branches[name]; !exists {
+							rd.Branches[name] = bc
+						}
+					}
+
+					delete(cacheFile, repoPath)
+				}
+
+				// Clean up cache.json
+				for range cacheFile {
+					emptied = false
+					break
+				}
+				if emptied {
+					os.Remove(cachePath)
+				} else {
+					newCacheData, err := json.MarshalIndent(cacheFile, "", "  ")
+					if err == nil {
+						atomicWriteFile(cachePath, newCacheData, 0644)
+					}
+				}
+			}
+		}
+	}
+
+	// Generate hashes for stacks that don't have one
+	for _, rd := range file.Repos {
+		if rd == nil {
+			continue
+		}
+		for _, stack := range rd.Stacks {
+			if stack != nil && stack.Hash == "" {
+				stack.Hash = GenerateStackHash(stack.Name)
+			}
+		}
+		if rd.Branches == nil {
+			rd.Branches = make(map[string]*BranchCache)
+		}
+	}
+
+	return json.MarshalIndent(file, "", "  ")
+}
+
 // Load loads the configuration from ~/.ezstack/config.json
 func Load() (*Config, error) {
 	configDir, err := ConfigDir()
@@ -234,11 +490,11 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	return os.WriteFile(filepath.Join(configDir, "config.json"), data, 0644)
+	return atomicWriteFile(filepath.Join(configDir, "config.json"), data, 0644)
 }
 
-// LoadStackConfig loads stack metadata for a specific repo from $HOME/.ezstack/stacks.json
-// It handles migration from the legacy flat array format to the new tree format
+// LoadStackConfig loads stack metadata and branch cache for a specific repo from $HOME/.ezstack/stacks.json
+// It handles migration from older formats using a versioned migration chain.
 func LoadStackConfig(repoDir string) (*StackConfig, error) {
 	configDir, err := ConfigDir()
 	if err != nil {
@@ -254,69 +510,93 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 	data, err := os.ReadFile(stackPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return &StackConfig{
-				Stacks:  make(map[string]*Stack),
-				repoDir: repoDir,
-			}, nil
+			// No stacks.json yet — check if there's a cache.json to bootstrap from
+			// by running migration from v1→v2 on an empty v1 file
+			emptyV1 := stackConfigFile{Version: 1, Repos: make(map[string]*repoData)}
+			emptyData, _ := json.MarshalIndent(emptyV1, "", "  ")
+			migratedData, migErr := migrateStackConfig(emptyData, 1, currentStackConfigVersion)
+			if migErr == nil {
+				// Check if migration produced any data worth saving
+				var check stackConfigFile
+				if json.Unmarshal(migratedData, &check) == nil && len(check.Repos) > 0 {
+					atomicWriteFile(stackPath, migratedData, 0644)
+					data = migratedData
+				}
+			}
+
+			if data == nil {
+				return &StackConfig{
+					Stacks: make(map[string]*Stack),
+					Cache: &CacheConfig{
+						Branches: make(map[string]*BranchCache),
+						repoDir:  repoDir,
+					},
+					repoDir: repoDir,
+				}, nil
+			}
+		} else {
+			return nil, err
 		}
-		return nil, err
 	}
 
-	// Try to load as new format first
+	// Check file version and run migrations if needed
+	var versionCheck struct {
+		Version int `json:"version"`
+	}
+	json.Unmarshal(data, &versionCheck)
+
+	if versionCheck.Version < currentStackConfigVersion {
+		data, err = migrateStackConfig(data, versionCheck.Version, currentStackConfigVersion)
+		if err != nil {
+			return nil, fmt.Errorf("failed to migrate stacks.json: %w", err)
+		}
+		// Write migrated data back so migration only runs once
+		atomicWriteFile(stackPath, data, 0644)
+	}
+
+	// Parse the (possibly migrated) data
 	var file stackConfigFile
 	if err := json.Unmarshal(data, &file); err != nil {
 		return nil, err
 	}
 
 	if file.Repos == nil {
-		file.Repos = make(map[string]*StackConfig)
+		file.Repos = make(map[string]*repoData)
 	}
 
-	// Get the stacks for this specific repo
-	sc := file.Repos[repoDir]
-	if sc == nil {
-		sc = &StackConfig{
-			Stacks: make(map[string]*Stack),
+	// Get the data for this specific repo
+	rd := file.Repos[repoDir]
+	if rd == nil {
+		rd = &repoData{
+			Stacks:   make(map[string]*Stack),
+			Branches: make(map[string]*BranchCache),
 		}
 	}
-	if sc.Stacks == nil {
-		sc.Stacks = make(map[string]*Stack)
+	if rd.Stacks == nil {
+		rd.Stacks = make(map[string]*Stack)
 	}
-	sc.repoDir = repoDir
+	if rd.Branches == nil {
+		rd.Branches = make(map[string]*BranchCache)
+	}
 
-	// Check if this is a legacy format (stacks have nil Tree but we loaded something)
-	needsMigration := false
+	sc := &StackConfig{
+		Stacks: rd.Stacks,
+		Cache: &CacheConfig{
+			Branches: rd.Branches,
+			repoDir:  repoDir,
+		},
+		repoDir: repoDir,
+	}
+
+	// Populate Branches slice for each stack using the combined cache
 	for _, stack := range sc.Stacks {
-		if stack.Tree == nil {
-			needsMigration = true
-			break
-		}
-	}
-
-	if needsMigration {
-		// Load as legacy format and migrate
-		var legacyFile legacyStackConfigFile
-		if err := json.Unmarshal(data, &legacyFile); err == nil {
-			if legacySC, ok := legacyFile.Repos[repoDir]; ok && legacySC != nil {
-				sc, err = migrateFromLegacy(legacySC, repoDir)
-				if err != nil {
-					return nil, err
-				}
-				// Save the migrated stacks.json immediately
-				_ = sc.Save(repoDir)
-			}
-		}
-	}
-
-	// Load cache and populate Branches slice for each stack
-	cache, _ := LoadCacheConfig(repoDir)
-	for _, stack := range sc.Stacks {
-		stack.cache = cache
+		stack.cache = sc.Cache
 		stack.PopulateBranches()
 	}
 
 	return sc, nil
 }
+
 
 // PopulateBranches rebuilds the Branches slice from the Tree structure
 // This should be called after loading or after modifying the Tree
@@ -335,88 +615,8 @@ func (s *Stack) PopulateBranchesWithCache(cache *CacheConfig) {
 	s.Branches = s.GetBranches(cache)
 }
 
-// migrateFromLegacy converts legacy flat array format to new tree format
-func migrateFromLegacy(legacy *legacyStackConfig, repoDir string) (*StackConfig, error) {
-	sc := &StackConfig{
-		Stacks:  make(map[string]*Stack),
-		repoDir: repoDir,
-	}
 
-	// Also migrate cache data
-	cache := &CacheConfig{
-		Branches: make(map[string]*BranchCache),
-		repoDir:  repoDir,
-	}
-
-	for stackName, legacyStack := range legacy.Stacks {
-		// Build the tree from the flat array
-		// First, figure out the root (base branch that's not in the stack)
-		branchSet := make(map[string]bool)
-		for _, b := range legacyStack.Branches {
-			branchSet[b.Name] = true
-		}
-
-		// Find the root (usually "main") - the parent of branches that don't have parents in the stack
-		root := "main"
-		for _, b := range legacyStack.Branches {
-			if !branchSet[b.Parent] {
-				root = b.Parent
-				break
-			}
-		}
-
-		// Build children map
-		children := make(map[string][]string)
-		for _, b := range legacyStack.Branches {
-			parent := b.Parent
-			if !branchSet[parent] {
-				parent = root // External parent means it's a root-level branch
-			}
-			children[parent] = append(children[parent], b.Name)
-		}
-
-		// Build tree recursively
-		var buildTree func(parent string) BranchTree
-		buildTree = func(parent string) BranchTree {
-			tree := make(BranchTree)
-			for _, childName := range children[parent] {
-				tree[childName] = buildTree(childName)
-			}
-			return tree
-		}
-
-		tree := buildTree(root)
-
-		// Migrate branch metadata to cache FIRST (before populating Branches)
-		for _, b := range legacyStack.Branches {
-			cache.Branches[b.Name] = &BranchCache{
-				WorktreePath: b.WorktreePath,
-				PRNumber:     b.PRNumber,
-				PRUrl:        b.PRUrl,
-				IsMerged:     b.IsMerged,
-				IsRemote:     b.IsRemote,
-			}
-		}
-
-		stack := &Stack{
-			Name:  legacyStack.Name,
-			Root:  root,
-			Tree:  tree,
-			cache: cache,
-		}
-		stack.PopulateBranches()
-		sc.Stacks[stackName] = stack
-	}
-
-	// Save the migrated cache
-	if len(cache.Branches) > 0 {
-		_ = cache.Save(repoDir) // Best effort, don't fail migration if cache save fails
-	}
-
-	return sc, nil
-}
-
-// Save saves the stack config for this repo to $HOME/.ezstack/stacks.json
+// Save saves the stack config and cache for this repo to $HOME/.ezstack/stacks.json
 func (sc *StackConfig) Save(repoDir string) error {
 	configDir, err := ConfigDir()
 	if err != nil {
@@ -437,13 +637,13 @@ func (sc *StackConfig) Save(repoDir string) error {
 		if !os.IsNotExist(err) {
 			return err
 		}
-		file.Repos = make(map[string]*StackConfig)
+		file.Repos = make(map[string]*repoData)
 	} else {
 		if err := json.Unmarshal(data, &file); err != nil {
 			return err
 		}
 		if file.Repos == nil {
-			file.Repos = make(map[string]*StackConfig)
+			file.Repos = make(map[string]*repoData)
 		}
 	}
 
@@ -453,26 +653,52 @@ func (sc *StackConfig) Save(repoDir string) error {
 		targetRepo = repoDir
 	}
 
-	// Update this repo's stacks
-	file.Repos[targetRepo] = sc
+	// Build the combined repo data
+	branches := make(map[string]*BranchCache)
+	if sc.Cache != nil {
+		branches = sc.Cache.Branches
+	}
+
+	file.Version = currentStackConfigVersion
+	file.Repos[targetRepo] = &repoData{
+		Stacks:   sc.Stacks,
+		Branches: branches,
+	}
 
 	newData, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return os.WriteFile(stackPath, newData, 0644)
+	return atomicWriteFile(stackPath, newData, 0644)
 }
 
-// LoadCacheConfig loads cached branch metadata from $HOME/.ezstack/cache.json
+// LoadCacheConfig loads cached branch metadata. This now delegates to the combined stacks file.
+// Kept for backward compatibility with callers that load cache separately.
 func LoadCacheConfig(repoDir string) (*CacheConfig, error) {
 	configDir, err := ConfigDir()
 	if err != nil {
 		return nil, err
 	}
 
+	// First try loading from the combined stacks.json
+	stackPath := filepath.Join(configDir, "stacks.json")
+	data, err := os.ReadFile(stackPath)
+	if err == nil {
+		var file stackConfigFile
+		if err := json.Unmarshal(data, &file); err == nil && file.Repos != nil {
+			if rd, ok := file.Repos[repoDir]; ok && rd != nil && rd.Branches != nil {
+				return &CacheConfig{
+					Branches: rd.Branches,
+					repoDir:  repoDir,
+				}, nil
+			}
+		}
+	}
+
+	// Fall back to legacy cache.json
 	cachePath := filepath.Join(configDir, "cache.json")
-	data, err := os.ReadFile(cachePath)
+	data, err = os.ReadFile(cachePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return &CacheConfig{
@@ -483,7 +709,6 @@ func LoadCacheConfig(repoDir string) (*CacheConfig, error) {
 		return nil, err
 	}
 
-	// Cache file stores all repos' cache data
 	var cacheFile map[string]*CacheConfig
 	if err := json.Unmarshal(data, &cacheFile); err != nil {
 		return nil, err
@@ -503,48 +728,6 @@ func LoadCacheConfig(repoDir string) (*CacheConfig, error) {
 	return cc, nil
 }
 
-// Save saves the cache config for this repo to $HOME/.ezstack/cache.json
-func (cc *CacheConfig) Save(repoDir string) error {
-	configDir, err := ConfigDir()
-	if err != nil {
-		return err
-	}
-
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return err
-	}
-
-	cachePath := filepath.Join(configDir, "cache.json")
-
-	// Load existing file to preserve other repos
-	var cacheFile map[string]*CacheConfig
-	data, err := os.ReadFile(cachePath)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-		cacheFile = make(map[string]*CacheConfig)
-	} else {
-		if err := json.Unmarshal(data, &cacheFile); err != nil {
-			cacheFile = make(map[string]*CacheConfig)
-		}
-	}
-
-	targetRepo := cc.repoDir
-	if targetRepo == "" {
-		targetRepo = repoDir
-	}
-
-	cacheFile[targetRepo] = cc
-
-	newData, err := json.MarshalIndent(cacheFile, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(cachePath, newData, 0644)
-}
-
 // GetBranchCache returns cached metadata for a branch
 func (cc *CacheConfig) GetBranchCache(branchName string) *BranchCache {
 	if cc.Branches == nil {
@@ -559,6 +742,44 @@ func (cc *CacheConfig) SetBranchCache(branchName string, cache *BranchCache) {
 		cc.Branches = make(map[string]*BranchCache)
 	}
 	cc.Branches[branchName] = cache
+}
+
+// Save writes the cache data back to the combined stacks.json file.
+// This loads the current stacks.json, updates the branches for this repo, and writes it back atomically.
+func (cc *CacheConfig) Save(repoDir string) error {
+	configDir, err := ConfigDir()
+	if err != nil {
+		return err
+	}
+
+	stackPath := filepath.Join(configDir, "stacks.json")
+	var file stackConfigFile
+
+	data, err := os.ReadFile(stackPath)
+	if err == nil {
+		json.Unmarshal(data, &file)
+	}
+	if file.Repos == nil {
+		file.Repos = make(map[string]*repoData)
+	}
+
+	rd := file.Repos[repoDir]
+	if rd == nil {
+		rd = &repoData{
+			Stacks: make(map[string]*Stack),
+		}
+		file.Repos[repoDir] = rd
+	}
+
+	file.Version = currentStackConfigVersion
+	rd.Branches = cc.Branches
+
+	newData, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return atomicWriteFile(stackPath, newData, 0644)
 }
 
 // GetBranches returns a flat list of branches from the tree structure

@@ -366,11 +366,6 @@ func New(args []string) error {
 		createAsStackRoot = ui.ConfirmTUIWithDefault("Make this a stack root? (allows stacking more branches on top)", true)
 	}
 
-	if !ui.ConfirmTUI(fmt.Sprintf("Create new worktree for branch '%s'", branchName)) {
-		ui.Warn("Cancelled")
-		return nil
-	}
-
 	if !createAsStackRoot {
 		// Just create the worktree without adding to a stack
 		if err := mgr.CreateWorktreeOnly(branchName, parentBranch, worktreePath); err != nil {

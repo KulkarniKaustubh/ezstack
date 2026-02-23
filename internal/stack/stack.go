@@ -74,6 +74,7 @@ func (m *Manager) RegisterExistingBranch(branchName, worktreePath, baseBranch st
 	// Create a new stack with this branch as the root
 	m.stackConfig.Stacks[branchName] = &config.Stack{
 		Name:     branchName,
+		Hash:     config.GenerateStackHash(branchName),
 		Branches: []*config.Branch{branch},
 	}
 
@@ -96,6 +97,7 @@ func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber i
 	// Create a new stack with this branch as the root
 	stack := &config.Stack{
 		Name: branchName,
+		Hash: config.GenerateStackHash(branchName),
 		Root: baseBranch,
 		Tree: config.BranchTree{
 			branchName: config.BranchTree{},
@@ -103,14 +105,13 @@ func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber i
 	}
 	m.stackConfig.Stacks[branchName] = stack
 
-	// Save cache with metadata
-	cache, _ := config.LoadCacheConfig(m.repoDir)
+	// Update cache
+	cache := m.stackConfig.Cache
 	cache.SetBranchCache(branchName, &config.BranchCache{
 		PRNumber: prNumber,
 		PRUrl:    prURL,
 		IsRemote: true,
 	})
-	cache.Save(m.repoDir)
 
 	// Populate branches from tree with cache
 	stack.PopulateBranchesWithCache(cache)
@@ -143,12 +144,11 @@ func (m *Manager) AddBranchToStack(name, parentBranch, worktreeDir string) (*con
 	// Add branch to the tree
 	stack.AddBranch(name, parentBranch)
 
-	// Save cache with metadata
-	cache, _ := config.LoadCacheConfig(m.repoDir)
+	// Update cache
+	cache := m.stackConfig.Cache
 	cache.SetBranchCache(name, &config.BranchCache{
 		WorktreePath: worktreeDir,
 	})
-	cache.Save(m.repoDir)
 
 	// Repopulate branches from tree with cache
 	stack.PopulateBranchesWithCache(cache)
@@ -191,6 +191,7 @@ func (m *Manager) CreateBranch(name, parentBranch, worktreeDir string) (*config.
 		stackName = name
 		stack = &config.Stack{
 			Name: stackName,
+			Hash: config.GenerateStackHash(stackName),
 			Root: parentBranch, // parentBranch is main/master
 			Tree: config.BranchTree{
 				name: config.BranchTree{},
@@ -203,12 +204,11 @@ func (m *Manager) CreateBranch(name, parentBranch, worktreeDir string) (*config.
 		stack.AddBranch(name, parentBranch)
 	}
 
-	// Save cache with metadata
-	cache, _ := config.LoadCacheConfig(m.repoDir)
+	// Update cache
+	cache := m.stackConfig.Cache
 	cache.SetBranchCache(name, &config.BranchCache{
 		WorktreePath: worktreeDir,
 	})
-	cache.Save(m.repoDir)
 
 	// Repopulate branches from tree with cache
 	stack.PopulateBranchesWithCache(cache)
@@ -257,6 +257,18 @@ func (m *Manager) findStackForBranch(branchName string) string {
 		}
 	}
 	return ""
+}
+
+// FindStackForBranch finds which stack a branch belongs to (exported)
+func (m *Manager) FindStackForBranch(branchName string) *config.Stack {
+	for _, stack := range m.stackConfig.Stacks {
+		for _, b := range stack.Branches {
+			if b.Name == branchName {
+				return stack
+			}
+		}
+	}
+	return nil
 }
 
 // GetCurrentStack returns the stack for the current branch
@@ -316,6 +328,31 @@ func (m *Manager) IsMainBranch(name string) bool {
 	return name == "main" || name == "master" || name == baseBranch
 }
 
+// GetStackByHash finds a stack by hash prefix. Returns error if 0 or >1 stacks match.
+func (m *Manager) GetStackByHash(prefix string) (*config.Stack, error) {
+	// Strip leading # if present
+	prefix = strings.TrimPrefix(prefix, "#")
+
+	var matches []*config.Stack
+	for _, stack := range m.stackConfig.Stacks {
+		if strings.HasPrefix(stack.Hash, prefix) {
+			matches = append(matches, stack)
+		}
+	}
+
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no stack found matching '%s'", prefix)
+	}
+	if len(matches) > 1 {
+		var hashes []string
+		for _, s := range matches {
+			hashes = append(hashes, s.Hash)
+		}
+		return nil, fmt.Errorf("ambiguous stack identifier '%s', matches: %s", prefix, strings.Join(hashes, ", "))
+	}
+	return matches[0], nil
+}
+
 // DeleteBranch removes a branch from the stack and deletes its worktree
 // Returns an error if the branch has child branches
 func (m *Manager) DeleteBranch(branchName string, force bool) error {
@@ -342,8 +379,7 @@ func (m *Manager) DeleteBranch(branchName string, force bool) error {
 		}
 	}
 
-	// Load cache first so we can use it for repopulation
-	cache, _ := config.LoadCacheConfig(m.repoDir)
+	cache := m.stackConfig.Cache
 
 	// Remove from stack config using tree methods
 	for stackName, stack := range m.stackConfig.Stacks {
@@ -365,7 +401,6 @@ func (m *Manager) DeleteBranch(branchName string, force bool) error {
 
 	// Remove from cache
 	delete(cache.Branches, branchName)
-	cache.Save(m.repoDir)
 
 	// Save the config
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
@@ -384,8 +419,7 @@ func (m *Manager) UntrackBranch(branchName string) error {
 		return fmt.Errorf("branch '%s' is not tracked by ezstack", branchName)
 	}
 
-	// Load cache first so we can use it for repopulation
-	cache, _ := config.LoadCacheConfig(m.repoDir)
+	cache := m.stackConfig.Cache
 
 	// Remove from stack config using tree methods (children are moved up automatically)
 	for stackName, stack := range m.stackConfig.Stacks {
@@ -407,7 +441,6 @@ func (m *Manager) UntrackBranch(branchName string) error {
 
 	// Remove from cache
 	delete(cache.Branches, branchName)
-	cache.Save(m.repoDir)
 
 	// Save the config
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
@@ -493,8 +526,7 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 		}
 	}
 
-	// Load cache for repopulation
-	cache, _ := config.LoadCacheConfig(m.repoDir)
+	cache := m.stackConfig.Cache
 
 	// Handle stack reorganization using tree methods
 	oldStack := m.stackConfig.Stacks[oldStackName]
@@ -582,6 +614,7 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 		// New parent is main - create a new stack with this branch as root
 		stack = &config.Stack{
 			Name: branchName,
+			Hash: config.GenerateStackHash(branchName),
 			Root: newParentName,
 			Tree: config.BranchTree{
 				branchName: config.BranchTree{},
@@ -592,12 +625,11 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 		return nil, fmt.Errorf("new parent '%s' is not in any stack and is not main/master", newParentName)
 	}
 
-	// Save cache with metadata
-	cache, _ := config.LoadCacheConfig(m.repoDir)
+	// Update cache
+	cache := m.stackConfig.Cache
 	cache.SetBranchCache(branchName, &config.BranchCache{
 		WorktreePath: worktreePath,
 	})
-	cache.Save(m.repoDir)
 
 	// Repopulate branches from tree with cache
 	stack.PopulateBranchesWithCache(cache)
@@ -656,8 +688,7 @@ func (m *Manager) moveBranchToStack(branchName, fromStackName, toStackName strin
 	}
 	newParentName := branch.Parent
 
-	// Load cache for repopulation
-	cache, _ := config.LoadCacheConfig(m.repoDir)
+	cache := m.stackConfig.Cache
 
 	// Extract subtree from old stack (includes all descendants)
 	subtree := fromStack.ExtractSubtree(branchName)
@@ -747,8 +778,7 @@ func (m *Manager) DetectOrphanedBranches() []string {
 
 // RemoveOrphanedBranches removes branches from config that no longer exist in git
 func (m *Manager) RemoveOrphanedBranches(branchNames []string) error {
-	// Load cache for repopulation
-	cache, _ := config.LoadCacheConfig(m.repoDir)
+	cache := m.stackConfig.Cache
 
 	for _, branchName := range branchNames {
 		// Find and remove from stack using tree methods
@@ -772,9 +802,6 @@ func (m *Manager) RemoveOrphanedBranches(branchNames []string) error {
 			}
 		}
 	}
-
-	// Save cache
-	cache.Save(m.repoDir)
 
 	return m.stackConfig.Save(m.repoDir)
 }
@@ -818,8 +845,7 @@ func (m *Manager) HandleMissingWorktrees(branches []MissingWorktreeInfo) error {
 		return nil
 	}
 
-	// Load cache for repopulation
-	cache, _ := config.LoadCacheConfig(m.repoDir)
+	cache := m.stackConfig.Cache
 
 	for _, info := range branches {
 		// Remove the branch from the stack config
@@ -844,9 +870,6 @@ func (m *Manager) HandleMissingWorktrees(branches []MissingWorktreeInfo) error {
 		}
 	}
 
-	// Save cache
-	cache.Save(m.repoDir)
-
 	return m.stackConfig.Save(m.repoDir)
 }
 
@@ -865,6 +888,7 @@ func (m *Manager) AddWorktreeToStack(branchName, worktreePath, parentName string
 		stackName = branchName
 		stack = &config.Stack{
 			Name: stackName,
+			Hash: config.GenerateStackHash(stackName),
 			Root: parentName,
 			Tree: config.BranchTree{
 				branchName: config.BranchTree{},
@@ -877,12 +901,11 @@ func (m *Manager) AddWorktreeToStack(branchName, worktreePath, parentName string
 		stack.AddBranch(branchName, parentName)
 	}
 
-	// Save cache with metadata
-	cache, _ := config.LoadCacheConfig(m.repoDir)
+	// Update cache
+	cache := m.stackConfig.Cache
 	cache.SetBranchCache(branchName, &config.BranchCache{
 		WorktreePath: worktreePath,
 	})
-	cache.Save(m.repoDir)
 
 	// Repopulate branches from tree with cache
 	stack.PopulateBranchesWithCache(cache)
@@ -919,8 +942,8 @@ func (m *Manager) MarkBranchMerged(branchName string) error {
 		}
 	}
 
-	// Load cache and update it
-	cache, _ := config.LoadCacheConfig(m.repoDir)
+	// Update cache
+	cache := m.stackConfig.Cache
 	bc := cache.GetBranchCache(branchName)
 	if bc == nil {
 		bc = &config.BranchCache{}
@@ -928,7 +951,6 @@ func (m *Manager) MarkBranchMerged(branchName string) error {
 	bc.IsMerged = true
 	bc.WorktreePath = ""
 	cache.SetBranchCache(branchName, bc)
-	cache.Save(m.repoDir)
 
 	// Update runtime branch object
 	branch.IsMerged = true
