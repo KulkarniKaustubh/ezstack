@@ -87,7 +87,7 @@ ezs sync
 | `reparent` | Change the parent of a branch |
 | `stack` | Add a branch to a stack |
 | `unstack` | Remove a branch from tracking |
-| `update` | Sync config with git |
+| `update` | Sync config with git (detects renames, orphans) |
 | `delete` | Delete a branch and its worktree |
 | `pr` | Manage pull requests |
 | `config` | Configure ezstack |

@@ -749,6 +749,8 @@ type UpdateResult struct {
 	AddedBranches []*config.Branch
 	// Branches whose parent was updated based on merge-base analysis
 	ReparentedBranches []ReparentInfo
+	// Branches that were detected as renames and updated
+	RenamedBranches []RenamedBranchInfo
 }
 
 // ReparentInfo contains info about a branch that was reparented
@@ -800,6 +802,86 @@ func (m *Manager) RemoveOrphanedBranches(branchNames []string) error {
 
 				break
 			}
+		}
+	}
+
+	return m.stackConfig.Save(m.repoDir)
+}
+
+// RenamedBranchInfo contains info about a branch that was renamed outside of ezstack
+type RenamedBranchInfo struct {
+	OldName      string
+	NewName      string
+	WorktreePath string
+}
+
+// DetectRenamedBranches correlates orphaned branches (in config but not in git) with
+// untracked worktrees (in git but not in config) by matching worktree paths.
+// If an orphaned branch's cached worktree path matches an untracked worktree's path,
+// it's almost certainly a rename (git branch -m old new).
+func (m *Manager) DetectRenamedBranches(orphaned []string, untracked []git.Worktree) []RenamedBranchInfo {
+	// Build a map of worktree path -> untracked worktree
+	untrackedByPath := make(map[string]git.Worktree)
+	for _, wt := range untracked {
+		untrackedByPath[wt.Path] = wt
+	}
+
+	var renames []RenamedBranchInfo
+	cache := m.stackConfig.Cache
+
+	for _, oldName := range orphaned {
+		bc := cache.GetBranchCache(oldName)
+		if bc == nil || bc.WorktreePath == "" {
+			continue
+		}
+		if wt, ok := untrackedByPath[bc.WorktreePath]; ok {
+			renames = append(renames, RenamedBranchInfo{
+				OldName:      oldName,
+				NewName:      wt.Branch,
+				WorktreePath: wt.Path,
+			})
+		}
+	}
+	return renames
+}
+
+// ApplyBranchRenames updates the config to reflect branch renames.
+// For each rename, it updates the tree key, moves the cache entry, and preserves all metadata.
+func (m *Manager) ApplyBranchRenames(renames []RenamedBranchInfo) error {
+	cache := m.stackConfig.Cache
+
+	for _, rename := range renames {
+		// Find the stack containing the old branch and rename it in the tree
+		for stackName, stack := range m.stackConfig.Stacks {
+			if !stack.HasBranch(rename.OldName) {
+				continue
+			}
+
+			// Rename in tree
+			stack.RenameBranchInTree(rename.OldName, rename.NewName)
+
+			// If this branch was the stack name, rename the stack too
+			if stackName == rename.OldName {
+				stack.Name = rename.NewName
+				stack.Hash = config.GenerateStackHash(rename.NewName)
+				delete(m.stackConfig.Stacks, stackName)
+				m.stackConfig.Stacks[rename.NewName] = stack
+			}
+
+			// Move cache entry: copy old metadata to new key, delete old key
+			oldCache := cache.GetBranchCache(rename.OldName)
+			if oldCache != nil {
+				cache.SetBranchCache(rename.NewName, oldCache)
+			} else {
+				cache.SetBranchCache(rename.NewName, &config.BranchCache{
+					WorktreePath: rename.WorktreePath,
+				})
+			}
+			delete(cache.Branches, rename.OldName)
+
+			// Repopulate branches from tree
+			stack.PopulateBranchesWithCache(cache)
+			break
 		}
 	}
 
