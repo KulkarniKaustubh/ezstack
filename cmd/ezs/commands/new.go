@@ -452,7 +452,7 @@ func promptWorktreeBaseDir(repoDir string, cfg *config.Config) (string, error) {
 	}
 
 	for {
-		worktreeBaseDir := ui.Prompt("Worktree base directory", defaultDir)
+		worktreeBaseDir := ui.PromptPath("Worktree base directory", defaultDir)
 		if worktreeBaseDir == "" {
 			return "", fmt.Errorf("worktree base directory is required")
 		}

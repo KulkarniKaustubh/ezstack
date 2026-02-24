@@ -1124,29 +1124,52 @@ func Info(msg string) {
 // Prompt asks for text input with a prompt and optional default value
 // Returns the user input or the default if empty input is given
 func Prompt(prompt, defaultVal string) string {
-	// Open /dev/tty directly to ensure we read fresh input from the terminal
-	tty, err := os.Open("/dev/tty")
-	if err != nil {
-		tty = os.Stdin
+	// Print the question on its own line first
+	if defaultVal != "" {
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s [%s]\n", Bold, Yellow, Reset, prompt, defaultVal)
 	} else {
-		defer tty.Close()
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s\n", Bold, Yellow, Reset, prompt)
 	}
 
-	reader := bufio.NewReader(tty)
-	if defaultVal != "" {
-		fmt.Fprintf(os.Stderr, "%s%s?%s %s [%s]: ", Bold, Yellow, Reset, prompt, defaultVal)
-	} else {
-		fmt.Fprintf(os.Stderr, "%s%s?%s %s: ", Bold, Yellow, Reset, prompt)
+	rl, err := readline.NewEx(&readline.Config{
+		Prompt:          ": ",
+		InterruptPrompt: "^C",
+		EOFPrompt:       "",
+		Stdin:           os.Stdin,
+		Stdout:          os.Stderr,
+		Stderr:          os.Stderr,
+	})
+	if err != nil {
+		// Fallback to basic input if readline fails
+		tty, err := os.Open("/dev/tty")
+		if err != nil {
+			tty = os.Stdin
+		} else {
+			defer tty.Close()
+		}
+		reader := bufio.NewReader(tty)
+		fmt.Fprintf(os.Stderr, ": ")
+		response, err := reader.ReadString('\n')
+		if err != nil {
+			return defaultVal
+		}
+		response = strings.TrimSpace(response)
+		if response == "" {
+			return defaultVal
+		}
+		return response
 	}
-	response, err := reader.ReadString('\n')
+	defer rl.Close()
+
+	line, err := rl.Readline()
 	if err != nil {
 		return defaultVal
 	}
-	response = strings.TrimSpace(response)
-	if response == "" {
+	line = strings.TrimSpace(line)
+	if line == "" {
 		return defaultVal
 	}
-	return response
+	return line
 }
 
 // PromptPath asks for a file path with tab completion support
@@ -1241,26 +1264,49 @@ func pathCompleterFunc(prefix string) *readline.PrefixCompleter {
 
 // PromptRequired asks for text input and keeps asking until a non-empty value is provided
 func PromptRequired(prompt string) string {
-	// Open /dev/tty directly to ensure we read fresh input from the terminal
-	// This avoids issues with buffered input from previous fzf sessions
-	tty, err := os.Open("/dev/tty")
-	if err != nil {
-		// Fallback to stdin if /dev/tty is not available
-		tty = os.Stdin
-	} else {
-		defer tty.Close()
-	}
-
-	reader := bufio.NewReader(tty)
 	for {
-		fmt.Fprintf(os.Stderr, "%s%s?%s %s: ", Bold, Yellow, Reset, prompt)
-		response, err := reader.ReadString('\n')
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s\n", Bold, Yellow, Reset, prompt)
+
+		rl, err := readline.NewEx(&readline.Config{
+			Prompt:          ": ",
+			InterruptPrompt: "^C",
+			EOFPrompt:       "",
+			Stdin:           os.Stdin,
+			Stdout:          os.Stderr,
+			Stderr:          os.Stderr,
+		})
 		if err != nil {
+			// Fallback to basic input if readline fails
+			tty, err := os.Open("/dev/tty")
+			if err != nil {
+				tty = os.Stdin
+			} else {
+				defer tty.Close()
+			}
+			reader := bufio.NewReader(tty)
+			fmt.Fprintf(os.Stderr, ": ")
+			response, err := reader.ReadString('\n')
+			if err != nil {
+				continue
+			}
+			response = strings.TrimSpace(response)
+			if response != "" {
+				return response
+			}
+			fmt.Fprintf(os.Stderr, "%s  (required)%s\n", Red, Reset)
 			continue
 		}
-		response = strings.TrimSpace(response)
-		if response != "" {
-			return response
+
+		line, err := rl.Readline()
+		rl.Close()
+		if err != nil {
+			// Ctrl+C should exit
+			fmt.Fprintln(os.Stderr)
+			os.Exit(130)
+		}
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
 		}
 		fmt.Fprintf(os.Stderr, "%s  (required)%s\n", Red, Reset)
 	}
