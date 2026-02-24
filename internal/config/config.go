@@ -88,7 +88,7 @@ type repoData struct {
 
 // currentStackConfigVersion is the latest version of the stacks.json format.
 // Bump this when adding a new migration.
-const currentStackConfigVersion = 2
+const currentStackConfigVersion = 3
 
 // stackConfigFile is the on-disk format that stores stacks for all repos
 type stackConfigFile struct {
@@ -104,9 +104,9 @@ type StackConfig struct {
 }
 
 // Stack represents a chain of stacked branches as a tree
+// Hash is the map key in StackConfig.Stacks and is populated at load time.
 type Stack struct {
-	Name     string       `json:"name"`
-	Hash     string       `json:"hash"` // 7-char hex hash for identification
+	Hash     string       `json:"-"`    // Populated from map key at load time
 	Root     string       `json:"root"` // The base branch (usually "main")
 	Tree     BranchTree   `json:"tree"` // The tree of branches
 	Branches []*Branch    `json:"-"`    // Runtime-only: populated from Tree for backward compatibility
@@ -231,6 +231,7 @@ func migrateStackConfig(data []byte, srcVersion, dstVersion int) ([]byte, error)
 	migrations := []func([]byte) ([]byte, error){
 		migrateV0ToV1,
 		migrateV1ToV2,
+		migrateV2ToV3,
 	}
 
 	for v := srcVersion; v < dstVersion; v++ {
@@ -250,6 +251,21 @@ func migrateStackConfig(data []byte, srcVersion, dstVersion int) ([]byte, error)
 // v0: stacks have "branches" as a flat array of objects
 // v1: stacks have "root" + "tree" structure, branch metadata moves to repo-level "branches"
 func migrateV0ToV1(data []byte) ([]byte, error) {
+	// v1 intermediate format: stacks keyed by name, with name/root/tree fields
+	type v1Stack struct {
+		Name string     `json:"name"`
+		Root string     `json:"root"`
+		Tree BranchTree `json:"tree"`
+	}
+	type v1RepoData struct {
+		Stacks   map[string]*v1Stack     `json:"stacks"`
+		Branches map[string]*BranchCache `json:"branches"`
+	}
+	type v1File struct {
+		Version int                    `json:"version"`
+		Repos   map[string]*v1RepoData `json:"repos"`
+	}
+
 	var legacyFile legacyStackConfigFile
 	if err := json.Unmarshal(data, &legacyFile); err != nil {
 		return nil, err
@@ -257,16 +273,16 @@ func migrateV0ToV1(data []byte) ([]byte, error) {
 
 	if legacyFile.Repos == nil {
 		// Nothing to migrate, just set version
-		result := stackConfigFile{
+		result := v1File{
 			Version: 1,
-			Repos:   make(map[string]*repoData),
+			Repos:   make(map[string]*v1RepoData),
 		}
 		return json.MarshalIndent(result, "", "  ")
 	}
 
-	result := stackConfigFile{
+	result := v1File{
 		Version: 1,
-		Repos:   make(map[string]*repoData),
+		Repos:   make(map[string]*v1RepoData),
 	}
 
 	for repoPath, legacySC := range legacyFile.Repos {
@@ -274,8 +290,8 @@ func migrateV0ToV1(data []byte) ([]byte, error) {
 			continue
 		}
 
-		rd := &repoData{
-			Stacks:   make(map[string]*Stack),
+		rd := &v1RepoData{
+			Stacks:   make(map[string]*v1Stack),
 			Branches: make(map[string]*BranchCache),
 		}
 
@@ -332,7 +348,7 @@ func migrateV0ToV1(data []byte) ([]byte, error) {
 				}
 			}
 
-			rd.Stacks[stackName] = &Stack{
+			rd.Stacks[stackName] = &v1Stack{
 				Name: legacyStack.Name,
 				Root: root,
 				Tree: tree,
@@ -349,14 +365,30 @@ func migrateV0ToV1(data []byte) ([]byte, error) {
 // v1: tree format, no hashes, cache may be in separate cache.json
 // v2: tree format + hash field on stacks + cache.json merged into branches
 func migrateV1ToV2(data []byte) ([]byte, error) {
-	var file stackConfigFile
+	// v2 intermediate format: stacks keyed by name, with name/hash/root/tree fields
+	type v2Stack struct {
+		Name string     `json:"name"`
+		Hash string     `json:"hash"`
+		Root string     `json:"root"`
+		Tree BranchTree `json:"tree"`
+	}
+	type v2RepoData struct {
+		Stacks   map[string]*v2Stack     `json:"stacks"`
+		Branches map[string]*BranchCache `json:"branches"`
+	}
+	type v2File struct {
+		Version int                    `json:"version"`
+		Repos   map[string]*v2RepoData `json:"repos"`
+	}
+
+	var file v2File
 	if err := json.Unmarshal(data, &file); err != nil {
 		return nil, err
 	}
 
 	file.Version = 2
 	if file.Repos == nil {
-		file.Repos = make(map[string]*repoData)
+		file.Repos = make(map[string]*v2RepoData)
 	}
 
 	// Merge cache.json if it exists
@@ -376,8 +408,8 @@ func migrateV1ToV2(data []byte) ([]byte, error) {
 
 					rd := file.Repos[repoPath]
 					if rd == nil {
-						rd = &repoData{
-							Stacks:   make(map[string]*Stack),
+						rd = &v2RepoData{
+							Stacks:   make(map[string]*v2Stack),
 							Branches: make(map[string]*BranchCache),
 						}
 						file.Repos[repoPath] = rd
@@ -417,9 +449,9 @@ func migrateV1ToV2(data []byte) ([]byte, error) {
 		if rd == nil {
 			continue
 		}
-		for _, stack := range rd.Stacks {
+		for name, stack := range rd.Stacks {
 			if stack != nil && stack.Hash == "" {
-				stack.Hash = GenerateStackHash(stack.Name)
+				stack.Hash = GenerateStackHash(name)
 			}
 		}
 		if rd.Branches == nil {
@@ -428,6 +460,71 @@ func migrateV1ToV2(data []byte) ([]byte, error) {
 	}
 
 	return json.MarshalIndent(file, "", "  ")
+}
+
+// migrateV2ToV3 re-keys stacks by hash instead of name, and removes name/hash fields from stack objects.
+// v2: stacks keyed by name, with name/hash/root/tree fields
+// v3: stacks keyed by hash, with only root/tree fields (hash is the map key)
+func migrateV2ToV3(data []byte) ([]byte, error) {
+	type v2Stack struct {
+		Name string     `json:"name"`
+		Hash string     `json:"hash"`
+		Root string     `json:"root"`
+		Tree BranchTree `json:"tree"`
+	}
+	type v2RepoData struct {
+		Stacks   map[string]*v2Stack     `json:"stacks"`
+		Branches map[string]*BranchCache `json:"branches"`
+	}
+	type v2File struct {
+		Version int                    `json:"version"`
+		Repos   map[string]*v2RepoData `json:"repos"`
+	}
+
+	var old v2File
+	if err := json.Unmarshal(data, &old); err != nil {
+		return nil, err
+	}
+
+	// v3 output uses the current Stack struct (no name/hash in JSON)
+	type v3RepoData struct {
+		Stacks   map[string]*Stack       `json:"stacks"`
+		Branches map[string]*BranchCache `json:"branches"`
+	}
+	type v3File struct {
+		Version int                    `json:"version"`
+		Repos   map[string]*v3RepoData `json:"repos"`
+	}
+
+	newFile := v3File{Version: 3, Repos: make(map[string]*v3RepoData)}
+	for repoPath, rd := range old.Repos {
+		if rd == nil {
+			continue
+		}
+		newRd := &v3RepoData{
+			Stacks:   make(map[string]*Stack),
+			Branches: rd.Branches,
+		}
+		if newRd.Branches == nil {
+			newRd.Branches = make(map[string]*BranchCache)
+		}
+		for name, stack := range rd.Stacks {
+			if stack == nil {
+				continue
+			}
+			hash := stack.Hash
+			if hash == "" {
+				hash = GenerateStackHash(name)
+			}
+			newRd.Stacks[hash] = &Stack{
+				Root: stack.Root,
+				Tree: stack.Tree,
+			}
+		}
+		newFile.Repos[repoPath] = newRd
+	}
+
+	return json.MarshalIndent(newFile, "", "  ")
 }
 
 // Load loads the configuration from ~/.ezstack/config.json
@@ -588,8 +685,9 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		repoDir: repoDir,
 	}
 
-	// Populate Branches slice for each stack using the combined cache
-	for _, stack := range sc.Stacks {
+	// Populate Hash from map key and Branches slice for each stack
+	for hash, stack := range sc.Stacks {
+		stack.Hash = hash
 		stack.cache = sc.Cache
 		stack.PopulateBranches()
 	}

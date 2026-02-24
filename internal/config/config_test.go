@@ -258,8 +258,9 @@ func TestStackConfig_LoadSave(t *testing.T) {
 	}
 
 	// Add a stack using the new tree format
+	hash := GenerateStackHash("feature-a")
 	stack := &Stack{
-		Name: "feature-a",
+		Hash: hash,
 		Root: "main",
 		Tree: BranchTree{
 			"feature-a": BranchTree{
@@ -267,10 +268,10 @@ func TestStackConfig_LoadSave(t *testing.T) {
 			},
 		},
 	}
-	stackCfg.Stacks["feature-a"] = stack
+	stackCfg.Stacks[hash] = stack
 
-	// Create cache with metadata
-	cache := &CacheConfig{
+	// Set up cache with metadata on the stack config
+	stackCfg.Cache = &CacheConfig{
 		Branches: map[string]*BranchCache{
 			"feature-a": {
 				WorktreePath: "/worktrees/feature-a",
@@ -284,13 +285,9 @@ func TestStackConfig_LoadSave(t *testing.T) {
 		},
 		repoDir: repoDir,
 	}
-	err = cache.Save(repoDir)
-	if err != nil {
-		t.Fatalf("Cache.Save() error = %v", err)
-	}
 
 	// Populate branches from tree
-	stack.cache = cache
+	stack.cache = stackCfg.Cache
 	stack.PopulateBranches()
 
 	// Save
@@ -305,9 +302,9 @@ func TestStackConfig_LoadSave(t *testing.T) {
 		t.Fatalf("LoadStackConfig() error = %v", err)
 	}
 
-	stack, ok := loaded.Stacks["feature-a"]
+	stack, ok := loaded.Stacks[hash]
 	if !ok {
-		t.Fatal("Stack 'feature-a' not found")
+		t.Fatalf("Stack with hash '%s' not found", hash)
 	}
 
 	if len(stack.Branches) != 2 {
@@ -337,28 +334,30 @@ func TestStackConfig_MultiRepo(t *testing.T) {
 
 	// Create stack for repo1
 	repo1Cfg, _ := LoadStackConfig("/repo1")
-	repo1Cfg.Stacks["stack1"] = &Stack{Name: "stack1"}
+	stack1Hash := GenerateStackHash("stack1")
+	repo1Cfg.Stacks[stack1Hash] = &Stack{Hash: stack1Hash, Root: "main", Tree: BranchTree{}}
 	repo1Cfg.Save("/repo1")
 
 	// Create stack for repo2
 	repo2Cfg, _ := LoadStackConfig("/repo2")
-	repo2Cfg.Stacks["stack2"] = &Stack{Name: "stack2"}
+	stack2Hash := GenerateStackHash("stack2")
+	repo2Cfg.Stacks[stack2Hash] = &Stack{Hash: stack2Hash, Root: "main", Tree: BranchTree{}}
 	repo2Cfg.Save("/repo2")
 
 	// Verify isolation
 	repo1Loaded, _ := LoadStackConfig("/repo1")
-	if _, ok := repo1Loaded.Stacks["stack2"]; ok {
+	if _, ok := repo1Loaded.Stacks[stack2Hash]; ok {
 		t.Error("repo1 should not have stack2")
 	}
-	if _, ok := repo1Loaded.Stacks["stack1"]; !ok {
+	if _, ok := repo1Loaded.Stacks[stack1Hash]; !ok {
 		t.Error("repo1 should have stack1")
 	}
 
 	repo2Loaded, _ := LoadStackConfig("/repo2")
-	if _, ok := repo2Loaded.Stacks["stack1"]; ok {
+	if _, ok := repo2Loaded.Stacks[stack1Hash]; ok {
 		t.Error("repo2 should not have stack1")
 	}
-	if _, ok := repo2Loaded.Stacks["stack2"]; !ok {
+	if _, ok := repo2Loaded.Stacks[stack2Hash]; !ok {
 		t.Error("repo2 should have stack2")
 	}
 }

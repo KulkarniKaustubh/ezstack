@@ -70,7 +70,7 @@ type MergedBranchInfo struct {
 	Branch       string
 	PRNumber     int
 	WorktreePath string
-	StackName    string
+	StackHash    string
 }
 
 // CleanupResult contains information about a branch cleanup operation
@@ -1001,14 +1001,14 @@ func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOn
 	stacksToCheck := make(map[string]*config.Stack)
 	if specificStacks != nil {
 		for _, s := range specificStacks {
-			stacksToCheck[s.Name] = s
+			stacksToCheck[s.Hash] = s
 		}
 	} else if currentStackOnly {
 		currentStack, _, err := m.GetCurrentStack()
 		if err != nil {
 			return nil, fmt.Errorf("not in a stack: %w", err)
 		}
-		stacksToCheck[currentStack.Name] = currentStack
+		stacksToCheck[currentStack.Hash] = currentStack
 	} else {
 		for stackName, stack := range m.stackConfig.Stacks {
 			stacksToCheck[stackName] = stack
@@ -1069,7 +1069,7 @@ func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOn
 						Branch:       branch.Name,
 						PRNumber:     branch.PRNumber,
 						WorktreePath: branch.WorktreePath,
-						StackName:    stackName,
+						StackHash:    stackName,
 					})
 				}
 			}
@@ -1081,7 +1081,7 @@ func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOn
 
 // FullyMergedStackInfo contains information about a fully merged stack
 type FullyMergedStackInfo struct {
-	StackName         string
+	StackHash         string
 	Stack             *config.Stack
 	HasLocalArtifacts bool // true if worktrees or git branches still exist locally
 }
@@ -1096,7 +1096,7 @@ func (m *Manager) DetectFullyMergedStacks(stacks []*config.Stack) []FullyMergedS
 		}
 
 		info := FullyMergedStackInfo{
-			StackName: stack.Name,
+			StackHash: stack.Hash,
 			Stack:     stack,
 		}
 

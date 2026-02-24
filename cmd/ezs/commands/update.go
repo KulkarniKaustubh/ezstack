@@ -278,7 +278,7 @@ func selectParentForWorktree(mgr *stack.Manager, branchName, baseBranch string) 
 		for _, s := range stacks {
 			for _, sb := range s.Branches {
 				if sb.Name == b.Name {
-					stackName = s.Name
+					stackName = s.Hash
 					break
 				}
 			}
