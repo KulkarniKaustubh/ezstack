@@ -75,11 +75,11 @@ type MergedBranchInfo struct {
 
 // CleanupResult contains information about a branch cleanup operation
 type CleanupResult struct {
-	Branch              string
-	Success             bool
-	Error               string
-	WorktreeWasDeleted  bool // True if worktree was already deleted before cleanup
-	WasCurrentWorktree  bool // True if this was the worktree we were in when cleanup started
+	Branch             string
+	Success            bool
+	Error              string
+	WorktreeWasDeleted bool // True if worktree was already deleted before cleanup
+	WasCurrentWorktree bool // True if this was the worktree we were in when cleanup started
 }
 
 // AfterRebaseCallback is called after each successful rebase
@@ -1081,8 +1081,8 @@ func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOn
 
 // FullyMergedStackInfo contains information about a fully merged stack
 type FullyMergedStackInfo struct {
-	StackName        string
-	Stack            *config.Stack
+	StackName         string
+	Stack             *config.Stack
 	HasLocalArtifacts bool // true if worktrees or git branches still exist locally
 }
 

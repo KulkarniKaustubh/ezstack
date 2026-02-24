@@ -451,6 +451,7 @@ Options:
 ```
 
 This command:
+- Detects renamed branches (`git branch -m`) and updates config automatically
 - Removes branches from config if their worktree folder was deleted
 - Removes branches from config if the git branch no longer exists
 - Offers to add worktrees that exist but aren't tracked
@@ -515,6 +516,24 @@ ezs config set cd_after_new true
 </details>
 
 <!-- ![ezs config](./assets/config.png) -->
+
+---
+
+## Manual Git Operations
+
+If you rename or delete branches outside of ezstack (e.g., with `git branch -m` or `git branch -D`), run `ezs update` to reconcile:
+
+```bash
+# Renamed a branch with git? ezs update detects it automatically
+git branch -m old-name new-name
+ezs update    # detects the rename, preserves stack position and PR metadata
+
+# Deleted a branch with git? ezs update cleans it up
+git branch -D some-branch
+ezs update    # removes orphaned branch from config
+```
+
+Use `--auto` to skip confirmation prompts, or `--dry-run` to preview changes.
 
 ---
 

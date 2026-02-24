@@ -92,8 +92,8 @@ const currentStackConfigVersion = 2
 
 // stackConfigFile is the on-disk format that stores stacks for all repos
 type stackConfigFile struct {
-	Version int                      `json:"version"`
-	Repos   map[string]*repoData    `json:"repos"`
+	Version int                  `json:"version"`
+	Repos   map[string]*repoData `json:"repos"`
 }
 
 // StackConfig holds metadata about stacks for a single repo
@@ -106,10 +106,10 @@ type StackConfig struct {
 // Stack represents a chain of stacked branches as a tree
 type Stack struct {
 	Name     string       `json:"name"`
-	Hash     string       `json:"hash"`           // 7-char hex hash for identification
-	Root     string       `json:"root"`            // The base branch (usually "main")
-	Tree     BranchTree   `json:"tree"`            // The tree of branches
-	Branches []*Branch    `json:"-"`               // Runtime-only: populated from Tree for backward compatibility
+	Hash     string       `json:"hash"` // 7-char hex hash for identification
+	Root     string       `json:"root"` // The base branch (usually "main")
+	Tree     BranchTree   `json:"tree"` // The tree of branches
+	Branches []*Branch    `json:"-"`    // Runtime-only: populated from Tree for backward compatibility
 	cache    *CacheConfig // Runtime-only: reference to cache for metadata
 }
 
@@ -597,7 +597,6 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 	return sc, nil
 }
 
-
 // IsFullyMerged returns true if every branch in the stack is marked as merged
 func (s *Stack) IsFullyMerged(cache *CacheConfig) bool {
 	branches := s.GetBranches(cache)
@@ -628,7 +627,6 @@ func (s *Stack) PopulateBranchesWithCache(cache *CacheConfig) {
 	s.cache = cache
 	s.Branches = s.GetBranches(cache)
 }
-
 
 // Save saves the stack config and cache for this repo to $HOME/.ezstack/stacks.json
 func (sc *StackConfig) Save(repoDir string) error {
@@ -1040,6 +1038,26 @@ func (s *Stack) extractSubtreeFromTree(tree BranchTree, branchName string, subtr
 			return true
 		}
 		if s.extractSubtreeFromTree(children, branchName, subtree) {
+			return true
+		}
+	}
+	return false
+}
+
+// RenameBranchInTree renames a branch in the tree, preserving its children and position
+func (s *Stack) RenameBranchInTree(oldName, newName string) bool {
+	return s.renameBranchInTree(s.Tree, oldName, newName)
+}
+
+// renameBranchInTree recursively finds and renames a branch
+func (s *Stack) renameBranchInTree(tree BranchTree, oldName, newName string) bool {
+	for name, children := range tree {
+		if name == oldName {
+			tree[newName] = children
+			delete(tree, oldName)
+			return true
+		}
+		if s.renameBranchInTree(children, oldName, newName) {
 			return true
 		}
 	}

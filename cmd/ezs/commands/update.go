@@ -29,6 +29,7 @@ func Update(args []string) error {
 %sDESCRIPTION%s
     Syncs ezstack config with the actual state of git worktrees:
 
+    • Detects renamed branches (git branch -m) and updates config
     • Removes branches from config if their worktree folder was deleted
     • Removes branches from config if the git branch no longer exists
     • Offers to add worktrees that exist but aren't tracked by ezstack
@@ -101,8 +102,61 @@ func Update(args []string) error {
 		}
 	}
 
-	// Step 3: Remove branches from config that no longer exist in git
+	// Step 3: Detect orphaned branches and untracked worktrees
 	orphaned := mgr.DetectOrphanedBranches()
+	untracked, err := mgr.GetUnregisteredWorktrees()
+	if err != nil {
+		return fmt.Errorf("failed to get unregistered worktrees: %w", err)
+	}
+
+	// Step 4: Detect renames (orphaned branch + untracked worktree at same path)
+	renames := mgr.DetectRenamedBranches(orphaned, untracked)
+	if len(renames) > 0 {
+		hasChanges = true
+
+		// Build sets of handled names to exclude from orphan/untracked processing
+		renamedOld := make(map[string]bool)
+		renamedNew := make(map[string]bool)
+		for _, r := range renames {
+			renamedOld[r.OldName] = true
+			renamedNew[r.NewName] = true
+		}
+
+		for _, r := range renames {
+			ui.Info(fmt.Sprintf("Detected rename: '%s' → '%s' (worktree: %s)", r.OldName, r.NewName, r.WorktreePath))
+		}
+
+		if !dryRun {
+			if autoMode || ui.ConfirmTUI("Apply detected renames?") {
+				if err := mgr.ApplyBranchRenames(renames); err != nil {
+					return fmt.Errorf("failed to apply renames: %w", err)
+				}
+				for _, r := range renames {
+					ui.Success(fmt.Sprintf("Renamed '%s' → '%s'", r.OldName, r.NewName))
+				}
+				result.RenamedBranches = append(result.RenamedBranches, renames...)
+			}
+		}
+
+		// Filter out renamed branches from orphaned and untracked lists
+		var remainingOrphaned []string
+		for _, name := range orphaned {
+			if !renamedOld[name] {
+				remainingOrphaned = append(remainingOrphaned, name)
+			}
+		}
+		orphaned = remainingOrphaned
+
+		var remainingUntracked []git.Worktree
+		for _, wt := range untracked {
+			if !renamedNew[wt.Branch] {
+				remainingUntracked = append(remainingUntracked, wt)
+			}
+		}
+		untracked = remainingUntracked
+	}
+
+	// Step 5: Remove remaining orphaned branches from config
 	if len(orphaned) > 0 {
 		hasChanges = true
 		for _, name := range orphaned {
@@ -116,12 +170,7 @@ func Update(args []string) error {
 		}
 	}
 
-	// Step 4: Detect untracked worktrees (exist in git but not in config)
-	untracked, err := mgr.GetUnregisteredWorktrees()
-	if err != nil {
-		return fmt.Errorf("failed to get unregistered worktrees: %w", err)
-	}
-
+	// Step 6: Handle remaining untracked worktrees
 	if len(untracked) > 0 {
 		hasChanges = true
 		ui.Info(fmt.Sprintf("Found %d untracked worktree(s):", len(untracked)))
@@ -161,6 +210,9 @@ func Update(args []string) error {
 	// Print summary
 	fmt.Fprintln(os.Stderr)
 	ui.Success("Update complete!")
+	if len(result.RenamedBranches) > 0 {
+		fmt.Fprintf(os.Stderr, "  • Renamed %d branch(es)\n", len(result.RenamedBranches))
+	}
 	if len(result.RemovedBranches) > 0 {
 		fmt.Fprintf(os.Stderr, "  • Removed %d orphaned branch(es)\n", len(result.RemovedBranches))
 	}
