@@ -71,8 +71,8 @@ ezs status
 # Create PRs
 ezs pr create -t "Part 1: Add feature"
 
-# Sync after changes
-ezs sync
+# Sync after changes (use stack hash from `ezs list`)
+ezs sync <stack hash>
 ```
 
 ## Commands

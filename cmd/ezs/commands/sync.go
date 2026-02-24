@@ -21,7 +21,7 @@ func Sync(args []string) error {
 
 %sUSAGE%s
     ezs sync [options]
-    ezs sync <hash-prefix>
+    ezs sync <hash-prefix>    Sync a specific stack by hash (min 3 characters)
 
 %sOPTIONS%s
     -a, --all              Sync current stack (auto-detect what needs syncing)
@@ -43,8 +43,8 @@ func Sync(args []string) error {
     5. Rebase child branches onto current branch
 
     When run from main (not in a stack worktree), shows a menu to choose
-    which stack to sync. You can also pass a stack hash prefix to sync
-    a specific stack from anywhere.
+    which stack to sync. You can also pass a stack hash prefix (minimum
+    3 characters) to sync a specific stack from anywhere.
 
 %sEXAMPLES%s
     ezs sync              Interactive menu

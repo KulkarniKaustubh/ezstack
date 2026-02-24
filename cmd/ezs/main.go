@@ -213,7 +213,7 @@ func printUsage() {
     new, n        Create a new branch in the stack
     list, ls      List all stacks and branches
     status, st    Show status of current stack
-    sync          Sync stack with remote (rebase onto main)
+    sync          Sync stack with remote (accepts stack hash prefix, min 3 chars)
     goto, go      Navigate to a branch worktree
     reparent, rp  Change the parent of a branch
     stack         Add a branch to a stack
@@ -242,8 +242,8 @@ func printUsage() {
     %s# View the stack%s
     ezs status
 
-    %s# Sync with remote (after parent merged or main updated)%s
-    ezs sync
+    %s# Sync a specific stack by hash prefix (min 3 chars)%s
+    ezs sync a1b2c
 
     %s# Create PRs for the stack%s
     ezs pr create -t "Part 1: Add feature"
