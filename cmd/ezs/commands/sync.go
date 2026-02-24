@@ -328,6 +328,9 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 		}
 	}
 
+	// Check for fully merged stacks and clean them up
+	cleanupFullyMergedStacks(mgr, stacks)
+
 	return nil
 }
 
@@ -588,6 +591,20 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 		}
 	}
 
+	// Check for fully merged stacks and clean them up
+	var stacksToCheck []*config.Stack
+	if allStacks {
+		stacksToCheck = mgr.ListStacks()
+	} else {
+		currentStack, _, csErr := mgr.GetCurrentStack()
+		if csErr == nil {
+			stacksToCheck = []*config.Stack{currentStack}
+		}
+	}
+	if len(stacksToCheck) > 0 {
+		cleanupFullyMergedStacks(mgr, stacksToCheck)
+	}
+
 	return nil
 }
 
@@ -762,5 +779,37 @@ func printSyncResults(results []stack.RebaseResult) {
 		}
 		fmt.Fprintln(os.Stderr)
 		fmt.Fprintf(os.Stderr, "%sTo resolve: cd to each worktree, fix conflicts, then run 'git rebase --continue'%s\n", ui.Gray, ui.Reset)
+	}
+}
+
+// cleanupFullyMergedStacks checks if any stacks are fully merged and offers to remove them.
+// If all worktrees/branches are already cleaned up, removes the stack automatically.
+// If some local artifacts remain, prompts the user for deletion.
+func cleanupFullyMergedStacks(mgr *stack.Manager, stacks []*config.Stack) {
+	fullyMerged := mgr.DetectFullyMergedStacks(stacks)
+	if len(fullyMerged) == 0 {
+		return
+	}
+
+	for _, info := range fullyMerged {
+		fmt.Fprintln(os.Stderr)
+		if info.HasLocalArtifacts {
+			// Some worktrees or git branches still exist locally
+			ui.Info(fmt.Sprintf("Stack '%s' is fully merged but has remaining local branches/worktrees", info.StackName))
+			if ui.ConfirmTUI(fmt.Sprintf("Delete all remaining worktrees and branches for stack '%s'", info.StackName)) {
+				if err := mgr.DeleteStack(info.StackName); err != nil {
+					ui.Warn(fmt.Sprintf("Failed to delete stack '%s': %v", info.StackName, err))
+				} else {
+					ui.Success(fmt.Sprintf("Removed fully merged stack '%s'", info.StackName))
+				}
+			}
+		} else {
+			// Everything already cleaned up - remove stack from config automatically
+			if err := mgr.DeleteStack(info.StackName); err != nil {
+				ui.Warn(fmt.Sprintf("Failed to remove stack '%s' from config: %v", info.StackName, err))
+			} else {
+				ui.Success(fmt.Sprintf("Removed fully merged stack '%s' (all branches already cleaned up)", info.StackName))
+			}
+		}
 	}
 }

@@ -598,6 +598,20 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 }
 
 
+// IsFullyMerged returns true if every branch in the stack is marked as merged
+func (s *Stack) IsFullyMerged(cache *CacheConfig) bool {
+	branches := s.GetBranches(cache)
+	if len(branches) == 0 {
+		return false
+	}
+	for _, b := range branches {
+		if !b.IsMerged {
+			return false
+		}
+	}
+	return true
+}
+
 // PopulateBranches rebuilds the Branches slice from the Tree structure
 // This should be called after loading or after modifying the Tree
 func (s *Stack) PopulateBranches() {

@@ -1079,6 +1079,50 @@ func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOn
 	return results, nil
 }
 
+// FullyMergedStackInfo contains information about a fully merged stack
+type FullyMergedStackInfo struct {
+	StackName        string
+	Stack            *config.Stack
+	HasLocalArtifacts bool // true if worktrees or git branches still exist locally
+}
+
+// DetectFullyMergedStacks finds stacks where every branch is merged
+func (m *Manager) DetectFullyMergedStacks(stacks []*config.Stack) []FullyMergedStackInfo {
+	var results []FullyMergedStackInfo
+
+	for _, stack := range stacks {
+		if !stack.IsFullyMerged(m.stackConfig.Cache) {
+			continue
+		}
+
+		info := FullyMergedStackInfo{
+			StackName: stack.Name,
+			Stack:     stack,
+		}
+
+		// Check if any local artifacts (worktrees, git branches) still exist
+		for _, branch := range stack.Branches {
+			if branch.IsRemote {
+				continue
+			}
+			if branch.WorktreePath != "" {
+				if _, err := os.Stat(branch.WorktreePath); err == nil {
+					info.HasLocalArtifacts = true
+					break
+				}
+			}
+			if m.git.BranchExists(branch.Name) {
+				info.HasLocalArtifacts = true
+				break
+			}
+		}
+
+		results = append(results, info)
+	}
+
+	return results
+}
+
 // CleanupMergedBranches marks branches as merged - deletes worktrees and git branches but keeps metadata in config
 // This allows merged PRs to still show up in ezs ls/status with strikethrough styling
 // Returns detailed results for each branch cleanup operation

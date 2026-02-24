@@ -923,6 +923,41 @@ func (m *Manager) AddWorktreeToStack(branchName, worktreePath, parentName string
 	return nil, fmt.Errorf("failed to add branch")
 }
 
+// DeleteStack removes an entire stack from config, cleaning up any remaining worktrees and git branches.
+// This is intended for fully merged stacks where all branches have been completed.
+func (m *Manager) DeleteStack(stackName string) error {
+	stack := m.stackConfig.Stacks[stackName]
+	if stack == nil {
+		return fmt.Errorf("stack '%s' not found", stackName)
+	}
+
+	cache := m.stackConfig.Cache
+
+	// Clean up any remaining worktrees and git branches
+	for _, branch := range stack.Branches {
+		if branch.IsRemote {
+			continue
+		}
+		// Try to remove worktree if it exists
+		if branch.WorktreePath != "" {
+			if _, err := os.Stat(branch.WorktreePath); err == nil {
+				_ = m.git.RemoveWorktree(branch.WorktreePath, true, branch.Name)
+			}
+		}
+		// Try to delete git branch if it still exists
+		if m.git.BranchExists(branch.Name) {
+			_ = m.git.DeleteBranch(branch.Name, true)
+		}
+		// Remove from cache
+		delete(cache.Branches, branch.Name)
+	}
+
+	// Remove the stack
+	delete(m.stackConfig.Stacks, stackName)
+
+	return m.stackConfig.Save(m.repoDir)
+}
+
 // MarkBranchMerged marks a branch as merged - deletes worktree and git branch but keeps metadata in config
 // This allows merged branches to still show up in ezs ls/status with strikethrough
 // The tree structure is NOT modified - children stay under the merged parent for display order.
