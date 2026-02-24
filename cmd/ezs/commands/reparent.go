@@ -211,7 +211,7 @@ func SelectNewParent(mgr *stack.Manager, g *git.Git, branchName, baseBranch stri
 		for _, s := range stacks {
 			for _, sb := range s.Branches {
 				if sb.Name == b.Name {
-					stackName = s.Name
+					stackName = s.Hash
 					break
 				}
 			}

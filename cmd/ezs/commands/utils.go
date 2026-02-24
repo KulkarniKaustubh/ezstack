@@ -166,7 +166,7 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 	statusMap := make(map[string]*ui.BranchStatus)
 
 	if debugMode {
-		fmt.Fprintf(os.Stderr, "[DEBUG] fetchBranchStatuses for stack %s with %d branches\n", s.Name, len(s.Branches))
+		fmt.Fprintf(os.Stderr, "[DEBUG] fetchBranchStatuses for stack %s with %d branches\n", s.Hash, len(s.Branches))
 	}
 
 	gh := discoverAndCachePRs(g, s)

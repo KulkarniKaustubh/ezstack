@@ -170,7 +170,7 @@ func convertTestStack(s *Stack) *config.Stack {
 		}
 	}
 	return &config.Stack{
-		Name:     s.Name,
+		Hash:     s.Name,
 		Branches: branches,
 	}
 }

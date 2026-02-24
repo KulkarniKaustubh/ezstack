@@ -266,9 +266,6 @@ func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 	var input strings.Builder
 	for _, s := range stacks {
 		hashDisplay := s.Hash
-		if hashDisplay == "" {
-			hashDisplay = s.Name
-		}
 		input.WriteString(fmt.Sprintf("%s (%d branches)\n", hashDisplay, len(s.Branches)))
 	}
 
@@ -285,9 +282,6 @@ func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 
 	for _, s := range stacks {
 		hashDisplay := s.Hash
-		if hashDisplay == "" {
-			hashDisplay = s.Name
-		}
 		if hashDisplay == selectedID {
 			return s, nil
 		}
@@ -397,9 +391,6 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 
 	var output strings.Builder
 	hashDisplay := stack.Hash
-	if hashDisplay == "" {
-		hashDisplay = stack.Name
-	}
 	output.WriteString(fmt.Sprintf("%s%s Stack %s%s\\n\\n", bold, cyan, hashDisplay, reset))
 
 	// Sort branches topologically (parent -> child order)
@@ -501,10 +492,12 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 // - showStatus=true: 5 columns - branch name, pr number, ci status, parent branch, remote tag
 func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, statusMap map[string]*BranchStatus) {
 	hashDisplay := stack.Hash
-	if hashDisplay == "" {
-		hashDisplay = stack.Name
-	}
 	fmt.Fprintf(os.Stderr, "\n%s%s Stack %s%s\n\n", Bold, Cyan, hashDisplay, Reset)
+
+	if len(stack.Branches) == 0 {
+		fmt.Fprintf(os.Stderr, "  %s(empty)%s\n\n", Gray, Reset)
+		return
+	}
 
 	// Sort branches topologically (parent -> child order)
 	sortedBranches := sortBranchesTopologically(stack.Branches)

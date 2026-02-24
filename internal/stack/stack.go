@@ -72,11 +72,24 @@ func (m *Manager) RegisterExistingBranch(branchName, worktreePath, baseBranch st
 	}
 
 	// Create a new stack with this branch as the root
-	m.stackConfig.Stacks[branchName] = &config.Stack{
-		Name:     branchName,
-		Hash:     config.GenerateStackHash(branchName),
-		Branches: []*config.Branch{branch},
+	hash := config.GenerateStackHash(branchName)
+	stack := &config.Stack{
+		Hash: hash,
+		Root: baseBranch,
+		Tree: config.BranchTree{
+			branchName: config.BranchTree{},
+		},
 	}
+	m.stackConfig.Stacks[hash] = stack
+
+	// Update cache with branch metadata
+	cache := m.stackConfig.Cache
+	cache.SetBranchCache(branchName, &config.BranchCache{
+		WorktreePath: worktreePath,
+	})
+
+	// Populate branches from tree
+	stack.PopulateBranchesWithCache(cache)
 
 	// Save the config
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
@@ -95,15 +108,15 @@ func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber i
 	}
 
 	// Create a new stack with this branch as the root
+	hash := config.GenerateStackHash(branchName)
 	stack := &config.Stack{
-		Name: branchName,
-		Hash: config.GenerateStackHash(branchName),
+		Hash: hash,
 		Root: baseBranch,
 		Tree: config.BranchTree{
 			branchName: config.BranchTree{},
 		},
 	}
-	m.stackConfig.Stacks[branchName] = stack
+	m.stackConfig.Stacks[hash] = stack
 
 	// Update cache
 	cache := m.stackConfig.Cache
@@ -134,12 +147,12 @@ func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber i
 // This is used when the worktree was created externally (e.g., from a remote branch)
 func (m *Manager) AddBranchToStack(name, parentBranch, worktreeDir string) (*config.Branch, error) {
 	// Find the stack for the parent
-	stackName := m.findStackForBranch(parentBranch)
-	if stackName == "" {
+	stackKey := m.findStackForBranch(parentBranch)
+	if stackKey == "" {
 		return nil, fmt.Errorf("parent branch '%s' not found in any stack", parentBranch)
 	}
 
-	stack := m.stackConfig.Stacks[stackName]
+	stack := m.stackConfig.Stacks[stackKey]
 
 	// Add branch to the tree
 	stack.AddBranch(name, parentBranch)
@@ -184,23 +197,22 @@ func (m *Manager) CreateBranch(name, parentBranch, worktreeDir string) (*config.
 	}
 
 	// Find or create the stack
-	stackName := m.findStackForBranch(parentBranch)
+	stackKey := m.findStackForBranch(parentBranch)
 	var stack *config.Stack
-	if stackName == "" {
+	if stackKey == "" {
 		// This is a new stack starting from main/master
-		stackName = name
+		hash := config.GenerateStackHash(name)
 		stack = &config.Stack{
-			Name: stackName,
-			Hash: config.GenerateStackHash(stackName),
+			Hash: hash,
 			Root: parentBranch, // parentBranch is main/master
 			Tree: config.BranchTree{
 				name: config.BranchTree{},
 			},
 		}
-		m.stackConfig.Stacks[stackName] = stack
+		m.stackConfig.Stacks[hash] = stack
 	} else {
 		// Add to existing stack
-		stack = m.stackConfig.Stacks[stackName]
+		stack = m.stackConfig.Stacks[stackKey]
 		stack.AddBranch(name, parentBranch)
 	}
 
@@ -484,8 +496,8 @@ func (m *Manager) ReparentBranch(branchName, newParentName string, doRebase bool
 // reparentExistingBranch handles reparenting a branch that's already in a stack
 func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName string, doRebase bool) (*config.Branch, error) {
 	oldParent := branch.Parent
-	oldStackName := m.findStackForBranch(branch.Name)
-	newParentStackName := m.findStackForBranch(newParentName)
+	oldStackKey := m.findStackForBranch(branch.Name)
+	newParentStackKey := m.findStackForBranch(newParentName)
 
 	// Prevent circular dependencies
 	if m.wouldCreateCycle(branch.Name, newParentName) {
@@ -529,14 +541,14 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 	cache := m.stackConfig.Cache
 
 	// Handle stack reorganization using tree methods
-	oldStack := m.stackConfig.Stacks[oldStackName]
+	oldStack := m.stackConfig.Stacks[oldStackKey]
 
-	if oldStackName != newParentStackName && newParentStackName != "" {
+	if oldStackKey != newParentStackKey && newParentStackKey != "" {
 		// Move branch (and its children) to the new parent's stack
-		if err := m.moveBranchToStack(branch.Name, oldStackName, newParentStackName); err != nil {
+		if err := m.moveBranchToStack(branch.Name, oldStackKey, newParentStackKey); err != nil {
 			return nil, fmt.Errorf("failed to move branch to new stack: %w", err)
 		}
-	} else if newParentStackName == "" && m.IsMainBranch(newParentName) {
+	} else if newParentStackKey == "" && m.IsMainBranch(newParentName) {
 		// New parent is main - use ReparentBranch to move in tree
 		// The branch stays in the same stack but is now a root-level branch
 		oldStack.ReparentBranch(branch.Name, "") // Empty parent means root level
@@ -603,24 +615,24 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 	}
 
 	// Find the stack for the new parent
-	newParentStackName := m.findStackForBranch(newParentName)
+	newParentStackKey := m.findStackForBranch(newParentName)
 	var stack *config.Stack
 
-	if newParentStackName != "" {
+	if newParentStackKey != "" {
 		// Add to existing stack
-		stack = m.stackConfig.Stacks[newParentStackName]
+		stack = m.stackConfig.Stacks[newParentStackKey]
 		stack.AddBranch(branchName, newParentName)
 	} else if m.IsMainBranch(newParentName) {
 		// New parent is main - create a new stack with this branch as root
+		hash := config.GenerateStackHash(branchName)
 		stack = &config.Stack{
-			Name: branchName,
-			Hash: config.GenerateStackHash(branchName),
+			Hash: hash,
 			Root: newParentName,
 			Tree: config.BranchTree{
 				branchName: config.BranchTree{},
 			},
 		}
-		m.stackConfig.Stacks[branchName] = stack
+		m.stackConfig.Stacks[hash] = stack
 	} else {
 		return nil, fmt.Errorf("new parent '%s' is not in any stack and is not main/master", newParentName)
 	}
@@ -852,21 +864,13 @@ func (m *Manager) ApplyBranchRenames(renames []RenamedBranchInfo) error {
 
 	for _, rename := range renames {
 		// Find the stack containing the old branch and rename it in the tree
-		for stackName, stack := range m.stackConfig.Stacks {
+		for _, stack := range m.stackConfig.Stacks {
 			if !stack.HasBranch(rename.OldName) {
 				continue
 			}
 
-			// Rename in tree
+			// Rename in tree (hash stays stable - stack identity doesn't change)
 			stack.RenameBranchInTree(rename.OldName, rename.NewName)
-
-			// If this branch was the stack name, rename the stack too
-			if stackName == rename.OldName {
-				stack.Name = rename.NewName
-				stack.Hash = config.GenerateStackHash(rename.NewName)
-				delete(m.stackConfig.Stacks, stackName)
-				m.stackConfig.Stacks[rename.NewName] = stack
-			}
 
 			// Move cache entry: copy old metadata to new key, delete old key
 			oldCache := cache.GetBranchCache(rename.OldName)
@@ -963,23 +967,22 @@ func (m *Manager) AddWorktreeToStack(branchName, worktreePath, parentName string
 	}
 
 	// Find or create the stack
-	stackName := m.findStackForBranch(parentName)
+	stackKey := m.findStackForBranch(parentName)
 	var stack *config.Stack
-	if stackName == "" {
+	if stackKey == "" {
 		// Parent is main/master - create new stack
-		stackName = branchName
+		hash := config.GenerateStackHash(branchName)
 		stack = &config.Stack{
-			Name: stackName,
-			Hash: config.GenerateStackHash(stackName),
+			Hash: hash,
 			Root: parentName,
 			Tree: config.BranchTree{
 				branchName: config.BranchTree{},
 			},
 		}
-		m.stackConfig.Stacks[stackName] = stack
+		m.stackConfig.Stacks[hash] = stack
 	} else {
 		// Add to existing stack
-		stack = m.stackConfig.Stacks[stackName]
+		stack = m.stackConfig.Stacks[stackKey]
 		stack.AddBranch(branchName, parentName)
 	}
 
@@ -1007,10 +1010,10 @@ func (m *Manager) AddWorktreeToStack(branchName, worktreePath, parentName string
 
 // DeleteStack removes an entire stack from config, cleaning up any remaining worktrees and git branches.
 // This is intended for fully merged stacks where all branches have been completed.
-func (m *Manager) DeleteStack(stackName string) error {
-	stack := m.stackConfig.Stacks[stackName]
+func (m *Manager) DeleteStack(stackHash string) error {
+	stack := m.stackConfig.Stacks[stackHash]
 	if stack == nil {
-		return fmt.Errorf("stack '%s' not found", stackName)
+		return fmt.Errorf("stack '%s' not found", stackHash)
 	}
 
 	cache := m.stackConfig.Cache
@@ -1035,7 +1038,7 @@ func (m *Manager) DeleteStack(stackName string) error {
 	}
 
 	// Remove the stack
-	delete(m.stackConfig.Stacks, stackName)
+	delete(m.stackConfig.Stacks, stackHash)
 
 	return m.stackConfig.Save(m.repoDir)
 }

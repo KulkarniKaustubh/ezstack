@@ -91,10 +91,8 @@ func List(args []string) error {
 	} else {
 		currentStack, _, err := mgr.GetCurrentStack()
 		if err != nil {
-			// Current branch is not part of any stack - show all stacks
-			for _, s := range stacks {
-				printStack(s)
-			}
+			// Current branch is not part of any stack
+			ui.Info("Current branch is not part of any stack. Use -a to show all stacks.")
 		} else {
 			printStack(currentStack)
 		}
@@ -192,8 +190,8 @@ func Status(args []string) error {
 
 	currentStack, branch, err := mgr.GetCurrentStack()
 	if err != nil {
-		// Current branch is not part of any stack - show all stacks
-		printAllStacksWithStatus()
+		// Current branch is not part of any stack
+		ui.Info("Current branch is not part of any stack. Use -a to show all stacks.")
 		return nil
 	}
 
