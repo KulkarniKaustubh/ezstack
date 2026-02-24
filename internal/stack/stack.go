@@ -340,10 +340,14 @@ func (m *Manager) IsMainBranch(name string) bool {
 	return name == "main" || name == "master" || name == baseBranch
 }
 
-// GetStackByHash finds a stack by hash prefix. Returns error if 0 or >1 stacks match.
+// GetStackByHash finds a stack by hash prefix (minimum 3 characters). Returns error if 0 or >1 stacks match.
 func (m *Manager) GetStackByHash(prefix string) (*config.Stack, error) {
 	// Strip leading # if present
 	prefix = strings.TrimPrefix(prefix, "#")
+
+	if len(prefix) < 3 {
+		return nil, fmt.Errorf("hash prefix too short: '%s' (minimum 3 characters)", prefix)
+	}
 
 	var matches []*config.Stack
 	for _, stack := range m.stackConfig.Stacks {

@@ -190,6 +190,7 @@ Sync stack with remote. Handles rebasing onto updated parents, cleaning up merge
 
 ```
 ezs sync [options]
+ezs sync <hash-prefix>
 
 Options:
     -a, --all              Sync current stack (auto-detect what needs syncing)
@@ -200,12 +201,18 @@ Options:
     --no-delete-local      Don't delete local branches after their PRs are merged
 ```
 
+You can sync a specific stack by passing its hash prefix (minimum 3 characters).
+Use `ezs list` to see stack hashes.
+
 <details>
 <summary>💡 Examples</summary>
 
 ```bash
 # Interactive sync menu
 ezs sync
+
+# Sync a specific stack by hash prefix (min 3 chars)
+ezs sync a1b2c
 
 # Auto-sync current stack
 ezs sync -a
