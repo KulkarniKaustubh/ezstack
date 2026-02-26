@@ -288,7 +288,32 @@ func (c *Client) runGH(args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// UpdateStackDescription updates PR descriptions with stack info
+// EnsureCorrectBaseBranches ensures each PR's base branch matches the expected parent branch.
+// skipBranches is a set of branch names to skip (e.g., remote-tracking branches that belong to others)
+func (c *Client) EnsureCorrectBaseBranches(stack *config.Stack, skipBranches map[string]bool) error {
+	for _, branch := range stack.Branches {
+		if branch.PRNumber == 0 {
+			continue
+		}
+		if skipBranches != nil && skipBranches[branch.Name] {
+			continue
+		}
+
+		pr, err := c.GetPR(branch.PRNumber)
+		if err != nil {
+			continue
+		}
+
+		if pr.Base != branch.BaseBranch {
+			if err := c.UpdatePRBase(branch.PRNumber, branch.BaseBranch); err != nil {
+				return fmt.Errorf("failed to update base branch for PR #%d (%s): %w", branch.PRNumber, branch.Name, err)
+			}
+		}
+	}
+	return nil
+}
+
+// UpdateStackDescription updates PR descriptions with stack info.
 // skipBranches is a set of branch names to skip (e.g., remote-tracking branches that belong to others)
 func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch string, skipBranches map[string]bool) error {
 	for _, branch := range stack.Branches {

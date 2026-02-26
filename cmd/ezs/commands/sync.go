@@ -331,6 +331,16 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 	// Check for fully merged stacks and clean them up
 	cleanupFullyMergedStacks(mgr, stacks)
 
+	// Ensure all PR base branches are correct (fixes manually-created PRs pointing to wrong base)
+	if gh != nil {
+		for _, s := range stacks {
+			skipBranches := getRemoteBranches(s)
+			if err := gh.EnsureCorrectBaseBranches(s, skipBranches); err != nil {
+				ui.Warn(fmt.Sprintf("Failed to update PR base branches: %v", err))
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -603,6 +613,16 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 	}
 	if len(stacksToCheck) > 0 {
 		cleanupFullyMergedStacks(mgr, stacksToCheck)
+	}
+
+	// Ensure all PR base branches are correct (fixes manually-created PRs pointing to wrong base)
+	if gh != nil && len(stacksToCheck) > 0 {
+		for _, s := range stacksToCheck {
+			skipBranches := getRemoteBranches(s)
+			if err := gh.EnsureCorrectBaseBranches(s, skipBranches); err != nil {
+				ui.Warn(fmt.Sprintf("Failed to update PR base branches: %v", err))
+			}
+		}
 	}
 
 	return nil

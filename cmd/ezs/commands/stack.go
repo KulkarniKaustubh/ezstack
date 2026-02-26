@@ -216,6 +216,7 @@ func Unstack(args []string) error {
 		return err
 	}
 
+	g := git.New(cwd)
 	mgr, err := stack.NewManager(cwd)
 	if err != nil {
 		return err
@@ -259,11 +260,38 @@ func Unstack(args []string) error {
 		return nil
 	}
 
+	// Capture children and parent before untracking (they change after)
+	oldParent := branch.Parent
+	childrenWithPRs := []*config.Branch{}
+	for _, c := range children {
+		if c.PRNumber > 0 && !c.IsRemote {
+			childrenWithPRs = append(childrenWithPRs, c)
+		}
+	}
+
 	if err := mgr.UntrackBranch(branchName); err != nil {
 		return err
 	}
 
 	ui.Success(fmt.Sprintf("Removed '%s' from stack tracking", branchName))
+
+	// Update children's PR base branches to point to the new parent
+	if len(childrenWithPRs) > 0 {
+		remoteURL, err := g.GetRemote("origin")
+		if err == nil {
+			gh, err := github.NewClient(remoteURL)
+			if err == nil {
+				for _, c := range childrenWithPRs {
+					if err := gh.UpdatePRBase(c.PRNumber, oldParent); err != nil {
+						ui.Warn(fmt.Sprintf("Failed to update PR #%d base branch: %v", c.PRNumber, err))
+					} else {
+						ui.Success(fmt.Sprintf("Updated PR #%d base branch to '%s'", c.PRNumber, oldParent))
+					}
+				}
+			}
+		}
+	}
+
 	return nil
 }
 
