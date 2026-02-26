@@ -298,37 +298,107 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 	}
 
 	if len(mergedBranches) > 0 {
-		fmt.Fprintln(os.Stderr)
-		ui.Info(fmt.Sprintf("Found %d merged branch(es) to clean up:", len(mergedBranches)))
-		for _, info := range mergedBranches {
-			fmt.Fprintf(os.Stderr, "  %s %s%s%s: PR #%d merged\n",
-				ui.IconSuccess, ui.Bold, info.Branch, ui.Reset, info.PRNumber)
+		// Group merged branches by stack to detect fully merged stacks upfront
+		mergedByStack := make(map[string][]stack.MergedBranchInfo)
+		for _, mb := range mergedBranches {
+			mergedByStack[mb.StackHash] = append(mergedByStack[mb.StackHash], mb)
 		}
-		fmt.Fprintln(os.Stderr)
-		if ui.ConfirmTUI(fmt.Sprintf("Delete %d merged branch(es) and their worktrees", len(mergedBranches))) {
-			ui.Info("Cleaning up merged branches...")
-			results := mgr.CleanupMergedBranches(mergedBranches, cwd)
-			deletedCount := 0
-			for _, r := range results {
-				if r.Success {
-					deletedCount++
-					if r.WorktreeWasDeleted {
-						ui.Success(fmt.Sprintf("Deleted %s (worktree was already removed)", r.Branch))
-					} else {
-						ui.Success(fmt.Sprintf("Deleted %s", r.Branch))
-					}
-				} else if r.Error != "" {
-					ui.Warn(fmt.Sprintf("Failed to delete %s: %s", r.Branch, r.Error))
+		stackByHash := make(map[string]*config.Stack)
+		for _, s := range stacks {
+			stackByHash[s.Hash] = s
+		}
+
+		// A stack is fully merged if every non-remote branch has a PR and all are in mergedBranches
+		fullyMergedHashes := make(map[string]bool)
+		for _, s := range stacks {
+			mbs := mergedByStack[s.Hash]
+			mergedNames := make(map[string]bool)
+			for _, mb := range mbs {
+				mergedNames[mb.Branch] = true
+			}
+			allAccountedFor := true
+			hasPRBranches := false
+			for _, b := range s.Branches {
+				if b.IsRemote {
+					continue
+				}
+				if b.PRNumber == 0 {
+					allAccountedFor = false
+					break
+				}
+				hasPRBranches = true
+				if !mergedNames[b.Name] {
+					allAccountedFor = false
+					break
 				}
 			}
-			if deletedCount > 0 {
-				fmt.Fprintln(os.Stderr)
-				ui.Success(fmt.Sprintf("Deleted %d merged branch(es)", deletedCount))
+			if allAccountedFor && hasPRBranches {
+				fullyMergedHashes[s.Hash] = true
+			}
+		}
+
+		// For fully merged stacks: single stack-level cleanup prompt
+		for hash := range fullyMergedHashes {
+			s := stackByHash[hash]
+			fmt.Fprintln(os.Stderr)
+			ui.Info(fmt.Sprintf("Stack '#%s' is fully merged (%d branch(es)):", hash, len(s.Branches)))
+			for _, b := range s.Branches {
+				if b.IsRemote {
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "  %s %s%s%s: PR #%d merged\n",
+					ui.IconSuccess, ui.Bold, b.Name, ui.Reset, b.PRNumber)
+			}
+			fmt.Fprintln(os.Stderr)
+			if ui.ConfirmTUI(fmt.Sprintf("Delete all worktrees, branches, and tracking for stack '#%s'", hash)) {
+				if err := mgr.DeleteStack(hash); err != nil {
+					ui.Warn(fmt.Sprintf("Failed to clean up stack '#%s': %v", hash, err))
+				} else {
+					ui.Success(fmt.Sprintf("Removed fully merged stack '#%s'", hash))
+				}
+			}
+		}
+
+		// For partially merged stacks: per-branch cleanup (existing behavior)
+		var partialMerged []stack.MergedBranchInfo
+		for _, mb := range mergedBranches {
+			if !fullyMergedHashes[mb.StackHash] {
+				partialMerged = append(partialMerged, mb)
+			}
+		}
+		if len(partialMerged) > 0 {
+			fmt.Fprintln(os.Stderr)
+			ui.Info(fmt.Sprintf("Found %d merged branch(es) to clean up:", len(partialMerged)))
+			for _, info := range partialMerged {
+				fmt.Fprintf(os.Stderr, "  %s %s%s%s: PR #%d merged\n",
+					ui.IconSuccess, ui.Bold, info.Branch, ui.Reset, info.PRNumber)
+			}
+			fmt.Fprintln(os.Stderr)
+			if ui.ConfirmTUI(fmt.Sprintf("Delete %d merged branch(es) and their worktrees", len(partialMerged))) {
+				ui.Info("Cleaning up merged branches...")
+				results := mgr.CleanupMergedBranches(partialMerged, cwd)
+				deletedCount := 0
+				for _, r := range results {
+					if r.Success {
+						deletedCount++
+						if r.WorktreeWasDeleted {
+							ui.Success(fmt.Sprintf("Deleted %s (worktree was already removed)", r.Branch))
+						} else {
+							ui.Success(fmt.Sprintf("Deleted %s", r.Branch))
+						}
+					} else if r.Error != "" {
+						ui.Warn(fmt.Sprintf("Failed to delete %s: %s", r.Branch, r.Error))
+					}
+				}
+				if deletedCount > 0 {
+					fmt.Fprintln(os.Stderr)
+					ui.Success(fmt.Sprintf("Deleted %d merged branch(es)", deletedCount))
+				}
 			}
 		}
 	}
 
-	// Check for fully merged stacks and clean them up
+	// Check for stacks that were already fully merged in cache before this sync run
 	cleanupFullyMergedStacks(mgr, stacks)
 
 	// Ensure all PR base branches are correct (fixes manually-created PRs pointing to wrong base)
