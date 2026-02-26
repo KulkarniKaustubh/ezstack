@@ -295,6 +295,9 @@ func (c *Client) EnsureCorrectBaseBranches(stack *config.Stack, skipBranches map
 		if branch.PRNumber == 0 {
 			continue
 		}
+		if branch.IsMerged {
+			continue
+		}
 		if skipBranches != nil && skipBranches[branch.Name] {
 			continue
 		}

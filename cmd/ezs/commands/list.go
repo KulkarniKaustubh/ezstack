@@ -185,6 +185,7 @@ func Status(args []string) error {
 
 	if *all {
 		printAllStacksWithStatus()
+		offerFullyMergedStackCleanup(mgr, stacks)
 		return nil
 	}
 
@@ -217,5 +218,36 @@ func Status(args []string) error {
 		ui.Warn("Rebase in progress! Resolve conflicts and run: git rebase --continue")
 	}
 
+	offerFullyMergedStackCleanup(mgr, []*config.Stack{currentStack})
+
 	return nil
+}
+
+// offerFullyMergedStackCleanup checks each stack whose branches are all marked merged
+// (updated in-memory by fetchBranchStatuses) and offers to delete them.
+func offerFullyMergedStackCleanup(mgr *stack.Manager, stacks []*config.Stack) {
+	for _, s := range stacks {
+		if len(s.Branches) == 0 {
+			continue
+		}
+		allMerged := true
+		for _, b := range s.Branches {
+			if !b.IsMerged {
+				allMerged = false
+				break
+			}
+		}
+		if !allMerged {
+			continue
+		}
+		fmt.Fprintln(os.Stderr)
+		ui.Info(fmt.Sprintf("Stack '#%s' is fully merged", s.Hash))
+		if ui.ConfirmTUI(fmt.Sprintf("Clean up stack '#%s' (delete worktrees, branches, and tracking)?", s.Hash)) {
+			if err := mgr.DeleteStack(s.Hash); err != nil {
+				ui.Warn(fmt.Sprintf("Failed to clean up stack '#%s': %v", s.Hash, err))
+			} else {
+				ui.Success(fmt.Sprintf("Removed fully merged stack '#%s'", s.Hash))
+			}
+		}
+	}
 }
