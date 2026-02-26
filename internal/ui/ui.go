@@ -1124,15 +1124,15 @@ func Info(msg string) {
 // Prompt asks for text input with a prompt and optional default value
 // Returns the user input or the default if empty input is given
 func Prompt(prompt, defaultVal string) string {
-	// Print the question on its own line first
+	var rlPrompt string
 	if defaultVal != "" {
-		fmt.Fprintf(os.Stderr, "%s%s?%s %s [%s]\n", Bold, Yellow, Reset, prompt, defaultVal)
+		rlPrompt = fmt.Sprintf("%s%s?%s %s [%s]: ", Bold, Yellow, Reset, prompt, defaultVal)
 	} else {
-		fmt.Fprintf(os.Stderr, "%s%s?%s %s\n", Bold, Yellow, Reset, prompt)
+		rlPrompt = fmt.Sprintf("%s%s?%s %s: ", Bold, Yellow, Reset, prompt)
 	}
 
 	rl, err := readline.NewEx(&readline.Config{
-		Prompt:          ": ",
+		Prompt:          rlPrompt,
 		InterruptPrompt: "^C",
 		EOFPrompt:       "",
 		Stdin:           os.Stdin,
@@ -1148,7 +1148,7 @@ func Prompt(prompt, defaultVal string) string {
 			defer tty.Close()
 		}
 		reader := bufio.NewReader(tty)
-		fmt.Fprintf(os.Stderr, ": ")
+		fmt.Fprintf(os.Stderr, rlPrompt)
 		response, err := reader.ReadString('\n')
 		if err != nil {
 			return defaultVal
