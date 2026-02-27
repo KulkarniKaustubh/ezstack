@@ -319,6 +319,23 @@ func (c *Client) EnsureCorrectBaseBranches(stack *config.Stack, skipBranches map
 // UpdateStackDescription updates PR descriptions with stack info.
 // skipBranches is a set of branch names to skip (e.g., remote-tracking branches that belong to others)
 func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch string, skipBranches map[string]bool) error {
+	// Count how many branches in this stack have PRs (excluding skipped branches)
+	prCount := 0
+	for _, branch := range stack.Branches {
+		if branch.PRNumber == 0 {
+			continue
+		}
+		if skipBranches != nil && skipBranches[branch.Name] {
+			continue
+		}
+		prCount++
+	}
+
+	// Only update descriptions when there are 2+ PRs in the stack
+	if prCount < 2 {
+		return nil
+	}
+
 	for _, branch := range stack.Branches {
 		if branch.PRNumber == 0 {
 			continue
@@ -358,7 +375,13 @@ func generateStackSection(stack *config.Stack, currentPRBranch string) string {
 	// Sort branches topologically (parent -> child order)
 	sortedBranches := config.SortBranchesTopologically(stack.Branches)
 
-	for i, branch := range sortedBranches {
+	num := 1
+	for _, branch := range sortedBranches {
+		// Skip branches that don't have a PR yet
+		if branch.PRNumber == 0 && branch.PRUrl == "" {
+			continue
+		}
+
 		// Use markdown list format - GitHub unfurls PR URLs in lists to show title
 		suffix := ""
 		if branch.Name == currentPRBranch {
@@ -366,12 +389,11 @@ func generateStackSection(stack *config.Stack, currentPRBranch string) string {
 		}
 
 		if branch.PRUrl != "" {
-			sb.WriteString(fmt.Sprintf("%d. %s%s\n", i+1, branch.PRUrl, suffix))
-		} else if branch.PRNumber > 0 {
-			sb.WriteString(fmt.Sprintf("%d. #%d%s\n", i+1, branch.PRNumber, suffix))
+			sb.WriteString(fmt.Sprintf("%d. %s%s\n", num, branch.PRUrl, suffix))
 		} else {
-			sb.WriteString(fmt.Sprintf("%d. `%s` _(no PR yet)_%s\n", i+1, branch.Name, suffix))
+			sb.WriteString(fmt.Sprintf("%d. #%d%s\n", num, branch.PRNumber, suffix))
 		}
+		num++
 	}
 	sb.WriteString("\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack) (beta)_\n")
 
