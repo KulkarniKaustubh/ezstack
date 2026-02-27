@@ -93,6 +93,7 @@ func TestGenerateStackSection(t *testing.T) {
 		stack           *Stack
 		currentPRBranch string
 		wantContains    []string
+		wantNotContains []string
 	}{
 		{
 			name: "Single branch stack",
@@ -128,7 +129,8 @@ func TestGenerateStackSection(t *testing.T) {
 				},
 			},
 			currentPRBranch: "feature-a",
-			wantContains:    []string{"feature-b", "no PR yet"},
+			wantContains:    []string{"pull/1", "← **This PR**"},
+			wantNotContains: []string{"feature-b", "no PR yet"},
 		},
 	}
 
@@ -141,6 +143,11 @@ func TestGenerateStackSection(t *testing.T) {
 			for _, want := range tt.wantContains {
 				if !strings.Contains(result, want) {
 					t.Errorf("generateStackSection() missing %q in:\n%s", want, result)
+				}
+			}
+			for _, notWant := range tt.wantNotContains {
+				if strings.Contains(result, notWant) {
+					t.Errorf("generateStackSection() should not contain %q in:\n%s", notWant, result)
 				}
 			}
 		})
