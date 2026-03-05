@@ -1050,6 +1050,15 @@ func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOn
 					continue
 				}
 
+				// If branch is already marked as merged in config, silently clean up
+				// any remaining git branch and skip prompting (we already confirmed once)
+				if branch.IsMerged {
+					if hasBranch {
+						_ = m.git.DeleteBranch(branch.Name, true)
+					}
+					continue
+				}
+
 				// Make sure this branch has no unmerged children
 				hasUnmergedChildren := false
 				for _, child := range m.GetChildren(branch.Name) {

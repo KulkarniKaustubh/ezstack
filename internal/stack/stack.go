@@ -389,9 +389,30 @@ func (m *Manager) DeleteBranch(branchName string, force bool) error {
 	}
 
 	// Remove the worktree and branch from git (only if not a remote branch)
-	if !branch.IsRemote && branch.WorktreePath != "" {
-		if err := m.git.RemoveWorktree(branch.WorktreePath, true, branchName); err != nil {
-			return fmt.Errorf("failed to remove worktree: %w", err)
+	if !branch.IsRemote {
+		worktreePath := branch.WorktreePath
+		if worktreePath == "" {
+			// WorktreePath missing from config - look it up from git worktree list
+			if wts, err := m.git.ListWorktrees(); err == nil {
+				for _, wt := range wts {
+					if wt.Branch == branchName {
+						worktreePath = wt.Path
+						break
+					}
+				}
+			}
+		}
+		if worktreePath != "" {
+			if err := m.git.RemoveWorktree(worktreePath, true, branchName); err != nil {
+				return fmt.Errorf("failed to remove worktree: %w", err)
+			}
+		} else if m.git.BranchExists(branchName) {
+			// No worktree at all - just delete the git branch directly
+			if err := m.git.DeleteBranch(branchName, true); err != nil {
+				if !strings.Contains(err.Error(), "not found") {
+					return fmt.Errorf("failed to delete branch: %w", err)
+				}
+			}
 		}
 	}
 
@@ -1059,10 +1080,25 @@ func (m *Manager) MarkBranchMerged(branchName string) error {
 	}
 
 	// Remove the worktree and branch from git (only if not a remote branch)
-	if !branch.IsRemote && branch.WorktreePath != "" {
-		if err := m.git.RemoveWorktree(branch.WorktreePath, true, branchName); err != nil {
-			// Log error but continue - worktree might already be gone
-			// Don't fail the whole operation
+	if !branch.IsRemote {
+		worktreePath := branch.WorktreePath
+		if worktreePath == "" {
+			// WorktreePath missing from config - look it up from git worktree list
+			if wts, err := m.git.ListWorktrees(); err == nil {
+				for _, wt := range wts {
+					if wt.Branch == branchName {
+						worktreePath = wt.Path
+						break
+					}
+				}
+			}
+		}
+		if worktreePath != "" {
+			// RemoveWorktree handles both worktree removal and branch deletion
+			_ = m.git.RemoveWorktree(worktreePath, true, branchName)
+		} else if m.git.BranchExists(branchName) {
+			// No worktree at all - just delete the git branch
+			_ = m.git.DeleteBranch(branchName, true)
 		}
 	}
 
