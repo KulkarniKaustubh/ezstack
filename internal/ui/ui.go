@@ -79,6 +79,10 @@ func Hyperlink(url, text string) string {
 // ErrBack is returned when the user selects the back option
 var ErrBack = fmt.Errorf("back")
 
+// YesMode, when true, makes all ConfirmTUI / Confirm calls auto-return true
+// without showing any interactive dialog.
+var YesMode bool
+
 // BranchStatus contains status information for a branch
 type BranchStatus struct {
 	PRState     string // "OPEN", "MERGED", "CLOSED", "DRAFT", ""
@@ -771,6 +775,10 @@ func getStatusText(branch *config.Branch, statusMap map[string]*BranchStatus) st
 
 // Confirm asks the user for confirmation (simple text-based)
 func Confirm(prompt string) bool {
+	if YesMode {
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ yes%s\n", Bold, Yellow, Reset, prompt, Green, Reset)
+		return true
+	}
 	fmt.Fprintf(os.Stderr, "%s [y/N]: ", prompt)
 	var response string
 	fmt.Scanln(&response)
@@ -781,6 +789,10 @@ func Confirm(prompt string) bool {
 // Returns true if user confirms, false otherwise
 // Yes is selected by default
 func ConfirmTUI(prompt string) bool {
+	if YesMode {
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ yes%s\n", Bold, Yellow, Reset, prompt, Green, Reset)
+		return true
+	}
 	// Check if stdin is a terminal - if not, use simple confirm
 	// This enables tests to pipe input
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
@@ -887,6 +899,10 @@ func ConfirmTUI(prompt string) bool {
 // Returns true if user confirms, false otherwise
 // defaultYes controls which option is selected by default
 func ConfirmTUIWithDefault(prompt string, defaultYes bool) bool {
+	if YesMode {
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ yes%s\n", Bold, Yellow, Reset, prompt, Green, Reset)
+		return true
+	}
 	// Check if stdin is a terminal - if not, use simple confirm
 	// This enables tests to pipe input
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
