@@ -172,13 +172,13 @@ func prCreateAll(currentStack *config.Stack) error {
 		}
 		if b.PRNumber == 0 {
 			// Check if branch has commits ahead of its base
-			commitsAhead, err := g.GetCommitsAhead(b.Name, b.BaseBranch)
+			commitsAhead, err := g.GetCommitsAhead(b.Name, b.Parent)
 			if err != nil {
 				ui.Warn(fmt.Sprintf("Could not check commits for %s: %v (skipping)", b.Name, err))
 				continue
 			}
 			if commitsAhead == 0 {
-				ui.Warn(fmt.Sprintf("Skipping %s: no commits ahead of '%s'", b.Name, b.BaseBranch))
+				ui.Warn(fmt.Sprintf("Skipping %s: no commits ahead of '%s'", b.Name, b.Parent))
 				continue
 			}
 			branchesToCreate = append(branchesToCreate, b)
@@ -192,7 +192,7 @@ func prCreateAll(currentStack *config.Stack) error {
 
 	ui.Info(fmt.Sprintf("Will create PRs for %d branches:", len(branchesToCreate)))
 	for _, b := range branchesToCreate {
-		fmt.Fprintf(os.Stderr, "  %s %s (base: %s)\n", ui.IconBullet, b.Name, b.BaseBranch)
+		fmt.Fprintf(os.Stderr, "  %s %s (base: %s)\n", ui.IconBullet, b.Name, b.Parent)
 	}
 
 	if !ui.ConfirmTUI("Create all PRs") {
@@ -211,7 +211,7 @@ func prCreateAll(currentStack *config.Stack) error {
 		}
 
 		// Create the PR (not as draft for bulk creation)
-		pr, err := gh.CreatePR(b.Name, "", b.Name, b.BaseBranch, false)
+		pr, err := gh.CreatePR(b.Name, "", b.Name, b.Parent, false)
 		if err != nil {
 			ui.Warn(fmt.Sprintf("Failed to create PR for %s: %v", b.Name, err))
 			continue
@@ -313,12 +313,12 @@ func prCreate(args []string) error {
 		return err
 	}
 
-	commitsAhead, err := g.GetCommitsAhead(branch.Name, branch.BaseBranch)
+	commitsAhead, err := g.GetCommitsAhead(branch.Name, branch.Parent)
 	if err != nil {
 		// If we can't determine, continue anyway (might be a new branch)
 		ui.Warn(fmt.Sprintf("Could not check commits: %v", err))
 	} else if commitsAhead == 0 {
-		return fmt.Errorf("no commits to create PR from. This branch has no commits ahead of '%s'.\nPlease make at least one commit first", branch.BaseBranch)
+		return fmt.Errorf("no commits to create PR from. This branch has no commits ahead of '%s'.\nPlease make at least one commit first", branch.Parent)
 	}
 
 	remoteURL, err := g.GetRemote("origin")
@@ -379,7 +379,7 @@ func prCreate(args []string) error {
 	if isDraft {
 		prType = "draft PR"
 	}
-	ui.Info(fmt.Sprintf("Will create %s '%s' with base branch: %s", prType, prTitle, branch.BaseBranch))
+	ui.Info(fmt.Sprintf("Will create %s '%s' with base branch: %s", prType, prTitle, branch.Parent))
 
 	if err := g.Fetch(); err != nil {
 		ui.Warn(fmt.Sprintf("Could not fetch from remote: %v", err))
@@ -417,8 +417,8 @@ func prCreate(args []string) error {
 		}
 	}
 
-	ui.Info(fmt.Sprintf("Creating %s with base branch: %s", prType, branch.BaseBranch))
-	pr, err := gh.CreatePR(prTitle, prBody, branch.Name, branch.BaseBranch, isDraft)
+	ui.Info(fmt.Sprintf("Creating %s with base branch: %s", prType, branch.Parent))
+	pr, err := gh.CreatePR(prTitle, prBody, branch.Name, branch.Parent, isDraft)
 	if err != nil {
 		return fmt.Errorf("failed to create PR: %w", err)
 	}
