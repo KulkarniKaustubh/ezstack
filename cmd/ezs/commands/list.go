@@ -84,18 +84,13 @@ func List(args []string) error {
 		ui.PrintStack(s, currentBranch, false, nil)
 	}
 
-	if *all {
+	currentStack, _, err := mgr.GetCurrentStack()
+	if *all || err != nil {
 		for _, s := range stacks {
 			printStack(s)
 		}
 	} else {
-		currentStack, _, err := mgr.GetCurrentStack()
-		if err != nil {
-			// Current branch is not part of any stack
-			ui.Info("Current branch is not part of any stack. Use -a to show all stacks.")
-		} else {
-			printStack(currentStack)
-		}
+		printStack(currentStack)
 	}
 
 	return nil
@@ -183,16 +178,10 @@ func Status(args []string) error {
 		}
 	}
 
-	if *all {
+	currentStack, branch, err := mgr.GetCurrentStack()
+	if *all || err != nil {
 		printAllStacksWithStatus()
 		offerFullyMergedStackCleanup(mgr, stacks)
-		return nil
-	}
-
-	currentStack, branch, err := mgr.GetCurrentStack()
-	if err != nil {
-		// Current branch is not part of any stack
-		ui.Info("Current branch is not part of any stack. Use -a to show all stacks.")
 		return nil
 	}
 
