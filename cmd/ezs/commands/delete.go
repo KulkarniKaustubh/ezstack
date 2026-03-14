@@ -102,9 +102,9 @@ func Delete(args []string) error {
 			return fmt.Errorf("cannot delete branch with children. Use --force to delete anyway")
 		}
 
-		confirmPrompt := fmt.Sprintf("Delete branch '%s'?", branchName)
+		confirmPrompt := fmt.Sprintf("Delete branch '%s' and its worktree?", branchName)
 		if hasChildren {
-			confirmPrompt = fmt.Sprintf("Delete branch '%s'? %s(has child branches!)%s", branchName, ui.Red, ui.Reset)
+			confirmPrompt = fmt.Sprintf("Delete branch '%s' and its worktree? %s(has child branches!)%s", branchName, ui.Red, ui.Reset)
 		}
 		if !ui.ConfirmTUI(confirmPrompt) {
 			ui.Warn("Cancelled")
