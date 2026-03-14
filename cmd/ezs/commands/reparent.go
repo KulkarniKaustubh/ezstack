@@ -310,18 +310,23 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 	cwd, _ := os.Getwd()
 	g := git.New(cwd)
 
-	// If we rebased, offer to force-push the branch
+	// If we rebased, offer to force-push the branch.
+	// Track whether the push succeeded so we only update the GitHub PR base
+	// when origin actually reflects the new parent (avoids misleading PR diffs).
+	pushSucceeded := true
 	if doRebase && branch.PRNumber > 0 {
 		ui.Info("Branch was rebased. Force-push required to update the PR.")
 		worktreePath := cwd
 		if branch.WorktreePath != "" {
 			worktreePath = branch.WorktreePath
 		}
-		OfferForcePush(branchName, worktreePath)
+		pushSucceeded = OfferForcePush(branchName, worktreePath)
 	}
 
-	// Update PR base branch on GitHub if the branch has a PR
-	if branch.PRNumber > 0 {
+	// Update PR base branch on GitHub only when origin is up-to-date.
+	// If the user declined the force push, origin still has the old history,
+	// so updating the PR base now would produce a misleading diff.
+	if branch.PRNumber > 0 && pushSucceeded {
 		remoteURL, err := g.GetRemote("origin")
 		if err == nil {
 			gh, err := github.NewClient(remoteURL)
