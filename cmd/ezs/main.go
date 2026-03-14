@@ -147,7 +147,7 @@ func main() {
 		if err == ui.ErrBack {
 			return
 		}
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		ui.Error(err.Error())
 		os.Exit(1)
 	}
 }
