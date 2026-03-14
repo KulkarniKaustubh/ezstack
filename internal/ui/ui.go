@@ -785,134 +785,17 @@ func Confirm(prompt string) bool {
 	return strings.ToLower(response) == "y" || strings.ToLower(response) == "yes"
 }
 
-// ConfirmTUI shows a nice TUI confirmation dialog with arrow key navigation
-// Returns true if user confirms, false otherwise
-// Yes is selected by default
-func ConfirmTUI(prompt string) bool {
-	if YesMode {
-		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ yes%s\n", Bold, Yellow, Reset, prompt, Green, Reset)
-		return true
-	}
-	// Check if stdin is a terminal - if not, use simple confirm
-	// This enables tests to pipe input
+// confirmTUICore implements the raw-terminal yes/no dialog loop.
+// defaultYes controls which option is highlighted initially.
+// escValue is the value returned when the user presses Escape.
+// Callers must handle YesMode and non-terminal fallback before calling this.
+func confirmTUICore(prompt string, defaultYes bool, escValue bool) bool {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return Confirm(prompt)
 	}
 
-	// Save terminal state and set raw mode
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
-		// Fallback to simple confirm if raw mode fails
-		return Confirm(prompt)
-	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
-
-	selected := 0 // 0 = Yes, 1 = No (Yes is default)
-
-	renderConfirm := func() {
-		// Clear current line and move cursor up
-		// Use stderr for all TUI output so stdout stays clean for eval
-		fmt.Fprint(os.Stderr, "\r\033[K")
-
-		// Print prompt
-		fmt.Fprintf(os.Stderr, "%s%s?%s %s\n\r", Bold, Yellow, Reset, prompt)
-		fmt.Fprint(os.Stderr, "\033[K")
-
-		// Print options with nice styling
-		yesStyle := fmt.Sprintf("  %s", Reset)
-		noStyle := fmt.Sprintf("  %s", Reset)
-
-		if selected == 0 {
-			yesStyle = fmt.Sprintf("%s▸ %s%sYes%s", Green, Bold, Green, Reset)
-			noStyle = fmt.Sprintf("  %sNo%s", Reset, Reset)
-		} else {
-			yesStyle = fmt.Sprintf("  %sYes%s", Reset, Reset)
-			noStyle = fmt.Sprintf("%s▸ %s%sNo%s", Red, Bold, Red, Reset)
-		}
-
-		fmt.Fprintf(os.Stderr, "  %s\n\r", yesStyle)
-		fmt.Fprintf(os.Stderr, "  %s\n\r", noStyle)
-		fmt.Fprintf(os.Stderr, "\033[K%s(Use ↑/↓ arrows to select, Enter to confirm)%s\r", Magenta, Reset)
-
-		// Move cursor up 3 lines to prepare for re-render
-		fmt.Fprint(os.Stderr, "\033[3A")
-	}
-
-	// Initial render
-	fmt.Fprintln(os.Stderr) // Add space before dialog
-	renderConfirm()
-
-	// Read input
-	buf := make([]byte, 3)
-	for {
-		n, err := os.Stdin.Read(buf)
-		if err != nil {
-			break
-		}
-
-		if n == 1 {
-			switch buf[0] {
-			case 13, 10: // Enter key
-				// Move cursor down past the dialog and clear
-				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
-				return selected == 0
-			case 3: // Ctrl+C - exit immediately
-				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
-				term.Restore(int(os.Stdin.Fd()), oldState)
-				os.Exit(130) // Standard exit code for Ctrl+C
-			case 27: // Escape (single byte - could be start of escape sequence)
-				// Will be handled below if it's a single ESC
-			case 'k', 'K': // vim-style up
-				selected = 0
-				renderConfirm()
-			case 'j', 'J': // vim-style down
-				selected = 1
-				renderConfirm()
-			case 'y', 'Y': // Quick yes
-				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
-				return true
-			case 'n', 'N': // Quick no
-				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
-				return false
-			}
-		} else if n == 3 && buf[0] == 27 && buf[1] == 91 {
-			// Arrow key escape sequence
-			switch buf[2] {
-			case 65: // Up arrow
-				selected = 0
-				renderConfirm()
-			case 66: // Down arrow
-				selected = 1
-				renderConfirm()
-			}
-		} else if n == 1 && buf[0] == 27 {
-			// Single ESC key - treat as cancel
-			fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
-			return false
-		}
-	}
-
-	return selected == 0
-}
-
-// ConfirmTUIWithDefault shows a nice TUI confirmation dialog with arrow key navigation
-// Returns true if user confirms, false otherwise
-// defaultYes controls which option is selected by default
-func ConfirmTUIWithDefault(prompt string, defaultYes bool) bool {
-	if YesMode {
-		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ yes%s\n", Bold, Yellow, Reset, prompt, Green, Reset)
-		return true
-	}
-	// Check if stdin is a terminal - if not, use simple confirm
-	// This enables tests to pipe input
-	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return Confirm(prompt)
-	}
-
-	// Save terminal state and set raw mode
-	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
-	if err != nil {
-		// Fallback to simple confirm if raw mode fails
 		return Confirm(prompt)
 	}
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
@@ -923,18 +806,11 @@ func ConfirmTUIWithDefault(prompt string, defaultYes bool) bool {
 	}
 
 	renderConfirm := func() {
-		// Clear current line and move cursor up
-		// Use stderr for all TUI output so stdout stays clean for eval
 		fmt.Fprint(os.Stderr, "\r\033[K")
-
-		// Print prompt
 		fmt.Fprintf(os.Stderr, "%s%s?%s %s\n\r", Bold, Yellow, Reset, prompt)
 		fmt.Fprint(os.Stderr, "\033[K")
 
-		// Print options with nice styling
-		yesStyle := fmt.Sprintf("  %s", Reset)
-		noStyle := fmt.Sprintf("  %s", Reset)
-
+		var yesStyle, noStyle string
 		if selected == 0 {
 			yesStyle = fmt.Sprintf("%s▸ %s%sYes%s", Green, Bold, Green, Reset)
 			noStyle = fmt.Sprintf("  %sNo%s", Reset, Reset)
@@ -946,16 +822,12 @@ func ConfirmTUIWithDefault(prompt string, defaultYes bool) bool {
 		fmt.Fprintf(os.Stderr, "  %s\n\r", yesStyle)
 		fmt.Fprintf(os.Stderr, "  %s\n\r", noStyle)
 		fmt.Fprintf(os.Stderr, "\033[K%s(Use ↑/↓ arrows to select, Enter to confirm)%s\r", Magenta, Reset)
-
-		// Move cursor up 3 lines to prepare for re-render
 		fmt.Fprint(os.Stderr, "\033[3A")
 	}
 
-	// Initial render
-	fmt.Fprintln(os.Stderr) // Add space before dialog
+	fmt.Fprintln(os.Stderr)
 	renderConfirm()
 
-	// Read input
 	buf := make([]byte, 3)
 	for {
 		n, err := os.Stdin.Read(buf)
@@ -965,31 +837,28 @@ func ConfirmTUIWithDefault(prompt string, defaultYes bool) bool {
 
 		if n == 1 {
 			switch buf[0] {
-			case 13, 10: // Enter key
-				// Move cursor down past the dialog and clear
+			case 13, 10: // Enter
 				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
 				return selected == 0
-			case 3: // Ctrl+C - exit immediately
+			case 3: // Ctrl+C
 				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
 				term.Restore(int(os.Stdin.Fd()), oldState)
-				os.Exit(130) // Standard exit code for Ctrl+C
-			case 27: // Escape (single byte - could be start of escape sequence)
-				// Will be handled below if it's a single ESC
+				os.Exit(130)
+			case 27: // ESC byte — handled below as single ESC or part of arrow sequence
 			case 'k', 'K': // vim-style up
 				selected = 0
 				renderConfirm()
 			case 'j', 'J': // vim-style down
 				selected = 1
 				renderConfirm()
-			case 'y', 'Y': // Quick yes
+			case 'y', 'Y':
 				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
 				return true
-			case 'n', 'N': // Quick no
+			case 'n', 'N':
 				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
 				return false
 			}
 		} else if n == 3 && buf[0] == 27 && buf[1] == 91 {
-			// Arrow key escape sequence
 			switch buf[2] {
 			case 65: // Up arrow
 				selected = 0
@@ -999,13 +868,33 @@ func ConfirmTUIWithDefault(prompt string, defaultYes bool) bool {
 				renderConfirm()
 			}
 		} else if n == 1 && buf[0] == 27 {
-			// Single ESC key - return default
+			// Single ESC
 			fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
-			return defaultYes
+			return escValue
 		}
 	}
 
 	return selected == 0
+}
+
+// ConfirmTUI shows a TUI yes/no dialog with Yes highlighted by default.
+// ESC cancels (returns false).
+func ConfirmTUI(prompt string) bool {
+	if YesMode {
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ yes%s\n", Bold, Yellow, Reset, prompt, Green, Reset)
+		return true
+	}
+	return confirmTUICore(prompt, true, false)
+}
+
+// ConfirmTUIWithDefault shows a TUI yes/no dialog.
+// defaultYes controls which option is highlighted; ESC returns the default.
+func ConfirmTUIWithDefault(prompt string, defaultYes bool) bool {
+	if YesMode {
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ yes%s\n", Bold, Yellow, Reset, prompt, Green, Reset)
+		return true
+	}
+	return confirmTUICore(prompt, defaultYes, defaultYes)
 }
 
 // SelectTUI shows a TUI selection menu with arrow key navigation
