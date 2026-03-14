@@ -139,10 +139,10 @@ func Sync(args []string) error {
 		return syncCurrentBranch(mgr, gh, branch, cwd)
 	}
 	if *parentFlag {
-		return syncOntoParent(mgr, branch, cwd)
+		return syncOntoParent(mgr, branch)
 	}
 	if *childrenFlag {
-		return syncChildren(mgr, branch, cwd)
+		return syncChildren(mgr, branch)
 	}
 
 	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal)
@@ -485,9 +485,9 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 	case "current":
 		return syncCurrentBranch(mgr, gh, branch, cwd)
 	case "parent":
-		return syncOntoParent(mgr, branch, cwd)
+		return syncOntoParent(mgr, branch)
 	case "children":
-		return syncChildren(mgr, branch, cwd)
+		return syncChildren(mgr, branch)
 	}
 
 	return nil
@@ -699,7 +699,7 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 }
 
 // syncOntoParent rebases the current branch onto its parent
-func syncOntoParent(mgr *stack.Manager, branch *config.Branch, cwd string) error {
+func syncOntoParent(mgr *stack.Manager, branch *config.Branch) error {
 	if mgr.IsMainBranch(branch.Parent) {
 		ui.Info("Parent is main - use 'Auto-sync' to rebase onto latest origin/main")
 		return nil
@@ -720,7 +720,7 @@ func syncOntoParent(mgr *stack.Manager, branch *config.Branch, cwd string) error
 }
 
 // syncChildren rebases child branches onto the current branch
-func syncChildren(mgr *stack.Manager, branch *config.Branch, cwd string) error {
+func syncChildren(mgr *stack.Manager, branch *config.Branch) error {
 	children := mgr.GetChildren(branch.Name)
 	localChildren := []*config.Branch{}
 	for _, c := range children {
