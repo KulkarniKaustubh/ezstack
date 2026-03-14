@@ -51,11 +51,22 @@ func hasRepoConfig(repoPath string) bool {
 }
 
 func main() {
+	// Pre-parse -y/--yes before dispatching so it works in any position,
+	// e.g. "ezs -y sync", "ezs sync -y", "ezs delete -y my-branch".
+	var cleanArgs []string
+	for _, arg := range os.Args[1:] {
+		if arg == "-y" || arg == "--yes" {
+			ui.YesMode = true
+		} else {
+			cleanArgs = append(cleanArgs, arg)
+		}
+	}
+
 	cmd := ""
 	args := []string{}
-	if len(os.Args) >= 2 {
-		cmd = os.Args[1]
-		args = os.Args[2:]
+	if len(cleanArgs) >= 1 {
+		cmd = cleanArgs[0]
+		args = cleanArgs[1:]
 	}
 
 	// Commands that don't require repo check
@@ -226,6 +237,7 @@ func printUsage() {
 %sOPTIONS%s
     -h, --help       Show this help message
     -v, --version    Show version
+    -y, --yes        Auto-confirm all yes/no prompts (selection menus still show)
     --shell-init     Output shell function for cd support
 
 %sSETUP%s
