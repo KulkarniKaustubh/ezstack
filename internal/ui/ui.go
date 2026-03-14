@@ -1164,7 +1164,7 @@ func Prompt(prompt, defaultVal string) string {
 			defer tty.Close()
 		}
 		reader := bufio.NewReader(tty)
-		fmt.Fprintf(os.Stderr, rlPrompt)
+		fmt.Fprint(os.Stderr, rlPrompt)
 		response, err := reader.ReadString('\n')
 		if err != nil {
 			return defaultVal
