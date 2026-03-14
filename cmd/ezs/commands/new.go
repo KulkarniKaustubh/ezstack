@@ -176,6 +176,9 @@ func New(args []string) error {
 
 					ui.Success(fmt.Sprintf("Registered '%s' as a stack root (found existing PR #%d)", branch.Name, pr.Number))
 					ui.Info("You can now add child branches with: ezs new <branch-name>")
+					if getCdAfterNew(cfg, mgr.GetRepoDir(), *cdFlag, *noCdFlag) {
+						fmt.Printf("cd %s\n", selected.Path)
+					}
 					return nil
 				}
 			}
@@ -183,6 +186,9 @@ func New(args []string) error {
 
 		ui.Success(fmt.Sprintf("Registered '%s' as a stack root", branch.Name))
 		ui.Info("You can now add child branches with: ezs new <branch-name>")
+		if getCdAfterNew(cfg, mgr.GetRepoDir(), *cdFlag, *noCdFlag) {
+			fmt.Printf("cd %s\n", selected.Path)
+		}
 		return nil
 	}
 
@@ -279,6 +285,9 @@ func New(args []string) error {
 
 		ui.Success(fmt.Sprintf("Created stack from PR #%d (%s)", selectedPR.Number, selectedPR.Branch))
 		ui.Success(fmt.Sprintf("Created your branch '%s' at %s", userBranch.Name, worktreePath))
+		if getCdAfterNew(cfg, mgr.GetRepoDir(), *cdFlag, *noCdFlag) {
+			fmt.Printf("cd %s\n", worktreePath)
+		}
 		return nil
 	}
 
