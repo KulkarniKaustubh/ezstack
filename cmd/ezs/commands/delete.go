@@ -142,11 +142,6 @@ func Delete(args []string) error {
 		return fmt.Errorf("failed to change to repo root: %w", err)
 	}
 
-	mgr, err = stack.NewManager(repoRoot)
-	if err != nil {
-		return err
-	}
-
 	// Try stack-aware delete first; if the branch isn't in any stack,
 	// fall back to direct worktree + branch removal.
 	if err := mgr.DeleteBranch(branchName, *force); err != nil {
