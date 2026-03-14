@@ -203,7 +203,10 @@ func Status(args []string) error {
 
 	ui.PrintStack(currentStack, currentBranch, true, statusMap)
 
-	parentRef := "origin/" + branch.Parent
+	parentRef := branch.Parent
+	if g.RemoteBranchExists(branch.Parent) {
+		parentRef = "origin/" + branch.Parent
+	}
 	commits, err := g.GetCommitsBetween(parentRef, currentBranch)
 	if err == nil && len(commits) > 0 {
 		fmt.Fprintf(os.Stderr, "%s%sCommits in this branch:%s\n", ui.Bold, ui.Cyan, ui.Reset)
