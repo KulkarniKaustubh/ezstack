@@ -1005,11 +1005,11 @@ func (s *Stack) addBranchToTree(tree BranchTree, branchName, parentName string) 
 // RemoveBranch removes a branch from the stack tree
 // If the branch has children, they are moved up to the branch's parent
 func (s *Stack) RemoveBranch(branchName string) {
-	s.removeBranchFromTree(s.Tree, branchName, s.Root)
+	s.removeBranchFromTree(s.Tree, branchName)
 }
 
 // removeBranchFromTree recursively finds and removes the branch
-func (s *Stack) removeBranchFromTree(tree BranchTree, branchName, parent string) bool {
+func (s *Stack) removeBranchFromTree(tree BranchTree, branchName string) bool {
 	for name, children := range tree {
 		if name == branchName {
 			// Move children up to this branch's parent (which is the current tree)
@@ -1019,7 +1019,7 @@ func (s *Stack) removeBranchFromTree(tree BranchTree, branchName, parent string)
 			delete(tree, branchName)
 			return true
 		}
-		if s.removeBranchFromTree(children, branchName, name) {
+		if s.removeBranchFromTree(children, branchName) {
 			return true
 		}
 	}
