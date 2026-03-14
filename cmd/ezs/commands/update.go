@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
@@ -32,7 +31,6 @@ func Update(args []string) error {
     • Detects renamed branches (git branch -m) and updates config
     • Removes branches from config if their worktree folder was deleted
     • Removes branches from config if the git branch no longer exists
-    • Offers to add worktrees that exist but aren't tracked by ezstack
 
     After running update, all ezs commands will work correctly.
 
@@ -75,12 +73,6 @@ func Update(args []string) error {
 		return err
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
-	baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
-
 	var result stack.UpdateResult
 	hasChanges := false
 
@@ -114,12 +106,10 @@ func Update(args []string) error {
 	if len(renames) > 0 {
 		hasChanges = true
 
-		// Build sets of handled names to exclude from orphan/untracked processing
+		// Build set of renamed old names to exclude from orphan processing
 		renamedOld := make(map[string]bool)
-		renamedNew := make(map[string]bool)
 		for _, r := range renames {
 			renamedOld[r.OldName] = true
-			renamedNew[r.NewName] = true
 		}
 
 		for _, r := range renames {
@@ -138,7 +128,7 @@ func Update(args []string) error {
 			}
 		}
 
-		// Filter out renamed branches from orphaned and untracked lists
+		// Filter out renamed branches from orphaned list
 		var remainingOrphaned []string
 		for _, name := range orphaned {
 			if !renamedOld[name] {
@@ -146,14 +136,6 @@ func Update(args []string) error {
 			}
 		}
 		orphaned = remainingOrphaned
-
-		var remainingUntracked []git.Worktree
-		for _, wt := range untracked {
-			if !renamedNew[wt.Branch] {
-				remainingUntracked = append(remainingUntracked, wt)
-			}
-		}
-		untracked = remainingUntracked
 	}
 
 	// Step 5: Remove remaining orphaned branches from config
@@ -166,28 +148,6 @@ func Update(args []string) error {
 		if !dryRun {
 			if err := mgr.RemoveOrphanedBranches(orphaned); err != nil {
 				return fmt.Errorf("failed to remove orphaned branches: %w", err)
-			}
-		}
-	}
-
-	// Step 6: Handle remaining untracked worktrees
-	if len(untracked) > 0 {
-		hasChanges = true
-		ui.Info(fmt.Sprintf("Found %d untracked worktree(s):", len(untracked)))
-		for _, wt := range untracked {
-			fmt.Fprintf(os.Stderr, "  • %s (%s)\n", wt.Branch, wt.Path)
-		}
-
-		if !dryRun {
-			for _, wt := range untracked {
-				added, err := addUntrackedWorktree(mgr, g, wt, baseBranch, autoMode)
-				if err != nil {
-					ui.Warn(fmt.Sprintf("Failed to add %s: %v", wt.Branch, err))
-					continue
-				}
-				if added != nil {
-					result.AddedBranches = append(result.AddedBranches, added)
-				}
 			}
 		}
 	}
@@ -216,9 +176,6 @@ func Update(args []string) error {
 	if len(result.RemovedBranches) > 0 {
 		fmt.Fprintf(os.Stderr, "  • Removed %d orphaned branch(es)\n", len(result.RemovedBranches))
 	}
-	if len(result.AddedBranches) > 0 {
-		fmt.Fprintf(os.Stderr, "  • Added %d worktree(s) to stacks\n", len(result.AddedBranches))
-	}
 	if len(result.ReparentedBranches) > 0 {
 		fmt.Fprintf(os.Stderr, "  • Updated %d parent relationship(s)\n", len(result.ReparentedBranches))
 	}
@@ -226,77 +183,3 @@ func Update(args []string) error {
 	return nil
 }
 
-// addUntrackedWorktree adds an untracked worktree to a stack
-func addUntrackedWorktree(mgr *stack.Manager, g *git.Git, wt git.Worktree, baseBranch string, autoMode bool) (*config.Branch, error) {
-	var parentName string
-	var err error
-
-	if autoMode {
-		// In auto mode, default to base branch
-		parentName = baseBranch
-		ui.Info(fmt.Sprintf("Adding '%s' with parent '%s' (auto mode)", wt.Branch, parentName))
-	} else {
-		// Always ask user to select parent
-		parentName, err = selectParentForWorktree(mgr, wt.Branch, baseBranch)
-		if err != nil {
-			return nil, err
-		}
-
-		if !ui.ConfirmTUI(fmt.Sprintf("Add '%s' to stack with parent '%s'?", wt.Branch, parentName)) {
-			return nil, nil
-		}
-	}
-
-	branch, err := mgr.AddWorktreeToStack(wt.Branch, wt.Path, parentName)
-	if err != nil {
-		return nil, err
-	}
-
-	ui.Success(fmt.Sprintf("Added '%s' to stack with parent '%s'", wt.Branch, parentName))
-	return branch, nil
-}
-
-// selectParentForWorktree shows a selection UI for choosing the parent of an untracked worktree
-func selectParentForWorktree(mgr *stack.Manager, branchName, baseBranch string) (string, error) {
-	allBranches := mgr.GetAllBranchesInAllStacks()
-	stacks := mgr.ListStacks()
-
-	var options []string
-	var parentNames []string
-
-	// Add base branch first (default)
-	options = append(options, fmt.Sprintf("%s (base branch)", baseBranch))
-	parentNames = append(parentNames, baseBranch)
-
-	// Add other branches from stacks, excluding the current branch
-	for _, b := range allBranches {
-		if b.Name == branchName || b.IsMerged {
-			continue
-		}
-
-		stackName := ""
-		for _, s := range stacks {
-			for _, sb := range s.Branches {
-				if sb.Name == b.Name {
-					stackName = s.Hash
-					break
-				}
-			}
-		}
-
-		options = append(options, fmt.Sprintf("%s (%s %s) [stack: %s]", b.Name, ui.IconArrow, b.Parent, stackName))
-		parentNames = append(parentNames, b.Name)
-	}
-
-	if len(options) == 0 {
-		return baseBranch, nil
-	}
-
-	ui.Info(fmt.Sprintf("Select parent for '%s':", branchName))
-	selected, err := ui.SelectOption(options, "Select parent branch")
-	if err != nil {
-		return "", err
-	}
-
-	return parentNames[selected], nil
-}

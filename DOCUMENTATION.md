@@ -461,7 +461,6 @@ This command:
 - Detects renamed branches (`git branch -m`) and updates config automatically
 - Removes branches from config if their worktree folder was deleted
 - Removes branches from config if the git branch no longer exists
-- Offers to add worktrees that exist but aren't tracked
 
 <details>
 <summary>💡 Examples</summary>
