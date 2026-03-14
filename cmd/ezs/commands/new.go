@@ -161,18 +161,7 @@ func New(args []string) error {
 				if err == nil && pr != nil && pr.Number > 0 {
 					branch.PRNumber = pr.Number
 					branch.PRUrl = pr.URL
-
-					cache, err := config.LoadCacheConfig(mgr.GetRepoDir())
-					if err == nil {
-						bc := cache.GetBranchCache(branch.Name)
-						if bc == nil {
-							bc = &config.BranchCache{}
-						}
-						bc.PRNumber = pr.Number
-						bc.PRUrl = pr.URL
-						cache.SetBranchCache(branch.Name, bc)
-						cache.Save(mgr.GetRepoDir())
-					}
+					savePRToCache(mgr.GetRepoDir(), branch.Name, pr.Number, pr.URL)
 
 					ui.Success(fmt.Sprintf("Registered '%s' as a stack root (found existing PR #%d)", branch.Name, pr.Number))
 					ui.Info("You can now add child branches with: ezs new <branch-name>")

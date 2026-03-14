@@ -9,8 +9,44 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/github"
+	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
+
+// savePRToCache saves a single branch's PR number and URL to the cache.
+func savePRToCache(cacheDir, branchName string, prNum int, prURL string) {
+	cache, err := config.LoadCacheConfig(cacheDir)
+	if err != nil {
+		return
+	}
+	bc := cache.GetBranchCache(branchName)
+	if bc == nil {
+		bc = &config.BranchCache{}
+	}
+	bc.PRNumber = prNum
+	bc.PRUrl = prURL
+	cache.SetBranchCache(branchName, bc)
+	cache.Save(cacheDir)
+}
+
+// findStackForBranch returns the first stack containing the given branch, or nil.
+func findStackForBranch(mgr *stack.Manager, branchName string) *config.Stack {
+	for _, s := range mgr.ListStacks() {
+		for _, b := range s.Branches {
+			if b.Name == branchName {
+				return s
+			}
+		}
+	}
+	return nil
+}
+
+// updateStackDescriptions updates PR descriptions for all PRs in the given stack.
+func updateStackDescriptions(gh *github.Client, s *config.Stack, activeBranch string) error {
+	ui.Info("Updating PR stack descriptions...")
+	skipBranches := getRemoteBranches(s)
+	return gh.UpdateStackDescription(s, activeBranch, skipBranches)
+}
 
 // OfferForcePush prompts the user to force push a branch with --force-with-lease
 // Returns true if push was successful, false otherwise

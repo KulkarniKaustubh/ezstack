@@ -293,19 +293,7 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 	ui.Success(fmt.Sprintf("Reparented '%s' to '%s'", branch.Name, branch.Parent))
 
 	// Find the stack this branch belongs to
-	var currentStack *config.Stack
-	stacks := mgr.ListStacks()
-	for _, s := range stacks {
-		for _, b := range s.Branches {
-			if b.Name == branchName {
-				currentStack = s
-				break
-			}
-		}
-		if currentStack != nil {
-			break
-		}
-	}
+	currentStack := findStackForBranch(mgr, branchName)
 
 	cwd, _ := os.Getwd()
 	g := git.New(cwd)
@@ -340,9 +328,7 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 
 				// Also update stack descriptions in all PRs
 				if currentStack != nil {
-					ui.Info("Updating PR stack descriptions...")
-					skipBranches := getRemoteBranches(currentStack)
-					if err := gh.UpdateStackDescription(currentStack, branchName, skipBranches); err != nil {
+					if err := updateStackDescriptions(gh, currentStack, branchName); err != nil {
 						ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
 					}
 				}

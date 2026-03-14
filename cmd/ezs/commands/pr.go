@@ -237,9 +237,7 @@ func prCreateAll(currentStack *config.Stack) error {
 	}
 	cache.Save(mainWorktree)
 
-	ui.Info("Updating PR stack descriptions...")
-	skipBranches := getRemoteBranches(currentStack)
-	if err := gh.UpdateStackDescription(currentStack, "", skipBranches); err != nil {
+	if err := updateStackDescriptions(gh, currentStack, ""); err != nil {
 		ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
 	}
 
@@ -430,22 +428,11 @@ func prCreate(args []string) error {
 	if mainWorktree == "" {
 		mainWorktree = cwd
 	}
-
-	cache, _ := config.LoadCacheConfig(mainWorktree)
-	bc := cache.GetBranchCache(branch.Name)
-	if bc == nil {
-		bc = &config.BranchCache{}
-	}
-	bc.PRNumber = pr.Number
-	bc.PRUrl = pr.URL
-	cache.SetBranchCache(branch.Name, bc)
-	cache.Save(mainWorktree)
+	savePRToCache(mainWorktree, branch.Name, pr.Number, pr.URL)
 
 	ui.Success(fmt.Sprintf("Created %s #%d: %s", prType, pr.Number, pr.URL))
 
-	ui.Info("Updating PR stack descriptions...")
-	skipBranches := getRemoteBranches(currentStack)
-	if err := gh.UpdateStackDescription(currentStack, branch.Name, skipBranches); err != nil {
+	if err := updateStackDescriptions(gh, currentStack, branch.Name); err != nil {
 		ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
 	}
 
@@ -635,9 +622,7 @@ func prStack(args []string) error {
 		return nil
 	}
 
-	skipBranches := getRemoteBranches(currentStack)
-	ui.Info("Updating PR stack descriptions...")
-	if err := gh.UpdateStackDescription(currentStack, branch.Name, skipBranches); err != nil {
+	if err := updateStackDescriptions(gh, currentStack, branch.Name); err != nil {
 		return err
 	}
 
