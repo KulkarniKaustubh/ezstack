@@ -229,16 +229,17 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 			if prErr == nil {
 				if prData.Merged {
 					status.PRState = "MERGED"
-					// Cache merged status if not already set
+					// Cache merged status if not already set; the read of b.IsMerged
+					// must be inside the lock to avoid a data race with other goroutines.
+					mu.Lock()
 					if !b.IsMerged {
-						mu.Lock()
 						b.IsMerged = true
 						discoveredMerged = true
-						mu.Unlock()
 						if debugMode {
 							fmt.Fprintf(os.Stderr, "[DEBUG] Marking branch %s as merged\n", b.Name)
 						}
 					}
+					mu.Unlock()
 				} else if prData.State == "CLOSED" {
 					status.PRState = "CLOSED"
 				} else if prData.IsDraft {
