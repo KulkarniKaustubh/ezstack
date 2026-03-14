@@ -33,6 +33,17 @@ func NewClient(remoteURL string) (*Client, error) {
 	}, nil
 }
 
+// CheckAuth verifies that the gh CLI is authenticated and returns an error if not.
+func CheckAuth() error {
+	cmd := exec.Command("gh", "auth", "status")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("GitHub authentication required. Run: gh auth login")
+	}
+	return nil
+}
+
 // PR represents a pull request
 type PR struct {
 	Number      int    `json:"number"`

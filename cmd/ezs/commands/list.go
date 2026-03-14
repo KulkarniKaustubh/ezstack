@@ -8,6 +8,7 @@ import (
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/github"
 	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
@@ -132,6 +133,10 @@ func Status(args []string) error {
 	}
 	helpers.MergeFlags(allShort, all, debugShort, debug)
 	debugMode = *debug
+
+	if err := github.CheckAuth(); err != nil {
+		return err
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {

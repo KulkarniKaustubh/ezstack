@@ -46,15 +46,22 @@ Run 'ezs pr <subcommand> --help' for subcommand options.
 
 // PR handles pull request operations
 func PR(args []string) error {
+	// Allow --help without requiring auth
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+		printPRUsage()
+		return nil
+	}
+
+	if err := github.CheckAuth(); err != nil {
+		return err
+	}
+
 	if len(args) < 1 {
 		// Interactive mode
 		return prInteractive()
 	}
 
 	switch args[0] {
-	case "-h", "--help":
-		printPRUsage()
-		return nil
 	case "create":
 		return prCreate(args[1:])
 	case "update":
