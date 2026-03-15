@@ -318,8 +318,8 @@ func (c *Client) EnsureCorrectBaseBranches(stack *config.Stack, skipBranches map
 			continue
 		}
 
-		if pr.Base != branch.BaseBranch {
-			if err := c.UpdatePRBase(branch.PRNumber, branch.BaseBranch); err != nil {
+		if pr.Base != branch.Parent {
+			if err := c.UpdatePRBase(branch.PRNumber, branch.Parent); err != nil {
 				return fmt.Errorf("failed to update base branch for PR #%d (%s): %w", branch.PRNumber, branch.Name, err)
 			}
 		}
