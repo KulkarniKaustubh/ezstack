@@ -282,7 +282,7 @@ func Unstack(args []string) error {
 	oldParent := branch.Parent
 	childrenWithPRs := []*config.Branch{}
 	for _, c := range children {
-		if c.PRNumber > 0 && !c.IsRemote {
+		if c.PRNumber > 0 {
 			childrenWithPRs = append(childrenWithPRs, c)
 		}
 	}

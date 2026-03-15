@@ -69,24 +69,37 @@ func TestGotoMergedBranch(t *testing.T) {
 	}
 }
 
-// TestGotoRemoteBranch tests that remote branches have no worktree
+// TestGotoRemoteBranch tests that remote branches are stack roots with no worktree
 func TestGotoRemoteBranch(t *testing.T) {
 	env := SetupTestEnv(t)
 	defer env.Cleanup()
 
 	mgr, _ := stack.NewManager(env.RepoDir)
 
-	branch, err := mgr.RegisterRemoteBranch("remote-feature", "main", 100, "https://github.com/org/repo/pull/100")
+	err := mgr.RegisterRemoteBranch("remote-feature", 100, "https://github.com/org/repo/pull/100")
 	if err != nil {
 		t.Fatalf("RegisterRemoteBranch failed: %v", err)
 	}
 
-	if !branch.IsRemote {
-		t.Error("IsRemote should be true")
+	// Remote branch is a stack root, not a tree branch
+	branch := mgr.GetBranch("remote-feature")
+	if branch != nil {
+		t.Error("Remote branch should not be found via GetBranch (it's a stack root)")
 	}
 
-	if branch.WorktreePath != "" {
-		t.Error("Remote branch should not have worktree path")
+	// Verify stack was created with correct root
+	stacks := mgr.ListStacks()
+	found := false
+	for _, s := range stacks {
+		if s.Root == "remote-feature" {
+			found = true
+			if s.RootPRNumber != 100 {
+				t.Errorf("RootPRNumber = %d, want 100", s.RootPRNumber)
+			}
+		}
+	}
+	if !found {
+		t.Error("Stack with root 'remote-feature' not found")
 	}
 }
 

@@ -312,9 +312,6 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 			allAccountedFor := true
 			hasPRBranches := false
 			for _, b := range s.Branches {
-				if b.IsRemote {
-					continue
-				}
 				if b.PRNumber == 0 {
 					allAccountedFor = false
 					break
@@ -336,9 +333,6 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 			fmt.Fprintln(os.Stderr)
 			ui.Info(fmt.Sprintf("Stack '#%s' is fully merged (%d branch(es)):", hash, len(s.Branches)))
 			for _, b := range s.Branches {
-				if b.IsRemote {
-					continue
-				}
 				fmt.Fprintf(os.Stderr, "  %s %s%s%s: PR #%d merged\n",
 					ui.IconSuccess, ui.Bold, b.Name, ui.Reset, b.PRNumber)
 			}
@@ -397,8 +391,7 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 	// Ensure all PR base branches are correct (fixes manually-created PRs pointing to wrong base)
 	if gh != nil {
 		for _, s := range stacks {
-			skipBranches := getRemoteBranches(s)
-			if err := gh.EnsureCorrectBaseBranches(s, skipBranches); err != nil {
+			if err := gh.EnsureCorrectBaseBranches(s); err != nil {
 				ui.Warn(fmt.Sprintf("Failed to update PR base branches: %v", err))
 			}
 		}
@@ -437,13 +430,7 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 		optionActions = append(optionActions, "parent")
 	}
 
-	allChildren := mgr.GetChildren(branch.Name)
-	localChildren := []*config.Branch{}
-	for _, c := range allChildren {
-		if !c.IsRemote {
-			localChildren = append(localChildren, c)
-		}
-	}
+	localChildren := mgr.GetChildren(branch.Name)
 	if len(localChildren) > 0 {
 		childNames := ""
 		for i, c := range localChildren {
@@ -681,8 +668,7 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 	// Ensure all PR base branches are correct (fixes manually-created PRs pointing to wrong base)
 	if gh != nil && len(stacksToCheck) > 0 {
 		for _, s := range stacksToCheck {
-			skipBranches := getRemoteBranches(s)
-			if err := gh.EnsureCorrectBaseBranches(s, skipBranches); err != nil {
+			if err := gh.EnsureCorrectBaseBranches(s); err != nil {
 				ui.Warn(fmt.Sprintf("Failed to update PR base branches: %v", err))
 			}
 		}
@@ -715,13 +701,7 @@ func syncOntoParent(mgr *stack.Manager, branch *config.Branch) error {
 
 // syncChildren rebases child branches onto the current branch
 func syncChildren(mgr *stack.Manager, branch *config.Branch) error {
-	children := mgr.GetChildren(branch.Name)
-	localChildren := []*config.Branch{}
-	for _, c := range children {
-		if !c.IsRemote {
-			localChildren = append(localChildren, c)
-		}
-	}
+	localChildren := mgr.GetChildren(branch.Name)
 
 	if len(localChildren) == 0 {
 		ui.Info("No local child branches to rebase")

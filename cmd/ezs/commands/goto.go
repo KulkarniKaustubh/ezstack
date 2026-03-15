@@ -63,9 +63,6 @@ func Goto(args []string) error {
 				return fmt.Errorf("branch '%s' has been merged and its worktree was deleted", branchName)
 			}
 			if targetBranch.WorktreePath == "" {
-				if targetBranch.IsRemote {
-					return fmt.Errorf("cannot go to remote branch '%s' - it has no local worktree", branchName)
-				}
 				return fmt.Errorf("no worktree path for branch '%s'", branchName)
 			}
 			fmt.Printf("cd %s\n", targetBranch.WorktreePath)
