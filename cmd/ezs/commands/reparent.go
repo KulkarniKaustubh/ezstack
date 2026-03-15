@@ -271,10 +271,12 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 		return nil
 	}
 
-	// Perform the reparent
 	branch, err := mgr.ReparentBranch(branchName, newParent, doRebase)
 	if err != nil {
 		return err
+	}
+	if branch == nil {
+		return fmt.Errorf("reparent succeeded but branch '%s' not found in updated config", branchName)
 	}
 
 	ui.Success(fmt.Sprintf("Reparented '%s' to '%s'", branch.Name, branch.Parent))

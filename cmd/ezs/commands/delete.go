@@ -113,6 +113,10 @@ func Delete(args []string) error {
 			return fmt.Errorf("cannot delete main/master branch")
 		}
 
+		if mgr.GetBranch(branchName) == nil && !g.BranchExists(branchName) {
+			return fmt.Errorf("branch '%s' not found", branchName)
+		}
+
 		children := mgr.GetChildren(branchName)
 		if len(children) > 0 && !*force {
 			ui.Error(fmt.Sprintf("Branch '%s' has child branches:", branchName))
