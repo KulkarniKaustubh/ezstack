@@ -149,11 +149,12 @@ func Stack(args []string) error {
 		return nil
 	}
 
-	branch, err := mgr.ReparentBranch(branchName, parentName, false)
+	result, err := mgr.ReparentBranch(branchName, parentName, false)
 	if err != nil {
 		return err
 	}
 
+	branch := result.Branch
 	ui.Success(fmt.Sprintf("Added '%s' to stack with parent '%s'", branch.Name, branch.Parent))
 
 	// Update PR base branch on GitHub if the branch has a PR
