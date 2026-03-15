@@ -288,15 +288,23 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 	}
 
 	oldStack := findStackForBranch(mgr, branchName)
-	branch, err := mgr.ReparentBranch(branchName, newParent, doRebase)
+	result, err := mgr.ReparentBranch(branchName, newParent, doRebase)
 	if err != nil {
 		return err
 	}
-	if branch == nil {
+	if result == nil || result.Branch == nil {
 		return fmt.Errorf("reparent succeeded but branch '%s' not found in updated config", branchName)
 	}
 
-	ui.Success(fmt.Sprintf("Reparented '%s' to '%s'", branch.Name, branch.Parent))
+	branch := result.Branch
+
+	if result.HasConflict {
+		ui.Warn(fmt.Sprintf("Reparented '%s' to '%s' (config updated), but rebase has conflicts", branch.Name, branch.Parent))
+		ui.Warn(fmt.Sprintf("Resolve conflicts in: %s", result.ConflictDir))
+		ui.Info("Then run: git rebase --continue")
+	} else {
+		ui.Success(fmt.Sprintf("Reparented '%s' to '%s'", branch.Name, branch.Parent))
+	}
 
 	currentStack := findStackForBranch(mgr, branchName)
 
@@ -304,7 +312,7 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 	g := git.New(cwd)
 
 	pushSucceeded := true
-	if doRebase && branch.PRNumber > 0 {
+	if doRebase && !result.HasConflict && branch.PRNumber > 0 {
 		ui.Info("Branch was rebased. Force-push required to update the PR.")
 		worktreePath := cwd
 		if branch.WorktreePath != "" {

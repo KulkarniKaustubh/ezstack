@@ -515,14 +515,22 @@ func (m *Manager) UntrackBranch(branchName string) error {
 	return nil
 }
 
+// ReparentResult holds the result of a reparent operation
+type ReparentResult struct {
+	Branch      *config.Branch
+	HasConflict bool   // true if rebase had conflicts (config was still saved)
+	ConflictDir string // worktree path where conflicts need to be resolved
+}
+
 // ReparentBranch changes the parent of a branch to a new parent
 // This handles several cases:
 // 1. Branch is already in a stack - just update parent pointer
 // 2. Branch is standalone (not in any stack) - add it to the new parent's stack
 // 3. New parent is in a different stack - merge stacks or move branch
-// If doRebase is true, performs git rebase --onto to move commits
-// Returns the updated branch and any error
-func (m *Manager) ReparentBranch(branchName, newParentName string, doRebase bool) (*config.Branch, error) {
+// If doRebase is true, performs git rebase --onto to move commits.
+// Config changes are always saved first. If rebase has conflicts, the result
+// will have HasConflict=true but the branch will still be returned (config is updated).
+func (m *Manager) ReparentBranch(branchName, newParentName string, doRebase bool) (*ReparentResult, error) {
 	if branchName == newParentName {
 		return nil, fmt.Errorf("cannot stack a branch on itself")
 	}
@@ -542,8 +550,9 @@ func (m *Manager) ReparentBranch(branchName, newParentName string, doRebase bool
 	return m.addBranchWithParent(branchName, newParentName, doRebase)
 }
 
-// reparentExistingBranch handles reparenting a branch that's already in a stack
-func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName string, doRebase bool) (*config.Branch, error) {
+// reparentExistingBranch handles reparenting a branch that's already in a stack.
+// Config changes are saved first, then rebase is attempted if requested.
+func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName string, doRebase bool) (*ReparentResult, error) {
 	oldParent := branch.Parent
 	oldStackKey := m.findStackForBranch(branch.Name)
 	newParentStackKey := m.findStackForBranch(newParentName)
@@ -553,31 +562,9 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 		return nil, fmt.Errorf("cannot reparent: would create circular dependency")
 	}
 
-	// Perform git rebase if requested
-	if doRebase && branch.WorktreePath != "" {
-		g := git.New(branch.WorktreePath)
-
-		// Get the merge-base between current branch and old parent
-		oldParentRef := m.getParentRef(oldParent)
-		mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
-		if err != nil {
-			mergeBase = oldParentRef
-		}
-
-		newParentRef := m.getRebaseRef(newParentName)
-
-		// Rebase onto new parent
-		rebaseResult := g.RebaseOntoNonInteractive(newParentRef, mergeBase)
-		if rebaseResult.HasConflict {
-			return nil, fmt.Errorf("rebase conflict - resolve conflicts in %s and run: git rebase --continue", branch.WorktreePath)
-		} else if rebaseResult.Error != nil {
-			return nil, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
-		}
-	}
-
 	cache := m.stackConfig.Cache
 
-	// Handle stack reorganization using tree methods
+	// Handle stack reorganization using tree methods — BEFORE rebase
 	oldStack := m.stackConfig.Stacks[oldStackKey]
 
 	if oldStackKey != newParentStackKey && newParentStackKey != "" {
@@ -617,17 +604,42 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 		oldStack.PopulateBranchesWithCache(cache)
 	}
 
-	// Save the config
+	// Save the config before attempting rebase
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
 		return nil, fmt.Errorf("failed to save stack config: %w", err)
 	}
 
-	// Return the updated branch
-	return m.GetBranch(branch.Name), nil
+	result := &ReparentResult{Branch: m.GetBranch(branch.Name)}
+
+	// Perform git rebase if requested (after config is saved)
+	if doRebase && branch.WorktreePath != "" {
+		g := git.New(branch.WorktreePath)
+
+		// Get the merge-base between current branch and old parent
+		oldParentRef := m.getParentRef(oldParent)
+		mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
+		if err != nil {
+			mergeBase = oldParentRef
+		}
+
+		newParentRef := m.getRebaseRef(newParentName)
+
+		// Rebase onto new parent
+		rebaseResult := g.RebaseOntoNonInteractive(newParentRef, mergeBase)
+		if rebaseResult.HasConflict {
+			result.HasConflict = true
+			result.ConflictDir = branch.WorktreePath
+		} else if rebaseResult.Error != nil {
+			return result, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
+		}
+	}
+
+	return result, nil
 }
 
-// addBranchWithParent adds a standalone git branch to a stack with the specified parent
-func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase bool) (*config.Branch, error) {
+// addBranchWithParent adds a standalone git branch to a stack with the specified parent.
+// Config changes are saved first, then rebase is attempted if requested.
+func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase bool) (*ReparentResult, error) {
 	// Check if the git branch exists
 	if !m.git.BranchExists(branchName) {
 		return nil, fmt.Errorf("git branch '%s' does not exist", branchName)
@@ -645,39 +657,24 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 		}
 	}
 
-	// Perform git rebase if requested and we have a worktree
-	if doRebase && worktreePath != "" {
-		g := git.New(worktreePath)
-
-		newParentRef := m.getRebaseRef(newParentName)
-
-		// Simple rebase onto new parent
-		rebaseResult := g.RebaseNonInteractive(newParentRef)
-		if rebaseResult.HasConflict {
-			return nil, fmt.Errorf("rebase conflict - resolve conflicts in %s and run: git rebase --continue", worktreePath)
-		} else if rebaseResult.Error != nil {
-			return nil, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
-		}
-	}
-
 	// Find the stack for the new parent
 	newParentStackKey := m.findStackForBranch(newParentName)
-	var stack *config.Stack
+	var targetStack *config.Stack
 
 	if newParentStackKey != "" {
 		// Add to existing stack
-		stack = m.stackConfig.Stacks[newParentStackKey]
-		stack.AddBranch(branchName, newParentName)
+		targetStack = m.stackConfig.Stacks[newParentStackKey]
+		targetStack.AddBranch(branchName, newParentName)
 	} else {
 		hash := config.GenerateStackHash(branchName)
-		stack = &config.Stack{
+		targetStack = &config.Stack{
 			Hash: hash,
 			Root: newParentName,
 			Tree: config.BranchTree{
 				branchName: config.BranchTree{},
 			},
 		}
-		m.stackConfig.Stacks[hash] = stack
+		m.stackConfig.Stacks[hash] = targetStack
 	}
 
 	// Update cache
@@ -687,20 +684,32 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 	})
 
 	// Repopulate branches from tree with cache
-	stack.PopulateBranchesWithCache(cache)
+	targetStack.PopulateBranchesWithCache(cache)
 
-	// Save the config
+	// Save config BEFORE attempting rebase
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
 		return nil, fmt.Errorf("failed to save stack config: %w", err)
 	}
 
-	// Return the branch from the populated list
-	for _, b := range stack.Branches {
-		if b.Name == branchName {
-			return b, nil
+	result := &ReparentResult{Branch: m.GetBranch(branchName)}
+
+	// Perform git rebase if requested and we have a worktree (after config is saved)
+	if doRebase && worktreePath != "" {
+		g := git.New(worktreePath)
+
+		newParentRef := m.getRebaseRef(newParentName)
+
+		// Simple rebase onto new parent
+		rebaseResult := g.RebaseNonInteractive(newParentRef)
+		if rebaseResult.HasConflict {
+			result.HasConflict = true
+			result.ConflictDir = worktreePath
+		} else if rebaseResult.Error != nil {
+			return result, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
 		}
 	}
-	return nil, fmt.Errorf("failed to add branch")
+
+	return result, nil
 }
 
 // wouldCreateCycle checks if reparenting branchName to newParentName would create a cycle
