@@ -144,20 +144,12 @@ func prCreateAll(currentStack *config.Stack) error {
 	}
 
 	g := git.New(cwd)
-	remoteURL, err := g.GetRemote("origin")
+	gh, err := newGitHubClient(g)
 	if err != nil {
 		return err
 	}
 
-	gh, err := github.NewClient(remoteURL)
-	if err != nil {
-		return err
-	}
-
-	mainWorktree, _ := g.GetMainWorktree()
-	if mainWorktree == "" {
-		mainWorktree = cwd
-	}
+	mainWorktree := getMainWorktreePath(g)
 
 	branchesToCreate := []*config.Branch{}
 	for _, b := range currentStack.Branches {
@@ -303,12 +295,7 @@ func prCreate(args []string) error {
 		return fmt.Errorf("no commits to create PR from. This branch has no commits ahead of '%s'.\nPlease make at least one commit first", branch.Parent)
 	}
 
-	remoteURL, err := g.GetRemote("origin")
-	if err != nil {
-		return err
-	}
-
-	gh, err := github.NewClient(remoteURL)
+	gh, err := newGitHubClient(g)
 	if err != nil {
 		return err
 	}
@@ -408,11 +395,7 @@ func prCreate(args []string) error {
 	branch.PRNumber = pr.Number
 	branch.PRUrl = pr.URL
 
-	mainWorktree, _ := g.GetMainWorktree()
-	if mainWorktree == "" {
-		mainWorktree = cwd
-	}
-	savePRToCache(mainWorktree, branch.Name, pr.Number, pr.URL)
+	savePRToCache(getMainWorktreePath(g), branch.Name, pr.Number, pr.URL)
 
 	ui.Success(fmt.Sprintf("Created %s #%d: %s", prType, pr.Number, pr.URL))
 
@@ -583,12 +566,7 @@ func prStack(args []string) error {
 		return err
 	}
 
-	remoteURL, err := g.GetRemote("origin")
-	if err != nil {
-		return err
-	}
-
-	gh, err := github.NewClient(remoteURL)
+	gh, err := newGitHubClient(g)
 	if err != nil {
 		return err
 	}
