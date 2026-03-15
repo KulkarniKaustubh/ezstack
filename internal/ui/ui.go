@@ -1144,10 +1144,8 @@ func pathCompleterFunc(prefix string) *readline.PrefixCompleter {
 // PromptRequired asks for text input and keeps asking until a non-empty value is provided
 func PromptRequired(prompt string) string {
 	for {
-		fmt.Fprintf(os.Stderr, "%s%s?%s %s\n", Bold, Yellow, Reset, prompt)
-
 		rl, err := readline.NewEx(&readline.Config{
-			Prompt:          ": ",
+			Prompt:          fmt.Sprintf("%s%s?%s %s: ", Bold, Yellow, Reset, prompt),
 			InterruptPrompt: "^C",
 			EOFPrompt:       "",
 			Stdin:           os.Stdin,
