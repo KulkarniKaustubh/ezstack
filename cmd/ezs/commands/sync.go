@@ -25,9 +25,9 @@ func Sync(args []string) error {
 %sOPTIONS%s
     -a, --all              Sync current stack (auto-detect what needs syncing)
     --all-stacks           Sync ALL stacks (not just current stack)
-    --current              Sync current branch only (auto-detect what it needs)
+    -c, --current          Sync current branch only (auto-detect what it needs)
     -p, --parent           Rebase current branch onto its parent
-    -c, --children         Rebase child branches onto current branch
+    -C, --children         Rebase child branches onto current branch
     --no-delete-local      Don't delete local branches after their PRs are merged
     -h, --help             Show this help message
 
@@ -50,18 +50,18 @@ func Sync(args []string) error {
     ezs sync a1b2c        Sync stack matching hash prefix
     ezs sync -a           Auto-sync current stack
     ezs sync --all-stacks Auto-sync all stacks
-    ezs sync --current    Sync current branch only
+    ezs sync -c           Sync current branch only
     ezs sync -p           Rebase current onto parent
-    ezs sync -c           Rebase children onto current
+    ezs sync -C           Rebase children onto current
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 	allFlag := fs.BoolP("all", "a", false, "Sync current stack")
 	allStacksFlag := fs.Bool("all-stacks", false, "Sync all stacks")
-	currentFlag := fs.Bool("current", false, "Sync current branch only")
+	currentFlag := fs.BoolP("current", "c", false, "Sync current branch only")
 	parentFlag := fs.BoolP("parent", "p", false, "Rebase onto parent")
-	childrenFlag := fs.BoolP("children", "c", false, "Rebase children")
+	childrenFlag := fs.BoolP("children", "C", false, "Rebase children")
 	noDeleteLocal := fs.Bool("no-delete-local", false, "Don't delete local branches after their PRs are merged")
 
 	if err := fs.Parse(args); err != nil {

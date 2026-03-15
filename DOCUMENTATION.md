@@ -195,9 +195,9 @@ ezs sync <hash-prefix>
 Options:
     -a, --all              Sync current stack (auto-detect what needs syncing)
     --all-stacks           Sync ALL stacks (not just current stack)
-    -cur, --current        Sync current branch only
+    -c, --current          Sync current branch only
     -p, --parent           Rebase current branch onto its parent
-    -c, --children         Rebase child branches onto current branch
+    -C, --children         Rebase child branches onto current branch
     --no-delete-local      Don't delete local branches after their PRs are merged
 ```
 
@@ -221,13 +221,13 @@ ezs sync -a
 ezs sync --all-stacks
 
 # Sync only current branch
-ezs sync -cur
+ezs sync -c
 
 # Rebase current branch onto its parent
 ezs sync -p
 
 # Rebase children onto current branch
-ezs sync -c
+ezs sync -C
 ```
 
 </details>
