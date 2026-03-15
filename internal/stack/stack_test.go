@@ -1127,3 +1127,24 @@ func TestManager_MultipleStacksSameRoot(t *testing.T) {
 		}
 	}
 }
+
+func TestManager_ReparentBranch_SelfReference(t *testing.T) {
+	dir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, err := NewManager(dir)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	createGitBranch(t, dir, "feature-a")
+
+	// Try to reparent a branch to itself
+	_, err = mgr.ReparentBranch("feature-a", "feature-a", false)
+	if err == nil {
+		t.Fatal("ReparentBranch() should error when branch == parent")
+	}
+	if err.Error() != "cannot stack a branch on itself" {
+		t.Errorf("ReparentBranch() error = %q, want %q", err.Error(), "cannot stack a branch on itself")
+	}
+}
