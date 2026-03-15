@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,9 +9,9 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/github"
-	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/spf13/pflag"
 )
 
 // getRemoteBranches returns a map of branch names that are remote branches (someone else's)
@@ -261,7 +260,7 @@ func runGitCommand(dir string, args ...string) error {
 }
 
 func prCreate(args []string) error {
-	fs := flag.NewFlagSet("pr create", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("pr create", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sCreate a new pull request%s
 
@@ -275,16 +274,13 @@ func prCreate(args []string) error {
     -h, --help             Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	title := fs.String("title", "", "PR title")
-	body := fs.String("body", "", "PR body")
-	draft := fs.Bool("draft", false, "Create as draft PR")
-	titleShort := fs.String("t", "", "PR title (short)")
-	bodyShort := fs.String("b", "", "PR body (short)")
-	draftShort := fs.Bool("d", false, "Create as draft PR (short)")
-	helpFlag := fs.Bool("h", false, "Show help")
+	title := fs.StringP("title", "t", "", "PR title")
+	body := fs.StringP("body", "b", "", "PR body")
+	draft := fs.BoolP("draft", "d", false, "Create as draft PR")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err
@@ -293,14 +289,6 @@ func prCreate(args []string) error {
 		fs.Usage()
 		return nil
 	}
-
-	if *titleShort != "" {
-		*title = *titleShort
-	}
-	if *bodyShort != "" {
-		*body = *bodyShort
-	}
-	helpers.MergeFlags(draftShort, draft)
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -453,7 +441,7 @@ func startsWithWIP(s string) bool {
 }
 
 func prUpdate(args []string) error {
-	fs := flag.NewFlagSet("pr update", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("pr update", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sPush changes to existing pull request%s
 
@@ -464,9 +452,9 @@ func prUpdate(args []string) error {
     -h, --help    Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	helpFlag := fs.Bool("h", false, "Show help")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err
@@ -567,7 +555,7 @@ func prUpdate(args []string) error {
 }
 
 func prStack(args []string) error {
-	fs := flag.NewFlagSet("pr stack", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("pr stack", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sUpdate all PR descriptions with stack info%s
 
@@ -578,9 +566,9 @@ func prStack(args []string) error {
     -h, --help    Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	helpFlag := fs.Bool("h", false, "Show help")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err

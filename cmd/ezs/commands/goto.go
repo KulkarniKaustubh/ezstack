@@ -1,18 +1,18 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/spf13/pflag"
 )
 
 // Goto navigates to a branch worktree
 func Goto(args []string) error {
-	fs := flag.NewFlagSet("goto", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("goto", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sNavigate to a branch worktree%s
 
@@ -31,9 +31,9 @@ func Goto(args []string) error {
         eval "$(ezs --shell-init)"
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	helpFlag := fs.Bool("h", false, "Show help")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err

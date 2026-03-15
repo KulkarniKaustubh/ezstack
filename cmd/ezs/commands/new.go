@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,11 +11,12 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/spf13/pflag"
 )
 
 // New creates a new branch in the stack
 func New(args []string) error {
-	fs := flag.NewFlagSet("new", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("new", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sCreate a new branch in the stack%s
 
@@ -39,22 +39,16 @@ func New(args []string) error {
         eval "$(ezs --shell-init)"
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	parent := fs.String("parent", "", "Parent branch")
-	worktree := fs.String("worktree", "", "Worktree path")
-	cdFlag := fs.Bool("cd", false, "Change to worktree")
-	noCdFlag := fs.Bool("no-cd", false, "Don't change to worktree")
-	fromWorktree := fs.Bool("from-worktree", false, "Select from worktree")
-	fromRemote := fs.Bool("from-remote", false, "Create stack from remote branch")
-	parentShort := fs.String("p", "", "Parent branch (short)")
-	worktreeShort := fs.String("w", "", "Worktree path (short)")
-	cdFlagShort := fs.Bool("c", false, "Change to worktree (short)")
-	noCdFlagShort := fs.Bool("C", false, "Don't change to worktree (short)")
-	fromWorktreeShort := fs.Bool("f", false, "Select from worktree (short)")
-	fromRemoteShort := fs.Bool("r", false, "Create stack from remote branch (short)")
-	helpFlag := fs.Bool("h", false, "Show help")
+	parent := fs.StringP("parent", "p", "", "Parent branch")
+	worktree := fs.StringP("worktree", "w", "", "Worktree path")
+	cdFlag := fs.BoolP("cd", "c", false, "Change to worktree")
+	noCdFlag := fs.BoolP("no-cd", "C", false, "Don't change to worktree")
+	fromWorktree := fs.BoolP("from-worktree", "f", false, "Register an existing worktree as a stack root")
+	fromRemote := fs.BoolP("from-remote", "r", false, "Create stack from remote branch")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err
@@ -63,14 +57,6 @@ func New(args []string) error {
 		fs.Usage()
 		return nil
 	}
-
-	if *parentShort != "" {
-		*parent = *parentShort
-	}
-	if *worktreeShort != "" {
-		*worktree = *worktreeShort
-	}
-	helpers.MergeFlags(cdFlagShort, cdFlag, noCdFlagShort, noCdFlag, fromWorktreeShort, fromWorktree, fromRemoteShort, fromRemote)
 
 	cwd, err := os.Getwd()
 	if err != nil {

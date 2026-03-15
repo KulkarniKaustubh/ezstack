@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"os"
 	"sync"
@@ -9,9 +8,9 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/github"
-	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/spf13/pflag"
 )
 
 // debugMode is set by --debug flag to show verbose output
@@ -19,7 +18,7 @@ var debugMode bool
 
 // List lists all stacks and branches
 func List(args []string) error {
-	fs := flag.NewFlagSet("list", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("list", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sList all stacks and branches%s
 
@@ -33,14 +32,12 @@ func List(args []string) error {
     -h, --help    Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	all := fs.Bool("all", false, "Show all stacks")
-	debug := fs.Bool("debug", false, "Show debug output")
-	allShort := fs.Bool("a", false, "Show all stacks (short)")
-	debugShort := fs.Bool("d", false, "Show debug output (short)")
-	helpFlag := fs.Bool("h", false, "Show help")
+	all := fs.BoolP("all", "a", false, "Show all stacks")
+	debug := fs.BoolP("debug", "d", false, "Show debug output")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err
@@ -50,7 +47,6 @@ func List(args []string) error {
 		return nil
 	}
 
-	helpers.MergeFlags(allShort, all, debugShort, debug)
 	debugMode = *debug
 
 	cwd, err := os.Getwd()
@@ -99,7 +95,7 @@ func List(args []string) error {
 
 // Status shows the status of current stack or all stacks with PR and CI info
 func Status(args []string) error {
-	fs := flag.NewFlagSet("status", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("status", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sShow status of current stack with PR and CI info%s
 
@@ -116,13 +112,11 @@ func Status(args []string) error {
     -h, --help    Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	helpFlag := fs.Bool("h", false, "Show help")
-	all := fs.Bool("all", false, "Show all stacks")
-	allShort := fs.Bool("a", false, "Show all stacks (short)")
-	debug := fs.Bool("debug", false, "Show debug output")
-	debugShort := fs.Bool("d", false, "Show debug output (short)")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
+	all := fs.BoolP("all", "a", false, "Show all stacks")
+	debug := fs.BoolP("debug", "d", false, "Show debug output")
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err
@@ -131,7 +125,6 @@ func Status(args []string) error {
 		fs.Usage()
 		return nil
 	}
-	helpers.MergeFlags(allShort, all, debugShort, debug)
 	debugMode = *debug
 
 	if err := github.CheckAuth(); err != nil {
