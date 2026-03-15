@@ -7,7 +7,6 @@ import (
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/internal/github"
 	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
@@ -139,23 +138,20 @@ func New(args []string) error {
 			return err
 		}
 
-		remoteURL, err := g.GetRemote("origin")
-		if err == nil {
-			gh, err := github.NewClient(remoteURL)
-			if err == nil {
-				pr, err := gh.GetPRByBranch(selected.Branch)
-				if err == nil && pr != nil && pr.Number > 0 {
-					branch.PRNumber = pr.Number
-					branch.PRUrl = pr.URL
-					savePRToCache(mgr.GetRepoDir(), branch.Name, pr.Number, pr.URL)
+		gh, ghErr := newGitHubClient(g)
+		if ghErr == nil {
+			pr, err := gh.GetPRByBranch(selected.Branch)
+			if err == nil && pr != nil && pr.Number > 0 {
+				branch.PRNumber = pr.Number
+				branch.PRUrl = pr.URL
+				savePRToCache(mgr.GetRepoDir(), branch.Name, pr.Number, pr.URL)
 
-					ui.Success(fmt.Sprintf("Registered '%s' as a stack root (found existing PR #%d)", branch.Name, pr.Number))
-					ui.Info("You can now add child branches with: ezs new <branch-name>")
-					if getCdAfterNew(cfg, mgr.GetRepoDir(), *cdFlag, *noCdFlag) {
-						fmt.Printf("cd %s\n", selected.Path)
-					}
-					return nil
+				ui.Success(fmt.Sprintf("Registered '%s' as a stack root (found existing PR #%d)", branch.Name, pr.Number))
+				ui.Info("You can now add child branches with: ezs new <branch-name>")
+				if getCdAfterNew(cfg, mgr.GetRepoDir(), *cdFlag, *noCdFlag) {
+					fmt.Printf("cd %s\n", selected.Path)
 				}
+				return nil
 			}
 		}
 
@@ -168,61 +164,17 @@ func New(args []string) error {
 	}
 
 	if useFromRemote {
-		remoteURL, err := g.GetRemote("origin")
-		if err != nil {
-			return fmt.Errorf("failed to get remote: %w", err)
-		}
-
-		gh, err := github.NewClient(remoteURL)
-		if err != nil {
-			return fmt.Errorf("failed to create GitHub client: %w", err)
-		}
-
-		ui.Info("Fetching open PRs...")
-		openPRs, err := gh.ListOpenPRs()
-		if err != nil {
-			return fmt.Errorf("failed to list open PRs: %w", err)
-		}
-
-		if len(openPRs) == 0 {
-			return fmt.Errorf("no open PRs found in this repository")
-		}
-
-		prOptions := make([]string, len(openPRs))
-		for i, pr := range openPRs {
-			prOptions[i] = fmt.Sprintf("#%d %s - %s (%s)", pr.Number, pr.Branch, pr.Title, pr.Author)
-		}
-
-		selectedIdx, err := ui.SelectOption(prOptions, "Select PR to create stack from")
-		if err != nil {
-			return err
-		}
-		selectedPR := openPRs[selectedIdx]
-
-		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "%s────────────────────────────────────────────────────────────────%s\n", ui.Yellow, ui.Reset)
-		ui.Warn("Note: This remote branch will never be rebased since it is assumed")
-		ui.Warn(fmt.Sprintf("that it does not belong to you. Only %sYOUR%s branches that are stacked", ui.Bold, ui.Reset+ui.Yellow))
-		ui.Warn("on this branch will be handled by ezstack.")
-		fmt.Fprintf(os.Stderr, "%s────────────────────────────────────────────────────────────────%s\n", ui.Yellow, ui.Reset)
-		fmt.Fprintln(os.Stderr)
-
-		newBranchName := ui.PromptRequired("Enter name for your new branch (stacked on " + selectedPR.Branch + ")")
-
-		ui.Info("Fetching remote branch...")
-		if err := g.Fetch(); err != nil {
-			return fmt.Errorf("failed to fetch: %w", err)
-		}
-
 		mgr, err := stack.NewManager(cwd)
 		if err != nil {
 			return err
 		}
 
-		err = mgr.RegisterRemoteBranch(selectedPR.Branch, selectedPR.Number, selectedPR.URL)
+		selectedPR, err := selectAndRegisterRemotePR(g, mgr)
 		if err != nil {
-			return fmt.Errorf("failed to register remote branch: %w", err)
+			return err
 		}
+
+		newBranchName := ui.PromptRequired("Enter name for your new branch (stacked on " + selectedPR.Branch + ")")
 
 		cfg, err := config.Load()
 		if err != nil {

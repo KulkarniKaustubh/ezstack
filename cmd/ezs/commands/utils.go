@@ -29,18 +29,6 @@ func savePRToCache(cacheDir, branchName string, prNum int, prURL string) {
 	cache.Save(cacheDir)
 }
 
-// findStackForBranch returns the first stack containing the given branch, or nil.
-func findStackForBranch(mgr *stack.Manager, branchName string) *config.Stack {
-	for _, s := range mgr.ListStacks() {
-		for _, b := range s.Branches {
-			if b.Name == branchName {
-				return s
-			}
-		}
-	}
-	return nil
-}
-
 // updateStackDescriptions updates PR descriptions for all PRs in the given stack.
 func updateStackDescriptions(gh *github.Client, s *config.Stack, activeBranch string) error {
 	ui.Info("Updating PR stack descriptions...")
@@ -114,6 +102,79 @@ func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) st
 	return pushed
 }
 
+// getMainWorktreePath returns the main worktree path, falling back to cwd.
+func getMainWorktreePath(g *git.Git) string {
+	mainWorktree, _ := g.GetMainWorktree()
+	if mainWorktree == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			return cwd
+		}
+	}
+	return mainWorktree
+}
+
+// newGitHubClient creates a GitHub client from the git remote URL.
+func newGitHubClient(g *git.Git) (*github.Client, error) {
+	remoteURL, err := g.GetRemote("origin")
+	if err != nil {
+		return nil, fmt.Errorf("failed to get remote: %w", err)
+	}
+	return github.NewClient(remoteURL)
+}
+
+// selectAndRegisterRemotePR fetches open PRs, shows a selection UI,
+// prints the remote branch warning, fetches the remote, and registers it as a stack root.
+// Returns the selected PR info.
+func selectAndRegisterRemotePR(g *git.Git, mgr *stack.Manager) (github.OpenPR, error) {
+	gh, err := newGitHubClient(g)
+	if err != nil {
+		return github.OpenPR{}, err
+	}
+
+	ui.Info("Fetching open PRs...")
+	openPRs, err := gh.ListOpenPRs()
+	if err != nil {
+		return github.OpenPR{}, fmt.Errorf("failed to list open PRs: %w", err)
+	}
+
+	if len(openPRs) == 0 {
+		return github.OpenPR{}, fmt.Errorf("no open PRs found in this repository")
+	}
+
+	prOptions := make([]string, len(openPRs))
+	for i, pr := range openPRs {
+		prOptions[i] = fmt.Sprintf("#%d %s - %s (%s)", pr.Number, pr.Branch, pr.Title, pr.Author)
+	}
+
+	selectedIdx, err := ui.SelectOption(prOptions, "Select PR to use as stack base")
+	if err != nil {
+		return github.OpenPR{}, err
+	}
+	selectedPR := openPRs[selectedIdx]
+
+	printRemoteBranchWarning()
+
+	ui.Info("Fetching remote branch...")
+	if err := g.Fetch(); err != nil {
+		return github.OpenPR{}, fmt.Errorf("failed to fetch: %w", err)
+	}
+
+	if err := mgr.RegisterRemoteBranch(selectedPR.Branch, selectedPR.Number, selectedPR.URL); err != nil {
+		return github.OpenPR{}, fmt.Errorf("failed to register remote branch: %w", err)
+	}
+
+	return selectedPR, nil
+}
+
+// printRemoteBranchWarning prints the warning about remote branches not being rebased.
+func printRemoteBranchWarning() {
+	fmt.Fprintln(os.Stderr)
+	ui.Warn("Note: This remote branch will never be rebased since it is assumed")
+	ui.Warn(fmt.Sprintf("that it does not belong to you. Only %sYOUR%s branches that are stacked", ui.Bold, ui.Reset+ui.Yellow))
+	ui.Warn("on this branch will be handled by ezstack.")
+	fmt.Fprintln(os.Stderr)
+}
+
 // discoverAndCachePRs discovers PRs from GitHub for branches that don't have PR numbers cached
 // and saves them to the config. Returns a GitHub client for further use (or nil if unavailable).
 func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
@@ -139,10 +200,7 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
 
 	discoveredPRs := false
 	ghAccessWarningShown := false
-	mainWorktree, _ := g.GetMainWorktree()
-	if mainWorktree == "" {
-		mainWorktree, _ = os.Getwd()
-	}
+	mainWorktree := getMainWorktreePath(g)
 
 	for _, branch := range s.Branches {
 		if debugMode {
