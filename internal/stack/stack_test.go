@@ -289,21 +289,95 @@ func TestManager_RegisterRemoteBranch(t *testing.T) {
 
 	mgr, _ := NewManager(repoDir)
 
-	branch, err := mgr.RegisterRemoteBranch("remote-feature", "main", 42, "https://github.com/org/repo/pull/42")
+	err := mgr.RegisterRemoteBranch("remote-feature", 42, "https://github.com/org/repo/pull/42")
 	if err != nil {
 		t.Fatalf("RegisterRemoteBranch() error = %v", err)
 	}
 
-	if !branch.IsRemote {
-		t.Error("IsRemote should be true")
+	// Remote branch should be the stack root, not a tree node
+	stacks := mgr.ListStacks()
+	found := false
+	for _, s := range stacks {
+		if s.Root == "remote-feature" {
+			found = true
+			if s.RootPRNumber != 42 {
+				t.Errorf("RootPRNumber = %d, want 42", s.RootPRNumber)
+			}
+			if s.RootPRUrl != "https://github.com/org/repo/pull/42" {
+				t.Errorf("RootPRUrl = %q, want %q", s.RootPRUrl, "https://github.com/org/repo/pull/42")
+			}
+			// Should have no branches in tree (remote is root, not a node)
+			if len(s.Branches) != 0 {
+				t.Errorf("Branches count = %d, want 0 (remote is root, not tree node)", len(s.Branches))
+			}
+			break
+		}
+	}
+	if !found {
+		t.Error("Stack with root 'remote-feature' not found")
 	}
 
-	if branch.PRNumber != 42 {
-		t.Errorf("PRNumber = %d, want 42", branch.PRNumber)
+	// Should not be findable via GetBranch (it's a root, not a tree branch)
+	branch := mgr.GetBranch("remote-feature")
+	if branch != nil {
+		t.Error("GetBranch should return nil for remote root branch")
+	}
+}
+
+func TestManager_RegisterRemoteBranch_AddChildBranch(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+
+	// Register remote branch as stack root
+	err := mgr.RegisterRemoteBranch("remote-feature", 42, "https://github.com/org/repo/pull/42")
+	if err != nil {
+		t.Fatalf("RegisterRemoteBranch() error = %v", err)
 	}
 
-	if branch.WorktreePath != "" {
-		t.Error("WorktreePath should be empty for remote branches")
+	// Add a child branch to the stack
+	child, err := mgr.AddBranchToStack("my-feature", "remote-feature", "/tmp/my-feature")
+	if err != nil {
+		t.Fatalf("AddBranchToStack() error = %v", err)
+	}
+
+	if child.Parent != "remote-feature" {
+		t.Errorf("child.Parent = %q, want %q", child.Parent, "remote-feature")
+	}
+
+	// Verify the stack structure
+	stack := mgr.GetStackForBranch("my-feature")
+	if stack == nil {
+		t.Fatal("GetStackForBranch returned nil")
+	}
+	if stack.Root != "remote-feature" {
+		t.Errorf("stack.Root = %q, want %q", stack.Root, "remote-feature")
+	}
+	if stack.RootPRNumber != 42 {
+		t.Errorf("stack.RootPRNumber = %d, want 42", stack.RootPRNumber)
+	}
+	// Only the child should be in branches (remote is root, not tree node)
+	if len(stack.Branches) != 1 {
+		t.Errorf("Branches count = %d, want 1", len(stack.Branches))
+	}
+}
+
+func TestManager_RegisterRemoteBranch_DuplicateRoot(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+
+	err := mgr.RegisterRemoteBranch("remote-feature", 42, "https://github.com/org/repo/pull/42")
+	if err != nil {
+		t.Fatalf("RegisterRemoteBranch() error = %v", err)
+	}
+
+	// Registering the same root again should fail
+	err = mgr.RegisterRemoteBranch("remote-feature", 99, "https://github.com/org/repo/pull/99")
+	if err == nil {
+		t.Error("RegisterRemoteBranch() should fail for duplicate root")
 	}
 }
 

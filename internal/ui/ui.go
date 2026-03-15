@@ -64,7 +64,6 @@ const (
 	IconStack    = "\uf24d" // nf-fa-clone (stack of items)
 	IconRocket   = "\uf135" // nf-fa-rocket
 	IconBack     = "\uf060" // nf-fa-arrow_left
-	IconRemote   = "\uf0c1" // nf-fa-link (for remote branches)
 )
 
 // Hyperlink wraps text in OSC 8 escape sequence for clickable terminal links
@@ -391,8 +390,6 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 	yellow := "\\x1b[33m"
 	gray := "\\x1b[90m"
 	cyan := "\\x1b[36m"
-	magenta := "\\x1b[35m"
-
 	var output strings.Builder
 	hashDisplay := stack.Hash
 	output.WriteString(fmt.Sprintf("%s%s Stack %s%s\\n\\n", bold, cyan, hashDisplay, reset))
@@ -403,7 +400,6 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 	// Calculate max widths
 	maxNameWidth := 0
 	maxPRWidth := 0
-	hasRemoteBranches := false
 	for _, b := range sortedBranches {
 		displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
 		if w := runewidth.StringWidth(displayName); w > maxNameWidth {
@@ -420,10 +416,6 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 		}
 		if w := runewidth.StringWidth(prText); w > maxPRWidth {
 			maxPRWidth = w
-		}
-
-		if b.IsRemote {
-			hasRemoteBranches = true
 		}
 	}
 
@@ -470,19 +462,14 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 		parentText := fmt.Sprintf("(%s %s)", IconArrow, b.Parent)
 		paddedParent := padRight(parentText, maxParentWidth)
 
-		remoteTag := ""
-		if hasRemoteBranches && b.IsRemote {
-			remoteTag = fmt.Sprintf("  %s%s[remote]%s", magenta, IconRemote, reset)
-		}
-
 		if b.IsMerged {
-			output.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %s%s%s  %s%s%s\\n",
+			output.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %s%s%s  %s%s\\n",
 				strikethrough, prefix, color, connector, bold, paddedName, reset+strikethrough,
-				prColor, paddedPRText, reset+strikethrough, paddedParent, reset, remoteTag))
+				prColor, paddedPRText, reset+strikethrough, paddedParent, reset))
 		} else {
-			output.WriteString(fmt.Sprintf("%s%s%s %s%s%s  %s%s%s  %s%s%s\\n",
+			output.WriteString(fmt.Sprintf("%s%s%s %s%s%s  %s%s%s  %s%s\\n",
 				prefix, color, connector, bold, paddedName, reset,
-				prColor, paddedPRText, reset, paddedParent, reset, remoteTag))
+				prColor, paddedPRText, reset, paddedParent, reset))
 		}
 	}
 
@@ -511,7 +498,6 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 	maxPRWidth := 0
 	maxStatusWidth := 0
 	maxParentWidth := 0
-	hasRemoteBranches := false
 
 	for _, branch := range sortedBranches {
 		name := truncateBranchName(branch.Name, MaxBranchNameWidth)
@@ -534,10 +520,6 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 		parentText := fmt.Sprintf("(%s %s)", IconArrow, branch.Parent)
 		if w := runewidth.StringWidth(parentText); w > maxParentWidth {
 			maxParentWidth = w
-		}
-
-		if branch.IsRemote {
-			hasRemoteBranches = true
 		}
 	}
 
@@ -575,16 +557,8 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 		parentInfo := fmt.Sprintf("(%s %s)", IconArrow, branch.Parent)
 		paddedParent := padRight(parentInfo, maxParentWidth)
 
-		// Remote indicator (separate column at the end)
-		remoteTag := ""
-		if hasRemoteBranches {
-			if branch.IsRemote {
-				remoteTag = fmt.Sprintf("  %s%s[remote]%s", Magenta, IconRemote, Reset)
-			}
-		}
-
 		if showStatus && statusMap != nil {
-			// 5 columns: branch, PR, status, parent, remote
+			// 5 columns: branch, PR, status, parent
 			statusText := getStatusText(branch, statusMap)
 			paddedStatus := padRight(statusText, maxStatusWidth)
 			statusColored := getStatusIcons(branch, statusMap)
@@ -596,32 +570,32 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 				// Replace all Reset codes with Reset+Strikethrough to maintain strikethrough
 				prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
 				statusWithStrike := strings.ReplaceAll(statusColored, Reset, Reset+Strikethrough)
-				fmt.Fprintf(os.Stderr, "%s%s%s%s %s%s%s  %s  %s%s  %s%s%s\n",
+				fmt.Fprintf(os.Stderr, "%s%s%s%s %s%s%s  %s  %s%s  %s%s\n",
 					Strikethrough, pointer, color, connector, Bold, paddedName, Reset+Strikethrough,
 					prWithStrike,
 					statusWithStrike, statusPadding,
-					paddedParent, Reset, remoteTag)
+					paddedParent, Reset)
 			} else {
-				fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s  %s%s  %s%s%s\n",
+				fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s  %s%s  %s%s\n",
 					pointer, color, connector, Bold, paddedName, Reset,
 					prFormatted,
 					statusColored, statusPadding,
-					paddedParent, Reset, remoteTag)
+					paddedParent, Reset)
 			}
 		} else {
-			// 4 columns: branch, PR, parent, remote
+			// 4 columns: branch, PR, parent
 			if isMerged {
 				// For merged branches, apply strikethrough to entire line
 				prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
-				fmt.Fprintf(os.Stderr, "%s%s%s%s %s%s%s  %s  %s%s%s\n",
+				fmt.Fprintf(os.Stderr, "%s%s%s%s %s%s%s  %s  %s%s\n",
 					Strikethrough, pointer, color, connector, Bold, paddedName, Reset+Strikethrough,
 					prWithStrike,
-					paddedParent, Reset, remoteTag)
+					paddedParent, Reset)
 			} else {
-				fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s  %s%s%s\n",
+				fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s  %s%s\n",
 					pointer, color, connector, Bold, paddedName, Reset,
 					prFormatted,
-					paddedParent, Reset, remoteTag)
+					paddedParent, Reset)
 			}
 		}
 	}

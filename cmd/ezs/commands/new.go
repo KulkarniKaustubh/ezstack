@@ -219,15 +219,14 @@ func New(args []string) error {
 			return err
 		}
 
+		err = mgr.RegisterRemoteBranch(selectedPR.Branch, selectedPR.Number, selectedPR.URL)
+		if err != nil {
+			return fmt.Errorf("failed to register remote branch: %w", err)
+		}
+
 		cfg, err := config.Load()
 		if err != nil {
 			return err
-		}
-		baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
-
-		_, err = mgr.RegisterRemoteBranch(selectedPR.Branch, baseBranch, selectedPR.Number, selectedPR.URL)
-		if err != nil {
-			return fmt.Errorf("failed to register remote branch: %w", err)
 		}
 
 		worktreePath := *worktree

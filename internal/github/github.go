@@ -300,16 +300,12 @@ func (c *Client) runGH(args ...string) (string, error) {
 }
 
 // EnsureCorrectBaseBranches ensures each PR's base branch matches the expected parent branch.
-// skipBranches is a set of branch names to skip (e.g., remote-tracking branches that belong to others)
-func (c *Client) EnsureCorrectBaseBranches(stack *config.Stack, skipBranches map[string]bool) error {
+func (c *Client) EnsureCorrectBaseBranches(stack *config.Stack) error {
 	for _, branch := range stack.Branches {
 		if branch.PRNumber == 0 {
 			continue
 		}
 		if branch.IsMerged {
-			continue
-		}
-		if skipBranches != nil && skipBranches[branch.Name] {
 			continue
 		}
 
@@ -328,18 +324,16 @@ func (c *Client) EnsureCorrectBaseBranches(stack *config.Stack, skipBranches map
 }
 
 // UpdateStackDescription updates PR descriptions with stack info.
-// skipBranches is a set of branch names to skip (e.g., remote-tracking branches that belong to others)
-func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch string, skipBranches map[string]bool) error {
-	// Count how many branches in this stack have PRs (excluding skipped branches)
+func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch string) error {
+	// Count how many PRs are in the stack (including root PR if present)
 	prCount := 0
-	for _, branch := range stack.Branches {
-		if branch.PRNumber == 0 {
-			continue
-		}
-		if skipBranches != nil && skipBranches[branch.Name] {
-			continue
-		}
+	if stack.RootPRNumber > 0 {
 		prCount++
+	}
+	for _, branch := range stack.Branches {
+		if branch.PRNumber > 0 {
+			prCount++
+		}
 	}
 
 	// Only update descriptions when there are 2+ PRs in the stack
@@ -349,11 +343,6 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 
 	for _, branch := range stack.Branches {
 		if branch.PRNumber == 0 {
-			continue
-		}
-
-		// Skip branches that we shouldn't modify (e.g., remote-tracking branches)
-		if skipBranches != nil && skipBranches[branch.Name] {
 			continue
 		}
 
@@ -383,10 +372,21 @@ func generateStackSection(stack *config.Stack, currentPRBranch string) string {
 	var sb strings.Builder
 	sb.WriteString("\n\n---\n## PR Stack\n\n")
 
+	num := 1
+
+	// Include root PR first if present (e.g., remote base branch PR)
+	if stack.RootPRNumber > 0 {
+		if stack.RootPRUrl != "" {
+			sb.WriteString(fmt.Sprintf("%d. %s (base)\n", num, stack.RootPRUrl))
+		} else {
+			sb.WriteString(fmt.Sprintf("%d. #%d (base)\n", num, stack.RootPRNumber))
+		}
+		num++
+	}
+
 	// Sort branches topologically (parent -> child order)
 	sortedBranches := config.SortBranchesTopologically(stack.Branches)
 
-	num := 1
 	for _, branch := range sortedBranches {
 		// Skip branches that don't have a PR yet
 		if branch.PRNumber == 0 && branch.PRUrl == "" {

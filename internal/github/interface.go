@@ -27,7 +27,7 @@ type ClientInterface interface {
 	ListOpenPRs() ([]OpenPR, error)
 
 	// UpdateStackDescription updates PR descriptions with stack info
-	UpdateStackDescription(stack *config.Stack, currentBranch string, skipBranches map[string]bool) error
+	UpdateStackDescription(stack *config.Stack, currentBranch string) error
 }
 
 // Ensure Client implements ClientInterface

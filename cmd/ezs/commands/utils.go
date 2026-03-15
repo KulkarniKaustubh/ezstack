@@ -44,8 +44,7 @@ func findStackForBranch(mgr *stack.Manager, branchName string) *config.Stack {
 // updateStackDescriptions updates PR descriptions for all PRs in the given stack.
 func updateStackDescriptions(gh *github.Client, s *config.Stack, activeBranch string) error {
 	ui.Info("Updating PR stack descriptions...")
-	skipBranches := getRemoteBranches(s)
-	return gh.UpdateStackDescription(s, activeBranch, skipBranches)
+	return gh.UpdateStackDescription(s, activeBranch)
 }
 
 // OfferForcePush prompts the user to force push a branch with --force-with-lease

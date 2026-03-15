@@ -99,13 +99,18 @@ type SyncCallbacks struct {
 	AfterRebase  AfterRebaseCallback
 }
 
-// getParentRef returns the git ref for a parent branch
-// For remote branches (IsRemote=true), returns origin/<name>
-// For local branches, returns the branch name
+// getParentRef returns the git ref for a parent branch.
+// For branches not in the tree (i.e. stack roots like main or remote bases),
+// returns origin/<name> if the remote exists, otherwise the local name.
+// For branches in the tree, returns the local branch name.
 func (m *Manager) getParentRef(parentName string) string {
 	parentBranch := m.GetBranch(parentName)
-	if parentBranch != nil && parentBranch.IsRemote {
-		return "origin/" + parentName
+	if parentBranch == nil {
+		// Parent is a root or external branch — prefer origin ref
+		if m.git.RemoteBranchExists(parentName) {
+			return "origin/" + parentName
+		}
+		return parentName
 	}
 	return parentName
 }
@@ -154,7 +159,7 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 
 	for _, stack := range stacksToCheck {
 		for _, branch := range stack.Branches {
-			if branch.IsRemote || branch.IsMerged {
+			if branch.IsMerged {
 				continue
 			}
 
@@ -219,7 +224,7 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 // Returns SyncInfo if the branch needs syncing, nil otherwise
 func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client) *SyncInfo {
 	branch := m.GetBranch(branchName)
-	if branch == nil || branch.IsRemote || branch.IsMerged {
+	if branch == nil || branch.IsMerged {
 		return nil
 	}
 
@@ -334,10 +339,8 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 	oldHeads := make(map[string]string)
 	for _, stack := range stacksToSync {
 		for _, branch := range stack.Branches {
-			if !branch.IsRemote {
-				if commit, err := m.git.GetBranchCommit(branch.Name); err == nil {
-					oldHeads[branch.Name] = commit
-				}
+			if commit, err := m.git.GetBranchCommit(branch.Name); err == nil {
+				oldHeads[branch.Name] = commit
 			}
 		}
 	}
@@ -348,10 +351,6 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 	for _, stack := range stacksToSync {
 		stackHasConflict := false // Track if this stack hit a conflict
 		for _, branch := range stack.Branches {
-			if branch.IsRemote {
-				continue
-			}
-
 			// Skip already-merged branches (they don't need syncing)
 			if branch.IsMerged {
 				continue
@@ -709,10 +708,6 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 		return nil, fmt.Errorf("branch '%s' not found", branchName)
 	}
 
-	if branch.IsRemote {
-		return nil, fmt.Errorf("cannot sync remote branch '%s'", branchName)
-	}
-
 	stack := m.GetStackForBranch(branchName)
 	if stack == nil {
 		return nil, fmt.Errorf("branch '%s' not found in any stack", branchName)
@@ -857,18 +852,10 @@ func (m *Manager) RebaseOnParent() error {
 		return err
 	}
 
-	if currentBranch.IsRemote {
-		// Remote branch - cannot rebase (no local worktree, belongs to someone else)
-		return fmt.Errorf("cannot rebase remote branch '%s' - it has no local worktree", currentBranch.Name)
-	}
-
-	// Check if parent is a remote branch - if so, use origin/<parent>
+	// If parent is the stack root (not in tree), use origin/<parent>
 	parentRef := currentBranch.Parent
-	for _, b := range currentStack.Branches {
-		if b.Name == currentBranch.Parent && b.IsRemote {
-			parentRef = "origin/" + currentBranch.Parent
-			break
-		}
+	if currentBranch.Parent == currentStack.Root {
+		parentRef = "origin/" + currentBranch.Parent
 	}
 
 	fmt.Fprintf(os.Stderr, "Rebasing %s onto %s\n", currentBranch.Name, parentRef)
@@ -887,10 +874,6 @@ func (m *Manager) RebaseChildren() ([]RebaseResult, error) {
 	children := m.GetChildren(currentBranch.Name)
 
 	for _, child := range children {
-		if child.IsRemote {
-			continue
-		}
-
 		result := RebaseResult{Branch: child.Name, WorktreePath: child.WorktreePath}
 		g := git.New(child.WorktreePath)
 
@@ -993,11 +976,6 @@ func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOn
 				continue
 			}
 
-			// Skip remote branches (they don't have local worktrees to clean up)
-			if branch.IsRemote {
-				continue
-			}
-
 			// Check if the PR is merged
 			pr, err := gh.GetPR(branch.PRNumber)
 			if err != nil {
@@ -1081,9 +1059,6 @@ func (m *Manager) DetectFullyMergedStacks(stacks []*config.Stack) []FullyMergedS
 
 		// Check if any local artifacts (worktrees, git branches) still exist
 		for _, branch := range stack.Branches {
-			if branch.IsRemote {
-				continue
-			}
 			if branch.WorktreePath != "" {
 				if _, err := os.Stat(branch.WorktreePath); err == nil {
 					info.HasLocalArtifacts = true

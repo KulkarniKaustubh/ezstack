@@ -14,17 +14,6 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// getRemoteBranches returns a map of branch names that are remote branches (someone else's)
-func getRemoteBranches(s *config.Stack) map[string]bool {
-	skipBranches := make(map[string]bool)
-	for _, branch := range s.Branches {
-		if branch.IsRemote {
-			skipBranches[branch.Name] = true
-		}
-	}
-	return skipBranches
-}
-
 func printPRUsage() {
 	fmt.Fprintf(os.Stderr, `%sManage pull requests%s
 
@@ -115,7 +104,7 @@ func prInteractive() error {
 
 	branchesWithoutPR := 0
 	for _, b := range currentStack.Branches {
-		if b.PRNumber == 0 && !b.IsRemote {
+		if b.PRNumber == 0 {
 			branchesWithoutPR++
 		}
 	}
@@ -172,10 +161,6 @@ func prCreateAll(currentStack *config.Stack) error {
 
 	branchesToCreate := []*config.Branch{}
 	for _, b := range currentStack.Branches {
-		// Skip remote branches (they already have PRs and belong to someone else)
-		if b.IsRemote {
-			continue
-		}
 		if b.PRNumber == 0 {
 			// Check if branch has commits ahead of its base
 			commitsAhead, err := g.GetCommitsAhead(b.Name, b.Parent)

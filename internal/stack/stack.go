@@ -99,55 +99,40 @@ func (m *Manager) RegisterExistingBranch(branchName, worktreePath, baseBranch st
 	return branch, nil
 }
 
-// RegisterRemoteBranch registers a remote branch (someone else's PR) as the root of a new stack
-// Remote branches don't have local worktrees - only their child branches do
-func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber int, prURL string) (*config.Branch, error) {
-	// Check if branch is already registered
-	if existing := m.GetBranch(branchName); existing != nil {
-		return nil, fmt.Errorf("branch '%s' is already registered in a stack", branchName)
+// RegisterRemoteBranch creates a new stack with a remote branch as its root/base.
+// The remote branch is NOT added to the tree — it is the stack root.
+// PR info is stored on the Stack struct for display in stack descriptions.
+func (m *Manager) RegisterRemoteBranch(branchName string, prNumber int, prURL string) error {
+	// Check if there's already a stack rooted on this branch
+	if key := m.findStackByRoot(branchName); key != "" {
+		return fmt.Errorf("a stack with root '%s' already exists", branchName)
 	}
 
-	// Create a new stack with this branch as the root
 	hash := config.GenerateStackHash(branchName)
 	stack := &config.Stack{
-		Hash: hash,
-		Root: baseBranch,
-		Tree: config.BranchTree{
-			branchName: config.BranchTree{},
-		},
+		Hash:         hash,
+		Root:         branchName,
+		RootPRNumber: prNumber,
+		RootPRUrl:    prURL,
+		Tree:         config.BranchTree{},
 	}
 	m.stackConfig.Stacks[hash] = stack
+	stack.PopulateBranchesWithCache(m.stackConfig.Cache)
 
-	// Update cache
-	cache := m.stackConfig.Cache
-	cache.SetBranchCache(branchName, &config.BranchCache{
-		PRNumber: prNumber,
-		PRUrl:    prURL,
-		IsRemote: true,
-	})
-
-	// Populate branches from tree with cache
-	stack.PopulateBranchesWithCache(cache)
-
-	// Save the config
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
-		return nil, fmt.Errorf("failed to save stack config: %w", err)
+		return fmt.Errorf("failed to save stack config: %w", err)
 	}
-
-	// Return the branch from the populated list
-	for _, b := range stack.Branches {
-		if b.Name == branchName {
-			return b, nil
-		}
-	}
-	return nil, fmt.Errorf("failed to create branch")
+	return nil
 }
 
 // AddBranchToStack adds an existing branch to a stack (worktree should already exist)
 // This is used when the worktree was created externally (e.g., from a remote branch)
 func (m *Manager) AddBranchToStack(name, parentBranch, worktreeDir string) (*config.Branch, error) {
-	// Find the stack for the parent
+	// Find the stack for the parent (check tree branches first, then roots)
 	stackKey := m.findStackForBranch(parentBranch)
+	if stackKey == "" {
+		stackKey = m.findStackByRoot(parentBranch)
+	}
 	if stackKey == "" {
 		return nil, fmt.Errorf("parent branch '%s' not found in any stack", parentBranch)
 	}
@@ -353,17 +338,15 @@ func (m *Manager) GetStackForBranch(branchName string) *config.Stack {
 // getRebaseRef returns the git ref to use when rebasing onto parentName.
 // For parents not tracked in any stack (roots, external branches), uses
 // origin/<name> when the remote branch exists. For tracked stack branches,
-// uses origin/<name> only if the branch is marked IsRemote.
+// uses the local branch name.
 func (m *Manager) getRebaseRef(parentName string) string {
 	parentBranch := m.GetBranch(parentName)
 	if parentBranch == nil {
+		// Parent is a root or external branch — prefer origin ref
 		if m.git.RemoteBranchExists(parentName) {
 			return "origin/" + parentName
 		}
 		return parentName
-	}
-	if parentBranch.IsRemote {
-		return "origin/" + parentName
 	}
 	return parentName
 }
@@ -416,30 +399,28 @@ func (m *Manager) DeleteBranch(branchName string, force bool) error {
 		return fmt.Errorf("cannot delete branch '%s': has child branches: %s. Use --force to delete anyway", branchName, strings.Join(childNames, ", "))
 	}
 
-	// Remove the worktree and branch from git (only if not a remote branch)
-	if !branch.IsRemote {
-		worktreePath := branch.WorktreePath
-		if worktreePath == "" {
-			// WorktreePath missing from config - look it up from git worktree list
-			if wts, err := m.git.ListWorktrees(); err == nil {
-				for _, wt := range wts {
-					if wt.Branch == branchName {
-						worktreePath = wt.Path
-						break
-					}
+	// Remove the worktree and branch from git
+	worktreePath := branch.WorktreePath
+	if worktreePath == "" {
+		// WorktreePath missing from config - look it up from git worktree list
+		if wts, err := m.git.ListWorktrees(); err == nil {
+			for _, wt := range wts {
+				if wt.Branch == branchName {
+					worktreePath = wt.Path
+					break
 				}
 			}
 		}
-		if worktreePath != "" {
-			if err := m.git.RemoveWorktree(worktreePath, true, branchName); err != nil {
-				return fmt.Errorf("failed to remove worktree: %w", err)
-			}
-		} else if m.git.BranchExists(branchName) {
-			// No worktree at all - just delete the git branch directly
-			if err := m.git.DeleteBranch(branchName, true); err != nil {
-				if !strings.Contains(err.Error(), "not found") {
-					return fmt.Errorf("failed to delete branch: %w", err)
-				}
+	}
+	if worktreePath != "" {
+		if err := m.git.RemoveWorktree(worktreePath, true, branchName); err != nil {
+			return fmt.Errorf("failed to remove worktree: %w", err)
+		}
+	} else if m.git.BranchExists(branchName) {
+		// No worktree at all - just delete the git branch directly
+		if err := m.git.DeleteBranch(branchName, true); err != nil {
+			if !strings.Contains(err.Error(), "not found") {
+				return fmt.Errorf("failed to delete branch: %w", err)
 			}
 		}
 	}
@@ -952,8 +933,8 @@ func (m *Manager) DetectMissingWorktrees() []MissingWorktreeInfo {
 	var missing []MissingWorktreeInfo
 	for _, stack := range m.stackConfig.Stacks {
 		for _, branch := range stack.Branches {
-			// Skip merged branches and remote branches (they don't have local worktrees)
-			if branch.IsMerged || branch.IsRemote {
+			// Skip merged branches (they don't have local worktrees)
+			if branch.IsMerged {
 				continue
 			}
 			// Skip branches without a worktree path
@@ -1068,9 +1049,6 @@ func (m *Manager) DeleteStack(stackHash string) error {
 
 	// Clean up any remaining worktrees and git branches
 	for _, branch := range stack.Branches {
-		if branch.IsRemote {
-			continue
-		}
 		// Try to remove worktree if it exists
 		if branch.WorktreePath != "" {
 			if _, err := os.Stat(branch.WorktreePath); err == nil {
@@ -1102,27 +1080,25 @@ func (m *Manager) MarkBranchMerged(branchName string) error {
 		return fmt.Errorf("branch '%s' not found in any stack", branchName)
 	}
 
-	// Remove the worktree and branch from git (only if not a remote branch)
-	if !branch.IsRemote {
-		worktreePath := branch.WorktreePath
-		if worktreePath == "" {
-			// WorktreePath missing from config - look it up from git worktree list
-			if wts, err := m.git.ListWorktrees(); err == nil {
-				for _, wt := range wts {
-					if wt.Branch == branchName {
-						worktreePath = wt.Path
-						break
-					}
+	// Remove the worktree and branch from git
+	worktreePath := branch.WorktreePath
+	if worktreePath == "" {
+		// WorktreePath missing from config - look it up from git worktree list
+		if wts, err := m.git.ListWorktrees(); err == nil {
+			for _, wt := range wts {
+				if wt.Branch == branchName {
+					worktreePath = wt.Path
+					break
 				}
 			}
 		}
-		if worktreePath != "" {
-			// RemoveWorktree handles both worktree removal and branch deletion
-			_ = m.git.RemoveWorktree(worktreePath, true, branchName)
-		} else if m.git.BranchExists(branchName) {
-			// No worktree at all - just delete the git branch
-			_ = m.git.DeleteBranch(branchName, true)
-		}
+	}
+	if worktreePath != "" {
+		// RemoveWorktree handles both worktree removal and branch deletion
+		_ = m.git.RemoveWorktree(worktreePath, true, branchName)
+	} else if m.git.BranchExists(branchName) {
+		// No worktree at all - just delete the git branch
+		_ = m.git.DeleteBranch(branchName, true)
 	}
 
 	// Update cache

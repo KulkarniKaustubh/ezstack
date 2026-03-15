@@ -94,7 +94,7 @@ type repoData struct {
 
 // currentStackConfigVersion is the latest version of the stacks.json format.
 // Bump this when adding a new migration.
-const currentStackConfigVersion = 3
+const currentStackConfigVersion = 4
 
 // stackConfigFile is the on-disk format that stores stacks for all repos
 type stackConfigFile struct {
@@ -112,11 +112,13 @@ type StackConfig struct {
 // Stack represents a chain of stacked branches as a tree
 // Hash is the map key in StackConfig.Stacks and is populated at load time.
 type Stack struct {
-	Hash     string       `json:"-"`    // Populated from map key at load time
-	Root     string       `json:"root"` // The base branch (usually "main")
-	Tree     BranchTree   `json:"tree"` // The tree of branches
-	Branches []*Branch    `json:"-"`    // Runtime-only: populated from Tree for backward compatibility
-	cache    *CacheConfig // Runtime-only: reference to cache for metadata
+	Hash         string       `json:"-"`                        // Populated from map key at load time
+	Root         string       `json:"root"`                     // The base branch (e.g. "main", or a remote branch name)
+	RootPRNumber int          `json:"root_pr_number,omitempty"` // PR number of the root branch (for remote base branches)
+	RootPRUrl    string       `json:"root_pr_url,omitempty"`    // PR URL of the root branch (for remote base branches)
+	Tree         BranchTree   `json:"tree"`                     // The tree of branches
+	Branches     []*Branch    `json:"-"`                        // Runtime-only: populated from Tree for backward compatibility
+	cache        *CacheConfig // Runtime-only: reference to cache for metadata
 }
 
 // GenerateStackHash generates a 7-char hex hash from a stack name using FNV-32a
@@ -236,6 +238,7 @@ func migrateStackConfig(data []byte, srcVersion, dstVersion int) ([]byte, error)
 		migrateV0ToV1,
 		migrateV1ToV2,
 		migrateV2ToV3,
+		migrateV3ToV4,
 	}
 
 	for v := srcVersion; v < dstVersion; v++ {
@@ -520,6 +523,96 @@ func migrateV2ToV3(data []byte) ([]byte, error) {
 				Tree: stack.Tree,
 			}
 		}
+		newFile.Repos[repoPath] = newRd
+	}
+
+	return json.MarshalIndent(newFile, "", "  ")
+}
+
+// migrateV3ToV4 moves remote branches from tree nodes to stack roots.
+// v3: remote branches are tree nodes with IsRemote=true in cache
+// v4: remote branches become the stack Root with RootPRNumber/RootPRUrl
+func migrateV3ToV4(data []byte) ([]byte, error) {
+	type v3Stack struct {
+		Root string     `json:"root"`
+		Tree BranchTree `json:"tree"`
+	}
+	type v3RepoData struct {
+		Stacks   map[string]*v3Stack     `json:"stacks"`
+		Branches map[string]*BranchCache `json:"branches"`
+	}
+	type v3File struct {
+		Version int                    `json:"version"`
+		Repos   map[string]*v3RepoData `json:"repos"`
+	}
+
+	var old v3File
+	if err := json.Unmarshal(data, &old); err != nil {
+		return nil, err
+	}
+
+	type v4Stack struct {
+		Root         string     `json:"root"`
+		RootPRNumber int        `json:"root_pr_number,omitempty"`
+		RootPRUrl    string     `json:"root_pr_url,omitempty"`
+		Tree         BranchTree `json:"tree"`
+	}
+	type v4RepoData struct {
+		Stacks   map[string]*v4Stack     `json:"stacks"`
+		Branches map[string]*BranchCache `json:"branches"`
+	}
+	type v4File struct {
+		Version int                    `json:"version"`
+		Repos   map[string]*v4RepoData `json:"repos"`
+	}
+
+	newFile := v4File{Version: 4, Repos: make(map[string]*v4RepoData)}
+	for repoPath, rd := range old.Repos {
+		if rd == nil {
+			continue
+		}
+		newRd := &v4RepoData{
+			Stacks:   make(map[string]*v4Stack),
+			Branches: rd.Branches,
+		}
+		if newRd.Branches == nil {
+			newRd.Branches = make(map[string]*BranchCache)
+		}
+
+		for hash, stack := range rd.Stacks {
+			if stack == nil {
+				continue
+			}
+			newStack := &v4Stack{
+				Root: stack.Root,
+				Tree: stack.Tree,
+			}
+
+			// Find remote branches in the tree (top-level only, since remote branches
+			// are always direct children of root in v3)
+			for branchName, children := range stack.Tree {
+				bc := rd.Branches[branchName]
+				if bc != nil && bc.IsRemote {
+					// This remote branch becomes the new root
+					newStack.Root = branchName
+					newStack.RootPRNumber = bc.PRNumber
+					newStack.RootPRUrl = bc.PRUrl
+
+					// Promote children to top-level tree nodes
+					delete(newStack.Tree, branchName)
+					for childName, childTree := range children {
+						newStack.Tree[childName] = childTree
+					}
+
+					// Remove from branch cache
+					delete(newRd.Branches, branchName)
+					break // Only one remote branch per stack
+				}
+			}
+
+			newRd.Stacks[hash] = newStack
+		}
+
 		newFile.Repos[repoPath] = newRd
 	}
 
