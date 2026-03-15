@@ -426,13 +426,13 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 		} else if syncInfo.BehindParent != "" {
 			reason = fmt.Sprintf("%d commits behind %s", syncInfo.BehindBy, syncInfo.BehindParent)
 		} else if syncInfo.BehindBy > 0 {
-			reason = fmt.Sprintf("%d commits behind main", syncInfo.BehindBy)
+			reason = fmt.Sprintf("%d commits behind %s", syncInfo.BehindBy, currentStack.Root)
 		}
 		options = append(options, fmt.Sprintf("%s  Sync current branch only (%s)", ui.IconSync, reason))
 		optionActions = append(optionActions, "current")
 	}
 
-	if branch.Parent != "" && !mgr.IsMainBranch(branch.Parent) {
+	if branch.Parent != "" && branch.Parent != currentStack.Root {
 		options = append(options, fmt.Sprintf("%s  Rebase current branch onto parent (%s)", ui.IconUp, branch.Parent))
 		optionActions = append(optionActions, "parent")
 	}
@@ -693,8 +693,9 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 
 // syncOntoParent rebases the current branch onto its parent
 func syncOntoParent(mgr *stack.Manager, branch *config.Branch) error {
-	if mgr.IsMainBranch(branch.Parent) {
-		ui.Info("Parent is main - use 'Auto-sync' to rebase onto latest origin/main")
+	stack := mgr.GetStackForBranch(branch.Name)
+	if stack != nil && branch.Parent == stack.Root {
+		ui.Info(fmt.Sprintf("Parent is %s - use 'Auto-sync' to rebase onto latest origin/%s", stack.Root, stack.Root))
 		return nil
 	}
 
