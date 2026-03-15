@@ -24,21 +24,27 @@ func Stack(args []string) error {
 %sOPTIONS%s
     -b, --branch <name>     Branch to add to stack
     -p, --parent <name>     Parent branch in the stack
+    -B, --base <name>       Base branch for a new stack (e.g. develop, staging)
     -h, --help              Show this help message
 
 %sDESCRIPTION%s
     Adds an untracked branch/worktree to an existing stack by setting its parent.
     This is equivalent to 'ezs reparent' for standalone branches.
 
+    Use --base to start a new stack rooted on a branch other than the default
+    base branch (e.g. develop or staging).
+
 %sEXAMPLES%s
-    ezs stack                         Interactive mode
-    ezs stack my-branch feature-a     Add my-branch under feature-a
-    ezs stack -b my-branch -p main    Add my-branch under main
+    ezs stack                             Interactive mode
+    ezs stack my-branch feature-a         Add my-branch under feature-a
+    ezs stack -b my-branch -p main        Add my-branch under main
+    ezs stack -b my-branch --base develop Start a new stack on develop
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 
 	branchFlag := fs.StringP("branch", "b", "", "Branch to add")
 	parentFlag := fs.StringP("parent", "p", "", "Parent branch")
+	baseFlag := fs.StringP("base", "B", "", "Base branch for a new stack")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -71,9 +77,16 @@ func Stack(args []string) error {
 		branchName = fs.Arg(0)
 	}
 
+	// --base and --parent are mutually exclusive
+	if *baseFlag != "" && *parentFlag != "" {
+		return fmt.Errorf("--base and --parent are mutually exclusive")
+	}
+
 	// Get parent
 	var parentName string
-	if *parentFlag != "" {
+	if *baseFlag != "" {
+		parentName = *baseFlag
+	} else if *parentFlag != "" {
 		parentName = *parentFlag
 	} else if fs.NArg() >= 2 {
 		parentName = fs.Arg(1)

@@ -175,18 +175,21 @@ func SelectNewParent(mgr *stack.Manager, g *git.Git, branchName, baseBranch stri
 	allBranches := mgr.GetAllBranchesInAllStacks()
 	stacks := mgr.ListStacks()
 
+	// Track which branches are already listed
+	listed := map[string]bool{branchName: true}
+
 	// Build options list - include main/master and all stack branches
 	var options []string
 	var parentNames []string
 
-	// Add main/master as first option
+	// Add configured base branch as first option
 	options = append(options, fmt.Sprintf("%s (base branch)", baseBranch))
 	parentNames = append(parentNames, baseBranch)
+	listed[baseBranch] = true
 
 	// Add branches from stacks (with stack preview)
 	for _, b := range allBranches {
-		// Skip the branch being reparented and its descendants
-		if b.Name == branchName || IsDescendantOf(mgr, b.Name, branchName) {
+		if listed[b.Name] || IsDescendantOf(mgr, b.Name, branchName) {
 			continue
 		}
 		if b.IsMerged {
@@ -206,6 +209,20 @@ func SelectNewParent(mgr *stack.Manager, g *git.Git, branchName, baseBranch stri
 
 		options = append(options, fmt.Sprintf("%s (%s %s) [stack: %s]", b.Name, ui.IconArrow, b.Parent, stackName))
 		parentNames = append(parentNames, b.Name)
+		listed[b.Name] = true
+	}
+
+	// Add other local branches as potential stack roots
+	localBranches, err := g.ListLocalBranches()
+	if err == nil {
+		for _, lb := range localBranches {
+			if listed[lb] {
+				continue
+			}
+			options = append(options, fmt.Sprintf("%s (local branch)", lb))
+			parentNames = append(parentNames, lb)
+			listed[lb] = true
+		}
 	}
 
 	if len(options) == 0 {

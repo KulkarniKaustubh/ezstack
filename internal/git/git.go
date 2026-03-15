@@ -280,6 +280,19 @@ func (g *Git) RemoteBranchExists(branch string) bool {
 	return err == nil
 }
 
+// ListLocalBranches returns all local branch names
+func (g *Git) ListLocalBranches() ([]string, error) {
+	output, err := g.run("for-each-ref", "--format=%(refname:short)", "refs/heads/")
+	if err != nil {
+		return nil, err
+	}
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return nil, nil
+	}
+	return strings.Split(output, "\n"), nil
+}
+
 // BranchExists checks if a local branch exists
 func (g *Git) BranchExists(branch string) bool {
 	_, err := g.run("rev-parse", "--verify", branch)

@@ -348,3 +348,53 @@ func TestRebaseResult(t *testing.T) {
 		t.Error("Conflict result should have HasConflict=true")
 	}
 }
+
+func TestListLocalBranches(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// Create some branches
+	exec.Command("git", "-C", dir, "branch", "develop").Run()
+	exec.Command("git", "-C", dir, "branch", "staging").Run()
+	exec.Command("git", "-C", dir, "branch", "feature-x").Run()
+
+	branches, err := g.ListLocalBranches()
+	if err != nil {
+		t.Fatalf("ListLocalBranches() error = %v", err)
+	}
+
+	// Should contain all branches including main/master
+	branchSet := map[string]bool{}
+	for _, b := range branches {
+		branchSet[b] = true
+	}
+
+	for _, expected := range []string{"develop", "staging", "feature-x"} {
+		if !branchSet[expected] {
+			t.Errorf("ListLocalBranches() missing branch %q, got %v", expected, branches)
+		}
+	}
+
+	if len(branches) < 4 {
+		t.Errorf("ListLocalBranches() returned %d branches, expected at least 4", len(branches))
+	}
+}
+
+func TestListLocalBranches_Empty(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// Even with just the default branch, should return at least 1
+	branches, err := g.ListLocalBranches()
+	if err != nil {
+		t.Fatalf("ListLocalBranches() error = %v", err)
+	}
+
+	if len(branches) < 1 {
+		t.Errorf("ListLocalBranches() returned %d branches, expected at least 1", len(branches))
+	}
+}
