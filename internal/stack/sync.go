@@ -62,6 +62,7 @@ type SyncInfo struct {
 	MergedParent string // Non-empty if parent was merged
 	BehindBy     int    // Number of commits behind target
 	BehindParent string // Non-empty if behind a non-main parent
+	StackRoot    string // The root branch of this branch's stack (e.g. "main", "develop")
 	NeedsSync    bool   // True if branch needs to be synced
 }
 
@@ -161,9 +162,10 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 				behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
 				if err == nil && behindBy > 0 {
 					results = append(results, SyncInfo{
-						Branch:    branch.Name,
-						BehindBy:  behindBy,
-						NeedsSync: true,
+						Branch:     branch.Name,
+						BehindBy:   behindBy,
+						StackRoot: stack.Root,
+						NeedsSync:  true,
 					})
 				}
 				continue
@@ -191,6 +193,7 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 				results = append(results, SyncInfo{
 					Branch:       branch.Name,
 					MergedParent: branch.Parent,
+					StackRoot:    stack.Root,
 					NeedsSync:    true,
 				})
 				continue
@@ -202,6 +205,7 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 					Branch:       branch.Name,
 					BehindBy:     behindBy,
 					BehindParent: branch.Parent,
+					StackRoot:    stack.Root,
 					NeedsSync:    true,
 				})
 			}
@@ -228,9 +232,10 @@ func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client
 		behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
 		if err == nil && behindBy > 0 {
 			return &SyncInfo{
-				Branch:    branch.Name,
-				BehindBy:  behindBy,
-				NeedsSync: true,
+				Branch:     branch.Name,
+				BehindBy:   behindBy,
+				StackRoot: stack.Root,
+				NeedsSync:  true,
 			}
 		}
 		return nil
@@ -258,6 +263,7 @@ func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client
 		return &SyncInfo{
 			Branch:       branch.Name,
 			MergedParent: branch.Parent,
+			StackRoot:    stack.Root,
 			NeedsSync:    true,
 		}
 	}
@@ -268,6 +274,7 @@ func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client
 			Branch:       branch.Name,
 			BehindBy:     behindBy,
 			BehindParent: branch.Parent,
+			StackRoot:    stack.Root,
 			NeedsSync:    true,
 		}
 	}
@@ -369,9 +376,10 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 
 				if callbacks != nil && callbacks.BeforeRebase != nil {
 					syncInfo := SyncInfo{
-						Branch:    branch.Name,
-						BehindBy:  behindBy,
-						NeedsSync: true,
+						Branch:     branch.Name,
+						BehindBy:   behindBy,
+						StackRoot: stack.Root,
+						NeedsSync:  true,
 					}
 					if !callbacks.BeforeRebase(syncInfo) {
 						continue
@@ -469,6 +477,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					syncInfo := SyncInfo{
 						Branch:       branch.Name,
 						MergedParent: oldParent,
+						StackRoot:    stack.Root,
 						NeedsSync:    true,
 					}
 					if !callbacks.BeforeRebase(syncInfo) {
@@ -550,6 +559,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					Branch:       branch.Name,
 					BehindBy:     behindBy,
 					BehindParent: branch.Parent,
+					StackRoot:    stack.Root,
 					NeedsSync:    true,
 				}
 				if !callbacks.BeforeRebase(syncInfo) {
