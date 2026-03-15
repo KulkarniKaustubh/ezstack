@@ -306,6 +306,10 @@ func prCreate(args []string) error {
 		return err
 	}
 
+	if branch.PRNumber > 0 {
+		return fmt.Errorf("branch '%s' already has PR #%d: %s\nTo push updates, use: ezs pr update", branch.Name, branch.PRNumber, branch.PRUrl)
+	}
+
 	commitsAhead, err := g.GetCommitsAhead(branch.Name, branch.Parent)
 	if err != nil {
 		// If we can't determine, continue anyway (might be a new branch)

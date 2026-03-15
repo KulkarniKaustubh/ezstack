@@ -271,6 +271,7 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 		return nil
 	}
 
+	oldStack := findStackForBranch(mgr, branchName)
 	branch, err := mgr.ReparentBranch(branchName, newParent, doRebase)
 	if err != nil {
 		return err
@@ -281,15 +282,11 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 
 	ui.Success(fmt.Sprintf("Reparented '%s' to '%s'", branch.Name, branch.Parent))
 
-	// Find the stack this branch belongs to
 	currentStack := findStackForBranch(mgr, branchName)
 
 	cwd, _ := os.Getwd()
 	g := git.New(cwd)
 
-	// If we rebased, offer to force-push the branch.
-	// Track whether the push succeeded so we only update the GitHub PR base
-	// when origin actually reflects the new parent (avoids misleading PR diffs).
 	pushSucceeded := true
 	if doRebase && branch.PRNumber > 0 {
 		ui.Info("Branch was rebased. Force-push required to update the PR.")
@@ -300,32 +297,34 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 		pushSucceeded = OfferForcePush(branchName, worktreePath)
 	}
 
-	// Update PR base branch on GitHub only when origin is up-to-date.
-	// If the user declined the force push, origin still has the old history,
-	// so updating the PR base now would produce a misleading diff.
-	if branch.PRNumber > 0 && pushSucceeded {
-		remoteURL, err := g.GetRemote("origin")
+	remoteURL, err := g.GetRemote("origin")
+	if err == nil {
+		gh, err := github.NewClient(remoteURL)
 		if err == nil {
-			gh, err := github.NewClient(remoteURL)
-			if err == nil {
+			// Only update PR base when the push succeeded — otherwise origin
+			// still has old history and the PR diff would be misleading.
+			if branch.PRNumber > 0 && pushSucceeded {
 				ui.Info(fmt.Sprintf("Updating PR #%d base branch to '%s'...", branch.PRNumber, newParent))
 				if err := gh.UpdatePRBase(branch.PRNumber, newParent); err != nil {
 					ui.Warn(fmt.Sprintf("Failed to update PR base branch: %v", err))
 				} else {
 					ui.Success(fmt.Sprintf("Updated PR #%d base branch to '%s'", branch.PRNumber, newParent))
 				}
+			}
 
-				// Also update stack descriptions in all PRs
-				if currentStack != nil {
-					if err := updateStackDescriptions(gh, currentStack, branchName); err != nil {
-						ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
-					}
+			if oldStack != nil && (currentStack == nil || oldStack.Hash != currentStack.Hash) {
+				if err := updateStackDescriptions(gh, oldStack, ""); err != nil {
+					ui.Warn(fmt.Sprintf("Failed to update old stack descriptions: %v", err))
+				}
+			}
+			if currentStack != nil {
+				if err := updateStackDescriptions(gh, currentStack, branchName); err != nil {
+					ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
 				}
 			}
 		}
 	}
 
-	// Show the updated stack
 	if currentStack != nil {
 		ui.PrintStack(currentStack, branchName, false, nil)
 	}
