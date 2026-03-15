@@ -127,7 +127,7 @@ func Stack(args []string) error {
 			if err != nil {
 				return err
 			}
-			branchName, err = selectUntrackedBranch(mgr)
+			branchName, err = selectUntrackedBranch(mgr, parentName)
 			if err != nil {
 				return err
 			}
@@ -137,7 +137,7 @@ func Stack(args []string) error {
 			if err != nil {
 				return err
 			}
-			branchName, err = selectUntrackedBranch(mgr)
+			branchName, err = selectUntrackedBranch(mgr, parentName)
 			if err != nil {
 				return err
 			}
@@ -392,22 +392,31 @@ func selectBaseBranch(mgr *stack.Manager, g *git.Git, branchName, baseBranch str
 	return branchNames[selected], nil
 }
 
-// selectUntrackedBranch shows a selection UI for untracked worktrees
-func selectUntrackedBranch(mgr *stack.Manager) (string, error) {
+// selectUntrackedBranch shows a selection UI for untracked worktrees.
+// excludeBranches are filtered out of the list (e.g. the base branch itself).
+func selectUntrackedBranch(mgr *stack.Manager, excludeBranches ...string) (string, error) {
 	unregistered, err := mgr.GetUnregisteredWorktrees()
 	if err != nil {
 		return "", err
 	}
 
-	if len(unregistered) == 0 {
-		return "", fmt.Errorf("no untracked branches found. All worktrees are already in stacks")
+	exclude := make(map[string]bool, len(excludeBranches))
+	for _, b := range excludeBranches {
+		exclude[b] = true
 	}
 
 	var options []string
 	var branchNames []string
 	for _, wt := range unregistered {
+		if exclude[wt.Branch] {
+			continue
+		}
 		options = append(options, fmt.Sprintf("%s (%s)", wt.Branch, wt.Path))
 		branchNames = append(branchNames, wt.Branch)
+	}
+
+	if len(options) == 0 {
+		return "", fmt.Errorf("no untracked branches found. All worktrees are already in stacks")
 	}
 
 	selected, err := ui.SelectOption(options, "Select branch to add to stack")
