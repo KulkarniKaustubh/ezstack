@@ -111,18 +111,23 @@ func Stack(args []string) error {
 			return err
 		}
 
-		branchName, err = selectUntrackedBranch(mgr)
-		if err != nil {
-			return err
-		}
-
 		if choice == 0 {
+			// Add to existing stack: pick branch first, then parent
+			branchName, err = selectUntrackedBranch(mgr)
+			if err != nil {
+				return err
+			}
 			parentName, err = SelectNewParent(mgr, g, branchName, baseBranch)
 			if err != nil {
 				return err
 			}
 		} else {
-			parentName, err = selectBaseBranch(mgr, g, branchName, baseBranch)
+			// Start a new stack: pick base branch first, then branch to add
+			parentName, err = selectBaseBranch(mgr, g, "", baseBranch)
+			if err != nil {
+				return err
+			}
+			branchName, err = selectUntrackedBranch(mgr)
 			if err != nil {
 				return err
 			}
