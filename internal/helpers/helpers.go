@@ -20,5 +20,3 @@ func ExpandPath(path string) string {
 	}
 	return path
 }
-
-

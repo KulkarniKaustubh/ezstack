@@ -24,8 +24,8 @@ func init() {
 
 // Config holds the global configuration for ezstack
 type Config struct {
-	DefaultBaseBranch string            `json:"default_base_branch"`
-	GitHubToken       string            `json:"github_token,omitempty"`
+	DefaultBaseBranch string                 `json:"default_base_branch"`
+	GitHubToken       string                 `json:"github_token,omitempty"`
 	Repos             map[string]*RepoConfig `json:"repos"`
 }
 

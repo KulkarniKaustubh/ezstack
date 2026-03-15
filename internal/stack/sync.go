@@ -167,10 +167,10 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 				behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
 				if err == nil && behindBy > 0 {
 					results = append(results, SyncInfo{
-						Branch:     branch.Name,
-						BehindBy:   behindBy,
+						Branch:    branch.Name,
+						BehindBy:  behindBy,
 						StackRoot: stack.Root,
-						NeedsSync:  true,
+						NeedsSync: true,
 					})
 				}
 				continue
@@ -237,10 +237,10 @@ func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client
 		behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
 		if err == nil && behindBy > 0 {
 			return &SyncInfo{
-				Branch:     branch.Name,
-				BehindBy:   behindBy,
+				Branch:    branch.Name,
+				BehindBy:  behindBy,
 				StackRoot: stack.Root,
-				NeedsSync:  true,
+				NeedsSync: true,
 			}
 		}
 		return nil
@@ -380,10 +380,10 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 
 				if callbacks != nil && callbacks.BeforeRebase != nil {
 					syncInfo := SyncInfo{
-						Branch:     branch.Name,
-						BehindBy:   behindBy,
+						Branch:    branch.Name,
+						BehindBy:  behindBy,
 						StackRoot: stack.Root,
-						NeedsSync:  true,
+						NeedsSync: true,
 					}
 					if !callbacks.BeforeRebase(syncInfo) {
 						continue
