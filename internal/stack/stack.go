@@ -103,9 +103,15 @@ func (m *Manager) RegisterExistingBranch(branchName, worktreePath, baseBranch st
 // The remote branch is NOT added to the tree — it is the stack root.
 // PR info is stored on the Stack struct for display in stack descriptions.
 func (m *Manager) RegisterRemoteBranch(branchName string, prNumber int, prURL string) error {
-	// Check if there's already a stack rooted on this branch
+	// If a stack with this root already exists, just update its PR info
 	if key := m.findStackByRoot(branchName); key != "" {
-		return fmt.Errorf("a stack with root '%s' already exists", branchName)
+		existing := m.stackConfig.Stacks[key]
+		existing.RootPRNumber = prNumber
+		existing.RootPRUrl = prURL
+		if err := m.stackConfig.Save(m.repoDir); err != nil {
+			return fmt.Errorf("failed to save stack config: %w", err)
+		}
+		return nil
 	}
 
 	hash := config.GenerateStackHash(branchName)
