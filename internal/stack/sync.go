@@ -362,6 +362,11 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				continue
 			}
 
+			// Skip branches without a worktree path (can't rebase without a working directory)
+			if branch.WorktreePath == "" {
+				continue
+			}
+
 			result := RebaseResult{Branch: branch.Name, WorktreePath: branch.WorktreePath}
 			g := git.New(branch.WorktreePath)
 
@@ -758,21 +763,24 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 	}
 
 	if isMerged {
+		// Mark the parent as merged in cache (same approach as bulk sync).
+		// Don't modify the tree structure — walkTree computes effective parents
+		// at runtime by skipping merged ancestors.
 		cache := m.stackConfig.Cache
-		bc := cache.GetBranchCache(branch.Parent)
-		if bc == nil {
-			bc = &config.BranchCache{}
-		}
-		bc.IsMerged = true
-		cache.SetBranchCache(branch.Parent, bc)
-
 		oldParent := branch.Parent
 		oldParentRef := m.getParentRef(oldParent)
 		result.SyncedParent = stack.Root
 
+		bc := cache.GetBranchCache(oldParent)
+		if bc == nil {
+			bc = &config.BranchCache{}
+		}
+		bc.IsMerged = true
+		cache.SetBranchCache(oldParent, bc)
+
+		// Repopulate so effective parents are recalculated
 		for _, s := range m.stackConfig.Stacks {
 			if s.HasBranch(branch.Name) {
-				s.ReparentBranch(branch.Name, "")
 				s.PopulateBranchesWithCache(cache)
 				break
 			}
@@ -863,7 +871,7 @@ func (m *Manager) RebaseOnParent() error {
 		}
 	}
 
-	fmt.Printf("Rebasing %s onto %s\n", currentBranch.Name, parentRef)
+	fmt.Fprintf(os.Stderr, "Rebasing %s onto %s\n", currentBranch.Name, parentRef)
 	return m.git.Rebase(parentRef)
 }
 
@@ -955,11 +963,6 @@ func (m *Manager) DetectMergedBranchesForStacks(gh *github.Client, stacks []*con
 func (m *Manager) detectMergedBranchesInternal(gh *github.Client, currentStackOnly bool, specificStacks []*config.Stack) ([]MergedBranchInfo, error) {
 	if gh == nil {
 		return nil, nil
-	}
-
-	baseBranch := m.config.DefaultBaseBranch
-	if baseBranch == "" {
-		baseBranch = "main"
 	}
 
 	var results []MergedBranchInfo

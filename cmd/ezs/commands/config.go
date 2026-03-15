@@ -100,9 +100,6 @@ func configSet(key, value string) error {
 			return fmt.Errorf("worktree_base_dir is a per-repo setting: %w", err)
 		}
 
-		// Expand ~ in path
-		value = helpers.ExpandPath(value)
-
 		if !filepath.IsAbs(value) {
 			cwd, err := os.Getwd()
 			if err != nil {
@@ -149,7 +146,11 @@ func configSet(key, value string) error {
 		return err
 	}
 
-	ui.Success(fmt.Sprintf("Set %s = %s", key, value))
+	displayValue := value
+	if key == "github_token" {
+		displayValue = "****** (set)"
+	}
+	ui.Success(fmt.Sprintf("Set %s = %s", key, displayValue))
 	return nil
 }
 
