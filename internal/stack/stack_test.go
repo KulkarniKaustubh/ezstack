@@ -374,10 +374,29 @@ func TestManager_RegisterRemoteBranch_DuplicateRoot(t *testing.T) {
 		t.Fatalf("RegisterRemoteBranch() error = %v", err)
 	}
 
-	// Registering the same root again should fail
+	// Registering the same root again should succeed and update PR info
 	err = mgr.RegisterRemoteBranch("remote-feature", 99, "https://github.com/org/repo/pull/99")
-	if err == nil {
-		t.Error("RegisterRemoteBranch() should fail for duplicate root")
+	if err != nil {
+		t.Fatalf("RegisterRemoteBranch() should succeed for duplicate root, got error = %v", err)
+	}
+
+	// Verify PR info was updated
+	mgr2, _ := NewManager(repoDir)
+	stacks := mgr2.ListStacks()
+	found := false
+	for _, s := range stacks {
+		if s.Root == "remote-feature" {
+			found = true
+			if s.RootPRNumber != 99 {
+				t.Errorf("expected RootPRNumber=99, got %d", s.RootPRNumber)
+			}
+			if s.RootPRUrl != "https://github.com/org/repo/pull/99" {
+				t.Errorf("expected updated RootPRUrl, got %s", s.RootPRUrl)
+			}
+		}
+	}
+	if !found {
+		t.Error("stack with root 'remote-feature' not found")
 	}
 }
 
