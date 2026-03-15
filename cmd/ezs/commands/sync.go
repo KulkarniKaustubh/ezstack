@@ -35,8 +35,8 @@ func Sync(args []string) error {
     Syncs your stack branches with the remote. Without flags, shows an
     interactive menu. This command can:
 
-    1. Detect and sync branches with merged parents (rebase onto main)
-    2. Detect and sync branches behind origin/main
+    1. Detect and sync branches with merged parents (rebase onto base)
+    2. Detect and sync branches behind their stack's base branch
     3. Sync only the current branch (wherever it is in the chain)
     4. Rebase current branch onto its parent
     5. Rebase child branches onto current branch
@@ -150,7 +150,7 @@ func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal
 	}
 
 	options := []string{
-		fmt.Sprintf("%s  Auto-sync ALL stacks (detect merged parents / behind main)", ui.IconSync),
+		fmt.Sprintf("%s  Auto-sync ALL stacks (detect merged parents / behind base branch)", ui.IconSync),
 		fmt.Sprintf("%s  Choose a stack to sync", ui.IconStack),
 	}
 
@@ -202,14 +202,14 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 		ui.Info(fmt.Sprintf("Found %d branch(es) that need syncing:", len(syncNeeded)))
 		for _, info := range syncNeeded {
 			if info.MergedParent != "" {
-				fmt.Fprintf(os.Stderr, "  %s %s%s%s: parent %s%s%s was merged to main\n",
-					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset)
+				fmt.Fprintf(os.Stderr, "  %s %s%s%s: parent %s%s%s was merged to %s\n",
+					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset, info.StackRoot)
 			} else if info.BehindParent != "" {
 				fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind parent %s%s%s\n",
 					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
 			} else if info.BehindBy > 0 {
-				fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind origin/main\n",
-					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset)
+				fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind origin/%s\n",
+					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, info.StackRoot)
 			}
 		}
 		fmt.Fprintln(os.Stderr)
@@ -236,8 +236,8 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 				msg = fmt.Sprintf("Sync %s%s%s? (%s%d commits%s behind parent %s%s%s)",
 					ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
 			} else {
-				msg = fmt.Sprintf("Sync %s%s%s? (%s%d commits%s behind origin/main)",
-					ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset)
+				msg = fmt.Sprintf("Sync %s%s%s? (%s%d commits%s behind origin/%s)",
+					ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, info.StackRoot)
 			}
 			if ui.ConfirmTUI(msg) {
 				ui.Info("Rebasing...")
@@ -412,7 +412,7 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 	options := []string{}
 	optionActions := []string{}
 
-	options = append(options, fmt.Sprintf("%s  Auto-sync current stack (detect merged parents / behind main)", ui.IconSync))
+	options = append(options, fmt.Sprintf("%s  Auto-sync current stack (detect merged parents / behind %s)", ui.IconSync, currentStack.Root))
 	optionActions = append(optionActions, "auto")
 
 	options = append(options, fmt.Sprintf("%s  Auto-sync ALL stacks", ui.IconSync))
@@ -522,14 +522,14 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 		ui.Info(fmt.Sprintf("Found %d branch(es) that need syncing:", len(syncNeeded)))
 		for _, info := range syncNeeded {
 			if info.MergedParent != "" {
-				fmt.Fprintf(os.Stderr, "  %s %s%s%s: parent %s%s%s was merged to main\n",
-					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset)
+				fmt.Fprintf(os.Stderr, "  %s %s%s%s: parent %s%s%s was merged to %s\n",
+					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset, info.StackRoot)
 			} else if info.BehindParent != "" {
 				fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind parent %s%s%s\n",
 					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
 			} else if info.BehindBy > 0 {
-				fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind origin/main\n",
-					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset)
+				fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind origin/%s\n",
+					ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, info.StackRoot)
 			}
 		}
 		fmt.Fprintln(os.Stderr)
@@ -557,8 +557,8 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 				msg = fmt.Sprintf("Sync %s%s%s? (%s%d commits%s behind parent %s%s%s)",
 					ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
 			} else {
-				msg = fmt.Sprintf("Sync %s%s%s? (%s%d commits%s behind origin/main)",
-					ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset)
+				msg = fmt.Sprintf("Sync %s%s%s? (%s%d commits%s behind origin/%s)",
+					ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, info.StackRoot)
 			}
 			if ui.ConfirmTUI(msg) {
 				ui.Info("Rebasing...")
@@ -792,11 +792,11 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 	}
 
 	if syncInfo.MergedParent != "" {
-		ui.Info(fmt.Sprintf("Parent %s was merged to main. Will rebase onto main.", syncInfo.MergedParent))
+		ui.Info(fmt.Sprintf("Parent %s was merged to %s. Will rebase onto %s.", syncInfo.MergedParent, syncInfo.StackRoot, syncInfo.StackRoot))
 	} else if syncInfo.BehindParent != "" {
 		ui.Info(fmt.Sprintf("Current branch is %d commits behind %s.", syncInfo.BehindBy, syncInfo.BehindParent))
 	} else if syncInfo.BehindBy > 0 {
-		ui.Info(fmt.Sprintf("Current branch is %d commits behind origin/main.", syncInfo.BehindBy))
+		ui.Info(fmt.Sprintf("Current branch is %d commits behind origin/%s.", syncInfo.BehindBy, syncInfo.StackRoot))
 	}
 
 	if !ui.ConfirmTUI("Sync current branch") {
