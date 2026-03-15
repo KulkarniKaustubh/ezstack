@@ -2,15 +2,12 @@
 
 # ezstack
 
-**Manage stacked PRs with git worktrees (beta)**
+**Manage stacked PRs with git worktrees**
 
-[![Go Version](https://img.shields.io/badge/Go-1.25.1+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Beta](https://img.shields.io/badge/Status-Beta-orange.svg)]()
 
 </div>
-
-> ⚠️ **BETA SOFTWARE**: This tool is currently in beta and under heavy development. It is subject to major changes at any time.
 
 ---
 
@@ -51,7 +48,7 @@ Add to your `~/.bashrc` or `~/.zshrc`:
 eval "$(ezs --shell-init)"
 ```
 
-This creates a shell function that wraps the `ezs` binary, enabling commands like `ezs goto` to change your shell's directory.
+This creates a shell function that wraps the `ezs` binary, enabling commands like `ezs goto` and `ezs new` to change your shell's directory.
 
 ## Quick Start
 
@@ -65,34 +62,36 @@ ezs new feature-1
 # Stack another branch on top
 ezs new feature-2 --parent feature-1
 
-# View your stack
+# View your stack with PR and CI status
 ezs status
 
 # Create PRs
 ezs pr create -t "Part 1: Add feature"
 
-# Sync after changes (use stack hash from `ezs list`)
-ezs sync <stack hash>
+# Sync after changes
+ezs sync -a
 ```
 
 ## Commands
 
-| Command | Description |
-|---------|-------------|
-| `new` | Create a new branch in the stack |
-| `list` | List all stacks and branches |
-| `status` | Show status of current stack |
-| `sync` | Sync stack with remote |
-| `goto` | Navigate to a branch worktree |
-| `reparent` | Change the parent of a branch |
-| `stack` | Add a branch to a stack |
-| `unstack` | Remove a branch from tracking |
-| `update` | Sync config with git (detects renames, orphans) |
-| `delete` | Delete a branch and its worktree |
-| `pr` | Manage pull requests |
-| `config` | Configure ezstack |
+| Command | Aliases | Description |
+|---------|---------|-------------|
+| `new` | `n` | Create a new branch in the stack |
+| `list` | `ls` | List all stacks and branches |
+| `status` | `st` | Show status with PR and CI info |
+| `sync` | `rebase`, `rb` | Sync stack with remote |
+| `goto` | `go` | Navigate to a branch worktree |
+| `reparent` | `rp` | Change the parent of a branch |
+| `stack` | | Add a branch to a stack |
+| `unstack` | | Remove a branch from tracking |
+| `update` | `up` | Sync config with git (detects renames, orphans) |
+| `delete` | `del`, `rm` | Delete a branch and its worktree |
+| `pr` | | Manage pull requests |
+| `config` | `cfg` | Configure ezstack |
 
-Run `ezs <command> --help` for command-specific help.
+**Global flags:** `-y, --yes` auto-confirm prompts · `-h, --help` · `-v, --version`
+
+Run `ezs <command> --help` for command-specific help, or just `ezs` for an interactive menu.
 
 ## Documentation
 
