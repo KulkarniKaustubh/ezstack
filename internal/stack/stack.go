@@ -523,6 +523,9 @@ func (m *Manager) UntrackBranch(branchName string) error {
 // If doRebase is true, performs git rebase --onto to move commits
 // Returns the updated branch and any error
 func (m *Manager) ReparentBranch(branchName, newParentName string, doRebase bool) (*config.Branch, error) {
+	if branchName == newParentName {
+		return nil, fmt.Errorf("cannot stack a branch on itself")
+	}
 	if m.GetBranch(newParentName) == nil && !m.git.BranchExists(newParentName) {
 		return nil, fmt.Errorf("new parent '%s' does not exist", newParentName)
 	}
