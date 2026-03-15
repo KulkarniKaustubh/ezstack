@@ -827,3 +827,303 @@ func TestManager_CreateWorktreeOnly_NoWorktreeDir(t *testing.T) {
 		t.Errorf("Error should mention worktree directory, got: %v", err)
 	}
 }
+
+// createGitBranch creates a git branch in the repo without checking it out.
+func createGitBranch(t *testing.T, repoDir, branchName string) {
+	t.Helper()
+	if err := exec.Command("git", "-C", repoDir, "branch", branchName).Run(); err != nil {
+		t.Fatalf("Failed to create git branch %s: %v", branchName, err)
+	}
+}
+
+// TestManager_CreateBranch_NonMainRoot tests creating a stack rooted on a non-main branch
+func TestManager_CreateBranch_NonMainRoot(t *testing.T) {
+	repoDir, worktreeDir, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	createGitBranch(t, repoDir, "develop")
+
+	mgr, _ := NewManager(repoDir)
+	branch, err := mgr.CreateBranch("feature-a", "develop", "")
+	if err != nil {
+		t.Fatalf("CreateBranch() error = %v", err)
+	}
+
+	if branch.Name != "feature-a" {
+		t.Errorf("branch.Name = %q, want %q", branch.Name, "feature-a")
+	}
+	if branch.Parent != "develop" {
+		t.Errorf("branch.Parent = %q, want %q", branch.Parent, "develop")
+	}
+
+	// Verify the stack root is develop, not main
+	mgr, _ = NewManager(repoDir)
+	stacks := mgr.ListStacks()
+	if len(stacks) != 1 {
+		t.Fatalf("Expected 1 stack, got %d", len(stacks))
+	}
+	if stacks[0].Root != "develop" {
+		t.Errorf("stack.Root = %q, want %q", stacks[0].Root, "develop")
+	}
+
+	// Verify we can add child branches to a non-main-rooted stack
+	mgr, _ = NewManager(repoDir)
+	child, err := mgr.CreateBranch("feature-b", "feature-a", "")
+	if err != nil {
+		t.Fatalf("CreateBranch() child error = %v", err)
+	}
+	if child.Parent != "feature-a" {
+		t.Errorf("child.Parent = %q, want %q", child.Parent, "feature-a")
+	}
+
+	// Both branches should be in the same stack
+	mgr, _ = NewManager(repoDir)
+	stacks = mgr.ListStacks()
+	if len(stacks) != 1 {
+		t.Fatalf("Expected 1 stack, got %d", len(stacks))
+	}
+	if len(stacks[0].Branches) != 2 {
+		t.Errorf("Expected 2 branches, got %d", len(stacks[0].Branches))
+	}
+
+	_ = worktreeDir // used implicitly via config
+}
+
+// TestManager_GetStackForBranch tests the GetStackForBranch helper
+func TestManager_GetStackForBranch(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+	stack := mgr.GetStackForBranch("feature-a")
+	if stack == nil {
+		t.Fatal("GetStackForBranch() returned nil for tracked branch")
+	}
+	if stack.Root != "main" {
+		t.Errorf("stack.Root = %q, want %q", stack.Root, "main")
+	}
+
+	stack = mgr.GetStackForBranch("nonexistent")
+	if stack != nil {
+		t.Error("GetStackForBranch() should return nil for untracked branch")
+	}
+
+	stack = mgr.GetStackForBranch("main")
+	if stack != nil {
+		t.Error("GetStackForBranch() should return nil for root branch (not in tree)")
+	}
+}
+
+// TestManager_ReparentBranch_ToNonMainRoot tests reparenting to a non-main external branch
+func TestManager_ReparentBranch_ToNonMainRoot(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	createGitBranch(t, repoDir, "develop")
+
+	// Create a stack: main -> feature-a
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	// Reparent feature-a from main to develop
+	mgr, _ = NewManager(repoDir)
+	branch, err := mgr.ReparentBranch("feature-a", "develop", false)
+	if err != nil {
+		t.Fatalf("ReparentBranch() error = %v", err)
+	}
+	if branch.Parent != "develop" {
+		t.Errorf("branch.Parent = %q, want %q", branch.Parent, "develop")
+	}
+
+	// Verify the stack now has develop as root
+	mgr, _ = NewManager(repoDir)
+	stack := mgr.GetStackForBranch("feature-a")
+	if stack == nil {
+		t.Fatal("feature-a should be in a stack after reparent")
+	}
+	if stack.Root != "develop" {
+		t.Errorf("stack.Root = %q, want %q", stack.Root, "develop")
+	}
+}
+
+// TestManager_ReparentBranch_CrossStack_NonMainRoot tests cross-stack reparent with non-main roots
+func TestManager_ReparentBranch_CrossStack_NonMainRoot(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	createGitBranch(t, repoDir, "develop")
+	createGitBranch(t, repoDir, "staging")
+
+	// Create stack 1: develop -> feature-a
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "develop", "")
+
+	// Create stack 2: staging -> feature-b
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "staging", "")
+
+	// Reparent feature-a to feature-b (cross-stack)
+	mgr, _ = NewManager(repoDir)
+	branch, err := mgr.ReparentBranch("feature-a", "feature-b", false)
+	if err != nil {
+		t.Fatalf("ReparentBranch() error = %v", err)
+	}
+	if branch.Parent != "feature-b" {
+		t.Errorf("branch.Parent = %q, want %q", branch.Parent, "feature-b")
+	}
+
+	// Both branches should now be in the staging-rooted stack
+	mgr, _ = NewManager(repoDir)
+	stack := mgr.GetStackForBranch("feature-a")
+	if stack == nil {
+		t.Fatal("feature-a should be in a stack")
+	}
+	if stack.Root != "staging" {
+		t.Errorf("stack.Root = %q, want %q", stack.Root, "staging")
+	}
+
+	stackB := mgr.GetStackForBranch("feature-b")
+	if stackB == nil || stackB.Hash != stack.Hash {
+		t.Error("feature-a and feature-b should be in the same stack")
+	}
+}
+
+// TestManager_AddBranchWithParent_NonMainRoot tests adding a standalone branch to a non-main parent
+func TestManager_AddBranchWithParent_NonMainRoot(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	createGitBranch(t, repoDir, "develop")
+	createGitBranch(t, repoDir, "standalone")
+
+	// Add standalone to develop — should create a new stack with root=develop
+	mgr, _ := NewManager(repoDir)
+	branch, err := mgr.ReparentBranch("standalone", "develop", false)
+	if err != nil {
+		t.Fatalf("ReparentBranch() error = %v", err)
+	}
+	if branch.Parent != "develop" {
+		t.Errorf("branch.Parent = %q, want %q", branch.Parent, "develop")
+	}
+
+	mgr, _ = NewManager(repoDir)
+	stack := mgr.GetStackForBranch("standalone")
+	if stack == nil {
+		t.Fatal("standalone should be in a stack")
+	}
+	if stack.Root != "develop" {
+		t.Errorf("stack.Root = %q, want %q", stack.Root, "develop")
+	}
+}
+
+// TestManager_CycleDetection_NonMainRoot tests cycle detection with non-main roots
+func TestManager_CycleDetection_NonMainRoot(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	createGitBranch(t, repoDir, "develop")
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "develop", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "feature-a", "")
+
+	// Try to reparent feature-a to feature-b (cycle)
+	mgr, _ = NewManager(repoDir)
+	_, err := mgr.ReparentBranch("feature-a", "feature-b", false)
+	if err == nil {
+		t.Error("ReparentBranch() should fail when creating a cycle")
+	}
+	if !strings.Contains(err.Error(), "circular") {
+		t.Errorf("Error should mention circular dependency, got: %v", err)
+	}
+}
+
+// TestManager_GetRebaseRef tests the getRebaseRef helper
+func TestManager_GetRebaseRef(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	mgr, _ = NewManager(repoDir)
+
+	// Tracked branch should return the local branch name
+	ref := mgr.getRebaseRef("feature-a")
+	if ref != "feature-a" {
+		t.Errorf("getRebaseRef('feature-a') = %q, want %q", ref, "feature-a")
+	}
+
+	// main is not tracked in any stack (it's a root), no remote, so returns local
+	ref = mgr.getRebaseRef("main")
+	if ref != "main" {
+		t.Errorf("getRebaseRef('main') = %q, want %q", ref, "main")
+	}
+}
+
+// TestManager_DeleteBranch_NonMainRoot tests deleting branches from non-main-rooted stacks
+func TestManager_DeleteBranch_NonMainRoot(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	createGitBranch(t, repoDir, "develop")
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "develop", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "feature-a", "")
+
+	// Delete feature-a (has children, needs force)
+	mgr, _ = NewManager(repoDir)
+	err := mgr.DeleteBranch("feature-a", true)
+	if err != nil {
+		t.Fatalf("DeleteBranch() error = %v", err)
+	}
+
+	mgr, _ = NewManager(repoDir)
+	if mgr.GetBranch("feature-a") != nil {
+		t.Error("feature-a should be deleted")
+	}
+
+	child := mgr.GetBranch("feature-b")
+	if child == nil {
+		t.Fatal("feature-b should still exist")
+	}
+	// After parent deletion, child should be reparented to stack root
+	if child.Parent != "develop" {
+		t.Errorf("child.Parent = %q, want %q", child.Parent, "develop")
+	}
+}
+
+// TestManager_MultipleStacksSameRoot tests having multiple stacks with the same non-main root
+func TestManager_MultipleStacksSameRoot(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	createGitBranch(t, repoDir, "develop")
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "develop", "")
+
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "develop", "")
+
+	mgr, _ = NewManager(repoDir)
+	stacks := mgr.ListStacks()
+	// Each CreateBranch from develop creates a new stack since develop is a root (not in any tree)
+	if len(stacks) != 2 {
+		t.Errorf("Expected 2 stacks, got %d", len(stacks))
+	}
+
+	for _, s := range stacks {
+		if s.Root != "develop" {
+			t.Errorf("stack.Root = %q, want %q", s.Root, "develop")
+		}
+	}
+}

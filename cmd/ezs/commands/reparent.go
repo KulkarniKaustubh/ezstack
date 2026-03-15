@@ -230,7 +230,7 @@ func IsDescendantOf(mgr *stack.Manager, branchName, ancestorName string) bool {
 	}
 
 	current := branch.Parent
-	for !mgr.IsMainBranch(current) {
+	for {
 		if current == ancestorName {
 			return true
 		}
@@ -240,7 +240,6 @@ func IsDescendantOf(mgr *stack.Manager, branchName, ancestorName string) bool {
 		}
 		current = parentBranch.Parent
 	}
-	return false
 }
 
 // doReparent performs the actual reparent operation

@@ -336,17 +336,13 @@ func New(args []string) error {
 	ui.Info(fmt.Sprintf("Creating branch '%s' from '%s'", branchName, parentBranch))
 	ui.Info(fmt.Sprintf("Worktree path: %s", worktreePath))
 
-	// Check if parent is the base branch (main/master) and ask about stack
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
 
-	// Check if this would create a new stack (parent is base branch and not already in a stack)
 	createAsStackRoot := true
-	if parentBranch == baseBranch && mgr.GetBranch(parentBranch) == nil {
-		// Parent is main/master and not in any stack - ask if user wants to create a stack
+	if mgr.GetBranch(parentBranch) == nil {
 		createAsStackRoot = ui.ConfirmTUIWithDefault("Make this a stack root? (allows stacking more branches on top)", true)
 	}
 

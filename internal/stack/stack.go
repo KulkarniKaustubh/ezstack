@@ -200,11 +200,10 @@ func (m *Manager) CreateBranch(name, parentBranch, worktreeDir string) (*config.
 	stackKey := m.findStackForBranch(parentBranch)
 	var stack *config.Stack
 	if stackKey == "" {
-		// This is a new stack starting from main/master
 		hash := config.GenerateStackHash(name)
 		stack = &config.Stack{
 			Hash: hash,
-			Root: parentBranch, // parentBranch is main/master
+			Root: parentBranch,
 			Tree: config.BranchTree{
 				name: config.BranchTree{},
 			},
@@ -334,10 +333,39 @@ func (m *Manager) GetChildren(branchName string) []*config.Branch {
 	return children
 }
 
-// IsMainBranch checks if a branch is the main/master branch
+// IsMainBranch checks if a branch is the main/master branch.
+// Use only for protection (e.g. preventing deletion of main). For stack-root
+// logic, compare against Stack.Root or use GetStackForBranch instead.
 func (m *Manager) IsMainBranch(name string) bool {
 	baseBranch := m.config.GetBaseBranch(m.repoDir)
 	return name == "main" || name == "master" || name == baseBranch
+}
+
+// GetStackForBranch returns the stack containing the given branch, or nil.
+func (m *Manager) GetStackForBranch(branchName string) *config.Stack {
+	key := m.findStackForBranch(branchName)
+	if key == "" {
+		return nil
+	}
+	return m.stackConfig.Stacks[key]
+}
+
+// getRebaseRef returns the git ref to use when rebasing onto parentName.
+// For parents not tracked in any stack (roots, external branches), uses
+// origin/<name> when the remote branch exists. For tracked stack branches,
+// uses origin/<name> only if the branch is marked IsRemote.
+func (m *Manager) getRebaseRef(parentName string) string {
+	parentBranch := m.GetBranch(parentName)
+	if parentBranch == nil {
+		if m.git.RemoteBranchExists(parentName) {
+			return "origin/" + parentName
+		}
+		return parentName
+	}
+	if parentBranch.IsRemote {
+		return "origin/" + parentName
+	}
+	return parentName
 }
 
 // GetStackByHash finds a stack by hash prefix (minimum 3 characters). Returns error if 0 or >1 stacks match.
@@ -495,15 +523,8 @@ func (m *Manager) UntrackBranch(branchName string) error {
 // If doRebase is true, performs git rebase --onto to move commits
 // Returns the updated branch and any error
 func (m *Manager) ReparentBranch(branchName, newParentName string, doRebase bool) (*config.Branch, error) {
-	// Validate new parent exists (either in a stack or is main/master)
-	if !m.IsMainBranch(newParentName) {
-		newParentBranch := m.GetBranch(newParentName)
-		if newParentBranch == nil {
-			// Check if it's a git branch that exists but not in ezstack
-			if !m.git.BranchExists(newParentName) {
-				return nil, fmt.Errorf("new parent '%s' does not exist", newParentName)
-			}
-		}
+	if m.GetBranch(newParentName) == nil && !m.git.BranchExists(newParentName) {
+		return nil, fmt.Errorf("new parent '%s' does not exist", newParentName)
 	}
 
 	// Check if branch is already registered in a stack
@@ -540,19 +561,7 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 			mergeBase = oldParentRef
 		}
 
-		// Determine new parent ref - prefer origin/ if remote exists, else local
-		newParentRef := newParentName
-		if m.IsMainBranch(newParentName) {
-			// For main/master, use origin/ only if remote exists
-			if m.git.RemoteBranchExists(newParentName) {
-				newParentRef = "origin/" + newParentName
-			}
-		} else {
-			newParentBranch := m.GetBranch(newParentName)
-			if newParentBranch != nil && newParentBranch.IsRemote {
-				newParentRef = "origin/" + newParentName
-			}
-		}
+		newParentRef := m.getRebaseRef(newParentName)
 
 		// Rebase onto new parent
 		rebaseResult := g.RebaseOntoNonInteractive(newParentRef, mergeBase)
@@ -572,7 +581,7 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 		if err := m.moveBranchToStack(branch.Name, oldStackKey, newParentStackKey, newParentName); err != nil {
 			return nil, fmt.Errorf("failed to move branch to new stack: %w", err)
 		}
-	} else if newParentStackKey == "" && m.IsMainBranch(newParentName) {
+	} else if newParentStackKey == "" {
 		if oldStack.Root == newParentName {
 			oldStack.ReparentBranch(branch.Name, "")
 			oldStack.PopulateBranchesWithCache(cache)
@@ -637,19 +646,7 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 	if doRebase && worktreePath != "" {
 		g := git.New(worktreePath)
 
-		// Determine new parent ref - prefer origin/ if remote exists, else local
-		newParentRef := newParentName
-		if m.IsMainBranch(newParentName) {
-			// For main/master, use origin/ only if remote exists
-			if m.git.RemoteBranchExists(newParentName) {
-				newParentRef = "origin/" + newParentName
-			}
-		} else {
-			newParentBranch := m.GetBranch(newParentName)
-			if newParentBranch != nil && newParentBranch.IsRemote {
-				newParentRef = "origin/" + newParentName
-			}
-		}
+		newParentRef := m.getRebaseRef(newParentName)
 
 		// Simple rebase onto new parent
 		rebaseResult := g.RebaseNonInteractive(newParentRef)
@@ -668,8 +665,7 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 		// Add to existing stack
 		stack = m.stackConfig.Stacks[newParentStackKey]
 		stack.AddBranch(branchName, newParentName)
-	} else if m.IsMainBranch(newParentName) {
-		// New parent is main - create a new stack with this branch as root
+	} else {
 		hash := config.GenerateStackHash(branchName)
 		stack = &config.Stack{
 			Hash: hash,
@@ -679,8 +675,6 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 			},
 		}
 		m.stackConfig.Stacks[hash] = stack
-	} else {
-		return nil, fmt.Errorf("new parent '%s' is not in any stack and is not main/master", newParentName)
 	}
 
 	// Update cache
@@ -712,22 +706,21 @@ func (m *Manager) wouldCreateCycle(branchName, newParentName string) bool {
 	current := newParentName
 	visited := make(map[string]bool)
 
-	for !m.IsMainBranch(current) {
+	for {
 		if current == branchName {
 			return true
 		}
 		if visited[current] {
-			return false // Already visited, no cycle through branchName
+			return false
 		}
 		visited[current] = true
 
 		branch := m.GetBranch(current)
 		if branch == nil {
-			return false // Not in stack, can't continue
+			return false // Reached a root or external branch
 		}
 		current = branch.Parent
 	}
-	return false
 }
 
 func (m *Manager) moveBranchToStack(branchName, fromStackName, toStackName, newParentName string) error {
