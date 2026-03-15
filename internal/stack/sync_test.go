@@ -293,3 +293,259 @@ func TestSyncStack_ContinuesWithoutConflict(t *testing.T) {
 		t.Errorf("Expected 2 successful syncs, got %d", successCount)
 	}
 }
+
+// TestDetectSyncNeeded_NonMainRoot verifies that sync detection for a stack rooted
+// on a non-main branch (e.g. develop) checks against origin/<root>, not origin/main.
+func TestDetectSyncNeeded_NonMainRoot(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Create a "develop" branch with its own commit
+	exec.Command("git", "-C", repoDir, "branch", "develop").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "develop").Run()
+	developFile := filepath.Join(repoDir, "develop.txt")
+	os.WriteFile(developFile, []byte("develop base\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Develop base commit").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	// Create bare repo as origin and push both branches
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "develop").Run()
+
+	// Create a stack rooted on develop
+	mgr, _ := NewManager(repoDir)
+	_, err := mgr.CreateBranch("feature-x", "develop", filepath.Join(worktreeBaseDir, "feature-x"))
+	if err != nil {
+		t.Fatalf("CreateBranch feature-x failed: %v", err)
+	}
+
+	// Add a commit to feature-x
+	featureXPath := filepath.Join(worktreeBaseDir, "feature-x")
+	fxFile := filepath.Join(featureXPath, "fx.txt")
+	os.WriteFile(fxFile, []byte("feature-x content\n"), 0644)
+	exec.Command("git", "-C", featureXPath, "add", ".").Run()
+	exec.Command("git", "-C", featureXPath, "commit", "-m", "Add fx.txt").Run()
+
+	// Advance develop on origin (simulate someone else pushing to develop)
+	exec.Command("git", "-C", repoDir, "checkout", "develop").Run()
+	developFile2 := filepath.Join(repoDir, "develop2.txt")
+	os.WriteFile(developFile2, []byte("develop update\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Update develop").Run()
+	exec.Command("git", "-C", repoDir, "push", "origin", "develop").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	// Detect sync needed — should find feature-x behind origin/develop
+	mgr, _ = NewManager(featureXPath)
+	stack := mgr.GetStackForBranch("feature-x")
+	if stack == nil {
+		t.Fatal("feature-x should be in a stack")
+	}
+	if stack.Root != "develop" {
+		t.Fatalf("stack.Root = %q, want %q", stack.Root, "develop")
+	}
+
+	syncNeeded, err := mgr.DetectSyncNeeded(nil)
+	if err != nil {
+		t.Fatalf("DetectSyncNeeded error: %v", err)
+	}
+
+	if len(syncNeeded) != 1 {
+		t.Fatalf("DetectSyncNeeded returned %d results, want 1", len(syncNeeded))
+	}
+
+	info := syncNeeded[0]
+	if info.Branch != "feature-x" {
+		t.Errorf("SyncInfo.Branch = %q, want %q", info.Branch, "feature-x")
+	}
+	if info.StackRoot != "develop" {
+		t.Errorf("SyncInfo.StackRoot = %q, want %q", info.StackRoot, "develop")
+	}
+	if info.BehindBy != 1 {
+		t.Errorf("SyncInfo.BehindBy = %d, want 1", info.BehindBy)
+	}
+}
+
+// TestDetectSyncNeeded_NonMainRoot_NotBehindMain verifies that a stack rooted on
+// develop does NOT report branches as needing sync when main is updated but develop is not.
+func TestDetectSyncNeeded_NonMainRoot_NotBehindMain(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Create develop branch
+	exec.Command("git", "-C", repoDir, "branch", "develop").Run()
+
+	// Create bare repo and push
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "develop").Run()
+
+	// Create a stack rooted on develop
+	mgr, _ := NewManager(repoDir)
+	_, err := mgr.CreateBranch("feature-y", "develop", filepath.Join(worktreeBaseDir, "feature-y"))
+	if err != nil {
+		t.Fatalf("CreateBranch feature-y failed: %v", err)
+	}
+
+	featureYPath := filepath.Join(worktreeBaseDir, "feature-y")
+	fyFile := filepath.Join(featureYPath, "fy.txt")
+	os.WriteFile(fyFile, []byte("feature-y content\n"), 0644)
+	exec.Command("git", "-C", featureYPath, "add", ".").Run()
+	exec.Command("git", "-C", featureYPath, "commit", "-m", "Add fy.txt").Run()
+
+	// Advance MAIN on origin (but NOT develop)
+	mainFile := filepath.Join(repoDir, "main-update.txt")
+	os.WriteFile(mainFile, []byte("main update\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Update main").Run()
+	exec.Command("git", "-C", repoDir, "push", "origin", "main").Run()
+
+	// Detect sync needed — should find NOTHING because develop hasn't changed
+	mgr, _ = NewManager(featureYPath)
+	syncNeeded, err := mgr.DetectSyncNeeded(nil)
+	if err != nil {
+		t.Fatalf("DetectSyncNeeded error: %v", err)
+	}
+
+	if len(syncNeeded) != 0 {
+		t.Errorf("DetectSyncNeeded returned %d results, want 0 (main updated but develop didn't)", len(syncNeeded))
+		for _, info := range syncNeeded {
+			t.Logf("  unexpected: branch=%s stackRoot=%s behindBy=%d", info.Branch, info.StackRoot, info.BehindBy)
+		}
+	}
+}
+
+// TestSyncStack_NonMainRoot verifies that syncing a stack rooted on develop
+// rebases against origin/develop, not origin/main.
+func TestSyncStack_NonMainRoot(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Create develop branch with a commit
+	exec.Command("git", "-C", repoDir, "branch", "develop").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "develop").Run()
+	devFile := filepath.Join(repoDir, "dev.txt")
+	os.WriteFile(devFile, []byte("develop v1\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Develop v1").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	// Set up origin
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "develop").Run()
+
+	// Create stack: develop -> feature-z
+	mgr, _ := NewManager(repoDir)
+	_, err := mgr.CreateBranch("feature-z", "develop", filepath.Join(worktreeBaseDir, "feature-z"))
+	if err != nil {
+		t.Fatalf("CreateBranch feature-z failed: %v", err)
+	}
+
+	featureZPath := filepath.Join(worktreeBaseDir, "feature-z")
+	fzFile := filepath.Join(featureZPath, "fz.txt")
+	os.WriteFile(fzFile, []byte("feature-z content\n"), 0644)
+	exec.Command("git", "-C", featureZPath, "add", ".").Run()
+	exec.Command("git", "-C", featureZPath, "commit", "-m", "Add fz.txt").Run()
+
+	// Update develop on origin
+	exec.Command("git", "-C", repoDir, "checkout", "develop").Run()
+	devFile2 := filepath.Join(repoDir, "dev2.txt")
+	os.WriteFile(devFile2, []byte("develop v2\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Develop v2").Run()
+	exec.Command("git", "-C", repoDir, "push", "origin", "develop").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	// Sync should rebase feature-z onto origin/develop
+	mgr, _ = NewManager(featureZPath)
+	results, err := mgr.SyncStack(nil, nil)
+	if err != nil {
+		t.Fatalf("SyncStack error: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("SyncStack returned %d results, want 1", len(results))
+	}
+
+	r := results[0]
+	if r.Branch != "feature-z" {
+		t.Errorf("result.Branch = %q, want %q", r.Branch, "feature-z")
+	}
+	if !r.Success {
+		t.Errorf("result.Success = false, want true (error: %v)", r.Error)
+	}
+	if r.SyncedParent != "origin/develop" {
+		t.Errorf("result.SyncedParent = %q, want %q", r.SyncedParent, "origin/develop")
+	}
+
+	// Verify feature-z now has develop v2's content
+	dev2InWorktree := filepath.Join(featureZPath, "dev2.txt")
+	if _, err := os.Stat(dev2InWorktree); os.IsNotExist(err) {
+		t.Error("feature-z should have dev2.txt after rebasing onto origin/develop")
+	}
+}
+
+// TestDetectSyncNeededForBranch_StackRoot verifies the per-branch sync detection
+// populates StackRoot correctly.
+func TestDetectSyncNeededForBranch_StackRoot(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Create staging branch
+	exec.Command("git", "-C", repoDir, "branch", "staging").Run()
+
+	// Set up origin
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "staging").Run()
+
+	// Create stack rooted on staging
+	mgr, _ := NewManager(repoDir)
+	_, err := mgr.CreateBranch("hotfix-1", "staging", filepath.Join(worktreeBaseDir, "hotfix-1"))
+	if err != nil {
+		t.Fatalf("CreateBranch hotfix-1 failed: %v", err)
+	}
+
+	hotfixPath := filepath.Join(worktreeBaseDir, "hotfix-1")
+	hfFile := filepath.Join(hotfixPath, "fix.txt")
+	os.WriteFile(hfFile, []byte("hotfix\n"), 0644)
+	exec.Command("git", "-C", hotfixPath, "add", ".").Run()
+	exec.Command("git", "-C", hotfixPath, "commit", "-m", "Hotfix").Run()
+
+	// Update staging on origin
+	exec.Command("git", "-C", repoDir, "checkout", "staging").Run()
+	stagingFile := filepath.Join(repoDir, "staging-update.txt")
+	os.WriteFile(stagingFile, []byte("staging update\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Update staging").Run()
+	exec.Command("git", "-C", repoDir, "push", "origin", "staging").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	// Detect for specific branch
+	mgr, _ = NewManager(hotfixPath)
+	info := mgr.DetectSyncNeededForBranch("hotfix-1", nil)
+	if info == nil {
+		t.Fatal("DetectSyncNeededForBranch returned nil, want sync info")
+	}
+
+	if info.StackRoot != "staging" {
+		t.Errorf("SyncInfo.StackRoot = %q, want %q", info.StackRoot, "staging")
+	}
+	if info.BehindBy != 1 {
+		t.Errorf("SyncInfo.BehindBy = %d, want 1", info.BehindBy)
+	}
+	if info.BehindParent != "" {
+		t.Errorf("SyncInfo.BehindParent = %q, want empty (behind root, not parent)", info.BehindParent)
+	}
+}
