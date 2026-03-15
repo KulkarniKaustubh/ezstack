@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
@@ -10,11 +9,12 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/github"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/spf13/pflag"
 )
 
 // Stack adds a branch to a stack (alias for reparent with standalone branch)
 func Stack(args []string) error {
-	fs := flag.NewFlagSet("stack", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("stack", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sAdd a branch to a stack%s
 
@@ -37,14 +37,12 @@ func Stack(args []string) error {
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 
-	branchFlag := fs.String("branch", "", "Branch to add")
-	branchShort := fs.String("b", "", "Branch to add (short)")
-	parentFlag := fs.String("parent", "", "Parent branch")
-	parentShort := fs.String("p", "", "Parent branch (short)")
-	helpFlag := fs.Bool("h", false, "Show help")
+	branchFlag := fs.StringP("branch", "b", "", "Branch to add")
+	parentFlag := fs.StringP("parent", "p", "", "Parent branch")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err
@@ -52,14 +50,6 @@ func Stack(args []string) error {
 	if *helpFlag {
 		fs.Usage()
 		return nil
-	}
-
-	// Merge short flags
-	if *branchShort != "" {
-		*branchFlag = *branchShort
-	}
-	if *parentShort != "" {
-		*parentFlag = *parentShort
 	}
 
 	cwd, err := os.Getwd()
@@ -153,7 +143,7 @@ func Stack(args []string) error {
 
 // Unstack removes a branch from ezstack tracking without deleting the git branch
 func Unstack(args []string) error {
-	fs := flag.NewFlagSet("unstack", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("unstack", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sRemove a branch from stack tracking%s
 
@@ -177,12 +167,11 @@ func Unstack(args []string) error {
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 
-	branchFlag := fs.String("branch", "", "Branch to untrack")
-	branchShort := fs.String("b", "", "Branch to untrack (short)")
-	helpFlag := fs.Bool("h", false, "Show help")
+	branchFlag := fs.StringP("branch", "b", "", "Branch to untrack")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err
@@ -190,11 +179,6 @@ func Unstack(args []string) error {
 	if *helpFlag {
 		fs.Usage()
 		return nil
-	}
-
-	// Merge short flags
-	if *branchShort != "" {
-		*branchFlag = *branchShort
 	}
 
 	cwd, err := os.Getwd()

@@ -1,19 +1,18 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/spf13/pflag"
 )
 
 // Delete deletes a branch and its worktree
 func Delete(args []string) error {
-	fs := flag.NewFlagSet("delete", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("delete", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sDelete a branch and its worktree%s
 
@@ -29,12 +28,11 @@ func Delete(args []string) error {
     If branch-name is omitted, shows interactive branch selector.
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	force := fs.Bool("force", false, "Force delete even if branch has children")
-	forceShort := fs.Bool("f", false, "Force delete (short)")
-	helpFlag := fs.Bool("h", false, "Show help")
+	force := fs.BoolP("force", "f", false, "Force delete even if branch has children")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err
@@ -43,8 +41,6 @@ func Delete(args []string) error {
 		fs.Usage()
 		return nil
 	}
-
-	helpers.MergeFlags(forceShort, force)
 
 	cwd, err := os.Getwd()
 	if err != nil {

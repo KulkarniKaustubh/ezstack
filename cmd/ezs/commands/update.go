@@ -1,19 +1,18 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/spf13/pflag"
 )
 
 // Update reconciles ezstack config with git reality
 func Update(args []string) error {
-	fs := flag.NewFlagSet("update", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("update", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sReconcile ezstack config with git reality%s
 
@@ -41,14 +40,12 @@ func Update(args []string) error {
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 
-	autoFlag := fs.Bool("auto", false, "Auto-accept all changes")
-	autoShort := fs.Bool("a", false, "Auto-accept all changes (short)")
-	dryRunFlag := fs.Bool("dry-run", false, "Show what would be changed")
-	dryRunShort := fs.Bool("d", false, "Dry run (short)")
-	helpFlag := fs.Bool("h", false, "Show help")
+	autoFlag := fs.BoolP("auto", "a", false, "Auto-accept all changes")
+	dryRunFlag := fs.BoolP("dry-run", "d", false, "Show what would be changed")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err
@@ -58,7 +55,6 @@ func Update(args []string) error {
 		return nil
 	}
 
-	helpers.MergeFlags(autoShort, autoFlag, dryRunShort, dryRunFlag)
 	autoMode := *autoFlag
 	dryRun := *dryRunFlag
 

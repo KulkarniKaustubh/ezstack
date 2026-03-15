@@ -21,12 +21,4 @@ func ExpandPath(path string) string {
 	return path
 }
 
-// MergeFlags merges short flags into long flags.
-// Pass pairs of (shortFlag, longFlag) pointers: short1, long1, short2, long2, etc.
-func MergeFlags(pairs ...*bool) {
-	for i := 0; i+1 < len(pairs); i += 2 {
-		if *pairs[i] {
-			*pairs[i+1] = true
-		}
-	}
-}
+

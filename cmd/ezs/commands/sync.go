@@ -1,21 +1,20 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/github"
-	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/spf13/pflag"
 )
 
 // Sync syncs the stack with remote - handles merged parents and branches behind origin/main
 func Sync(args []string) error {
-	fs := flag.NewFlagSet("sync", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("sync", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sSync stack with remote%s
 
@@ -26,7 +25,7 @@ func Sync(args []string) error {
 %sOPTIONS%s
     -a, --all              Sync current stack (auto-detect what needs syncing)
     --all-stacks           Sync ALL stacks (not just current stack)
-    -cur, --current        Sync current branch only (auto-detect what it needs)
+    --current              Sync current branch only (auto-detect what it needs)
     -p, --parent           Rebase current branch onto its parent
     -c, --children         Rebase child branches onto current branch
     --no-delete-local      Don't delete local branches after their PRs are merged
@@ -51,26 +50,22 @@ func Sync(args []string) error {
     ezs sync a1b2c        Sync stack matching hash prefix
     ezs sync -a           Auto-sync current stack
     ezs sync --all-stacks Auto-sync all stacks
-    ezs sync -cur         Sync current branch only
+    ezs sync --current    Sync current branch only
     ezs sync -p           Rebase current onto parent
     ezs sync -c           Rebase children onto current
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 
-	helpFlag := fs.Bool("h", false, "Show help")
-	allFlag := fs.Bool("all", false, "Sync current stack")
-	allShort := fs.Bool("a", false, "Sync current stack (short)")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
+	allFlag := fs.BoolP("all", "a", false, "Sync current stack")
 	allStacksFlag := fs.Bool("all-stacks", false, "Sync all stacks")
 	currentFlag := fs.Bool("current", false, "Sync current branch only")
-	currentShort := fs.Bool("cur", false, "Sync current branch only (short)")
-	parentFlag := fs.Bool("parent", false, "Rebase onto parent")
-	parentShort := fs.Bool("p", false, "Rebase onto parent (short)")
-	childrenFlag := fs.Bool("children", false, "Rebase children")
-	childrenShort := fs.Bool("c", false, "Rebase children (short)")
+	parentFlag := fs.BoolP("parent", "p", false, "Rebase onto parent")
+	childrenFlag := fs.BoolP("children", "c", false, "Rebase children")
 	noDeleteLocal := fs.Bool("no-delete-local", false, "Don't delete local branches after their PRs are merged")
 
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err
@@ -79,8 +74,6 @@ func Sync(args []string) error {
 		fs.Usage()
 		return nil
 	}
-
-	helpers.MergeFlags(allShort, allFlag, currentShort, currentFlag, parentShort, parentFlag, childrenShort, childrenFlag)
 
 	cwd, err := os.Getwd()
 	if err != nil {

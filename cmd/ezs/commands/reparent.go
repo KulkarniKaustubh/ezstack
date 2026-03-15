@@ -1,21 +1,20 @@
 package commands
 
 import (
-	"flag"
 	"fmt"
 	"os"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/github"
-	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/spf13/pflag"
 )
 
 // Reparent changes the parent of a branch
 func Reparent(args []string) error {
-	fs := flag.NewFlagSet("reparent", flag.ContinueOnError)
+	fs := pflag.NewFlagSet("reparent", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sChange the parent of a branch%s
 
@@ -31,7 +30,7 @@ func Reparent(args []string) error {
 
 %sDESCRIPTION%s
     Changes the parent of a branch. This can be used to:
-    
+
     1. Move a branch to a different parent within the same stack
     2. Add a standalone worktree/branch to an existing stack
     3. Split a stack by reparenting branches to different parents
@@ -47,16 +46,13 @@ func Reparent(args []string) error {
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 
-	branchFlag := fs.String("branch", "", "Branch to reparent")
-	branchShort := fs.String("b", "", "Branch to reparent (short)")
-	parentFlag := fs.String("parent", "", "New parent branch")
-	parentShort := fs.String("p", "", "New parent branch (short)")
-	noRebaseFlag := fs.Bool("no-rebase", false, "Don't rebase")
-	noRebaseShort := fs.Bool("n", false, "Don't rebase (short)")
-	helpFlag := fs.Bool("h", false, "Show help")
+	branchFlag := fs.StringP("branch", "b", "", "Branch to reparent")
+	parentFlag := fs.StringP("parent", "p", "", "New parent branch")
+	noRebaseFlag := fs.BoolP("no-rebase", "n", false, "Don't rebase")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
-		if err == flag.ErrHelp {
+		if err == pflag.ErrHelp {
 			return nil
 		}
 		return err
@@ -65,15 +61,6 @@ func Reparent(args []string) error {
 		fs.Usage()
 		return nil
 	}
-
-	// Merge short flags into long flags
-	if *branchShort != "" {
-		*branchFlag = *branchShort
-	}
-	if *parentShort != "" {
-		*parentFlag = *parentShort
-	}
-	helpers.MergeFlags(noRebaseShort, noRebaseFlag)
 
 	// Determine if we should rebase
 	doRebase := !*noRebaseFlag
