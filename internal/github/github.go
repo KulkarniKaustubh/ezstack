@@ -406,7 +406,7 @@ func generateStackSection(stack *config.Stack, currentPRBranch string) string {
 		}
 		num++
 	}
-	sb.WriteString("\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack) (beta)_\n")
+	sb.WriteString("\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n")
 
 	return sb.String()
 }
