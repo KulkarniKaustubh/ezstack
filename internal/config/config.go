@@ -2,34 +2,40 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"strings"
+
+	"github.com/spf13/viper"
 )
+
+var v *viper.Viper
+
+func init() {
+	v = viper.New()
+	v.SetEnvPrefix("EZSTACK")
+	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
+	v.AutomaticEnv()
+	v.SetDefault("default_base_branch", "main")
+}
 
 // Config holds the global configuration for ezstack
 type Config struct {
-	// DefaultBaseBranch is the default base branch (usually "main" or "master")
-	DefaultBaseBranch string `json:"default_base_branch"`
-	// GitHubToken for API access (optional, can use gh cli)
-	GitHubToken string `json:"github_token,omitempty"`
-	// Repos holds per-repository configuration, keyed by repo path
-	Repos map[string]*RepoConfig `json:"repos"`
+	DefaultBaseBranch string            `json:"default_base_branch"`
+	GitHubToken       string            `json:"github_token,omitempty"`
+	Repos             map[string]*RepoConfig `json:"repos"`
 }
 
 // RepoConfig holds configuration for a specific repository
 type RepoConfig struct {
-	// RepoPath is the absolute path to the main repository
-	RepoPath string `json:"repo_path"`
-	// WorktreeBaseDir is where worktrees are created for this repo
-	WorktreeBaseDir string `json:"worktree_base_dir"`
-	// DefaultBaseBranch overrides the global default for this repo
-	DefaultBaseBranch string `json:"default_base_branch,omitempty"`
-	// CdAfterNew if true, outputs cd command after creating new worktree
-	CdAfterNew *bool `json:"cd_after_new,omitempty"`
-	// AutoDraftWipCommits if true, auto-creates draft PRs when commit starts with "wip"
-	AutoDraftWipCommits *bool `json:"auto_draft_wip_commits,omitempty"`
+	RepoPath            string `json:"repo_path"`
+	WorktreeBaseDir     string `json:"worktree_base_dir"`
+	DefaultBaseBranch   string `json:"default_base_branch,omitempty"`
+	CdAfterNew          *bool  `json:"cd_after_new,omitempty"`
+	AutoDraftWipCommits *bool  `json:"auto_draft_wip_commits,omitempty"`
 }
 
 // GetRepoConfig returns the configuration for a specific repo path
@@ -135,17 +141,16 @@ type CacheConfig struct {
 	repoDir  string
 }
 
-// Branch represents a single branch in a stack (used internally for compatibility)
-// This is constructed from the tree structure and cache at runtime
+// Branch represents a single branch in a stack, constructed from the tree and cache at runtime.
 type Branch struct {
 	Name         string `json:"name"`
-	Parent       string `json:"parent"`        // Parent branch name
-	WorktreePath string `json:"worktree_path"` // Path to the worktree
+	Parent       string `json:"parent"`
+	WorktreePath string `json:"worktree_path"`
 	PRNumber     int    `json:"pr_number,omitempty"`
 	PRUrl        string `json:"pr_url,omitempty"`
-	BaseBranch   string `json:"base_branch"`         // The branch this PR targets (same as Parent for display)
-	IsRemote     bool   `json:"is_remote,omitempty"` // True if this is someone else's branch
-	IsMerged     bool   `json:"is_merged,omitempty"` // True if this branch's PR has been merged
+	BaseBranch   string `json:"base_branch"`         // original tree parent, used for display ordering
+	IsRemote     bool   `json:"is_remote,omitempty"` // branch belongs to another contributor
+	IsMerged     bool   `json:"is_merged,omitempty"`
 }
 
 // legacyStackConfigFile represents the old config format for backward compatibility
@@ -173,10 +178,9 @@ type legacyBranch struct {
 	IsMerged     bool   `json:"is_merged,omitempty"`
 }
 
-// ConfigDir returns the path to the ezstack config directory
-// Checks EZSTACK_HOME environment variable first, then defaults to $HOME/.ezstack
+// ConfigDir returns the path to the ezstack config directory.
+// Checks EZSTACK_HOME first, then defaults to $HOME/.ezstack.
 func ConfigDir() (string, error) {
-	// Check for EZSTACK_HOME environment variable first
 	if ezstackHome := os.Getenv("EZSTACK_HOME"); ezstackHome != "" {
 		return ezstackHome, nil
 	}
@@ -300,13 +304,12 @@ func migrateV0ToV1(data []byte) ([]byte, error) {
 				continue
 			}
 
-			// Build set of branch names in this stack
 			branchSet := make(map[string]bool)
 			for _, b := range legacyStack.Branches {
 				branchSet[b.Name] = true
 			}
 
-			// Find the root (parent not in the stack)
+			// Find the root: the parent that isn't itself in the stack
 			root := "main"
 			for _, b := range legacyStack.Branches {
 				if !branchSet[b.Parent] {
@@ -315,7 +318,6 @@ func migrateV0ToV1(data []byte) ([]byte, error) {
 				}
 			}
 
-			// Build children map
 			children := make(map[string][]string)
 			for _, b := range legacyStack.Branches {
 				parent := b.Parent
@@ -325,7 +327,6 @@ func migrateV0ToV1(data []byte) ([]byte, error) {
 				children[parent] = append(children[parent], b.Name)
 			}
 
-			// Build tree recursively
 			var buildTree func(parent string) BranchTree
 			buildTree = func(parent string) BranchTree {
 				tree := make(BranchTree)
@@ -337,7 +338,7 @@ func migrateV0ToV1(data []byte) ([]byte, error) {
 
 			tree := buildTree(root)
 
-			// Move branch metadata to repo-level cache
+			// Move branch metadata to the repo-level cache
 			for _, b := range legacyStack.Branches {
 				rd.Branches[b.Name] = &BranchCache{
 					WorktreePath: b.WorktreePath,
@@ -391,7 +392,6 @@ func migrateV1ToV2(data []byte) ([]byte, error) {
 		file.Repos = make(map[string]*v2RepoData)
 	}
 
-	// Merge cache.json if it exists
 	configDir, err := ConfigDir()
 	if err == nil {
 		cachePath := filepath.Join(configDir, "cache.json")
@@ -444,7 +444,6 @@ func migrateV1ToV2(data []byte) ([]byte, error) {
 		}
 	}
 
-	// Generate hashes for stacks that don't have one
 	for _, rd := range file.Repos {
 		if rd == nil {
 			continue
@@ -527,7 +526,11 @@ func migrateV2ToV3(data []byte) ([]byte, error) {
 	return json.MarshalIndent(newFile, "", "  ")
 }
 
-// Load loads the configuration from ~/.ezstack/config.json
+// Load loads the configuration from ~/.ezstack/config.json.
+// Top-level scalar values are resolved through Viper so that EZSTACK_-prefixed
+// environment variables (e.g. EZSTACK_GITHUB_TOKEN) take precedence over the file.
+// The repos map is read directly from JSON because Viper lowercases all keys,
+// which would corrupt filesystem-path map keys like /Users/….
 func Load() (*Config, error) {
 	configDir, err := ConfigDir()
 	if err != nil {
@@ -535,40 +538,45 @@ func Load() (*Config, error) {
 	}
 
 	configPath := filepath.Join(configDir, "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return &Config{
-				DefaultBaseBranch: "main",
-				Repos:             make(map[string]*RepoConfig),
-			}, nil
+
+	v.SetConfigFile(configPath)
+	v.SetConfigType("json")
+	if err := v.ReadInConfig(); err != nil {
+		var pathErr *os.PathError
+		if _, ok := err.(viper.ConfigFileNotFoundError); !ok && !errors.As(err, &pathErr) {
+			return nil, fmt.Errorf("reading config: %w", err)
 		}
-		return nil, err
 	}
 
-	var cfg Config
-	if err := json.Unmarshal(data, &cfg); err != nil {
-		return nil, err
+	cfg := &Config{
+		DefaultBaseBranch: v.GetString("default_base_branch"),
+		GitHubToken:       v.GetString("github_token"),
+		Repos:             make(map[string]*RepoConfig),
 	}
 
-	// Initialize repos map if nil
-	if cfg.Repos == nil {
-		cfg.Repos = make(map[string]*RepoConfig)
-	}
+	// The repos map is read from raw JSON to preserve case-sensitive path keys.
+	data, err := os.ReadFile(configPath)
+	if err == nil {
+		var raw struct {
+			Repos map[string]*RepoConfig `json:"repos"`
+		}
+		if jsonErr := json.Unmarshal(data, &raw); jsonErr == nil && raw.Repos != nil {
+			cfg.Repos = raw.Repos
+		}
 
-	// Check for legacy config format and migrate if needed
-	var legacy legacyConfig
-	if err := json.Unmarshal(data, &legacy); err == nil {
-		if legacy.WorktreeBaseDir != "" && legacy.MainRepoDir != "" && len(cfg.Repos) == 0 {
-			// Migrate legacy config: use MainRepoDir as the repo key
-			cfg.Repos[legacy.MainRepoDir] = &RepoConfig{
-				RepoPath:        legacy.MainRepoDir,
-				WorktreeBaseDir: legacy.WorktreeBaseDir,
+		// Migrate legacy single-repo config format.
+		var legacy legacyConfig
+		if jsonErr := json.Unmarshal(data, &legacy); jsonErr == nil {
+			if legacy.WorktreeBaseDir != "" && legacy.MainRepoDir != "" && len(cfg.Repos) == 0 {
+				cfg.Repos[legacy.MainRepoDir] = &RepoConfig{
+					RepoPath:        legacy.MainRepoDir,
+					WorktreeBaseDir: legacy.WorktreeBaseDir,
+				}
 			}
 		}
 	}
 
-	return &cfg, nil
+	return cfg, nil
 }
 
 // Save saves the configuration to ~/.ezstack/config.json
@@ -598,7 +606,6 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		return nil, err
 	}
 
-	// Ensure the config directory exists
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return nil, err
 	}
@@ -607,13 +614,12 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 	data, err := os.ReadFile(stackPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// No stacks.json yet — check if there's a cache.json to bootstrap from
+			// No stacks.json yet — bootstrap from cache.json if present
 			// by running migration from v1→v2 on an empty v1 file
 			emptyV1 := stackConfigFile{Version: 1, Repos: make(map[string]*repoData)}
 			emptyData, _ := json.MarshalIndent(emptyV1, "", "  ")
 			migratedData, migErr := migrateStackConfig(emptyData, 1, currentStackConfigVersion)
 			if migErr == nil {
-				// Check if migration produced any data worth saving
 				var check stackConfigFile
 				if json.Unmarshal(migratedData, &check) == nil && len(check.Repos) > 0 {
 					atomicWriteFile(stackPath, migratedData, 0644)
@@ -636,7 +642,6 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		}
 	}
 
-	// Check file version and run migrations if needed
 	var versionCheck struct {
 		Version int `json:"version"`
 	}
@@ -647,11 +652,9 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to migrate stacks.json: %w", err)
 		}
-		// Write migrated data back so migration only runs once
-		atomicWriteFile(stackPath, data, 0644)
+		atomicWriteFile(stackPath, data, 0644) // write back so migration only runs once
 	}
 
-	// Parse the (possibly migrated) data
 	var file stackConfigFile
 	if err := json.Unmarshal(data, &file); err != nil {
 		return nil, err
@@ -661,7 +664,6 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		file.Repos = make(map[string]*repoData)
 	}
 
-	// Get the data for this specific repo
 	rd := file.Repos[repoDir]
 	if rd == nil {
 		rd = &repoData{
@@ -685,7 +687,6 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		repoDir: repoDir,
 	}
 
-	// Populate Hash from map key and Branches slice for each stack
 	for hash, stack := range sc.Stacks {
 		stack.Hash = hash
 		stack.cache = sc.Cache
@@ -733,14 +734,13 @@ func (sc *StackConfig) Save(repoDir string) error {
 		return err
 	}
 
-	// Ensure the config directory exists
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return err
 	}
 
 	stackPath := filepath.Join(configDir, "stacks.json")
 
-	// Load existing file to preserve other repos
+	// Load existing file first to preserve other repos' data
 	var file stackConfigFile
 	data, err := os.ReadFile(stackPath)
 	if err != nil {
@@ -757,13 +757,11 @@ func (sc *StackConfig) Save(repoDir string) error {
 		}
 	}
 
-	// Use the stored repoDir if available, otherwise use the parameter
 	targetRepo := sc.repoDir
 	if targetRepo == "" {
 		targetRepo = repoDir
 	}
 
-	// Build the combined repo data
 	branches := make(map[string]*BranchCache)
 	if sc.Cache != nil {
 		branches = sc.Cache.Branches
@@ -906,7 +904,6 @@ func (s *Stack) GetBranches(cache *CacheConfig) []*Branch {
 // effectiveParent is the nearest non-merged ancestor (used for git operations)
 // treeParent is the actual tree parent (used for display hierarchy tracking)
 func (s *Stack) walkTree(treeParent, effectiveParent string, tree BranchTree, cache *CacheConfig, branches *[]*Branch) {
-	// Get sorted keys for consistent ordering
 	keys := make([]string, 0, len(tree))
 	for k := range tree {
 		keys = append(keys, k)
@@ -916,7 +913,6 @@ func (s *Stack) walkTree(treeParent, effectiveParent string, tree BranchTree, ca
 	for _, branchName := range keys {
 		children := tree[branchName]
 
-		// Check if this branch is merged
 		isMerged := false
 		if cache != nil {
 			if bc := cache.GetBranchCache(branchName); bc != nil {
@@ -924,16 +920,14 @@ func (s *Stack) walkTree(treeParent, effectiveParent string, tree BranchTree, ca
 			}
 		}
 
-		// Create branch object
-		// Parent is the effective parent (nearest non-merged ancestor) for git operations
-		// BaseBranch tracks the original tree parent for display purposes
+		// Parent is the effective parent (nearest non-merged ancestor) for git operations.
+		// BaseBranch is the original tree parent, used for display ordering.
 		branch := &Branch{
 			Name:       branchName,
 			Parent:     effectiveParent,
 			BaseBranch: treeParent,
 		}
 
-		// Populate from cache if available
 		if cache != nil {
 			if bc := cache.GetBranchCache(branchName); bc != nil {
 				branch.WorktreePath = bc.WorktreePath
@@ -946,14 +940,12 @@ func (s *Stack) walkTree(treeParent, effectiveParent string, tree BranchTree, ca
 
 		*branches = append(*branches, branch)
 
-		// For children: if this branch is merged, they inherit our effective parent
-		// Otherwise, this branch becomes the effective parent
+		// Merged branches pass their effective parent down so children rebase onto the right base.
 		childEffectiveParent := branchName
 		if isMerged {
 			childEffectiveParent = effectiveParent
 		}
 
-		// Recurse into children
 		s.walkTree(branchName, childEffectiveParent, children, cache, branches)
 	}
 }
@@ -975,13 +967,11 @@ func (s *Stack) AddBranch(branchName, parentName string) {
 		s.Tree = make(BranchTree)
 	}
 
-	// If parent is the root (main), add directly to the tree
 	if parentName == s.Root {
 		s.Tree[branchName] = make(BranchTree)
 		return
 	}
 
-	// Find the parent in the tree and add the child
 	s.addBranchToTree(s.Tree, branchName, parentName)
 }
 
@@ -1197,43 +1187,35 @@ func SortBranchesTopologically(branches []*Branch) []*Branch {
 		return branches
 	}
 
-	// Build a map of branch name -> branch for quick lookup
 	branchMap := make(map[string]*Branch)
 	for _, b := range branches {
 		branchMap[b.Name] = b
 	}
 
-	// Build children map using BOTH current Parent AND original BaseBranch
-	// This preserves the original hierarchy even after reparenting
+	// Build children map using both current Parent and original BaseBranch so that
+	// reparented (merged) branches stay in their original display position.
 	children := make(map[string][]*Branch)
 	var roots []*Branch
 
 	for _, b := range branches {
-		// Check if parent is in this stack
 		_, parentInStack := branchMap[b.Parent]
-		// Also check if original base branch is in this stack (for reparented branches)
 		_, baseInStack := branchMap[b.BaseBranch]
 
 		if parentInStack {
-			// Current parent is in stack - use it
 			children[b.Parent] = append(children[b.Parent], b)
 		} else if baseInStack && b.BaseBranch != b.Parent {
-			// Branch was reparented (BaseBranch != Parent), but original parent is in stack
-			// Keep it as a child of the original parent for display purposes
+			// Branch was reparented; keep it under the original parent for display.
 			children[b.BaseBranch] = append(children[b.BaseBranch], b)
 		} else {
-			// Parent is external (main) - this is a root
 			roots = append(roots, b)
 		}
 	}
 
-	// Build a map of branch name -> original index for stable sorting
 	originalIndex := make(map[string]int)
 	for i, b := range branches {
 		originalIndex[b.Name] = i
 	}
 
-	// Sort roots by original index to maintain stable order
 	sortByOriginalIndex := func(slice []*Branch) {
 		for i := 0; i < len(slice)-1; i++ {
 			for j := i + 1; j < len(slice); j++ {
@@ -1244,28 +1226,23 @@ func SortBranchesTopologically(branches []*Branch) []*Branch {
 		}
 	}
 	sortByOriginalIndex(roots)
-
-	// Sort children by original index too
 	for parent := range children {
 		sortByOriginalIndex(children[parent])
 	}
 
-	// BFS to build sorted list
+	// BFS
 	var sorted []*Branch
 	queue := roots
-
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
 		sorted = append(sorted, current)
-
-		// Add children to queue
 		for _, child := range children[current.Name] {
 			queue = append(queue, child)
 		}
 	}
 
-	// If we didn't get all branches (shouldn't happen), append remaining
+	// Safety net: append any branches missed due to unexpected graph structure.
 	if len(sorted) < len(branches) {
 		inSorted := make(map[string]bool)
 		for _, b := range sorted {
