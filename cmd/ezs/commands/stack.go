@@ -103,6 +103,7 @@ func Stack(args []string) error {
 		choice, err := ui.SelectOptionWithBack([]string{
 			"Add branch to an existing stack",
 			"Start a new stack (choose base branch)",
+			"Start a new stack from a remote PR",
 		}, "What would you like to do?")
 		if err != nil {
 			if err == ui.ErrBack {
@@ -121,9 +122,19 @@ func Stack(args []string) error {
 			if err != nil {
 				return err
 			}
-		} else {
+		} else if choice == 1 {
 			// Start a new stack: pick base branch first, then branch to add
 			parentName, err = selectBaseBranch(mgr, g, "", baseBranch)
+			if err != nil {
+				return err
+			}
+			branchName, err = selectUntrackedBranch(mgr)
+			if err != nil {
+				return err
+			}
+		} else {
+			// Start a new stack from a remote PR
+			parentName, err = selectRemotePR(g, mgr)
 			if err != nil {
 				return err
 			}
@@ -412,4 +423,56 @@ func selectUntrackedBranch(mgr *stack.Manager) (string, error) {
 	}
 
 	return branchNames[selected], nil
+}
+
+// selectRemotePR shows a selection UI for choosing a remote PR as the base of a new stack.
+// It registers the remote branch as the stack root and returns the remote branch name as the parent.
+func selectRemotePR(g *git.Git, mgr *stack.Manager) (string, error) {
+	remoteURL, err := g.GetRemote("origin")
+	if err != nil {
+		return "", fmt.Errorf("failed to get remote: %w", err)
+	}
+
+	gh, err := github.NewClient(remoteURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to create GitHub client: %w", err)
+	}
+
+	ui.Info("Fetching open PRs...")
+	openPRs, err := gh.ListOpenPRs()
+	if err != nil {
+		return "", fmt.Errorf("failed to list open PRs: %w", err)
+	}
+
+	if len(openPRs) == 0 {
+		return "", fmt.Errorf("no open PRs found in this repository")
+	}
+
+	prOptions := make([]string, len(openPRs))
+	for i, pr := range openPRs {
+		prOptions[i] = fmt.Sprintf("#%d %s - %s (%s)", pr.Number, pr.Branch, pr.Title, pr.Author)
+	}
+
+	selectedIdx, err := ui.SelectOption(prOptions, "Select PR to use as stack base")
+	if err != nil {
+		return "", err
+	}
+	selectedPR := openPRs[selectedIdx]
+
+	fmt.Fprintln(os.Stderr)
+	ui.Warn("Note: This remote branch will never be rebased since it is assumed")
+	ui.Warn(fmt.Sprintf("that it does not belong to you. Only %sYOUR%s branches that are stacked", ui.Bold, ui.Reset+ui.Yellow))
+	ui.Warn("on this branch will be handled by ezstack.")
+	fmt.Fprintln(os.Stderr)
+
+	ui.Info("Fetching remote branch...")
+	if err := g.Fetch(); err != nil {
+		return "", fmt.Errorf("failed to fetch: %w", err)
+	}
+
+	if err := mgr.RegisterRemoteBranch(selectedPR.Branch, selectedPR.Number, selectedPR.URL); err != nil {
+		return "", fmt.Errorf("failed to register remote branch: %w", err)
+	}
+
+	return selectedPR.Branch, nil
 }
