@@ -92,24 +92,53 @@ func Stack(args []string) error {
 		parentName = fs.Arg(1)
 	}
 
-	// Interactive mode
-	if branchName == "" {
-		branchName, err = selectUntrackedBranch(mgr)
-		if err != nil {
-			return err
-		}
-	}
-
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 	baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
 
-	if parentName == "" {
-		parentName, err = SelectNewParent(mgr, g, branchName, baseBranch)
+	// Fully interactive mode: no branch or parent specified
+	if branchName == "" && parentName == "" {
+		choice, err := ui.SelectOptionWithBack([]string{
+			"Add branch to an existing stack",
+			"Start a new stack (choose base branch)",
+		}, "What would you like to do?")
+		if err != nil {
+			if err == ui.ErrBack {
+				return ui.ErrBack
+			}
+			return err
+		}
+
+		branchName, err = selectUntrackedBranch(mgr)
 		if err != nil {
 			return err
+		}
+
+		if choice == 0 {
+			parentName, err = SelectNewParent(mgr, g, branchName, baseBranch)
+			if err != nil {
+				return err
+			}
+		} else {
+			parentName, err = selectBaseBranch(mgr, g, branchName, baseBranch)
+			if err != nil {
+				return err
+			}
+		}
+	} else {
+		if branchName == "" {
+			branchName, err = selectUntrackedBranch(mgr)
+			if err != nil {
+				return err
+			}
+		}
+		if parentName == "" {
+			parentName, err = SelectNewParent(mgr, g, branchName, baseBranch)
+			if err != nil {
+				return err
+			}
 		}
 	}
 
@@ -306,6 +335,46 @@ func selectTrackedBranch(mgr *stack.Manager) (string, error) {
 	}
 
 	selected, err := ui.SelectOption(options, "Select branch to remove from tracking")
+	if err != nil {
+		return "", err
+	}
+
+	return branchNames[selected], nil
+}
+
+// selectBaseBranch shows a selection UI for choosing the base branch of a new stack
+func selectBaseBranch(mgr *stack.Manager, g *git.Git, branchName, baseBranch string) (string, error) {
+	var options []string
+	var branchNames []string
+	listed := map[string]bool{branchName: true}
+
+	// Add configured base branch first
+	options = append(options, fmt.Sprintf("%s (default base)", baseBranch))
+	branchNames = append(branchNames, baseBranch)
+	listed[baseBranch] = true
+
+	// Add other local branches
+	localBranches, err := g.ListLocalBranches()
+	if err == nil {
+		for _, lb := range localBranches {
+			if listed[lb] {
+				continue
+			}
+			// Skip branches that are tracked in stacks (they're not bases)
+			if mgr.GetBranch(lb) != nil {
+				continue
+			}
+			options = append(options, lb)
+			branchNames = append(branchNames, lb)
+			listed[lb] = true
+		}
+	}
+
+	if len(options) == 0 {
+		return "", fmt.Errorf("no branches available as stack base")
+	}
+
+	selected, err := ui.SelectOption(options, "Select base branch for the new stack")
 	if err != nil {
 		return "", err
 	}
