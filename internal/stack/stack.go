@@ -569,17 +569,38 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 	oldStack := m.stackConfig.Stacks[oldStackKey]
 
 	if oldStackKey != newParentStackKey && newParentStackKey != "" {
-		// Move branch (and its children) to the new parent's stack
-		if err := m.moveBranchToStack(branch.Name, oldStackKey, newParentStackKey); err != nil {
+		if err := m.moveBranchToStack(branch.Name, oldStackKey, newParentStackKey, newParentName); err != nil {
 			return nil, fmt.Errorf("failed to move branch to new stack: %w", err)
 		}
 	} else if newParentStackKey == "" && m.IsMainBranch(newParentName) {
-		// New parent is main - use ReparentBranch to move in tree
-		// The branch stays in the same stack but is now a root-level branch
-		oldStack.ReparentBranch(branch.Name, "") // Empty parent means root level
-		oldStack.PopulateBranchesWithCache(cache)
+		if oldStack.Root == newParentName {
+			oldStack.ReparentBranch(branch.Name, "")
+			oldStack.PopulateBranchesWithCache(cache)
+		} else {
+			mainStackKey := m.findStackByRoot(newParentName)
+			if mainStackKey != "" {
+				if err := m.moveBranchToStack(branch.Name, oldStackKey, mainStackKey, newParentName); err != nil {
+					return nil, fmt.Errorf("failed to move branch to main stack: %w", err)
+				}
+			} else {
+				subtree := oldStack.ExtractSubtree(branch.Name)
+				oldStack.PopulateBranchesWithCache(cache)
+				if len(oldStack.Tree) == 0 {
+					delete(m.stackConfig.Stacks, oldStackKey)
+				}
+				hash := config.GenerateStackHash(branch.Name)
+				newStack := &config.Stack{
+					Hash: hash,
+					Root: newParentName,
+					Tree: config.BranchTree{
+						branch.Name: subtree,
+					},
+				}
+				m.stackConfig.Stacks[hash] = newStack
+				newStack.PopulateBranchesWithCache(cache)
+			}
+		}
 	} else {
-		// Same stack, different parent - use ReparentBranch
 		oldStack.ReparentBranch(branch.Name, newParentName)
 		oldStack.PopulateBranchesWithCache(cache)
 	}
@@ -709,8 +730,7 @@ func (m *Manager) wouldCreateCycle(branchName, newParentName string) bool {
 	return false
 }
 
-// moveBranchToStack moves a branch and all its descendants from one stack to another
-func (m *Manager) moveBranchToStack(branchName, fromStackName, toStackName string) error {
+func (m *Manager) moveBranchToStack(branchName, fromStackName, toStackName, newParentName string) error {
 	fromStack := m.stackConfig.Stacks[fromStackName]
 	toStack := m.stackConfig.Stacks[toStackName]
 
@@ -718,34 +738,32 @@ func (m *Manager) moveBranchToStack(branchName, fromStackName, toStackName strin
 		return fmt.Errorf("invalid stack names")
 	}
 
-	// Get the branch to find the new parent
-	branch := m.GetBranch(branchName)
-	if branch == nil {
-		return fmt.Errorf("branch '%s' not found", branchName)
-	}
-	newParentName := branch.Parent
-
 	cache := m.stackConfig.Cache
 
-	// Extract subtree from old stack (includes all descendants)
 	subtree := fromStack.ExtractSubtree(branchName)
 	if subtree == nil {
 		return fmt.Errorf("branch '%s' not found in source stack", branchName)
 	}
 
-	// Repopulate source stack
 	fromStack.PopulateBranchesWithCache(cache)
 
-	// If old stack is now empty, remove it
 	if len(fromStack.Tree) == 0 {
 		delete(m.stackConfig.Stacks, fromStackName)
 	}
 
-	// Add subtree to new stack under the new parent
 	toStack.AddSubtree(branchName, subtree, newParentName)
 	toStack.PopulateBranchesWithCache(cache)
 
 	return nil
+}
+
+func (m *Manager) findStackByRoot(rootName string) string {
+	for stackName, stack := range m.stackConfig.Stacks {
+		if stack.Root == rootName {
+			return stackName
+		}
+	}
+	return ""
 }
 
 // GetAllBranchesInAllStacks returns all branches across all stacks
