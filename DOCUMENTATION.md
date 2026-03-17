@@ -391,21 +391,28 @@ ezs reparent feature-2 main --no-rebase
 
 ### `ezs stack`
 
-Add an untracked branch/worktree to an existing stack, or start a new stack.
+Add an untracked branch/worktree to an existing stack, start a new stack, or rename a stack.
 
 ```
 ezs stack [branch] [parent] [options]
+ezs stack rename [stack-hash] [name]
 
 Options:
     -b, --branch <name>     Branch to add to stack
     -p, --parent <name>     Parent branch in the stack
     -B, --base <name>       Base branch for a new stack (e.g. develop, staging)
+
+Subcommands:
+    rename                  Rename an existing stack
 ```
 
 In interactive mode, you can choose to:
 - Add a branch to an existing stack
 - Start a new stack with a custom base branch (e.g. `develop`, `staging`)
 - Start a new stack from a remote PR (stack on top of someone else's branch)
+- Rename a stack
+
+When creating a new stack (via `ezs new` or `ezs stack`), you'll be prompted to optionally name it. Named stacks display as `name [hash]` in `ezs ls` and `ezs status`.
 
 `--base` and `--parent` are mutually exclusive. Use `--base` to start a new stack rooted on a branch other than the default base branch.
 
@@ -424,6 +431,15 @@ ezs stack -b my-branch -p main
 
 # Start a new stack on develop
 ezs stack -b my-branch --base develop
+
+# Rename a stack (interactive)
+ezs stack rename
+
+# Rename a stack by hash prefix
+ezs stack rename a1b2c my-feature
+
+# Clear a stack name
+ezs stack rename a1b2c ""
 ```
 
 </details>
