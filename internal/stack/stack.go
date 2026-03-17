@@ -1043,6 +1043,16 @@ func (m *Manager) AddWorktreeToStack(branchName, worktreePath, parentName string
 	return nil, fmt.Errorf("failed to add branch")
 }
 
+// SetStackName sets or updates the name of a stack
+func (m *Manager) SetStackName(stackHash, name string) error {
+	stack := m.stackConfig.Stacks[stackHash]
+	if stack == nil {
+		return fmt.Errorf("stack '%s' not found", stackHash)
+	}
+	stack.Name = name
+	return m.stackConfig.Save(m.repoDir)
+}
+
 // DeleteStack removes an entire stack from config, cleaning up any remaining worktrees and git branches.
 // This is intended for fully merged stacks where all branches have been completed.
 func (m *Manager) DeleteStack(stackHash string) error {

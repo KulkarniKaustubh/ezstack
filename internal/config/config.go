@@ -94,7 +94,7 @@ type repoData struct {
 
 // currentStackConfigVersion is the latest version of the stacks.json format.
 // Bump this when adding a new migration.
-const currentStackConfigVersion = 4
+const currentStackConfigVersion = 5
 
 // stackConfigFile is the on-disk format that stores stacks for all repos
 type stackConfigFile struct {
@@ -113,12 +113,21 @@ type StackConfig struct {
 // Hash is the map key in StackConfig.Stacks and is populated at load time.
 type Stack struct {
 	Hash         string       `json:"-"`                        // Populated from map key at load time
+	Name         string       `json:"name,omitempty"`           // Optional user-given name for the stack
 	Root         string       `json:"root"`                     // The base branch (e.g. "main", or a remote branch name)
 	RootPRNumber int          `json:"root_pr_number,omitempty"` // PR number of the root branch (for remote base branches)
 	RootPRUrl    string       `json:"root_pr_url,omitempty"`    // PR URL of the root branch (for remote base branches)
 	Tree         BranchTree   `json:"tree"`                     // The tree of branches
 	Branches     []*Branch    `json:"-"`                        // Runtime-only: populated from Tree for backward compatibility
 	cache        *CacheConfig // Runtime-only: reference to cache for metadata
+}
+
+// DisplayName returns the display string for a stack: "name [hash]" or just hash
+func (s *Stack) DisplayName() string {
+	if s.Name != "" {
+		return fmt.Sprintf("%s [%s]", s.Name, s.Hash)
+	}
+	return s.Hash
 }
 
 // GenerateStackHash generates a 7-char hex hash from a stack name using FNV-32a
@@ -239,6 +248,7 @@ func migrateStackConfig(data []byte, srcVersion, dstVersion int) ([]byte, error)
 		migrateV1ToV2,
 		migrateV2ToV3,
 		migrateV3ToV4,
+		migrateV4ToV5,
 	}
 
 	for v := srcVersion; v < dstVersion; v++ {
@@ -617,6 +627,21 @@ func migrateV3ToV4(data []byte) ([]byte, error) {
 	}
 
 	return json.MarshalIndent(newFile, "", "  ")
+}
+
+// migrateV4ToV5 adds the optional Name field to stacks.
+// No structural change needed — the Name field is omitempty and defaults to "".
+// This migration just bumps the version number.
+func migrateV4ToV5(data []byte) ([]byte, error) {
+	var file struct {
+		Version int                    `json:"version"`
+		Repos   map[string]*repoData   `json:"repos"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil, err
+	}
+	file.Version = 5
+	return json.MarshalIndent(file, "", "  ")
 }
 
 // Load loads the configuration from ~/.ezstack/config.json.

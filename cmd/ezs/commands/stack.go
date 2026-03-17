@@ -13,18 +13,27 @@ import (
 
 // Stack adds a branch to a stack (alias for reparent with standalone branch)
 func Stack(args []string) error {
+	// Check for "rename" subcommand before flag parsing
+	if len(args) > 0 && args[0] == "rename" {
+		return stackRename(args[1:])
+	}
+
 	fs := pflag.NewFlagSet("stack", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sAdd a branch to a stack%s
 
 %sUSAGE%s
     ezs stack [branch] [parent] [options]
+    ezs stack rename [stack-hash] [name]
 
 %sOPTIONS%s
     -b, --branch <name>     Branch to add to stack
     -p, --parent <name>     Parent branch in the stack
     -B, --base <name>       Base branch for a new stack (e.g. develop, staging)
     -h, --help              Show this help message
+
+%sSUBCOMMANDS%s
+    rename                  Rename an existing stack
 
 %sDESCRIPTION%s
     Adds an untracked branch/worktree to an existing stack by setting its parent.
@@ -38,7 +47,9 @@ func Stack(args []string) error {
     ezs stack my-branch feature-a         Add my-branch under feature-a
     ezs stack -b my-branch -p main        Add my-branch under main
     ezs stack -b my-branch --base develop Start a new stack on develop
-`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
+    ezs stack rename                      Rename a stack (interactive)
+    ezs stack rename a1b2c my-feature     Rename stack a1b2c to "my-feature"
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 
 	branchFlag := fs.StringP("branch", "b", "", "Branch to add")
@@ -83,6 +94,7 @@ func Stack(args []string) error {
 
 	// Get parent
 	var parentName string
+	isNewStack := *baseFlag != ""
 	if *baseFlag != "" {
 		parentName = *baseFlag
 	} else if *parentFlag != "" {
@@ -103,6 +115,7 @@ func Stack(args []string) error {
 			"Add branch to an existing stack",
 			"Start a new stack (choose base branch)",
 			"Start a new stack from a remote PR",
+			"Rename a stack",
 		}, "What would you like to do?")
 		if err != nil {
 			if err == ui.ErrBack {
@@ -122,6 +135,7 @@ func Stack(args []string) error {
 				return err
 			}
 		} else if choice == 1 {
+			isNewStack = true
 			// Start a new stack: pick base branch first, then branch to add
 			parentName, err = selectBaseBranch(mgr, g, "", baseBranch)
 			if err != nil {
@@ -131,7 +145,8 @@ func Stack(args []string) error {
 			if err != nil {
 				return err
 			}
-		} else {
+		} else if choice == 2 {
+			isNewStack = true
 			// Start a new stack from a remote PR
 			parentName, err = selectRemotePR(g, mgr)
 			if err != nil {
@@ -141,6 +156,9 @@ func Stack(args []string) error {
 			if err != nil {
 				return err
 			}
+		} else {
+			// Rename a stack
+			return stackRename(nil)
 		}
 	} else {
 		if branchName == "" {
@@ -172,6 +190,11 @@ func Stack(args []string) error {
 	branch := result.Branch
 	ui.Success(fmt.Sprintf("Added '%s' to stack with parent '%s'", branch.Name, branch.Parent))
 
+	// Prompt for stack name if this created a new stack
+	if isNewStack {
+		promptStackName(mgr, branchName)
+	}
+
 	// Update PR base branch on GitHub if the branch has a PR
 	if branch.PRNumber > 0 {
 		gh, ghErr := newGitHubClient(g)
@@ -194,6 +217,81 @@ func Stack(args []string) error {
 	}
 
 	return nil
+}
+
+// stackRename handles the "ezs stack rename" subcommand
+func stackRename(args []string) error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	mgr, err := stack.NewManager(cwd)
+	if err != nil {
+		return err
+	}
+
+	stacks := mgr.ListStacks()
+	if len(stacks) == 0 {
+		return fmt.Errorf("no stacks found")
+	}
+
+	var targetStack *config.Stack
+	var newName string
+
+	if len(args) >= 1 {
+		// First arg is stack hash prefix
+		targetStack, err = mgr.GetStackByHash(args[0])
+		if err != nil {
+			return err
+		}
+	}
+	if len(args) >= 2 {
+		newName = args[1]
+	}
+
+	// Interactive: select stack if not provided
+	if targetStack == nil {
+		targetStack, err = ui.SelectStack(stacks, "Select stack to rename")
+		if err != nil {
+			return err
+		}
+	}
+
+	// Prompt for name if not provided
+	if newName == "" {
+		currentName := targetStack.Name
+		if currentName == "" {
+			currentName = "(unnamed)"
+		}
+		ui.Info(fmt.Sprintf("Current: %s", targetStack.DisplayName()))
+		newName = ui.Prompt("New name (empty to clear)", "")
+	}
+
+	if err := mgr.SetStackName(targetStack.Hash, newName); err != nil {
+		return err
+	}
+
+	if newName == "" {
+		ui.Success(fmt.Sprintf("Cleared name for stack %s", targetStack.Hash))
+	} else {
+		ui.Success(fmt.Sprintf("Renamed stack to '%s [%s]'", newName, targetStack.Hash))
+	}
+	return nil
+}
+
+// promptStackName prompts the user to optionally name a newly created stack
+func promptStackName(mgr *stack.Manager, branchName string) {
+	s := mgr.GetStackForBranch(branchName)
+	if s == nil {
+		return
+	}
+	name := ui.Prompt("Name this stack (optional, Enter to skip)", "")
+	if name != "" {
+		if err := mgr.SetStackName(s.Hash, name); err != nil {
+			ui.Warn(fmt.Sprintf("Failed to set stack name: %v", err))
+		}
+	}
 }
 
 // Unstack removes a branch from ezstack tracking without deleting the git branch

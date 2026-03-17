@@ -138,6 +138,9 @@ func New(args []string) error {
 			return err
 		}
 
+		// Prompt for stack name
+		promptStackName(mgr, branch.Name)
+
 		gh, ghErr := newGitHubClient(g)
 		if ghErr == nil {
 			pr, err := gh.GetPRByBranch(selected.Branch)
@@ -208,6 +211,9 @@ func New(args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to add branch to stack: %w", err)
 		}
+
+		// Prompt for stack name (new stack was just created)
+		promptStackName(mgr, userBranch.Name)
 
 		ui.Success(fmt.Sprintf("Created stack from PR #%d (%s)", selectedPR.Number, selectedPR.Branch))
 		ui.Success(fmt.Sprintf("Created your branch '%s' at %s", userBranch.Name, worktreePath))
@@ -313,12 +319,20 @@ func New(args []string) error {
 		return nil
 	}
 
+	// Check if this will create a new stack (parent not in any existing stack)
+	isNewStack := mgr.GetBranch(parentBranch) == nil
+
 	branch, err := mgr.CreateBranch(branchName, parentBranch, worktreePath)
 	if err != nil {
 		return err
 	}
 
 	ui.Success(fmt.Sprintf("Created branch '%s' with worktree at '%s'", branch.Name, branch.WorktreePath))
+
+	// Prompt for stack name if a new stack was created
+	if isNewStack {
+		promptStackName(mgr, branch.Name)
+	}
 
 	if getCdAfterNew(cfg, mgr.GetRepoDir(), *cdFlag, *noCdFlag) {
 		fmt.Printf("cd %s\n", branch.WorktreePath)
