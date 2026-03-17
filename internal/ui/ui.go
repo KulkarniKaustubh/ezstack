@@ -267,9 +267,8 @@ func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 	}
 
 	var input strings.Builder
-	for _, s := range stacks {
-		hashDisplay := s.Hash
-		input.WriteString(fmt.Sprintf("%s (%d branches)\n", hashDisplay, len(s.Branches)))
+	for i, s := range stacks {
+		input.WriteString(fmt.Sprintf("%d. %s (%d branches)\n", i+1, s.DisplayName(), len(s.Branches)))
 	}
 
 	selected, err := runFzf(input.String(), prompt)
@@ -277,20 +276,17 @@ func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 		return nil, err
 	}
 
-	parts := strings.SplitN(selected, " ", 2)
-	if len(parts) == 0 {
-		return nil, fmt.Errorf("no stack selected")
+	var idx int
+	if _, err := fmt.Sscanf(selected, "%d.", &idx); err != nil {
+		return nil, fmt.Errorf("failed to parse selection")
 	}
-	selectedID := parts[0]
+	idx-- // 0-based
 
-	for _, s := range stacks {
-		hashDisplay := s.Hash
-		if hashDisplay == selectedID {
-			return s, nil
-		}
+	if idx >= 0 && idx < len(stacks) {
+		return stacks[idx], nil
 	}
 
-	return nil, fmt.Errorf("stack not found: %s", selectedID)
+	return nil, fmt.Errorf("stack not found")
 }
 
 // runFzf executes fzf with the given input and returns the selected line
@@ -391,8 +387,7 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 	gray := "\\x1b[90m"
 	cyan := "\\x1b[36m"
 	var output strings.Builder
-	hashDisplay := stack.Hash
-	output.WriteString(fmt.Sprintf("%s%s Stack %s%s\\n\\n", bold, cyan, hashDisplay, reset))
+	output.WriteString(fmt.Sprintf("%s%s Stack %s%s\\n\\n", bold, cyan, stack.DisplayName(), reset))
 
 	// Sort branches topologically (parent -> child order)
 	sortedBranches := sortBranchesTopologically(stack.Branches)
@@ -482,8 +477,7 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 // - showStatus=false: 4 columns - branch name, pr number, parent branch, remote tag
 // - showStatus=true: 5 columns - branch name, pr number, ci status, parent branch, remote tag
 func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, statusMap map[string]*BranchStatus) {
-	hashDisplay := stack.Hash
-	fmt.Fprintf(os.Stderr, "\n%s%s Stack %s%s\n\n", Bold, Cyan, hashDisplay, Reset)
+	fmt.Fprintf(os.Stderr, "\n%s%s Stack %s%s\n\n", Bold, Cyan, stack.DisplayName(), Reset)
 
 	if len(stack.Branches) == 0 {
 		fmt.Fprintf(os.Stderr, "  %s(empty)%s\n\n", Gray, Reset)

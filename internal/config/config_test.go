@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -359,6 +360,143 @@ func TestStackConfig_MultiRepo(t *testing.T) {
 	}
 	if _, ok := repo2Loaded.Stacks[stack2Hash]; !ok {
 		t.Error("repo2 should have stack2")
+	}
+}
+
+func TestStack_DisplayName(t *testing.T) {
+	tests := []struct {
+		name string
+		stack Stack
+		want string
+	}{
+		{
+			name:  "with name",
+			stack: Stack{Hash: "a1b2c3d", Name: "my-feature"},
+			want:  "my-feature [a1b2c3d]",
+		},
+		{
+			name:  "without name",
+			stack: Stack{Hash: "a1b2c3d"},
+			want:  "a1b2c3d",
+		},
+		{
+			name:  "empty name",
+			stack: Stack{Hash: "x1y2z3w", Name: ""},
+			want:  "x1y2z3w",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.stack.DisplayName()
+			if got != tt.want {
+				t.Errorf("DisplayName() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStackConfig_NamePersistence(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "stack-name-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	originalHome := os.Getenv("EZSTACK_HOME")
+	defer os.Setenv("EZSTACK_HOME", originalHome)
+	os.Setenv("EZSTACK_HOME", tmpDir)
+
+	repoDir := "/test/repo"
+
+	// Create stack with a name
+	stackCfg, err := LoadStackConfig(repoDir)
+	if err != nil {
+		t.Fatalf("LoadStackConfig() error = %v", err)
+	}
+
+	hash := GenerateStackHash("test-stack")
+	s := &Stack{
+		Hash: hash,
+		Name: "my-feature",
+		Root: "main",
+		Tree: BranchTree{
+			"feature-a": BranchTree{},
+		},
+	}
+	stackCfg.Stacks[hash] = s
+	stackCfg.Cache = &CacheConfig{
+		Branches: map[string]*BranchCache{
+			"feature-a": {WorktreePath: "/wt/feature-a"},
+		},
+		repoDir: repoDir,
+	}
+	s.PopulateBranchesWithCache(stackCfg.Cache)
+
+	if err := stackCfg.Save(repoDir); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	// Reload and verify name persists
+	loaded, err := LoadStackConfig(repoDir)
+	if err != nil {
+		t.Fatalf("LoadStackConfig() error = %v", err)
+	}
+
+	loadedStack := loaded.Stacks[hash]
+	if loadedStack == nil {
+		t.Fatalf("Stack not found after reload")
+	}
+	if loadedStack.Name != "my-feature" {
+		t.Errorf("Name = %q, want %q", loadedStack.Name, "my-feature")
+	}
+	if loadedStack.DisplayName() != "my-feature ["+hash+"]" {
+		t.Errorf("DisplayName() = %q, want %q", loadedStack.DisplayName(), "my-feature ["+hash+"]")
+	}
+
+	// Update name to empty and verify
+	loadedStack.Name = ""
+	loaded.Save(repoDir)
+
+	reloaded, _ := LoadStackConfig(repoDir)
+	if reloaded.Stacks[hash].Name != "" {
+		t.Errorf("Name should be empty after clearing, got %q", reloaded.Stacks[hash].Name)
+	}
+}
+
+func TestMigrateV4ToV5(t *testing.T) {
+	// v4 data — stacks have no Name field
+	v4Data := []byte(`{
+		"version": 4,
+		"repos": {
+			"/test/repo": {
+				"stacks": {
+					"abc1234": {
+						"root": "main",
+						"tree": {"feature-a": {}}
+					}
+				},
+				"branches": {
+					"feature-a": {"worktree_path": "/wt/a"}
+				}
+			}
+		}
+	}`)
+
+	migrated, err := migrateV4ToV5(v4Data)
+	if err != nil {
+		t.Fatalf("migrateV4ToV5() error = %v", err)
+	}
+
+	// Verify version was bumped
+	var result struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(migrated, &result); err != nil {
+		t.Fatalf("json.Unmarshal error = %v", err)
+	}
+	if result.Version != 5 {
+		t.Errorf("Version = %d, want 5", result.Version)
 	}
 }
 

@@ -1418,3 +1418,71 @@ func TestManager_ReparentBranch_AddStandaloneBranchWithConflict(t *testing.T) {
 	// Abort the rebase so cleanup can remove the worktree
 	exec.Command("git", "-C", standalonePath, "rebase", "--abort").Run()
 }
+
+func TestManager_SetStackName(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "")
+
+	// Find the stack for feature-a
+	s := mgr.GetStackForBranch("feature-a")
+	if s == nil {
+		t.Fatal("GetStackForBranch() returned nil")
+	}
+
+	// Initially no name
+	if s.Name != "" {
+		t.Errorf("Name should be empty initially, got %q", s.Name)
+	}
+	if s.DisplayName() != s.Hash {
+		t.Errorf("DisplayName() = %q, want %q", s.DisplayName(), s.Hash)
+	}
+
+	// Set a name
+	if err := mgr.SetStackName(s.Hash, "my-feature"); err != nil {
+		t.Fatalf("SetStackName() error = %v", err)
+	}
+
+	// Verify name is set
+	if s.Name != "my-feature" {
+		t.Errorf("Name = %q, want %q", s.Name, "my-feature")
+	}
+	want := "my-feature [" + s.Hash + "]"
+	if s.DisplayName() != want {
+		t.Errorf("DisplayName() = %q, want %q", s.DisplayName(), want)
+	}
+
+	// Reload manager and verify persistence
+	mgr2, _ := NewManager(repoDir)
+	s2 := mgr2.GetStackForBranch("feature-a")
+	if s2 == nil {
+		t.Fatal("Stack not found after reload")
+	}
+	if s2.Name != "my-feature" {
+		t.Errorf("Name after reload = %q, want %q", s2.Name, "my-feature")
+	}
+
+	// Clear name
+	if err := mgr2.SetStackName(s2.Hash, ""); err != nil {
+		t.Fatalf("SetStackName() error = %v", err)
+	}
+	if s2.Name != "" {
+		t.Errorf("Name should be empty after clear, got %q", s2.Name)
+	}
+	if s2.DisplayName() != s2.Hash {
+		t.Errorf("DisplayName() after clear = %q, want %q", s2.DisplayName(), s2.Hash)
+	}
+}
+
+func TestManager_SetStackName_NotFound(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	err := mgr.SetStackName("nonexistent", "name")
+	if err == nil {
+		t.Error("SetStackName() should error for nonexistent stack")
+	}
+}
