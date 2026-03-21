@@ -319,8 +319,8 @@ func New(args []string) error {
 		return nil
 	}
 
-	// Check if this will create a new stack (parent not in any existing stack)
-	isNewStack := mgr.GetBranch(parentBranch) == nil
+	// Check if this will create a new stack (parent not in any existing stack or root)
+	isNewStack := mgr.GetBranch(parentBranch) == nil && !mgr.HasStackWithRoot(parentBranch)
 
 	branch, err := mgr.CreateBranch(branchName, parentBranch, worktreePath)
 	if err != nil {

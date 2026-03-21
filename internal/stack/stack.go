@@ -187,8 +187,11 @@ func (m *Manager) CreateBranch(name, parentBranch, worktreeDir string) (*config.
 		return nil, fmt.Errorf("failed to create worktree: %w", err)
 	}
 
-	// Find or create the stack
+	// Find or create the stack — check both branches and roots
 	stackKey := m.findStackForBranch(parentBranch)
+	if stackKey == "" {
+		stackKey = m.findStackByRoot(parentBranch)
+	}
 	var stack *config.Stack
 	if stackKey == "" {
 		hash := config.GenerateStackHash(name)
@@ -644,8 +647,11 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 		}
 	}
 
-	// Find the stack for the new parent
+	// Find the stack for the new parent — check both branches and roots
 	newParentStackKey := m.findStackForBranch(newParentName)
+	if newParentStackKey == "" {
+		newParentStackKey = m.findStackByRoot(newParentName)
+	}
 	var targetStack *config.Stack
 
 	if newParentStackKey != "" {
@@ -747,6 +753,11 @@ func (m *Manager) moveBranchToStack(branchName, fromStackName, toStackName, newP
 	toStack.PopulateBranchesWithCache(cache)
 
 	return nil
+}
+
+// HasStackWithRoot checks if any stack uses rootName as its root
+func (m *Manager) HasStackWithRoot(rootName string) bool {
+	return m.findStackByRoot(rootName) != ""
 }
 
 func (m *Manager) findStackByRoot(rootName string) string {
