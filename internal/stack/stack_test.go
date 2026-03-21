@@ -1194,7 +1194,7 @@ func TestManager_DeleteBranch_NonMainRoot(t *testing.T) {
 	}
 }
 
-// TestManager_MultipleStacksSameRoot tests having multiple stacks with the same non-main root
+// TestManager_MultipleStacksSameRoot tests that branches from the same root end up in the same stack
 func TestManager_MultipleStacksSameRoot(t *testing.T) {
 	repoDir, _, cleanup := setupTestEnv(t)
 	defer cleanup()
@@ -1209,15 +1209,16 @@ func TestManager_MultipleStacksSameRoot(t *testing.T) {
 
 	mgr, _ = NewManager(repoDir)
 	stacks := mgr.ListStacks()
-	// Each CreateBranch from develop creates a new stack since develop is a root (not in any tree)
-	if len(stacks) != 2 {
-		t.Errorf("Expected 2 stacks, got %d", len(stacks))
+	// Both branches from develop should be in the same stack
+	if len(stacks) != 1 {
+		t.Errorf("Expected 1 stack, got %d", len(stacks))
 	}
 
-	for _, s := range stacks {
-		if s.Root != "develop" {
-			t.Errorf("stack.Root = %q, want %q", s.Root, "develop")
-		}
+	if stacks[0].Root != "develop" {
+		t.Errorf("stack.Root = %q, want %q", stacks[0].Root, "develop")
+	}
+	if len(stacks[0].Branches) != 2 {
+		t.Errorf("Expected 2 branches in stack, got %d", len(stacks[0].Branches))
 	}
 }
 
