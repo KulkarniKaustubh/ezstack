@@ -375,6 +375,48 @@ func sortBranchesTopologically(branches []*config.Branch) []*config.Branch {
 	return config.SortBranchesTopologically(branches)
 }
 
+// fzfPRText returns the PR label for fzf preview (uses cached PRState)
+func fzfPRText(b *config.Branch) string {
+	if b.PRNumber == 0 {
+		return "[no PR]"
+	}
+	state := b.PRState
+	if state == "" && b.IsMerged {
+		state = "MERGED"
+	}
+	switch state {
+	case "MERGED":
+		return fmt.Sprintf("[PR #%d MERGED]", b.PRNumber)
+	case "CLOSED":
+		return fmt.Sprintf("[PR #%d CLOSED]", b.PRNumber)
+	case "DRAFT":
+		return fmt.Sprintf("[PR #%d DRAFT]", b.PRNumber)
+	default:
+		return fmt.Sprintf("[PR #%d]", b.PRNumber)
+	}
+}
+
+// fzfPRColor returns the color escape code for PR text in fzf preview
+func fzfPRColor(b *config.Branch, cyan, yellow, gray, red string) string {
+	if b.PRNumber == 0 {
+		return gray
+	}
+	state := b.PRState
+	if state == "" && b.IsMerged {
+		state = "MERGED"
+	}
+	switch state {
+	case "MERGED":
+		return cyan
+	case "CLOSED":
+		return red
+	case "DRAFT":
+		return gray
+	default:
+		return yellow
+	}
+}
+
 // formatStackString formats a stack as a string for fzf preview (with escape codes)
 // Always sorts branches topologically (parent -> child order)
 func formatStackString(stack *config.Stack, currentBranch string) string {
@@ -383,6 +425,7 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 	reset := "\\x1b[0m"
 	strikethrough := "\\x1b[9m"
 	green := "\\x1b[32m"
+	red := "\\x1b[31m"
 	yellow := "\\x1b[33m"
 	gray := "\\x1b[90m"
 	cyan := "\\x1b[36m"
@@ -401,14 +444,7 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 			maxNameWidth = w
 		}
 
-		var prText string
-		if b.IsMerged {
-			prText = fmt.Sprintf("[PR #%d MERGED]", b.PRNumber)
-		} else if b.PRNumber > 0 {
-			prText = fmt.Sprintf("[PR #%d]", b.PRNumber)
-		} else {
-			prText = "[no PR]"
-		}
+		prText := fzfPRText(b)
 		if w := runewidth.StringWidth(prText); w > maxPRWidth {
 			maxPRWidth = w
 		}
@@ -441,17 +477,8 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 		displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
 		paddedName := padRight(displayName, maxNameWidth)
 
-		var prText, prColor string
-		if b.IsMerged {
-			prText = fmt.Sprintf("[PR #%d MERGED]", b.PRNumber)
-			prColor = cyan
-		} else if b.PRNumber > 0 {
-			prText = fmt.Sprintf("[PR #%d]", b.PRNumber)
-			prColor = yellow
-		} else {
-			prText = "[no PR]"
-			prColor = gray
-		}
+		prText, prColor := fzfPRText(b), fzfPRColor(b, cyan, yellow, gray, red)
+
 		paddedPRText := padRight(prText, maxPRWidth)
 
 		parentText := fmt.Sprintf("(%s %s)", IconArrow, b.Parent)
@@ -601,24 +628,29 @@ func getPRText(branch *config.Branch, statusMap map[string]*BranchStatus) string
 	if branch.PRNumber == 0 {
 		return "[no PR]"
 	}
-	// Check cached IsMerged first (for ezs ls without API calls)
-	if branch.IsMerged {
-		return fmt.Sprintf("[PR #%d MERGED]", branch.PRNumber)
-	}
-	// Then check statusMap (for ezs status with live API data)
+
+	// Resolve PR state: prefer live statusMap, fall back to cached branch.PRState
+	prState := branch.PRState
 	if statusMap != nil {
-		if status, ok := statusMap[branch.Name]; ok && status != nil {
-			switch status.PRState {
-			case "MERGED":
-				return fmt.Sprintf("[PR #%d MERGED]", branch.PRNumber)
-			case "CLOSED":
-				return fmt.Sprintf("[PR #%d CLOSED]", branch.PRNumber)
-			case "DRAFT":
-				return fmt.Sprintf("[PR #%d DRAFT]", branch.PRNumber)
-			}
+		if status, ok := statusMap[branch.Name]; ok && status != nil && status.PRState != "" {
+			prState = status.PRState
 		}
 	}
-	return fmt.Sprintf("[PR #%d]", branch.PRNumber)
+	// Legacy fallback: IsMerged bool without PRState
+	if prState == "" && branch.IsMerged {
+		prState = "MERGED"
+	}
+
+	switch prState {
+	case "MERGED":
+		return fmt.Sprintf("[PR #%d MERGED]", branch.PRNumber)
+	case "CLOSED":
+		return fmt.Sprintf("[PR #%d CLOSED]", branch.PRNumber)
+	case "DRAFT":
+		return fmt.Sprintf("[PR #%d DRAFT]", branch.PRNumber)
+	default:
+		return fmt.Sprintf("[PR #%d]", branch.PRNumber)
+	}
 }
 
 // getPRColor returns the color for PR text
@@ -626,24 +658,28 @@ func getPRColor(branch *config.Branch, statusMap map[string]*BranchStatus) strin
 	if branch.PRNumber == 0 {
 		return Gray
 	}
-	// Check cached IsMerged first (for ezs ls without API calls)
-	if branch.IsMerged {
-		return Cyan // Light blue for merged PRs
-	}
-	// Then check statusMap (for ezs status with live API data)
+
+	// Resolve PR state: prefer live statusMap, fall back to cached branch.PRState
+	prState := branch.PRState
 	if statusMap != nil {
-		if status, ok := statusMap[branch.Name]; ok && status != nil {
-			switch status.PRState {
-			case "MERGED":
-				return Cyan // Light blue for merged PRs
-			case "CLOSED":
-				return Red
-			case "DRAFT":
-				return Gray
-			}
+		if status, ok := statusMap[branch.Name]; ok && status != nil && status.PRState != "" {
+			prState = status.PRState
 		}
 	}
-	return Yellow
+	if prState == "" && branch.IsMerged {
+		prState = "MERGED"
+	}
+
+	switch prState {
+	case "MERGED":
+		return Cyan
+	case "CLOSED":
+		return Red
+	case "DRAFT":
+		return Gray
+	default:
+		return Yellow
+	}
 }
 
 // getPRFormatted returns the PR text with color and hyperlink applied

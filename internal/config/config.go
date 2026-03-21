@@ -142,6 +142,7 @@ type BranchCache struct {
 	WorktreePath string `json:"worktree_path,omitempty"`
 	PRNumber     int    `json:"pr_number,omitempty"`
 	PRUrl        string `json:"pr_url,omitempty"`
+	PRState      string `json:"pr_state,omitempty"` // Cached: "OPEN", "DRAFT", "MERGED", "CLOSED"
 	IsMerged     bool   `json:"is_merged,omitempty"`
 	IsRemote     bool   `json:"is_remote,omitempty"`
 }
@@ -159,6 +160,7 @@ type Branch struct {
 	WorktreePath string `json:"worktree_path"`
 	PRNumber     int    `json:"pr_number,omitempty"`
 	PRUrl        string `json:"pr_url,omitempty"`
+	PRState      string `json:"pr_state,omitempty"`  // Cached: "OPEN", "DRAFT", "MERGED", "CLOSED"
 	BaseBranch   string `json:"base_branch"`         // original tree parent, used for display ordering
 	IsRemote     bool   `json:"is_remote,omitempty"` // branch belongs to another contributor
 	IsMerged     bool   `json:"is_merged,omitempty"`
@@ -1051,6 +1053,7 @@ func (s *Stack) walkTree(treeParent, effectiveParent string, tree BranchTree, ca
 				branch.WorktreePath = bc.WorktreePath
 				branch.PRNumber = bc.PRNumber
 				branch.PRUrl = bc.PRUrl
+				branch.PRState = bc.PRState
 				branch.IsMerged = bc.IsMerged
 				branch.IsRemote = bc.IsRemote
 			}
