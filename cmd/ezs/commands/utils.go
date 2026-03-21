@@ -270,8 +270,6 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 		return statusMap
 	}
 
-	// Track if we discovered any newly merged branches to save config
-	var discoveredMerged bool
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
@@ -327,7 +325,6 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 					mu.Lock()
 					if !b.IsMerged {
 						b.IsMerged = true
-						discoveredMerged = true
 						if debugMode {
 							fmt.Fprintf(os.Stderr, "[DEBUG] Marking branch %s as merged\n", b.Name)
 						}
@@ -342,6 +339,11 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 				}
 				status.Mergeable = prData.Mergeable
 				status.ReviewState = prData.ReviewState
+
+				// Cache PR state on the branch for ezs ls
+				mu.Lock()
+				b.PRState = status.PRState
+				mu.Unlock()
 			}
 
 			// Process checks data
@@ -361,22 +363,30 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 
 	wg.Wait()
 
-	// Save config if we discovered newly merged branches
-	if discoveredMerged {
-		mainWorktree, err := g.GetMainWorktree()
+	// Save cached PR state for all branches with PR data
+	mainWorktree, err := g.GetMainWorktree()
+	if err == nil {
+		cache, err := config.LoadCacheConfig(mainWorktree)
 		if err == nil {
-			cache, err := config.LoadCacheConfig(mainWorktree)
-			if err == nil {
-				for _, branch := range s.Branches {
-					if branch.IsMerged {
-						bc := cache.GetBranchCache(branch.Name)
-						if bc == nil {
-							bc = &config.BranchCache{}
-						}
-						bc.IsMerged = true
-						cache.SetBranchCache(branch.Name, bc)
-					}
+			changed := false
+			for _, branch := range s.Branches {
+				if branch.PRState == "" {
+					continue
 				}
+				bc := cache.GetBranchCache(branch.Name)
+				if bc == nil {
+					bc = &config.BranchCache{}
+				}
+				if bc.PRState != branch.PRState || (branch.IsMerged && !bc.IsMerged) {
+					bc.PRState = branch.PRState
+					if branch.IsMerged {
+						bc.IsMerged = true
+					}
+					cache.SetBranchCache(branch.Name, bc)
+					changed = true
+				}
+			}
+			if changed {
 				cache.Save(mainWorktree)
 			}
 		}
