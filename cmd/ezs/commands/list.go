@@ -217,7 +217,7 @@ func Status(args []string) error {
 // (updated in-memory by fetchBranchStatuses) and offers to delete them.
 func offerFullyMergedStackCleanup(mgr *stack.Manager, stacks []*config.Stack) {
 	for _, s := range stacks {
-		if len(s.Branches) == 0 {
+		if len(s.Branches) == 0 || s.DeleteDeclined {
 			continue
 		}
 		allMerged := true
@@ -231,13 +231,15 @@ func offerFullyMergedStackCleanup(mgr *stack.Manager, stacks []*config.Stack) {
 			continue
 		}
 		fmt.Fprintln(os.Stderr)
-		ui.Info(fmt.Sprintf("Stack '#%s' is fully merged", s.Hash))
-		if ui.ConfirmTUI(fmt.Sprintf("Clean up stack '#%s' (delete worktrees, branches, and tracking)?", s.Hash)) {
+		ui.Info(fmt.Sprintf("Stack '%s' is fully merged", s.DisplayName()))
+		if ui.ConfirmTUI(fmt.Sprintf("Clean up stack '%s' (delete worktrees, branches, and tracking)?", s.DisplayName())) {
 			if err := mgr.DeleteStack(s.Hash); err != nil {
-				ui.Warn(fmt.Sprintf("Failed to clean up stack '#%s': %v", s.Hash, err))
+				ui.Warn(fmt.Sprintf("Failed to clean up stack '%s': %v", s.DisplayName(), err))
 			} else {
-				ui.Success(fmt.Sprintf("Removed fully merged stack '#%s'", s.Hash))
+				ui.Success(fmt.Sprintf("Removed fully merged stack '%s'", s.DisplayName()))
 			}
+		} else {
+			mgr.DeclineStackDelete(s.Hash)
 		}
 	}
 }

@@ -1064,6 +1064,21 @@ func (m *Manager) SetStackName(stackHash, name string) error {
 	return m.stackConfig.Save(m.repoDir)
 }
 
+// DeclineStackDelete marks a stack so cleanup prompts are not repeated.
+func (m *Manager) DeclineStackDelete(stackHash string) {
+	stack := m.stackConfig.Stacks[stackHash]
+	if stack == nil {
+		return
+	}
+	stack.DeleteDeclined = true
+	m.stackConfig.Save(m.repoDir)
+}
+
+// GetStackByHashExact returns a stack by its exact hash (no prefix matching).
+func (m *Manager) GetStackByHashExact(hash string) *config.Stack {
+	return m.stackConfig.Stacks[hash]
+}
+
 // DeleteStack removes an entire stack from config, cleaning up any remaining worktrees and git branches.
 // This is intended for fully merged stacks where all branches have been completed.
 func (m *Manager) DeleteStack(stackHash string) error {
