@@ -400,6 +400,8 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 	}
 
 	if len(syncNeeded) == 0 && len(mergedBranches) == 0 {
+		// Even if no sync is needed, check for fully merged stacks that need cleanup
+		cleanupFullyMergedStacks(mgr, stacks)
 		ui.Success("All branches are up to date. No sync needed.")
 		return nil
 	}
