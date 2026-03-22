@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// Delete deletes a branch and its worktree
+// Delete deletes a branch and its worktree, or an entire stack by hash
 func Delete(args []string) error {
 	fs := pflag.NewFlagSet("delete", pflag.ContinueOnError)
 	fs.Usage = func() {
@@ -18,17 +18,21 @@ func Delete(args []string) error {
 
 %sUSAGE%s
     ezs delete [branch-name] [options]
+    ezs delete [stack-hash] [options]
     ezs rm [branch-name] [options]
 
 %sOPTIONS%s
     -f, --force    Force delete even if branch has children
+    -s, --stack    Treat argument as a stack hash (delete entire stack)
     -h, --help     Show this help message
 
 %sNOTES%s
     If branch-name is omitted, shows interactive branch selector.
+    Use --stack or pass a stack hash prefix to delete an entire stack.
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	force := fs.BoolP("force", "f", false, "Force delete even if branch has children")
+	stackFlag := fs.BoolP("stack", "s", false, "Delete entire stack by hash")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -53,6 +57,20 @@ func Delete(args []string) error {
 	}
 
 	g := git.New(cwd)
+
+	// Check if the argument is a stack hash (with --stack flag or auto-detected)
+	if fs.NArg() >= 1 {
+		arg := fs.Arg(0)
+		if *stackFlag {
+			return deleteStack(mgr, arg)
+		}
+		// Auto-detect: if argument matches a stack hash but not a branch name, treat as stack
+		if !g.BranchExists(arg) && mgr.GetBranch(arg) == nil {
+			if s, err := mgr.GetStackByHash(arg); err == nil && s != nil {
+				return deleteStack(mgr, arg)
+			}
+		}
+	}
 
 	var branchName string
 	if fs.NArg() < 1 {
@@ -181,4 +199,40 @@ func deleteNonStackBranch(repoRoot, branchName string) error {
 	}
 
 	return fmt.Errorf("branch '%s' not found", branchName)
+}
+
+// deleteStack deletes an entire stack by hash prefix
+func deleteStack(mgr *stack.Manager, hashPrefix string) error {
+	s, err := mgr.GetStackByHash(hashPrefix)
+	if err != nil {
+		return err
+	}
+
+	ui.Warn(fmt.Sprintf("This will delete stack '%s' (%d branch(es)):", s.DisplayName(), len(s.Branches)))
+	for _, b := range s.Branches {
+		status := ""
+		if b.IsMerged {
+			status = " (merged)"
+		}
+		fmt.Fprintf(os.Stderr, "  %s %s%s\n", ui.IconBullet, b.Name, status)
+	}
+	fmt.Fprintln(os.Stderr)
+
+	if !ui.ConfirmTUI(fmt.Sprintf("Delete all worktrees, branches, and tracking for stack '%s'?", s.DisplayName())) {
+		ui.Warn("Cancelled")
+		return nil
+	}
+
+	repoRoot := mgr.GetRepoDir()
+	if err := os.Chdir(repoRoot); err != nil {
+		return fmt.Errorf("failed to change to repo root: %w", err)
+	}
+
+	if err := mgr.DeleteStack(s.Hash); err != nil {
+		return fmt.Errorf("failed to delete stack: %w", err)
+	}
+
+	ui.Success(fmt.Sprintf("Deleted stack '%s'", s.DisplayName()))
+	fmt.Printf("cd %s\n", repoRoot)
+	return nil
 }
