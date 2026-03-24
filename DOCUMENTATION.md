@@ -12,19 +12,23 @@
 
 [Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows)
 
-**Commands:** [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [pr](#ezs-pr) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [update](#ezs-update) · [config](#ezs-config)
+**Commands:** [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [update](#ezs-update) · [config](#ezs-config)
 
 ---
 
 ## Overview
 
-ezstack is a CLI tool for managing stacked pull requests using git worktrees. Each branch in your stack lives in its own worktree, allowing you to work on multiple parts of a feature simultaneously.
+ezstack is a CLI tool for managing stacked pull requests. It supports two workflow modes:
+
+- **Worktree mode (default):** Each branch lives in its own git worktree, allowing parallel work across the stack
+- **Checkout mode:** Branches use standard `git checkout`, keeping a single working directory
 
 **Key Concepts**
 
 - **Stack** — A chain of branches where each branch builds on its parent
-- **Worktree** — A separate working directory for each branch
+- **Worktree** — A separate working directory for each branch (optional)
 - **Sync** — Rebase branches when parents are merged or updated
+- **Auto-restack** — `ezs commit` and `ezs amend` automatically rebase children
 
 ---
 
@@ -58,21 +62,21 @@ cd ezstack
 make install
 ```
 
-**Shell integration**
+**Shell integration (recommended)**
 
 Add to your shell configuration:
 
-For `bash`:
 ```bash
+# bash
 echo 'eval "$(ezs --shell-init)"' >> ~/.bashrc
-```
 
-For `zsh`:
-```bash
+# zsh
 echo 'eval "$(ezs --shell-init)"' >> ~/.zshrc
 ```
 
-This enables automatic directory changes when using `goto`, `new`, `delete`, and `sync` commands.
+This enables automatic directory changes for `goto`, `new`, `delete`, `sync`, `up`, `down`, `commit`, and `amend` commands.
+
+Without shell integration, commands that would change your directory will instead print a helpful message with the path to `cd` to manually.
 
 ---
 
@@ -80,8 +84,10 @@ This enables automatic directory changes when using `goto`, `new`, `delete`, and
 
 Run `ezs config` in your repository to configure:
 
+- **Use worktrees** — Whether to create worktrees for new branches (default: yes)
 - **Worktree base directory** — Where branch worktrees will be created
 - **Main branch name** — Usually `main` or `master`
+- **Auto-cd** — Whether to cd into new worktrees after creation (default: yes)
 
 Configuration is stored in `~/.ezstack/config.json`.
 
@@ -92,7 +98,7 @@ ezs config set <key> <value>    Set a configuration value
 ezs config show                 Show current configuration
 ```
 
-**Available keys:** `worktree_base_dir`, `default_base_branch`, `github_token`, `cd_after_new`
+**Available keys:** `worktree_base_dir`, `default_base_branch`, `cd_after_new`, `use_worktrees`
 
 **Global flags**
 
@@ -125,27 +131,7 @@ Options:
     -r, --from-remote         Create a stack from a remote branch
 ```
 
-<details>
-<summary>Examples</summary>
-
-```bash
-# Create a new branch with current branch as parent
-ezs new feature-1
-
-# Create a branch with a specific parent
-ezs new feature-2 --parent feature-1
-
-# Create and cd into the new worktree
-ezs new feature-3 -c
-
-# Register an existing worktree as a stack root
-ezs new -f
-
-# Create a stack from a remote branch
-ezs new -r
-```
-
-</details>
+When `use_worktrees` is disabled, creates a git branch without a worktree and optionally checks it out.
 
 ---
 
@@ -161,19 +147,6 @@ Options:
     -d, --debug   Show debug output
 ```
 
-<details>
-<summary>Examples</summary>
-
-```bash
-# Show current stack status
-ezs status
-
-# Show all stacks
-ezs status -a
-```
-
-</details>
-
 ---
 
 ### `ezs list`
@@ -185,21 +158,11 @@ ezs list [options]
 
 Options:
     -a, --all     Show all stacks
+    --json        Output as JSON (machine-readable)
     -d, --debug   Show debug output
 ```
 
-<details>
-<summary>Examples</summary>
-
-```bash
-# List current stack
-ezs list
-
-# List all stacks
-ezs ls -a
-```
-
-</details>
+The `--json` flag outputs stack structure to stdout for editor integrations and scripts.
 
 ---
 
@@ -218,38 +181,12 @@ Options:
     -p, --parent           Rebase current branch onto its parent
     -C, --children         Rebase child branches onto current branch
     --no-delete-local      Don't delete local branches after their PRs are merged
+    --dry-run              Preview what would be synced without making changes
+    --autostash            Stash uncommitted changes before rebase, pop after
+    --json                 Output dry-run results as JSON (requires --dry-run)
 ```
 
 You can sync a specific stack by passing its hash prefix (minimum 3 characters).
-Use `ezs list` to see stack hashes.
-
-<details>
-<summary>Examples</summary>
-
-```bash
-# Interactive sync menu
-ezs sync
-
-# Sync a specific stack by hash prefix (min 3 chars)
-ezs sync a1b2c
-
-# Auto-sync current stack
-ezs sync -a
-
-# Sync all stacks
-ezs sync --all-stacks
-
-# Sync only current branch
-ezs sync -c
-
-# Rebase current branch onto its parent
-ezs sync -p
-
-# Rebase children onto current branch
-ezs sync -C
-```
-
-</details>
 
 ---
 
@@ -261,20 +198,20 @@ Navigate to a branch worktree. Aliases: `go`
 ezs goto [branch-name]
 ```
 
-If branch-name is omitted, shows interactive selection of all worktrees.
+If branch-name is omitted, shows interactive selection. Falls back to `git checkout` when the branch has no worktree.
 
-<details>
-<summary>Examples</summary>
+---
 
-```bash
-# Interactive worktree selection
-ezs goto
+### `ezs up` / `ezs down`
 
-# Go to a specific branch
-ezs go feature-1
+Navigate up (toward parent/base) or down (toward children/leaves) in the stack.
+
+```
+ezs up [n]      Navigate n levels toward parent (default: 1)
+ezs down [n]    Navigate n levels toward children (default: 1)
 ```
 
-</details>
+When navigating down with multiple children, shows an interactive selector.
 
 ---
 
@@ -288,41 +225,44 @@ ezs pr <subcommand> [options]
 Subcommands:
     create    Create a new pull request
     update    Push changes to existing PR
+    merge     Merge a pull request
+    draft     Toggle PR between draft and ready
     stack     Update all PR descriptions with stack info
 ```
 
 #### `ezs pr create`
 
 ```
-ezs pr create [options]
-
 Options:
     -t, --title <title>    PR title (defaults to branch name)
     -b, --body <body>      PR body/description
     -d, --draft            Create as draft PR
 ```
 
-<details>
-<summary>Examples</summary>
+#### `ezs pr merge`
 
-```bash
-# Create a PR with a title
-ezs pr create -t "Add new feature"
-
-# Create a draft PR
-ezs pr create -t "WIP: New feature" -d
-
-# Create with title and body
-ezs pr create -t "Add feature" -b "This PR adds..."
-
-# Push updates to existing PR
-ezs pr update
-
-# Update all PR descriptions with stack info
-ezs pr stack
+```
+Options:
+    -m, --method <method>      Merge method: merge, squash, rebase (default: interactive)
+    --no-delete-branch         Don't delete the remote branch after merge
 ```
 
-</details>
+#### `ezs pr draft`
+
+Toggles the current branch's PR between draft and ready-for-review state.
+
+---
+
+### `ezs commit` / `ezs amend`
+
+Wrap `git commit` / `git commit --amend` and auto-sync child branches. Aliases: `ci`
+
+```
+ezs commit [git-commit-options]
+ezs amend [git-commit-options]
+```
+
+All arguments are passed through to `git commit`. After committing, any child branches in the stack are automatically rebased onto the updated branch.
 
 ---
 
@@ -332,32 +272,18 @@ Delete a branch and its worktree. Aliases: `del`, `rm`
 
 ```
 ezs delete [branch-name] [options]
+ezs delete [stack-hash] [options]
 
 Options:
-    -f, --force    Force delete even if branch has children
+    -f, --force            Force delete even if branch has children
+    -s, --stack            Treat argument as a stack hash (delete entire stack)
 ```
-
-<details>
-<summary>Examples</summary>
-
-```bash
-# Interactive branch selection
-ezs delete
-
-# Delete a specific branch
-ezs rm feature-1
-
-# Force delete a branch with children
-ezs delete feature-1 -f
-```
-
-</details>
 
 ---
 
 ### `ezs reparent`
 
-Change the parent of a branch. Aliases: `rp`
+Change the parent of a branch. Always rebases onto the new parent. Aliases: `rp`
 
 ```
 ezs reparent [branch] [new-parent] [options]
@@ -365,27 +291,7 @@ ezs reparent [branch] [new-parent] [options]
 Options:
     -b, --branch <name>     Branch to reparent
     -p, --parent <name>     New parent branch
-    -n, --no-rebase         Don't rebase, just update metadata (default: rebase)
 ```
-
-<details>
-<summary>Examples</summary>
-
-```bash
-# Interactive mode
-ezs reparent
-
-# Reparent feature-2 to feature-1
-ezs reparent feature-2 feature-1
-
-# Reparent using flags
-ezs rp -b feature-2 -p main
-
-# Update metadata only (no rebase)
-ezs reparent feature-2 main --no-rebase
-```
-
-</details>
 
 ---
 
@@ -401,48 +307,7 @@ Options:
     -b, --branch <name>     Branch to add to stack
     -p, --parent <name>     Parent branch in the stack
     -B, --base <name>       Base branch for a new stack (e.g. develop, staging)
-
-Subcommands:
-    rename                  Rename an existing stack
 ```
-
-In interactive mode, you can choose to:
-- Add a branch to an existing stack
-- Start a new stack with a custom base branch (e.g. `develop`, `staging`)
-- Start a new stack from a remote PR (stack on top of someone else's branch)
-- Rename a stack
-
-When creating a new stack (via `ezs new` or `ezs stack`), you'll be prompted to optionally name it. Named stacks display as `name [hash]` in `ezs ls` and `ezs status`.
-
-`--base` and `--parent` are mutually exclusive. Use `--base` to start a new stack rooted on a branch other than the default base branch.
-
-<details>
-<summary>Examples</summary>
-
-```bash
-# Interactive mode (choose from menu)
-ezs stack
-
-# Add my-branch under feature-1
-ezs stack my-branch feature-1
-
-# Add using flags
-ezs stack -b my-branch -p main
-
-# Start a new stack on develop
-ezs stack -b my-branch --base develop
-
-# Rename a stack (interactive)
-ezs stack rename
-
-# Rename a stack by hash prefix
-ezs stack rename a1b2c my-feature
-
-# Clear a stack name
-ezs stack rename a1b2c ""
-```
-
-</details>
 
 ---
 
@@ -457,26 +322,11 @@ Options:
     -b, --branch <name>     Branch to untrack
 ```
 
-If the branch has children, they will be reparented to the untracked branch's parent.
-
-<details>
-<summary>Examples</summary>
-
-```bash
-# Interactive mode
-ezs unstack
-
-# Untrack a specific branch
-ezs unstack feature-1
-```
-
-</details>
-
 ---
 
 ### `ezs update`
 
-Reconcile ezstack config with git reality. Aliases: `up`
+Reconcile ezstack config with git reality.
 
 ```
 ezs update [options]
@@ -486,26 +336,7 @@ Options:
     -d, --dry-run     Show what would be changed without making changes
 ```
 
-This command:
-- Detects renamed branches (`git branch -m`) and updates config automatically
-- Removes branches from config if their worktree folder was deleted
-- Removes branches from config if the git branch no longer exists
-
-<details>
-<summary>Examples</summary>
-
-```bash
-# Interactive mode
-ezs update
-
-# Auto-accept all changes
-ezs update --auto
-
-# Preview changes without applying
-ezs update --dry-run
-```
-
-</details>
+Detects renamed branches, removes orphaned entries, and cleans up stale config.
 
 ---
 
@@ -521,50 +352,19 @@ Subcommands:
     show                 Show current configuration
 ```
 
-**Available keys:**
-- `worktree_base_dir` — Base directory for worktrees (per-repo)
-- `default_base_branch` — Default base branch (e.g., main)
-- `github_token` — GitHub token for API access
-- `cd_after_new` — Auto-cd to new worktree (true/false, per-repo)
-
-If no subcommand is provided, runs interactive configuration.
-
-<details>
-<summary>Examples</summary>
-
-```bash
-# Interactive configuration
-ezs config
-
-# Show current configuration
-ezs config show
-
-# Set worktree base directory
-ezs config set worktree_base_dir ~/worktrees
-
-# Enable auto-cd after creating new branches
-ezs config set cd_after_new true
-```
-
-</details>
-
 ---
 
 ## Manual Git Operations
 
-If you rename or delete branches outside of ezstack (e.g., with `git branch -m` or `git branch -D`), run `ezs update` to reconcile:
+If you rename or delete branches outside of ezstack, run `ezs update` to reconcile:
 
 ```bash
-# Renamed a branch with git? ezs update detects it automatically
 git branch -m old-name new-name
 ezs update    # detects the rename, preserves stack position and PR metadata
 
-# Deleted a branch with git? ezs update cleans it up
 git branch -D some-branch
 ezs update    # removes orphaned branch from config
 ```
-
-Use `--auto` to skip confirmation prompts, or `--dry-run` to preview changes.
 
 ---
 
@@ -573,13 +373,14 @@ Use `--auto` to skip confirmation prompts, or `--dry-run` to preview changes.
 ### Creating a Stacked PR
 
 ```bash
-# Start from main
 ezs new feature-1
-
-# Make changes, then stack the next part
+# make changes
+ezs commit -m "Add feature part 1"
 ezs new feature-2 --parent feature-1
+# make changes
+ezs commit -m "Add feature part 2"
 
-# Create PRs
+# Create PRs for the whole stack
 ezs pr create -t "Part 1: Add feature"
 ezs goto feature-2
 ezs pr create -t "Part 2: Add feature"
@@ -588,25 +389,32 @@ ezs pr create -t "Part 2: Add feature"
 ezs pr stack
 ```
 
----
-
 ### After Parent is Merged
 
 ```bash
 # Sync will detect merged parents and rebase
 ezs sync -a
+
+# Or merge from the CLI and sync
+ezs pr merge -m squash
+ezs goto feature-2
+ezs sync -a
 ```
 
----
+### Navigating the Stack
+
+```bash
+# Move between branches
+ezs up        # go to parent
+ezs down      # go to child
+ezs up 2      # go up two levels
+ezs goto feature-1   # jump to a specific branch
+```
 
 ### Stacking on a Remote PR
 
 ```bash
-# Start a new stack from someone else's PR
 ezs stack
 # Select "Start a new stack from a remote PR"
 # Pick the PR, then pick your branch to stack on top
-
-# Or use ezs new with --from-remote
-ezs new my-branch -r
 ```

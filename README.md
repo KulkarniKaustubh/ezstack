@@ -40,7 +40,7 @@ cd ezstack
 make install
 ```
 
-### Shell Integration (Required)
+### Shell Integration (Recommended)
 
 Add to your `~/.bashrc` or `~/.zshrc`:
 
@@ -48,7 +48,7 @@ Add to your `~/.bashrc` or `~/.zshrc`:
 eval "$(ezs --shell-init)"
 ```
 
-This creates a shell function that wraps the `ezs` binary, enabling commands like `ezs goto` and `ezs new` to change your shell's directory.
+This creates a shell function that wraps the `ezs` binary, enabling commands like `ezs goto`, `ezs up`, and `ezs new` to change your shell's directory. Without shell integration, these commands will print the path and instruct you to `cd` manually.
 
 ## Quick Start
 
@@ -68,6 +68,9 @@ ezs status
 # Create PRs
 ezs pr create -t "Part 1: Add feature"
 
+# Commit and auto-sync children
+ezs commit -m "Add feature"
+
 # Sync after changes
 ezs sync -a
 ```
@@ -81,21 +84,50 @@ ezs sync -a
 | `status` | `st` | Show status with PR and CI info |
 | `sync` | `rebase`, `rb` | Sync stack with remote |
 | `goto` | `go` | Navigate to a branch worktree |
+| `up` | | Navigate up the stack (toward parent) |
+| `down` | | Navigate down the stack (toward children) |
 | `reparent` | `rp` | Change the parent of a branch |
 | `stack` | | Add a branch to a stack |
 | `unstack` | | Remove a branch from tracking |
-| `update` | `up` | Sync config with git (detects renames, orphans) |
+| `update` | | Sync config with git (detects renames, orphans) |
 | `delete` | `del`, `rm` | Delete a branch and its worktree |
-| `pr` | | Manage pull requests |
+| `commit` | `ci` | Commit and auto-sync child branches |
+| `amend` | | Amend last commit and auto-sync children |
+| `pr` | | Manage pull requests (create, update, merge, draft, stack) |
 | `config` | `cfg` | Configure ezstack |
+| `menu` | | Interactive command menu |
 
 **Global flags:** `-y, --yes` auto-confirm prompts · `-h, --help` · `-v, --version`
 
-Run `ezs <command> --help` for command-specific help, or just `ezs` for an interactive menu.
+Run `ezs <command> --help` for command-specific help.
+
+## Configuration
+
+ezstack supports both worktree-based and checkout-based workflows:
+
+- **Worktrees (default):** Each branch gets its own worktree directory for parallel work
+- **No worktrees:** Branches use `git checkout` for a simpler, single-directory workflow
+
+Configure with `ezs config set use_worktrees true/false`.
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error |
+| 2 | Usage/argument error |
+| 3 | Rebase conflict |
+| 4 | Not in a git repository |
+| 5 | Not in a stack |
+| 6 | GitHub authentication required |
+| 7 | Branch not found |
+| 8 | Network/remote error |
+| 10 | User cancelled |
 
 ## Documentation
 
-See [DOCUMENTATION.md](DOCUMENTATION.md) for comprehensive documentation.
+See [DOCUMENTATION.md](DOCUMENTATION.md) for comprehensive documentation, or [AGENTS.md](AGENTS.md) for AI-assisted workflows.
 
 ## License
 
