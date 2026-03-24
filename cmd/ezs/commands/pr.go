@@ -43,7 +43,7 @@ func PR(args []string) error {
 	}
 
 	if err := github.CheckAuth(); err != nil {
-		return err
+		return ui.NewExitError(ui.ExitAuthRequired, "%v", err)
 	}
 
 	if len(args) < 1 {
@@ -81,7 +81,7 @@ func prInteractive() error {
 
 	currentStack, branch, err := mgr.GetCurrentStack()
 	if err != nil {
-		return fmt.Errorf("not in a stack. Create a branch first with: ezs new <branch-name>")
+		return ui.NewExitError(ui.ExitNotInStack, "not in a stack. Create a branch first with: ezs new <branch-name>")
 	}
 
 	ui.PrintStack(currentStack, branch.Name, false, nil)
