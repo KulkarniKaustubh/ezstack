@@ -316,6 +316,16 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 
 	var results []RebaseResult
 
+	// saveState persists cache and config; logs warnings on failure.
+	saveState := func(sc *syncCache) {
+		if err := sc.save(); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: failed to save cache: %v\n", err)
+		}
+		if err := m.stackConfig.Save(m.repoDir); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: failed to save config: %v\n", err)
+		}
+	}
+
 	// Use combined cache from stack config
 	sc := newSyncCache(m.stackConfig, m.repoDir)
 
@@ -364,6 +374,9 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 
 			// Skip branches without a worktree path (can't rebase without a working directory)
 			if branch.WorktreePath == "" {
+				if callbacks != nil && callbacks.BeforeRebase != nil {
+					fmt.Fprintf(os.Stderr, "  Skipping %s: no worktree path (use 'ezs goto %s' to set up)\n", branch.Name, branch.Name)
+				}
 				continue
 			}
 
@@ -533,8 +546,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					result.HasConflict = true
 					result.Error = fmt.Errorf("%s", conflictMsg())
 					results = append(results, result)
-					sc.save()
-					m.stackConfig.Save(m.repoDir)
+					saveState(sc)
 					if !allStacks {
 						return results, nil
 					}
@@ -544,8 +556,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					popStash()
 					result.Error = rebaseResult.Error
 					results = append(results, result)
-					sc.save()
-					m.stackConfig.Save(m.repoDir)
+					saveState(sc)
 					if !allStacks {
 						return results, nil
 					}
@@ -557,7 +568,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				results = append(results, result)
 				if callbacks != nil && callbacks.AfterRebase != nil {
 					if !callbacks.AfterRebase(result, g) {
-						sc.save()
+						saveState(sc)
 						if !allStacks {
 							return results, nil
 						}
@@ -797,15 +808,14 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 		if rebaseResult.HasConflict {
 			result.HasConflict = true
 			result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
-			m.stackConfig.Save(m.repoDir)
-			return result, nil
 		} else if rebaseResult.Error != nil {
 			result.Error = rebaseResult.Error
-			m.stackConfig.Save(m.repoDir)
-			return result, nil
+		} else {
+			result.Success = true
 		}
-		result.Success = true
-		m.stackConfig.Save(m.repoDir)
+		if err := m.stackConfig.Save(m.repoDir); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: failed to save config: %v\n", err)
+		}
 		return result, nil
 	}
 
