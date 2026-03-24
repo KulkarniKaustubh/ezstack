@@ -89,7 +89,7 @@ func main() {
 		os.Exit(ui.ExitNotInRepo)
 	}
 
-	// If no command given (interactive mode) and no config, guide through setup
+	// If no command given, show usage (or guide through first-time setup)
 	if cmd == "" {
 		if !hasRepoConfig(repoPath) {
 			ui.Info("Welcome to ezstack! Let's set up this repository.")
@@ -103,11 +103,7 @@ func main() {
 			}
 			return
 		}
-		// Config exists, show interactive menu
-		if err := runInteractiveMenu(); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-			os.Exit(1)
-		}
+		printUsage()
 		return
 	}
 
@@ -141,6 +137,8 @@ func main() {
 		err = commands.Commit(args)
 	case "amend":
 		err = commands.Amend(args)
+	case "menu":
+		err = runInteractiveMenu()
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		printUsage()
@@ -239,6 +237,7 @@ func printUsage() {
     amend         Amend last commit and auto-sync children
     pr            Manage pull requests
     config        Configure ezstack
+    menu          Interactive command menu
 
 %sOPTIONS%s
     -h, --help       Show this help message
