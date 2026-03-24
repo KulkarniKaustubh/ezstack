@@ -26,6 +26,15 @@ type ClientInterface interface {
 	// ListOpenPRs returns all open PRs in the repository
 	ListOpenPRs() ([]OpenPR, error)
 
+	// MergePR merges a pull request using the specified method
+	MergePR(number int, method string, deleteRemoteBranch bool) error
+
+	// SetPRDraft marks a PR as draft
+	SetPRDraft(number int) error
+
+	// SetPRReady marks a draft PR as ready for review
+	SetPRReady(number int) error
+
 	// UpdateStackDescription updates PR descriptions with stack info
 	UpdateStackDescription(stack *config.Stack, currentBranch string) error
 }

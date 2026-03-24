@@ -379,13 +379,22 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					}
 				}
 			}
-			// popStash restores stashed changes after rebase completes
+			// popStash restores stashed changes after rebase completes.
+			// Not called on conflict — user resolves first, then runs 'git stash pop'.
 			popStash := func() {
 				if didStash {
 					if err := g.StashPop(); err != nil {
 						fmt.Fprintf(os.Stderr, "  Warning: failed to pop stash for %s: %v\n", branch.Name, err)
 					}
 				}
+			}
+			// conflictMsg appends stash info to the conflict error when applicable
+			conflictMsg := func() string {
+				msg := fmt.Sprintf("resolve conflicts in: %s", branch.WorktreePath)
+				if didStash {
+					msg += " (uncommitted changes stashed — run 'git stash pop' after resolving)"
+				}
+				return msg
 			}
 
 			if branch.Parent == stack.Root {
@@ -414,7 +423,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				rebaseResult := g.RebaseNonInteractive("origin/" + stack.Root)
 				if rebaseResult.HasConflict {
 					result.HasConflict = true
-					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
+					result.Error = fmt.Errorf("%s", conflictMsg())
 					results = append(results, result)
 					if !allStacks {
 						return results, nil
@@ -522,7 +531,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				rebaseResult := g.RebaseOntoNonInteractive(rebaseTarget, mergeBase)
 				if rebaseResult.HasConflict {
 					result.HasConflict = true
-					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
+					result.Error = fmt.Errorf("%s", conflictMsg())
 					results = append(results, result)
 					sc.save()
 					m.stackConfig.Save(m.repoDir)
@@ -615,7 +624,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				rebaseResult := g.RebaseOntoNonInteractive(parentRef, oldParentHead)
 				if rebaseResult.HasConflict {
 					result.HasConflict = true
-					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
+					result.Error = fmt.Errorf("%s", conflictMsg())
 					results = append(results, result)
 					if !allStacks {
 						return results, nil
@@ -651,7 +660,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			rebaseResult := g.RebaseNonInteractive(parentRef)
 			if rebaseResult.HasConflict {
 				result.HasConflict = true
-				result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
+				result.Error = fmt.Errorf("%s", conflictMsg())
 				results = append(results, result)
 				if !allStacks {
 					return results, nil
