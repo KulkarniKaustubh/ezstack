@@ -462,7 +462,9 @@ func migrateV1ToV2(data []byte) ([]byte, error) {
 				} else {
 					newCacheData, err := json.MarshalIndent(cacheFile, "", "  ")
 					if err == nil {
-						atomicWriteFile(cachePath, newCacheData, 0644)
+						if wErr := atomicWriteFile(cachePath, newCacheData, 0644); wErr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to update cache.json: %v\n", wErr)
+					}
 					}
 				}
 			}
@@ -752,7 +754,9 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 			if migErr == nil {
 				var check stackConfigFile
 				if json.Unmarshal(migratedData, &check) == nil && len(check.Repos) > 0 {
-					atomicWriteFile(stackPath, migratedData, 0644)
+					if err := atomicWriteFile(stackPath, migratedData, 0644); err != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to persist bootstrap migration: %v\n", err)
+					}
 					data = migratedData
 				}
 			}
@@ -775,14 +779,18 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 	var versionCheck struct {
 		Version int `json:"version"`
 	}
-	json.Unmarshal(data, &versionCheck)
+	if err := json.Unmarshal(data, &versionCheck); err != nil {
+		return nil, fmt.Errorf("failed to read stacks.json version: %w", err)
+	}
 
 	if versionCheck.Version < currentStackConfigVersion {
 		data, err = migrateStackConfig(data, versionCheck.Version, currentStackConfigVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to migrate stacks.json: %w", err)
 		}
-		atomicWriteFile(stackPath, data, 0644) // write back so migration only runs once
+		if err := atomicWriteFile(stackPath, data, 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to persist migration: %v\n", err)
+		}
 	}
 
 	var file stackConfigFile
@@ -995,7 +1003,9 @@ func (cc *CacheConfig) Save(repoDir string) error {
 
 	data, err := os.ReadFile(stackPath)
 	if err == nil {
-		json.Unmarshal(data, &file)
+		if uErr := json.Unmarshal(data, &file); uErr != nil {
+			return fmt.Errorf("failed to parse stacks.json: %w", uErr)
+		}
 	}
 	if file.Repos == nil {
 		file.Repos = make(map[string]*repoData)
