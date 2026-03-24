@@ -13,6 +13,24 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
+// IsShellWrapped returns true if ezs is running through the shell wrapper function.
+// When true, stdout "cd <path>" will be eval'd by the shell. When false, the tool
+// should print the path to stderr and tell the user to cd manually.
+func IsShellWrapped() bool {
+	return os.Getenv("EZS_SHELL_WRAPPER") == "1"
+}
+
+// EmitCd outputs a cd command to stdout if running through the shell wrapper,
+// otherwise prints a message to stderr telling the user to cd manually.
+func EmitCd(path string) {
+	if IsShellWrapped() {
+		fmt.Printf("cd %s\n", path)
+	} else {
+		ui.Info(fmt.Sprintf("Run: cd %s", path))
+		ui.Info("Tip: Add to your shell config for automatic cd: eval \"$(ezs --shell-init)\"")
+	}
+}
+
 // savePRToCache saves a single branch's PR number and URL to the cache.
 func savePRToCache(cacheDir, branchName string, prNum int, prURL string) {
 	cache, err := config.LoadCacheConfig(cacheDir)

@@ -273,12 +273,12 @@ func printShellInit() {
 # Add this to your shell config: eval "$(ezs --shell-init)"
 ezs() {
     case "${1:-}" in
-        goto|go|new|n|delete|del|rm|sync)
+        goto|go|new|n|delete|del|rm|sync|up|down|commit|amend)
             # These commands may output "cd <path>" which we need to eval
-            eval "$(command ezs "$@")"
+            eval "$(EZS_SHELL_WRAPPER=1 command ezs "$@")"
             ;;
         *)
-            command ezs "$@"
+            EZS_SHELL_WRAPPER=1 command ezs "$@"
             ;;
     esac
 }
