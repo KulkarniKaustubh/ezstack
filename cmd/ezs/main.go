@@ -11,7 +11,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
-const version = "1.1.0"
+const version = "1.1.1-rc.1"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
@@ -230,7 +230,7 @@ func printUsage() {
     new, n        Create a new branch in the stack
     list, ls      List all stacks and branches
     status, st    Show status of current stack
-    sync          Sync stack with remote (accepts stack hash prefix, min 3 chars)
+    sync, rb      Sync stack with remote (accepts stack hash prefix, min 3 chars)
     goto, go      Navigate to a branch worktree
     up            Navigate up the stack (toward parent)
     down          Navigate down the stack (toward children)
@@ -238,7 +238,7 @@ func printUsage() {
     stack         Add a branch to a stack
     unstack       Remove a branch from tracking (keeps git branch)
     update        Sync config with git (detect manual changes)
-    delete, rm    Delete a branch and its worktree
+    delete, del, rm  Delete a branch and its worktree
     commit, ci    Commit and auto-sync child branches
     amend         Amend last commit and auto-sync children
     pr            Manage pull requests
@@ -284,7 +284,7 @@ func printShellInit() {
 # Add this to your shell config: eval "$(ezs --shell-init)"
 ezs() {
     case "${1:-}" in
-        goto|go|new|n|delete|del|rm|sync|up|down|commit|amend)
+        goto|go|new|n|delete|del|rm|sync|up|down)
             # These commands may output "cd <path>" which we need to eval
             eval "$(EZS_SHELL_WRAPPER=1 command ezs "$@")"
             ;;
