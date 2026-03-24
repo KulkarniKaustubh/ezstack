@@ -127,7 +127,7 @@ func main() {
 		err = commands.Delete(args)
 	case "reparent", "rp":
 		err = commands.Reparent(args)
-	case "update", "up":
+	case "update":
 		err = commands.Update(args)
 	case "stack":
 		err = commands.Stack(args)
@@ -137,6 +137,10 @@ func main() {
 		err = commands.Commit(args)
 	case "amend":
 		err = commands.Amend(args)
+	case "up":
+		err = commands.Up(args)
+	case "down":
+		err = commands.Down(args)
 	case "menu":
 		err = runInteractiveMenu()
 	default:
@@ -228,10 +232,12 @@ func printUsage() {
     status, st    Show status of current stack
     sync          Sync stack with remote (accepts stack hash prefix, min 3 chars)
     goto, go      Navigate to a branch worktree
+    up            Navigate up the stack (toward parent)
+    down          Navigate down the stack (toward children)
     reparent, rp  Change the parent of a branch
     stack         Add a branch to a stack
     unstack       Remove a branch from tracking (keeps git branch)
-    update, up    Sync config with git (detect manual changes)
+    update        Sync config with git (detect manual changes)
     delete, rm    Delete a branch and its worktree
     commit, ci    Commit and auto-sync child branches
     amend         Amend last commit and auto-sync children
