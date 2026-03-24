@@ -151,7 +151,7 @@ func selectBranchToReparent(mgr *stack.Manager, g *git.Git) (string, error) {
 	}
 
 	if len(options) == 0 {
-		return "", fmt.Errorf("no branches available to reparent")
+		return "", fmt.Errorf("no branches available to reparent. Create one with: ezs new <branch-name>")
 	}
 
 	// Use fzf to select

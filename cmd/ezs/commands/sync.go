@@ -719,7 +719,7 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 	ui.Info("Fetching latest changes...")
 	g := git.New(cwd)
 	if err := g.Fetch(); err != nil {
-		return fmt.Errorf("failed to fetch: %w", err)
+		return fmt.Errorf("failed to fetch from remote: %w. Check your network connection and that the remote is accessible", err)
 	}
 
 	syncInfo := mgr.DetectSyncNeededForBranch(branch.Name, gh)

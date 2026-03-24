@@ -405,7 +405,7 @@ func prCreate(args []string) error {
 	ui.Info(fmt.Sprintf("Creating %s with base branch: %s", prType, branch.Parent))
 	pr, err := gh.CreatePR(prTitle, prBody, branch.Name, branch.Parent, isDraft)
 	if err != nil {
-		return fmt.Errorf("failed to create PR: %w", err)
+		return fmt.Errorf("failed to create PR: %w. Check that the branch is pushed and you have repo access", err)
 	}
 
 	branch.PRNumber = pr.Number
@@ -645,7 +645,7 @@ func prMerge(args []string) error {
 	}
 
 	if err := gh.MergePR(branch.PRNumber, mergeMethod, deleteRemoteBranch); err != nil {
-		return fmt.Errorf("failed to merge PR: %w", err)
+		return fmt.Errorf("failed to merge PR: %w. Check for required reviews, CI status, or branch protection rules", err)
 	}
 
 	ui.Success(fmt.Sprintf("Merged PR #%d via %s", branch.PRNumber, mergeMethod))
