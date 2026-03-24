@@ -137,7 +137,7 @@ func commitInternal(args []string, amend bool) error {
 	for _, result := range results {
 		if result.HasConflict {
 			ui.Warn(fmt.Sprintf("Conflict in '%s': resolve in %s", result.Branch, result.WorktreePath))
-			ui.Info("After resolving: git rebase --continue")
+			ui.Info("To resolve: cd to the worktree, fix conflicts, run 'git add .' then 'git rebase --continue'")
 			return nil
 		} else if result.Error != nil {
 			ui.Warn(fmt.Sprintf("Failed to sync '%s': %v", result.Branch, result.Error))

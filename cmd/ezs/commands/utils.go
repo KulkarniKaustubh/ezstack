@@ -73,7 +73,7 @@ func OfferForcePush(branchName, worktreePath string) bool {
 	if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease)", branchName)) {
 		ui.Info("Pushing...")
 		if err := g.PushForce(); err != nil {
-			ui.Error(fmt.Sprintf("Push failed: %v", err))
+			ui.Error(fmt.Sprintf("Push failed: %v. Check your network connection and remote access", err))
 			return false
 		}
 		ui.Success("Pushed successfully")
@@ -109,7 +109,7 @@ func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) st
 		if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease)", branchName)) {
 			ui.Info(fmt.Sprintf("Pushing %s...", branchName))
 			if err := g.PushForce(); err != nil {
-				ui.Error(fmt.Sprintf("Push failed for %s: %v", branchName, err))
+				ui.Error(fmt.Sprintf("Push failed for %s: %v. Check remote access or try: git push --force-with-lease", branchName, err))
 			} else {
 				ui.Success(fmt.Sprintf("Pushed %s successfully", branchName))
 				pushed++
