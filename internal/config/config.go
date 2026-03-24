@@ -35,6 +35,7 @@ type RepoConfig struct {
 	WorktreeBaseDir     string `json:"worktree_base_dir"`
 	DefaultBaseBranch   string `json:"default_base_branch,omitempty"`
 	CdAfterNew          *bool  `json:"cd_after_new,omitempty"`
+	UseWorktrees        *bool  `json:"use_worktrees,omitempty"`
 	AutoDraftWipCommits *bool  `json:"auto_draft_wip_commits,omitempty"`
 }
 
@@ -74,12 +75,20 @@ func (c *Config) GetBaseBranch(repoPath string) string {
 	return "main"
 }
 
-// GetCdAfterNew returns whether to cd after creating a new worktree (default: false)
+// GetCdAfterNew returns whether to cd after creating a new worktree (default: true)
 func (c *Config) GetCdAfterNew(repoPath string) bool {
 	if repoCfg := c.GetRepoConfig(repoPath); repoCfg != nil && repoCfg.CdAfterNew != nil {
 		return *repoCfg.CdAfterNew
 	}
-	return false
+	return true
+}
+
+// GetUseWorktrees returns whether to use worktrees for new branches (default: true)
+func (c *Config) GetUseWorktrees(repoPath string) bool {
+	if repoCfg := c.GetRepoConfig(repoPath); repoCfg != nil && repoCfg.UseWorktrees != nil {
+		return *repoCfg.UseWorktrees
+	}
+	return true
 }
 
 // BranchTree is a recursive map representing the stack hierarchy
