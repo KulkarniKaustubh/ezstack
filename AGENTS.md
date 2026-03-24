@@ -70,7 +70,7 @@ ezs sync --dry-run --json
 
 ```bash
 # Auto-sync with stash support
-ezs -y sync -a --autostash
+ezs -y sync -a
 ```
 
 ## Architecture Notes

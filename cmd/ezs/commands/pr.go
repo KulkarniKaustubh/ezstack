@@ -316,6 +316,16 @@ func prCreate(args []string) error {
 		return err
 	}
 
+	// Check if a PR already exists on GitHub for this branch (handles stale cache)
+	existingPR, err := gh.GetPRByBranch(branch.Name)
+	if err == nil && existingPR != nil && !existingPR.Merged && existingPR.State != "CLOSED" {
+		// Update local cache with the existing PR
+		branch.PRNumber = existingPR.Number
+		branch.PRUrl = existingPR.URL
+		savePRToCache(getMainWorktreePath(g), branch.Name, existingPR.Number, existingPR.URL)
+		return fmt.Errorf("branch '%s' already has an open PR #%d: %s\nLocal cache has been updated. To push updates, use: ezs pr update", branch.Name, existingPR.Number, existingPR.URL)
+	}
+
 	prTitle := *title
 	if prTitle == "" {
 		prTitle = ui.Prompt("PR title", branch.Name)
