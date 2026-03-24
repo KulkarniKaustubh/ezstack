@@ -182,7 +182,7 @@ Options:
     -C, --children         Rebase child branches onto current branch
     --no-delete-local      Don't delete local branches after their PRs are merged
     --dry-run              Preview what would be synced without making changes
-    --autostash            Stash uncommitted changes before rebase, pop after
+    --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
     --json                 Output dry-run results as JSON (requires --dry-run)
 ```
 

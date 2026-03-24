@@ -31,7 +31,7 @@ func Sync(args []string) error {
     -C, --children         Rebase child branches onto current branch
     --no-delete-local      Don't delete local branches after their PRs are merged
     --dry-run              Preview what would be synced without making changes
-    --autostash            Stash uncommitted changes before rebase, pop after
+    --no-autostash         Don't stash uncommitted changes before rebase
     --json                 Output dry-run results as JSON (requires --dry-run)
     -h, --help             Show this help message
 
@@ -68,7 +68,7 @@ func Sync(args []string) error {
 	childrenFlag := fs.BoolP("children", "C", false, "Rebase children")
 	noDeleteLocal := fs.Bool("no-delete-local", false, "Don't delete local branches after their PRs are merged")
 	dryRunFlag := fs.Bool("dry-run", false, "Preview what would be synced")
-	autostashFlag := fs.Bool("autostash", false, "Stash uncommitted changes before rebase")
+	noAutostashFlag := fs.Bool("no-autostash", false, "Don't stash uncommitted changes before rebase")
 	jsonFlag := fs.Bool("json", false, "Output dry-run results as JSON")
 
 	if err := fs.Parse(args); err != nil {
@@ -98,7 +98,7 @@ func Sync(args []string) error {
 	deleteLocal := !*noDeleteLocal
 
 	dryRun := *dryRunFlag
-	autostash := *autostashFlag
+	autostash := !*noAutostashFlag
 	jsonOutput := *jsonFlag
 
 	if jsonOutput && !dryRun {
