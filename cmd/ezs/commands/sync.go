@@ -29,6 +29,8 @@ func Sync(args []string) error {
     -p, --parent           Rebase current branch onto its parent
     -C, --children         Rebase child branches onto current branch
     --no-delete-local      Don't delete local branches after their PRs are merged
+    --dry-run              Preview what would be synced without making changes
+    --autostash            Stash uncommitted changes before rebase, pop after
     -h, --help             Show this help message
 
 %sDESCRIPTION%s
@@ -63,6 +65,8 @@ func Sync(args []string) error {
 	parentFlag := fs.BoolP("parent", "p", false, "Rebase onto parent")
 	childrenFlag := fs.BoolP("children", "C", false, "Rebase children")
 	noDeleteLocal := fs.Bool("no-delete-local", false, "Don't delete local branches after their PRs are merged")
+	dryRunFlag := fs.Bool("dry-run", false, "Preview what would be synced")
+	autostashFlag := fs.Bool("autostash", false, "Stash uncommitted changes before rebase")
 
 	if err := fs.Parse(args); err != nil {
 		if err == pflag.ErrHelp {
@@ -90,6 +94,9 @@ func Sync(args []string) error {
 
 	deleteLocal := !*noDeleteLocal
 
+	dryRun := *dryRunFlag
+	autostash := *autostashFlag
+
 	// Check for positional arg (hash prefix)
 	positionalArgs := fs.Args()
 	if len(positionalArgs) > 0 {
@@ -98,7 +105,10 @@ func Sync(args []string) error {
 		if err != nil {
 			return err
 		}
-		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack})
+		if dryRun {
+			return syncDryRun(mgr, gh, []*config.Stack{targetStack})
+		}
+		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash)
 	}
 
 	// Try to get current stack (may fail if on main)
@@ -106,9 +116,15 @@ func Sync(args []string) error {
 	if err != nil {
 		// On main or not in a stack - show main menu
 		if *allStacksFlag || *allFlag {
-			return syncStacks(mgr, gh, cwd, deleteLocal, true)
+			if dryRun {
+				return syncDryRunAll(mgr, gh)
+			}
+			return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash)
 		}
-		return syncFromMain(mgr, gh, cwd, deleteLocal)
+		if dryRun {
+			return syncDryRunAll(mgr, gh)
+		}
+		return syncFromMain(mgr, gh, cwd, deleteLocal, autostash)
 	}
 
 	// In a stack worktree - existing behavior
@@ -118,14 +134,21 @@ func Sync(args []string) error {
 	spinner.Stop()
 	ui.PrintStack(currentStack, branch.Name, true, statusMap)
 
+	if dryRun {
+		if *allStacksFlag {
+			return syncDryRunAll(mgr, gh)
+		}
+		return syncDryRun(mgr, gh, []*config.Stack{currentStack})
+	}
+
 	if *allStacksFlag {
-		return syncStacks(mgr, gh, cwd, deleteLocal, true)
+		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash)
 	}
 	if *allFlag {
-		return syncStacks(mgr, gh, cwd, deleteLocal, false)
+		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash)
 	}
 	if *currentFlag {
-		return syncCurrentBranch(mgr, gh, branch, cwd)
+		return syncCurrentBranch(mgr, gh, branch, cwd, autostash)
 	}
 	if *parentFlag {
 		return syncOntoParent(mgr, branch)
@@ -134,11 +157,41 @@ func Sync(args []string) error {
 		return syncChildren(mgr, branch)
 	}
 
-	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal)
+	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal, autostash)
+}
+
+// syncDryRun previews what sync would do for specific stacks
+func syncDryRun(mgr *stack.Manager, gh *github.Client, stacks []*config.Stack) error {
+	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, stacks)
+	if err != nil {
+		return err
+	}
+	if len(syncNeeded) == 0 {
+		ui.Success("All branches are up to date. Nothing to sync.")
+		return nil
+	}
+	ui.Info("[dry-run] The following branches would be synced:")
+	printSyncInfoList(syncNeeded)
+	return nil
+}
+
+// syncDryRunAll previews what sync would do across all stacks
+func syncDryRunAll(mgr *stack.Manager, gh *github.Client) error {
+	syncNeeded, err := mgr.DetectSyncNeededAllStacks(gh)
+	if err != nil {
+		return err
+	}
+	if len(syncNeeded) == 0 {
+		ui.Success("All branches are up to date. Nothing to sync.")
+		return nil
+	}
+	ui.Info("[dry-run] The following branches would be synced:")
+	printSyncInfoList(syncNeeded)
+	return nil
 }
 
 // syncFromMain shows an interactive menu when running sync from main (not in a stack worktree)
-func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool) error {
+func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, autostash bool) error {
 	stacks := mgr.ListStacks()
 	if len(stacks) == 0 {
 		ui.Info("No stacks found. Create a branch first with: ezs new <branch-name>")
@@ -160,13 +213,13 @@ func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal
 
 	switch selected {
 	case 0:
-		return syncStacks(mgr, gh, cwd, deleteLocal, true)
+		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash)
 	case 1:
 		targetStack, err := ui.SelectStack(stacks, "Select a stack to sync")
 		if err != nil {
 			return err
 		}
-		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack})
+		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash)
 	}
 
 	return nil
@@ -217,7 +270,7 @@ func formatSyncConfirmMsg(info stack.SyncInfo) string {
 // makeSyncCallbacks creates standard sync callbacks for interactive syncing.
 // When singleStackMode is true, declining a push shows a more detailed error
 // explaining that child branches can't be synced without pushing the parent.
-func makeSyncCallbacks(singleStackMode bool) *stack.SyncCallbacks {
+func makeSyncCallbacks(singleStackMode bool, autostash bool) *stack.SyncCallbacks {
 	beforeRebase := func(info stack.SyncInfo) bool {
 		if ui.ConfirmTUI(formatSyncConfirmMsg(info)) {
 			ui.Info("Rebasing...")
@@ -248,6 +301,7 @@ func makeSyncCallbacks(singleStackMode bool) *stack.SyncCallbacks {
 	return &stack.SyncCallbacks{
 		BeforeRebase: beforeRebase,
 		AfterRebase:  afterRebase,
+		Autostash:    autostash,
 	}
 }
 
@@ -383,7 +437,7 @@ func handleMergedBranchCleanup(mgr *stack.Manager, mergedBranches []stack.Merged
 }
 
 // syncSpecificStacks syncs a specific set of stacks
-func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, stacks []*config.Stack) error {
+func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, stacks []*config.Stack, autostash bool) error {
 	ui.Info("Fetching latest changes...")
 
 	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, stacks)
@@ -417,7 +471,7 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 	if len(syncNeeded) > 0 {
 		fmt.Fprintln(os.Stderr)
 
-		callbacks := makeSyncCallbacks(len(stacks) == 1)
+		callbacks := makeSyncCallbacks(len(stacks) == 1, autostash)
 		results, err := mgr.SyncSpecificStacks(stacks, gh, callbacks)
 		if err != nil {
 			return err
@@ -447,7 +501,7 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 }
 
 // syncInteractive shows an interactive menu for sync operations
-func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config.Stack, branch *config.Branch, cwd string, deleteLocal bool) error {
+func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config.Stack, branch *config.Branch, cwd string, deleteLocal bool, autostash bool) error {
 	options := []string{}
 	optionActions := []string{}
 
@@ -505,11 +559,11 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 	action := optionActions[selected]
 	switch action {
 	case "auto":
-		return syncStacks(mgr, gh, cwd, deleteLocal, false)
+		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash)
 	case "auto-all":
-		return syncStacks(mgr, gh, cwd, deleteLocal, true)
+		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash)
 	case "current":
-		return syncCurrentBranch(mgr, gh, branch, cwd)
+		return syncCurrentBranch(mgr, gh, branch, cwd, autostash)
 	case "parent":
 		return syncOntoParent(mgr, branch)
 	case "children":
@@ -520,7 +574,7 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 }
 
 // syncStacks resolves the target stacks and delegates to syncSpecificStacks.
-func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, allStacks bool) error {
+func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, allStacks bool, autostash bool) error {
 	var stacks []*config.Stack
 	if allStacks {
 		stacks = mgr.ListStacks()
@@ -535,7 +589,7 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 		}
 		stacks = []*config.Stack{currentStack}
 	}
-	return syncSpecificStacks(mgr, gh, cwd, deleteLocal, stacks)
+	return syncSpecificStacks(mgr, gh, cwd, deleteLocal, stacks, autostash)
 }
 
 // syncOntoParent rebases the current branch onto its parent
@@ -619,7 +673,7 @@ func syncChildren(mgr *stack.Manager, branch *config.Branch) error {
 }
 
 // syncCurrentBranch syncs only the current branch (wherever it is in the chain)
-func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Branch, cwd string) error {
+func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Branch, cwd string, autostash bool) error {
 	ui.Info("Fetching latest changes...")
 	g := git.New(cwd)
 	if err := g.Fetch(); err != nil {
@@ -645,10 +699,33 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 		return nil
 	}
 
+	// Autostash: stash uncommitted changes before rebase
+	didStash := false
+	if autostash {
+		if hasChanges, _ := g.HasChanges(); hasChanges {
+			if err := g.StashPush(); err == nil {
+				didStash = true
+				ui.Info("Stashed uncommitted changes")
+			}
+		}
+	}
+
 	ui.Info("Syncing current branch...")
 	result, err := mgr.SyncBranch(branch.Name, gh)
 	if err != nil {
+		if didStash {
+			g.StashPop()
+		}
 		return err
+	}
+
+	// Pop stash after successful sync (not on conflict — user resolves first)
+	if didStash && !result.HasConflict {
+		if err := g.StashPop(); err != nil {
+			ui.Warn(fmt.Sprintf("Failed to pop stash: %v", err))
+		} else {
+			ui.Info("Restored stashed changes")
+		}
 	}
 
 	if result.Success {
