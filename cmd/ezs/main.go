@@ -137,6 +137,10 @@ func main() {
 		err = commands.Stack(args)
 	case "unstack":
 		err = commands.Unstack(args)
+	case "commit", "ci":
+		err = commands.Commit(args)
+	case "amend":
+		err = commands.Amend(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		printUsage()
@@ -231,6 +235,8 @@ func printUsage() {
     unstack       Remove a branch from tracking (keeps git branch)
     update, up    Sync config with git (detect manual changes)
     delete, rm    Delete a branch and its worktree
+    commit, ci    Commit and auto-sync child branches
+    amend         Amend last commit and auto-sync children
     pr            Manage pull requests
     config        Configure ezstack
 
