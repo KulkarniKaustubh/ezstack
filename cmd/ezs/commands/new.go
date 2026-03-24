@@ -270,76 +270,100 @@ func New(args []string) error {
 		return err
 	}
 
-	worktreePath := *worktree
-	if worktreePath == "" {
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
-		repoDir := mgr.GetRepoDir()
-		worktreeBaseDir := cfg.GetWorktreeBaseDir(repoDir)
-		if worktreeBaseDir == "" {
-			// Prompt user to set worktree base dir
-			worktreeBaseDir, err = promptWorktreeBaseDir(repoDir, cfg)
-			if err != nil {
-				return err
-			}
-		}
-		worktreePath = filepath.Join(worktreeBaseDir, branchName)
-	}
-
-	worktreePath = helpers.ExpandPath(worktreePath)
-
-	ui.Info(fmt.Sprintf("Creating branch '%s' from '%s'", branchName, parentBranch))
-	ui.Info(fmt.Sprintf("Worktree path: %s", worktreePath))
-
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
 
-	createAsStackRoot := true
-	if mgr.GetBranch(parentBranch) == nil {
-		createAsStackRoot = ui.ConfirmTUIWithDefault("Make this a stack root? (allows stacking more branches on top)", true)
+	repoDir := mgr.GetRepoDir()
+	useWorktrees := cfg.GetUseWorktrees(repoDir)
+
+	// If worktree path was explicitly specified, use worktrees regardless of config
+	if *worktree != "" {
+		useWorktrees = true
 	}
 
-	if !createAsStackRoot {
-		// Just create the worktree without adding to a stack
-		if err := mgr.CreateWorktreeOnly(branchName, parentBranch, worktreePath); err != nil {
+	if useWorktrees {
+		worktreePath := *worktree
+		if worktreePath == "" {
+			worktreeBaseDir := cfg.GetWorktreeBaseDir(repoDir)
+			if worktreeBaseDir == "" {
+				worktreeBaseDir, err = promptWorktreeBaseDir(repoDir, cfg)
+				if err != nil {
+					return err
+				}
+			}
+			worktreePath = filepath.Join(worktreeBaseDir, branchName)
+		}
+
+		worktreePath = helpers.ExpandPath(worktreePath)
+
+		ui.Info(fmt.Sprintf("Creating branch '%s' from '%s'", branchName, parentBranch))
+		ui.Info(fmt.Sprintf("Worktree path: %s", worktreePath))
+
+		createAsStackRoot := true
+		if mgr.GetBranch(parentBranch) == nil {
+			createAsStackRoot = ui.ConfirmTUIWithDefault("Make this a stack root? (allows stacking more branches on top)", true)
+		}
+
+		if !createAsStackRoot {
+			if err := mgr.CreateWorktreeOnly(branchName, parentBranch, worktreePath); err != nil {
+				return err
+			}
+			ui.Success(fmt.Sprintf("Created worktree '%s' at '%s' (not part of a stack)", branchName, worktreePath))
+			if shouldCd := getCdAfterNew(cfg, repoDir, *cdFlag, *noCdFlag); shouldCd {
+				fmt.Printf("cd %s\n", worktreePath)
+			} else {
+				ui.Info(fmt.Sprintf("To start working: cd %s", worktreePath))
+			}
+			return nil
+		}
+
+		isNewStack := mgr.GetBranch(parentBranch) == nil && !mgr.HasStackWithRoot(parentBranch)
+
+		branch, err := mgr.CreateBranch(branchName, parentBranch, worktreePath)
+		if err != nil {
 			return err
 		}
-		ui.Success(fmt.Sprintf("Created worktree '%s' at '%s' (not part of a stack)", branchName, worktreePath))
-		if shouldCd := getCdAfterNew(cfg, mgr.GetRepoDir(), *cdFlag, *noCdFlag); shouldCd {
-			fmt.Printf("cd %s\n", worktreePath)
-			ui.Info("Note: If `ezs goto` doesn't work, add this to your ~/.bashrc or ~/.zshrc:")
-			ui.Info("  eval \"$(ezs --shell-init)\"")
-		} else {
-			ui.Info(fmt.Sprintf("To start working: cd %s", worktreePath))
+
+		ui.Success(fmt.Sprintf("Created branch '%s' with worktree at '%s'", branch.Name, branch.WorktreePath))
+
+		if isNewStack {
+			promptStackName(mgr, branch.Name)
 		}
-		return nil
-	}
 
-	// Check if this will create a new stack (parent not in any existing stack or root)
-	isNewStack := mgr.GetBranch(parentBranch) == nil && !mgr.HasStackWithRoot(parentBranch)
-
-	branch, err := mgr.CreateBranch(branchName, parentBranch, worktreePath)
-	if err != nil {
-		return err
-	}
-
-	ui.Success(fmt.Sprintf("Created branch '%s' with worktree at '%s'", branch.Name, branch.WorktreePath))
-
-	// Prompt for stack name if a new stack was created
-	if isNewStack {
-		promptStackName(mgr, branch.Name)
-	}
-
-	if getCdAfterNew(cfg, mgr.GetRepoDir(), *cdFlag, *noCdFlag) {
-		fmt.Printf("cd %s\n", branch.WorktreePath)
-		ui.Info("Note: If `ezs goto` doesn't work, add this to your ~/.bashrc or ~/.zshrc:")
-		ui.Info("  eval \"$(ezs --shell-init)\"")
+		if getCdAfterNew(cfg, repoDir, *cdFlag, *noCdFlag) {
+			fmt.Printf("cd %s\n", branch.WorktreePath)
+		} else {
+			ui.Info(fmt.Sprintf("To start working: cd %s", branch.WorktreePath))
+		}
 	} else {
-		ui.Info(fmt.Sprintf("To start working: cd %s", branch.WorktreePath))
+		// No worktrees mode: create a git branch and track it
+		ui.Info(fmt.Sprintf("Creating branch '%s' from '%s' (no worktree)", branchName, parentBranch))
+
+		isNewStack := mgr.GetBranch(parentBranch) == nil && !mgr.HasStackWithRoot(parentBranch)
+
+		branch, err := mgr.CreateBranchNoWorktree(branchName, parentBranch)
+		if err != nil {
+			return err
+		}
+
+		ui.Success(fmt.Sprintf("Created branch '%s'", branch.Name))
+
+		if isNewStack {
+			promptStackName(mgr, branch.Name)
+		}
+
+		// Switch to the new branch
+		if getCdAfterNew(cfg, repoDir, *cdFlag, *noCdFlag) {
+			if err := g.CheckoutBranch(branchName); err != nil {
+				ui.Warn(fmt.Sprintf("Failed to switch to branch: %v", err))
+			} else {
+				ui.Success(fmt.Sprintf("Switched to branch '%s'", branchName))
+			}
+		} else {
+			ui.Info(fmt.Sprintf("To start working: git checkout %s", branchName))
+		}
 	}
 
 	return nil

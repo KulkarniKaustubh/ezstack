@@ -232,6 +232,55 @@ func (m *Manager) CreateBranch(name, parentBranch, worktreeDir string) (*config.
 	return nil, fmt.Errorf("failed to create branch")
 }
 
+// CreateBranchNoWorktree creates a new branch without a worktree and adds it to a stack
+func (m *Manager) CreateBranchNoWorktree(name, parentBranch string) (*config.Branch, error) {
+	// Create the git branch
+	if err := m.git.CreateBranchOnly(name, parentBranch); err != nil {
+		return nil, fmt.Errorf("failed to create branch: %w", err)
+	}
+
+	// Find or create the stack — check both branches and roots
+	stackKey := m.findStackForBranch(parentBranch)
+	if stackKey == "" {
+		stackKey = m.findStackByRoot(parentBranch)
+	}
+	var stack *config.Stack
+	if stackKey == "" {
+		hash := config.GenerateStackHash(name)
+		stack = &config.Stack{
+			Hash: hash,
+			Root: parentBranch,
+			Tree: config.BranchTree{
+				name: config.BranchTree{},
+			},
+		}
+		m.stackConfig.Stacks[hash] = stack
+	} else {
+		stack = m.stackConfig.Stacks[stackKey]
+		stack.AddBranch(name, parentBranch)
+	}
+
+	// Update cache (no worktree path)
+	cache := m.stackConfig.Cache
+	cache.SetBranchCache(name, &config.BranchCache{})
+
+	// Repopulate branches from tree with cache
+	stack.PopulateBranchesWithCache(cache)
+
+	// Save the config
+	if err := m.stackConfig.Save(m.repoDir); err != nil {
+		return nil, fmt.Errorf("failed to save stack config: %w", err)
+	}
+
+	// Return the branch from the populated list
+	for _, b := range stack.Branches {
+		if b.Name == name {
+			return b, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to create branch")
+}
+
 // CreateWorktreeOnly creates a worktree without adding it to a stack
 // This is used when the user wants to create a standalone worktree from main/master
 func (m *Manager) CreateWorktreeOnly(name, parentBranch, worktreeDir string) error {

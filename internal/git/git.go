@@ -108,6 +108,18 @@ func (g *Git) GetMainWorktree() (string, error) {
 	return mainWorktree, nil
 }
 
+// CreateBranchOnly creates a new branch without a worktree
+func (g *Git) CreateBranchOnly(branchName, baseBranch string) error {
+	_, err := g.run("branch", branchName, baseBranch)
+	return err
+}
+
+// CheckoutBranch switches to an existing branch
+func (g *Git) CheckoutBranch(branchName string) error {
+	_, err := g.run("checkout", branchName)
+	return err
+}
+
 // CreateWorktree creates a new worktree
 func (g *Git) CreateWorktree(branchName, worktreePath, baseBranch string) error {
 	// First create the branch from baseBranch
@@ -400,6 +412,27 @@ func (g *Git) RebaseOntoNonInteractive(newBase, oldBase string) RebaseResult {
 // Rebase rebases current branch onto target
 func (g *Git) Rebase(target string) error {
 	return g.RunInteractive("rebase", target)
+}
+
+// StashPush stashes all changes including untracked files
+func (g *Git) StashPush() error {
+	_, err := g.run("stash", "push", "-u", "-m", "ezstack-autostash")
+	return err
+}
+
+// StashPop pops the top stash entry
+func (g *Git) StashPop() error {
+	_, err := g.run("stash", "pop")
+	return err
+}
+
+// HasChanges returns true if the working directory has uncommitted changes
+func (g *Git) HasChanges() (bool, error) {
+	output, err := g.run("status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return output != "", nil
 }
 
 // ResetHard performs a hard reset to the given ref

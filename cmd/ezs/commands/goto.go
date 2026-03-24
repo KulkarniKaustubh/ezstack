@@ -62,10 +62,15 @@ func Goto(args []string) error {
 			if targetBranch.IsMerged {
 				return fmt.Errorf("branch '%s' has been merged and its worktree was deleted", branchName)
 			}
-			if targetBranch.WorktreePath == "" {
-				return fmt.Errorf("no worktree path for branch '%s'", branchName)
+			if targetBranch.WorktreePath != "" {
+				fmt.Printf("cd %s\n", targetBranch.WorktreePath)
+				return nil
 			}
-			fmt.Printf("cd %s\n", targetBranch.WorktreePath)
+			// No worktree — fall back to git checkout
+			if err := g.CheckoutBranch(branchName); err != nil {
+				return fmt.Errorf("failed to switch to branch '%s': %w", branchName, err)
+			}
+			ui.Success(fmt.Sprintf("Switched to branch '%s'", branchName))
 			return nil
 		}
 
@@ -82,7 +87,16 @@ func Goto(args []string) error {
 			}
 		}
 
-		return fmt.Errorf("branch '%s' not found in any worktree", branchName)
+		// Last resort: try git checkout if the branch exists
+		if g.BranchExists(branchName) {
+			if err := g.CheckoutBranch(branchName); err != nil {
+				return fmt.Errorf("failed to switch to branch '%s': %w", branchName, err)
+			}
+			ui.Success(fmt.Sprintf("Switched to branch '%s'", branchName))
+			return nil
+		}
+
+		return fmt.Errorf("branch '%s' not found in any stack or worktree", branchName)
 	}
 
 	// Interactive selection - get all worktrees
