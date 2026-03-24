@@ -78,6 +78,44 @@ func Hyperlink(url, text string) string {
 // ErrBack is returned when the user selects the back option
 var ErrBack = fmt.Errorf("back")
 
+// Exit codes for structured error reporting
+const (
+	ExitSuccess        = 0  // Success
+	ExitGeneral        = 1  // General error
+	ExitUsage          = 2  // Usage/argument error
+	ExitConflict       = 3  // Rebase conflict
+	ExitNotInRepo      = 4  // Not in a git repository
+	ExitNotInStack     = 5  // Current branch is not in a stack
+	ExitAuthRequired   = 6  // GitHub authentication required
+	ExitBranchNotFound = 7  // Branch not found
+	ExitNetworkError   = 8  // Network/remote error
+	ExitUserCancelled  = 10 // User cancelled operation
+)
+
+// ExitError wraps an error with a specific exit code
+type ExitError struct {
+	Code    int
+	Message string
+}
+
+func (e *ExitError) Error() string { return e.Message }
+
+// NewExitError creates an ExitError with the given code and message
+func NewExitError(code int, format string, args ...interface{}) *ExitError {
+	return &ExitError{Code: code, Message: fmt.Sprintf(format, args...)}
+}
+
+// GetExitCode returns the exit code for an error, defaulting to ExitGeneral
+func GetExitCode(err error) int {
+	if err == nil {
+		return ExitSuccess
+	}
+	if exitErr, ok := err.(*ExitError); ok {
+		return exitErr.Code
+	}
+	return ExitGeneral
+}
+
 // YesMode, when true, makes all ConfirmTUI / Confirm calls auto-return true
 // without showing any interactive dialog.
 var YesMode bool

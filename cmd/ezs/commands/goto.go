@@ -96,7 +96,7 @@ func Goto(args []string) error {
 			return nil
 		}
 
-		return fmt.Errorf("branch '%s' not found in any stack or worktree", branchName)
+		return ui.NewExitError(ui.ExitBranchNotFound, "branch '%s' not found in any stack or worktree", branchName)
 	}
 
 	// Interactive selection - get all worktrees

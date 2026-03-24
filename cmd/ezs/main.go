@@ -86,7 +86,7 @@ func main() {
 	repoPath, inRepo := checkRepoRoot()
 	if !inRepo {
 		ui.Error("ezs must be run from a git repository root (or a worktree)")
-		os.Exit(1)
+		os.Exit(ui.ExitNotInRepo)
 	}
 
 	// If no command given (interactive mode) and no config, guide through setup
@@ -144,7 +144,7 @@ func main() {
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		printUsage()
-		os.Exit(1)
+		os.Exit(ui.ExitUsage)
 	}
 
 	if err != nil {
@@ -152,7 +152,7 @@ func main() {
 			return
 		}
 		ui.Error(err.Error())
-		os.Exit(1)
+		os.Exit(ui.GetExitCode(err))
 	}
 }
 
