@@ -140,14 +140,14 @@ func TestConfig_GetCdAfterNew(t *testing.T) {
 			want:     false,
 		},
 		{
-			name: "nil defaults to false",
+			name: "nil defaults to true",
 			config: &Config{
 				Repos: map[string]*RepoConfig{
 					"/repo": {},
 				},
 			},
 			repoPath: "/repo",
-			want:     false,
+			want:     true,
 		},
 	}
 

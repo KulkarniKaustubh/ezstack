@@ -27,6 +27,7 @@ func printConfigUsage() {
     default_base_branch   Default base branch (e.g., main)
     github_token          GitHub token for API access
     cd_after_new          Auto-cd to new worktree (true/false, per-repo)
+    use_worktrees         Use git worktrees for new branches (true/false, per-repo)
 
 %sOPTIONS%s
     -h, --help    Show this help message
@@ -138,8 +139,21 @@ func configSet(key, value string) error {
 		repoCfg.CdAfterNew = &boolVal
 		cfg.SetRepoConfig(repoPath, repoCfg)
 		ui.Info(fmt.Sprintf("Setting cd_after_new for repo: %s", repoPath))
+	case "use_worktrees":
+		repoPath, err := getCurrentRepoPath()
+		if err != nil {
+			return fmt.Errorf("use_worktrees is a per-repo setting: %w", err)
+		}
+		repoCfg := cfg.GetRepoConfig(repoPath)
+		if repoCfg == nil {
+			repoCfg = &config.RepoConfig{}
+		}
+		boolVal := value == "true" || value == "1" || value == "yes"
+		repoCfg.UseWorktrees = &boolVal
+		cfg.SetRepoConfig(repoPath, repoCfg)
+		ui.Info(fmt.Sprintf("Setting use_worktrees for repo: %s", repoPath))
 	default:
-		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new", key)
+		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees", key)
 	}
 
 	if err := cfg.Save(); err != nil {
@@ -193,7 +207,12 @@ func configShow() error {
 			if repoCfg.CdAfterNew != nil {
 				fmt.Printf("  cd_after_new: %v\n", *repoCfg.CdAfterNew)
 			} else {
-				fmt.Printf("  cd_after_new: false (default)\n")
+				fmt.Printf("  cd_after_new: true (default)\n")
+			}
+			if repoCfg.UseWorktrees != nil {
+				fmt.Printf("  use_worktrees: %v\n", *repoCfg.UseWorktrees)
+			} else {
+				fmt.Printf("  use_worktrees: true (default)\n")
 			}
 		} else {
 			fmt.Printf("  worktree_base_dir: %s(not configured for this repo)%s\n", ui.Yellow, ui.Reset)
@@ -250,57 +269,66 @@ func configInteractive() error {
 
 	repoCfg := cfg.GetRepoConfig(repoPath)
 	currentWorktreeBaseDir := ""
-	currentCdAfterNew := false
+	currentCdAfterNew := true
+	currentUseWorktrees := true
 	if repoCfg != nil {
 		currentWorktreeBaseDir = repoCfg.WorktreeBaseDir
 		if repoCfg.CdAfterNew != nil {
 			currentCdAfterNew = *repoCfg.CdAfterNew
 		}
-	}
-
-	// Generate default worktree dir: ../<repo_name>_worktrees
-	if currentWorktreeBaseDir == "" {
-		repoName := filepath.Base(repoPath)
-		currentWorktreeBaseDir = filepath.Join(filepath.Dir(repoPath), repoName+"_worktrees")
+		if repoCfg.UseWorktrees != nil {
+			currentUseWorktrees = *repoCfg.UseWorktrees
+		}
 	}
 
 	configChanged := false
 
-	// Loop until valid path is provided
-	for {
-		worktreeBaseDir := ui.PromptPath("Worktree base directory (where new worktrees will be created)", currentWorktreeBaseDir)
-
-		if worktreeBaseDir != "" {
-			worktreeBaseDir = helpers.ExpandPath(worktreeBaseDir)
-			if !filepath.IsAbs(worktreeBaseDir) {
-				cwd, err := os.Getwd()
-				if err != nil {
-					return fmt.Errorf("failed to get current directory: %w", err)
-				}
-				worktreeBaseDir = filepath.Join(cwd, worktreeBaseDir)
-			}
-			worktreeBaseDir = filepath.Clean(worktreeBaseDir)
-
-			// Check if path is inside repo root
-			if isInsidePath(worktreeBaseDir, repoPath) {
-				ui.Error("Worktree directory cannot be inside the repository root")
-				continue
-			}
-
-			if repoCfg == nil {
-				repoCfg = &config.RepoConfig{}
-			}
-			repoCfg.WorktreeBaseDir = worktreeBaseDir
-			configChanged = true
-			ui.Success(fmt.Sprintf("Set worktree_base_dir = %s", worktreeBaseDir))
-		}
-		break
-	}
-
-	cdAfterNew := ui.ConfirmTUIWithDefault("Auto-cd into new worktrees after creation", currentCdAfterNew)
 	if repoCfg == nil {
 		repoCfg = &config.RepoConfig{}
 	}
+
+	useWorktrees := ui.ConfirmTUIWithDefault("Use git worktrees for new branches (recommended)", currentUseWorktrees)
+	repoCfg.UseWorktrees = &useWorktrees
+	configChanged = true
+	ui.Success(fmt.Sprintf("Set use_worktrees = %v", useWorktrees))
+
+	if useWorktrees {
+		// Generate default worktree dir: ../<repo_name>_worktrees
+		if currentWorktreeBaseDir == "" {
+			repoName := filepath.Base(repoPath)
+			currentWorktreeBaseDir = filepath.Join(filepath.Dir(repoPath), repoName+"_worktrees")
+		}
+
+		// Loop until valid path is provided
+		for {
+			worktreeBaseDir := ui.PromptPath("Worktree base directory (where new worktrees will be created)", currentWorktreeBaseDir)
+
+			if worktreeBaseDir != "" {
+				worktreeBaseDir = helpers.ExpandPath(worktreeBaseDir)
+				if !filepath.IsAbs(worktreeBaseDir) {
+					cwd, err := os.Getwd()
+					if err != nil {
+						return fmt.Errorf("failed to get current directory: %w", err)
+					}
+					worktreeBaseDir = filepath.Join(cwd, worktreeBaseDir)
+				}
+				worktreeBaseDir = filepath.Clean(worktreeBaseDir)
+
+				// Check if path is inside repo root
+				if isInsidePath(worktreeBaseDir, repoPath) {
+					ui.Error("Worktree directory cannot be inside the repository root")
+					continue
+				}
+
+				repoCfg.WorktreeBaseDir = worktreeBaseDir
+				configChanged = true
+				ui.Success(fmt.Sprintf("Set worktree_base_dir = %s", worktreeBaseDir))
+			}
+			break
+		}
+	}
+
+	cdAfterNew := ui.ConfirmTUIWithDefault("Auto-cd into new worktrees after creation", currentCdAfterNew)
 	repoCfg.CdAfterNew = &cdAfterNew
 	configChanged = true
 	ui.Success(fmt.Sprintf("Set cd_after_new = %v", cdAfterNew))
