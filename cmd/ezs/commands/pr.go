@@ -170,6 +170,16 @@ func prCreateAll(currentStack *config.Stack) error {
 	branchesToCreate := []*config.Branch{}
 	for _, b := range currentStack.Branches {
 		if b.PRNumber == 0 {
+			// Check GitHub for an existing open PR (handles stale cache)
+			existingPR, err := gh.GetPRByBranch(b.Name)
+			if err == nil && existingPR != nil && !existingPR.Merged && existingPR.State != "CLOSED" {
+				b.PRNumber = existingPR.Number
+				b.PRUrl = existingPR.URL
+				savePRToCache(mainWorktree, b.Name, existingPR.Number, existingPR.URL)
+				ui.Info(fmt.Sprintf("Branch '%s' already has PR #%d (updated local cache)", b.Name, existingPR.Number))
+				continue
+			}
+
 			// Check if branch has commits ahead of its base
 			commitsAhead, err := g.GetCommitsAhead(b.Name, b.Parent)
 			if err != nil {
@@ -199,13 +209,15 @@ func prCreateAll(currentStack *config.Stack) error {
 		return nil
 	}
 
+	created := 0
+	failed := 0
 	for _, b := range branchesToCreate {
 		ui.Info(fmt.Sprintf("Creating PR for %s...", b.Name))
 
-		// Push the branch first (need to be in that worktree or use git push from main)
-		pushCmd := fmt.Sprintf("git push -u origin %s", b.Name)
+		// Push the branch first
 		if err := runGitCommand(cwd, "push", "-u", "origin", b.Name); err != nil {
-			ui.Warn(fmt.Sprintf("Failed to push %s: %v (trying %s)", b.Name, err, pushCmd))
+			ui.Warn(fmt.Sprintf("Failed to push %s: %v", b.Name, err))
+			failed++
 			continue
 		}
 
@@ -213,34 +225,28 @@ func prCreateAll(currentStack *config.Stack) error {
 		pr, err := gh.CreatePR(b.Name, "", b.Name, b.Parent, false)
 		if err != nil {
 			ui.Warn(fmt.Sprintf("Failed to create PR for %s: %v", b.Name, err))
+			failed++
 			continue
 		}
 
 		b.PRNumber = pr.Number
 		b.PRUrl = pr.URL
+		savePRToCache(mainWorktree, b.Name, pr.Number, pr.URL)
+		created++
 		ui.Success(fmt.Sprintf("Created PR #%d for %s: %s", pr.Number, b.Name, pr.URL))
 	}
 
-	// Save PR numbers to cache
-	cache, _ := config.LoadCacheConfig(mainWorktree)
-	for _, updated := range branchesToCreate {
-		if updated.PRNumber > 0 {
-			bc := cache.GetBranchCache(updated.Name)
-			if bc == nil {
-				bc = &config.BranchCache{}
-			}
-			bc.PRNumber = updated.PRNumber
-			bc.PRUrl = updated.PRUrl
-			cache.SetBranchCache(updated.Name, bc)
+	if created > 0 {
+		if err := updateStackDescriptions(gh, currentStack, ""); err != nil {
+			ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
 		}
 	}
-	cache.Save(mainWorktree)
 
-	if err := updateStackDescriptions(gh, currentStack, ""); err != nil {
-		ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
+	if failed > 0 {
+		ui.Warn(fmt.Sprintf("Created %d PR(s), %d failed", created, failed))
+	} else {
+		ui.Success(fmt.Sprintf("Created %d PR(s)", created))
 	}
-
-	ui.Success("All PRs created!")
 	return nil
 }
 
