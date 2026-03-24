@@ -376,7 +376,7 @@ func handleMergedBranchCleanup(mgr *stack.Manager, mergedBranches []stack.Merged
 				ui.Success(fmt.Sprintf("Deleted %d merged branch(es)", deletedCount))
 			}
 			if needsCd {
-				fmt.Printf("cd %s\n", mgr.GetRepoDir())
+				EmitCd(mgr.GetRepoDir())
 			}
 		}
 	}

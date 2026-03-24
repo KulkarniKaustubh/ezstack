@@ -173,7 +173,7 @@ func Delete(args []string) error {
 	}
 
 	ui.Success(fmt.Sprintf("Deleted branch '%s' and its worktree", branchName))
-	fmt.Printf("cd %s\n", repoRoot)
+	EmitCd(repoRoot)
 
 	return nil
 }
@@ -233,6 +233,6 @@ func deleteStack(mgr *stack.Manager, hashPrefix string) error {
 	}
 
 	ui.Success(fmt.Sprintf("Deleted stack '%s'", s.DisplayName()))
-	fmt.Printf("cd %s\n", repoRoot)
+	EmitCd(repoRoot)
 	return nil
 }

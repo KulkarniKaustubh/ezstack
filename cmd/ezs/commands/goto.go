@@ -63,7 +63,7 @@ func Goto(args []string) error {
 				return fmt.Errorf("branch '%s' has been merged and its worktree was deleted", branchName)
 			}
 			if targetBranch.WorktreePath != "" {
-				fmt.Printf("cd %s\n", targetBranch.WorktreePath)
+				EmitCd(targetBranch.WorktreePath)
 				return nil
 			}
 			// No worktree — fall back to git checkout
@@ -82,7 +82,7 @@ func Goto(args []string) error {
 
 		for _, wt := range worktrees {
 			if wt.Branch == branchName {
-				fmt.Printf("cd %s\n", wt.Path)
+				EmitCd(wt.Path)
 				return nil
 			}
 		}
@@ -124,6 +124,6 @@ func Goto(args []string) error {
 		return err
 	}
 
-	fmt.Printf("cd %s\n", selected.Path)
+	EmitCd(selected.Path)
 	return nil
 }
