@@ -24,30 +24,29 @@ func Reparent(args []string) error {
 %sOPTIONS%s
     -b, --branch <name>     Branch to reparent
     -p, --parent <name>     New parent branch
-    -n, --no-rebase         Don't rebase, just update metadata (default: rebase)
     -h, --help              Show this help message
 
 %sDESCRIPTION%s
-    Changes the parent of a branch. This can be used to:
+    Changes the parent of a branch and rebases commits onto the new parent.
+    This can be used to:
 
     1. Move a branch to a different parent within the same stack
     2. Add a standalone worktree/branch to an existing stack
     3. Split a stack by reparenting branches to different parents
 
-    By default, commits are rebased onto the new parent. Use --no-rebase
-    to only update the metadata without rebasing.
+    Reparenting always rebases to keep the stack consistent. If the rebase
+    conflicts, the reparent metadata is still updated and you can resolve
+    conflicts manually.
 
 %sEXAMPLES%s
-    ezs reparent                    Interactive mode
+    ezs reparent                        Interactive mode
     ezs reparent feature-c feature-a    Reparent feature-c to feature-a
     ezs reparent -b feature-c -p main   Reparent feature-c to main
-    ezs reparent --no-rebase            Update metadata only
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 
 	branchFlag := fs.StringP("branch", "b", "", "Branch to reparent")
 	parentFlag := fs.StringP("parent", "p", "", "New parent branch")
-	noRebaseFlag := fs.BoolP("no-rebase", "n", false, "Don't rebase")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -60,9 +59,6 @@ func Reparent(args []string) error {
 		fs.Usage()
 		return nil
 	}
-
-	// Determine if we should rebase
-	doRebase := !*noRebaseFlag
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -93,15 +89,15 @@ func Reparent(args []string) error {
 
 	// Interactive mode if branch or parent not specified
 	if branchName == "" || newParent == "" {
-		return reparentInteractive(mgr, g, branchName, newParent, doRebase)
+		return reparentInteractive(mgr, g, branchName, newParent)
 	}
 
 	// Non-interactive mode
-	return doReparent(mgr, branchName, newParent, doRebase)
+	return doReparent(mgr, branchName, newParent)
 }
 
 // reparentInteractive handles interactive branch and parent selection
-func reparentInteractive(mgr *stack.Manager, g *git.Git, branchName, newParent string, doRebase bool) error {
+func reparentInteractive(mgr *stack.Manager, g *git.Git, branchName, newParent string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
@@ -124,7 +120,7 @@ func reparentInteractive(mgr *stack.Manager, g *git.Git, branchName, newParent s
 		}
 	}
 
-	return doReparent(mgr, branchName, newParent, doRebase)
+	return doReparent(mgr, branchName, newParent)
 }
 
 // selectBranchToReparent shows a selection UI for choosing which branch to reparent
@@ -259,7 +255,7 @@ func IsDescendantOf(mgr *stack.Manager, branchName, ancestorName string) bool {
 }
 
 // doReparent performs the actual reparent operation
-func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool) error {
+func doReparent(mgr *stack.Manager, branchName, newParent string) error {
 	// Get current parent for display
 	existingBranch := mgr.GetBranch(branchName)
 	oldParent := ""
@@ -274,20 +270,15 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 		ui.Info(fmt.Sprintf("Adding '%s' to stack with parent '%s'", branchName, newParent))
 	}
 
-	if doRebase {
-		ui.Info("Will rebase commits onto new parent")
-	} else {
-		ui.Info("Metadata only (no rebase)")
-	}
+	ui.Info("Will rebase commits onto new parent")
 
-	// Confirm
 	if !ui.ConfirmTUI("Proceed with reparent?") {
 		ui.Warn("Cancelled")
 		return nil
 	}
 
 	oldStack := mgr.GetStackForBranch(branchName)
-	result, err := mgr.ReparentBranch(branchName, newParent, doRebase)
+	result, err := mgr.ReparentBranch(branchName, newParent, true)
 	if err != nil {
 		return err
 	}
@@ -311,7 +302,7 @@ func doReparent(mgr *stack.Manager, branchName, newParent string, doRebase bool)
 	g := git.New(cwd)
 
 	pushSucceeded := true
-	if doRebase && !result.HasConflict && branch.PRNumber > 0 {
+	if !result.HasConflict && branch.PRNumber > 0 {
 		ui.Info("Branch was rebased. Force-push required to update the PR.")
 		worktreePath := cwd
 		if branch.WorktreePath != "" {
