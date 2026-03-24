@@ -97,6 +97,7 @@ type BeforeRebaseCallback func(info SyncInfo) bool
 type SyncCallbacks struct {
 	BeforeRebase BeforeRebaseCallback
 	AfterRebase  AfterRebaseCallback
+	Autostash    bool // Stash uncommitted changes before rebase, pop after
 }
 
 // getParentRef returns the git ref for a parent branch.
@@ -369,9 +370,28 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			result := RebaseResult{Branch: branch.Name, WorktreePath: branch.WorktreePath}
 			g := git.New(branch.WorktreePath)
 
+			// Autostash: stash uncommitted changes before rebase
+			didStash := false
+			if callbacks != nil && callbacks.Autostash {
+				if hasChanges, _ := g.HasChanges(); hasChanges {
+					if err := g.StashPush(); err == nil {
+						didStash = true
+					}
+				}
+			}
+			// popStash restores stashed changes after rebase completes
+			popStash := func() {
+				if didStash {
+					if err := g.StashPop(); err != nil {
+						fmt.Fprintf(os.Stderr, "  Warning: failed to pop stash for %s: %v\n", branch.Name, err)
+					}
+				}
+			}
+
 			if branch.Parent == stack.Root {
 				behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
 				if err != nil || behindBy == 0 {
+					popStash()
 					continue
 				}
 
@@ -386,6 +406,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 						NeedsSync: true,
 					}
 					if !callbacks.BeforeRebase(syncInfo) {
+						popStash()
 						continue
 					}
 				}
@@ -396,32 +417,28 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 					results = append(results, result)
 					if !allStacks {
-						// Stop immediately on conflict when syncing single stack
 						return results, nil
 					}
-					// Mark this stack as having a conflict and continue to next stack
 					stackHasConflict = true
 					continue
 				} else if rebaseResult.Error != nil {
+					popStash()
 					result.Error = rebaseResult.Error
 					results = append(results, result)
 					if !allStacks {
-						// Stop on error when syncing single stack
 						return results, nil
 					}
-					// Mark this stack as having an error and continue to next stack
 					stackHasConflict = true
 					continue
 				}
+				popStash()
 				result.Success = true
 				results = append(results, result)
-				// Call afterRebase callback to allow pushing before continuing to children
 				if callbacks != nil && callbacks.AfterRebase != nil {
 					if !callbacks.AfterRebase(result, g) {
 						if !allStacks {
-							return results, nil // Callback requested stop for single stack
+							return results, nil
 						}
-						// For all stacks, mark this stack as having an issue and continue to next stack
 						stackHasConflict = true
 						continue
 					}
@@ -470,6 +487,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					}
 				}
 				if updatedBranch == nil {
+					popStash()
 					continue
 				}
 
@@ -485,15 +503,14 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 						NeedsSync:    true,
 					}
 					if !callbacks.BeforeRebase(syncInfo) {
-						continue // User chose to skip this branch
+						popStash()
+						continue
 					}
 				}
 
 				// Find the merge-base between current branch and old parent
-				// This is the point where we originally branched from the parent
 				mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
 				if err != nil {
-					// Fallback to using oldParentRef if we can't get merge-base
 					mergeBase = oldParentRef
 				}
 
@@ -510,35 +527,31 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					sc.save()
 					m.stackConfig.Save(m.repoDir)
 					if !allStacks {
-						// Stop immediately on conflict when syncing single stack
 						return results, nil
 					}
-					// Mark this stack as having a conflict and continue to next stack
 					stackHasConflict = true
 					continue
 				} else if rebaseResult.Error != nil {
+					popStash()
 					result.Error = rebaseResult.Error
 					results = append(results, result)
 					sc.save()
 					m.stackConfig.Save(m.repoDir)
 					if !allStacks {
-						// Stop on error when syncing single stack
 						return results, nil
 					}
-					// Mark this stack as having an error and continue to next stack
 					stackHasConflict = true
 					continue
 				}
+				popStash()
 				result.Success = true
 				results = append(results, result)
-				// Call afterRebase callback to allow pushing before continuing to children
 				if callbacks != nil && callbacks.AfterRebase != nil {
 					if !callbacks.AfterRebase(result, g) {
 						sc.save()
 						if !allStacks {
-							return results, nil // Callback requested stop for single stack
+							return results, nil
 						}
-						// For all stacks, mark this stack as having an issue and continue to next stack
 						stackHasConflict = true
 						continue
 					}
@@ -551,13 +564,13 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			// (e.g., parent was just rebased onto main in this same sync operation)
 			behindBy, err := m.git.GetCommitsBehind(branch.Name, parentRef)
 			if err != nil || behindBy == 0 {
-				continue // Not behind parent, skip
+				popStash()
+				continue
 			}
 
 			result.BehindBy = behindBy
 			result.SyncedParent = branch.Parent
 
-			// Call beforeRebase callback to ask for confirmation
 			if callbacks != nil && callbacks.BeforeRebase != nil {
 				syncInfo := SyncInfo{
 					Branch:       branch.Name,
@@ -567,37 +580,31 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					NeedsSync:    true,
 				}
 				if !callbacks.BeforeRebase(syncInfo) {
-					continue // User chose to skip this branch
+					popStash()
+					continue
 				}
 			}
 
 			// Use the OLD parent HEAD (recorded before any rebasing) as the base for --onto
-			// This correctly handles the case where parent was rebased in this sync:
-			// - Parent was at oldParentHead, child was based on it
-			// - Parent got rebased to newParentHead (current parentRef)
-			// - We need: git rebase --onto newParentHead oldParentHead
-			// This transplants commits from oldParentHead..childHead onto newParentHead
 			oldParentHead, hasOldHead := oldHeads[branch.Parent]
 			if hasOldHead {
-				// Check if child has any commits of its own (beyond the old parent)
-				// If child HEAD == oldParentHead, there are no commits to rebase
-				// In this case, just fast-forward the child to the new parent HEAD
 				childHead, err := m.git.GetBranchCommit(branch.Name)
 				if err == nil && childHead == oldParentHead {
 					// No commits in child - just reset to new parent HEAD
 					if err := g.ResetHard(parentRef); err != nil {
+						popStash()
 						result.Error = fmt.Errorf("failed to fast-forward: %w", err)
 						results = append(results, result)
 						continue
 					}
+					popStash()
 					result.Success = true
 					results = append(results, result)
 					if callbacks != nil && callbacks.AfterRebase != nil {
 						if !callbacks.AfterRebase(result, g) {
 							if !allStacks {
-								return results, nil // Callback requested stop for single stack
+								return results, nil
 							}
-							// For all stacks, mark this stack as having an issue and continue to next stack
 							stackHasConflict = true
 							continue
 						}
@@ -605,39 +612,34 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					continue
 				}
 
-				// Use rebase --onto with the old parent HEAD
 				rebaseResult := g.RebaseOntoNonInteractive(parentRef, oldParentHead)
 				if rebaseResult.HasConflict {
 					result.HasConflict = true
 					result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 					results = append(results, result)
 					if !allStacks {
-						// Stop immediately on conflict when syncing single stack
 						return results, nil
 					}
-					// Mark this stack as having a conflict and continue to next stack
 					stackHasConflict = true
 					continue
 				} else if rebaseResult.Error != nil {
+					popStash()
 					result.Error = rebaseResult.Error
 					results = append(results, result)
 					if !allStacks {
-						// Stop on error when syncing single stack
 						return results, nil
 					}
-					// Mark this stack as having an error and continue to next stack
 					stackHasConflict = true
 					continue
 				}
+				popStash()
 				result.Success = true
 				results = append(results, result)
-				// Call afterRebase callback to allow pushing before continuing to children
 				if callbacks != nil && callbacks.AfterRebase != nil {
 					if !callbacks.AfterRebase(result, g) {
 						if !allStacks {
-							return results, nil // Callback requested stop for single stack
+							return results, nil
 						}
-						// For all stacks, mark this stack as having an issue and continue to next stack
 						stackHasConflict = true
 						continue
 					}
@@ -652,32 +654,28 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 				results = append(results, result)
 				if !allStacks {
-					// Stop immediately on conflict when syncing single stack
 					return results, nil
 				}
-				// Mark this stack as having a conflict and continue to next stack
 				stackHasConflict = true
 				continue
 			} else if rebaseResult.Error != nil {
+				popStash()
 				result.Error = rebaseResult.Error
 				results = append(results, result)
 				if !allStacks {
-					// Stop on error when syncing single stack
 					return results, nil
 				}
-				// Mark this stack as having an error and continue to next stack
 				stackHasConflict = true
 				continue
 			}
+			popStash()
 			result.Success = true
 			results = append(results, result)
-			// Call afterRebase callback to allow pushing before continuing to children
 			if callbacks != nil && callbacks.AfterRebase != nil {
 				if !callbacks.AfterRebase(result, g) {
 					if !allStacks {
-						return results, nil // Callback requested stop for single stack
+						return results, nil
 					}
-					// For all stacks, mark this stack as having an issue and continue to next stack
 					stackHasConflict = true
 					continue
 				}
