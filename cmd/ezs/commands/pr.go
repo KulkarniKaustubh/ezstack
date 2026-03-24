@@ -23,6 +23,8 @@ func printPRUsage() {
 %sSUBCOMMANDS%s
     create    Create a new pull request
     update    Push changes to existing PR
+    merge     Merge a pull request
+    draft     Toggle PR between draft and ready
     stack     Update all PR descriptions with stack info
 
 %sOPTIONS%s
@@ -54,10 +56,14 @@ func PR(args []string) error {
 		return prCreate(args[1:])
 	case "update":
 		return prUpdate(args[1:])
+	case "merge":
+		return prMerge(args[1:])
+	case "draft":
+		return prDraft(args[1:])
 	case "stack":
 		return prStack(args[1:])
 	default:
-		return fmt.Errorf("unknown pr command: %s", args[0])
+		return fmt.Errorf("unknown pr command: %s. Run 'ezs pr --help' for available subcommands", args[0])
 	}
 }
 
@@ -89,6 +95,12 @@ func prInteractive() error {
 	} else {
 		options = append(options, fmt.Sprintf("%s  Push updates to PR #%d", ui.IconPush, branch.PRNumber))
 		optionActions = append(optionActions, "update")
+
+		options = append(options, fmt.Sprintf("%s  Merge PR #%d", ui.IconSuccess, branch.PRNumber))
+		optionActions = append(optionActions, "merge")
+
+		options = append(options, fmt.Sprintf("%s  Toggle draft/ready for PR #%d", ui.IconSync, branch.PRNumber))
+		optionActions = append(optionActions, "draft")
 	}
 
 	prCount := 0
@@ -127,6 +139,10 @@ func prInteractive() error {
 		return prCreate(nil)
 	case "update":
 		return prUpdate(nil)
+	case "merge":
+		return prMerge(nil)
+	case "draft":
+		return prDraft(nil)
 	case "stack":
 		return prStack(nil)
 	case "create-all":
@@ -523,6 +539,194 @@ func prUpdate(args []string) error {
 	}
 
 	ui.Success(fmt.Sprintf("Updated PR #%d", branch.PRNumber))
+	return nil
+}
+
+func prMerge(args []string) error {
+	fs := pflag.NewFlagSet("pr merge", pflag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `%sMerge a pull request%s
+
+%sUSAGE%s
+    ezs pr merge [options]
+
+%sOPTIONS%s
+    -m, --method <method>  Merge method: merge, squash, rebase (default: squash)
+    --no-delete-branch     Don't delete the remote branch after merge
+    -h, --help             Show this help message
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
+	}
+	method := fs.StringP("method", "m", "", "Merge method (merge, squash, rebase)")
+	noDeleteBranch := fs.Bool("no-delete-branch", false, "Don't delete remote branch after merge")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
+
+	if err := fs.Parse(args); err != nil {
+		if err == pflag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	if *helpFlag {
+		fs.Usage()
+		return nil
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	g := git.New(cwd)
+	mgr, err := stack.NewManager(cwd)
+	if err != nil {
+		return err
+	}
+
+	_, branch, err := mgr.GetCurrentStack()
+	if err != nil {
+		return err
+	}
+
+	if branch.PRNumber == 0 {
+		return fmt.Errorf("no PR exists for branch '%s'. Create one with: ezs pr create", branch.Name)
+	}
+
+	gh, err := newGitHubClient(g)
+	if err != nil {
+		return err
+	}
+
+	// Fetch PR details to show status
+	pr, err := gh.GetPR(branch.PRNumber)
+	if err != nil {
+		return fmt.Errorf("failed to get PR: %w", err)
+	}
+
+	if pr.Merged {
+		return fmt.Errorf("PR #%d is already merged", branch.PRNumber)
+	}
+	if pr.State == "CLOSED" {
+		return fmt.Errorf("PR #%d is closed. Reopen it on GitHub first", branch.PRNumber)
+	}
+
+	// Choose merge method
+	mergeMethod := *method
+	if mergeMethod == "" {
+		methodOptions := []string{"Squash and merge", "Create a merge commit", "Rebase and merge"}
+		choice := ui.SelectTUI(methodOptions, "Merge method", 0)
+		if choice == -1 {
+			ui.Warn("Cancelled")
+			return nil
+		}
+		switch choice {
+		case 0:
+			mergeMethod = "squash"
+		case 1:
+			mergeMethod = "merge"
+		case 2:
+			mergeMethod = "rebase"
+		}
+	}
+
+	// Validate method
+	switch mergeMethod {
+	case "merge", "squash", "rebase":
+		// valid
+	default:
+		return fmt.Errorf("invalid merge method: %s. Must be one of: merge, squash, rebase", mergeMethod)
+	}
+
+	deleteRemoteBranch := !*noDeleteBranch
+
+	ui.Info(fmt.Sprintf("Merging PR #%d (%s) via %s", branch.PRNumber, branch.Name, mergeMethod))
+	if !ui.ConfirmTUI(fmt.Sprintf("Merge PR #%d via %s?", branch.PRNumber, mergeMethod)) {
+		ui.Warn("Cancelled")
+		return nil
+	}
+
+	if err := gh.MergePR(branch.PRNumber, mergeMethod, deleteRemoteBranch); err != nil {
+		return fmt.Errorf("failed to merge PR: %w", err)
+	}
+
+	ui.Success(fmt.Sprintf("Merged PR #%d via %s", branch.PRNumber, mergeMethod))
+	ui.Info("Run 'ezs sync' to update the stack and clean up merged branches")
+
+	return nil
+}
+
+func prDraft(args []string) error {
+	fs := pflag.NewFlagSet("pr draft", pflag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `%sToggle PR between draft and ready%s
+
+%sUSAGE%s
+    ezs pr draft [options]
+
+%sOPTIONS%s
+    -h, --help    Show this help message
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
+	}
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
+
+	if err := fs.Parse(args); err != nil {
+		if err == pflag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	if *helpFlag {
+		fs.Usage()
+		return nil
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	g := git.New(cwd)
+	mgr, err := stack.NewManager(cwd)
+	if err != nil {
+		return err
+	}
+
+	_, branch, err := mgr.GetCurrentStack()
+	if err != nil {
+		return err
+	}
+
+	if branch.PRNumber == 0 {
+		return fmt.Errorf("no PR exists for branch '%s'. Create one with: ezs pr create", branch.Name)
+	}
+
+	gh, err := newGitHubClient(g)
+	if err != nil {
+		return err
+	}
+
+	pr, err := gh.GetPR(branch.PRNumber)
+	if err != nil {
+		return fmt.Errorf("failed to get PR: %w", err)
+	}
+
+	if pr.Merged {
+		return fmt.Errorf("PR #%d is already merged", branch.PRNumber)
+	}
+
+	if pr.IsDraft {
+		ui.Info(fmt.Sprintf("PR #%d is currently a draft. Marking as ready for review...", branch.PRNumber))
+		if err := gh.SetPRReady(branch.PRNumber); err != nil {
+			return fmt.Errorf("failed to mark PR as ready: %w", err)
+		}
+		ui.Success(fmt.Sprintf("PR #%d is now ready for review", branch.PRNumber))
+	} else {
+		ui.Info(fmt.Sprintf("PR #%d is currently ready for review. Converting to draft...", branch.PRNumber))
+		if err := gh.SetPRDraft(branch.PRNumber); err != nil {
+			return fmt.Errorf("failed to convert PR to draft: %w", err)
+		}
+		ui.Success(fmt.Sprintf("PR #%d is now a draft", branch.PRNumber))
+	}
+
 	return nil
 }
 

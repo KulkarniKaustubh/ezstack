@@ -214,6 +214,28 @@ func (c *Client) UpdatePRBase(number int, base string) error {
 	return err
 }
 
+// MergePR merges a pull request using the specified method (merge, squash, rebase)
+func (c *Client) MergePR(number int, method string, deleteRemoteBranch bool) error {
+	args := []string{"pr", "merge", fmt.Sprintf("%d", number), "--" + method}
+	if deleteRemoteBranch {
+		args = append(args, "--delete-branch")
+	}
+	_, err := c.runGH(args...)
+	return err
+}
+
+// SetPRDraft marks a PR as draft
+func (c *Client) SetPRDraft(number int) error {
+	_, err := c.runGH("pr", "ready", fmt.Sprintf("%d", number), "--undo")
+	return err
+}
+
+// SetPRReady marks a draft PR as ready for review
+func (c *Client) SetPRReady(number int) error {
+	_, err := c.runGH("pr", "ready", fmt.Sprintf("%d", number))
+	return err
+}
+
 // OpenPR represents a minimal PR for listing
 type OpenPR struct {
 	Number int    `json:"number"`
