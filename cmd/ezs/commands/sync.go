@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -31,6 +32,7 @@ func Sync(args []string) error {
     --no-delete-local      Don't delete local branches after their PRs are merged
     --dry-run              Preview what would be synced without making changes
     --autostash            Stash uncommitted changes before rebase, pop after
+    --json                 Output dry-run results as JSON (requires --dry-run)
     -h, --help             Show this help message
 
 %sDESCRIPTION%s
@@ -67,6 +69,7 @@ func Sync(args []string) error {
 	noDeleteLocal := fs.Bool("no-delete-local", false, "Don't delete local branches after their PRs are merged")
 	dryRunFlag := fs.Bool("dry-run", false, "Preview what would be synced")
 	autostashFlag := fs.Bool("autostash", false, "Stash uncommitted changes before rebase")
+	jsonFlag := fs.Bool("json", false, "Output dry-run results as JSON")
 
 	if err := fs.Parse(args); err != nil {
 		if err == pflag.ErrHelp {
@@ -96,6 +99,11 @@ func Sync(args []string) error {
 
 	dryRun := *dryRunFlag
 	autostash := *autostashFlag
+	jsonOutput := *jsonFlag
+
+	if jsonOutput && !dryRun {
+		return fmt.Errorf("--json requires --dry-run")
+	}
 
 	// Check for positional arg (hash prefix)
 	positionalArgs := fs.Args()
@@ -106,7 +114,7 @@ func Sync(args []string) error {
 			return err
 		}
 		if dryRun {
-			return syncDryRun(mgr, gh, []*config.Stack{targetStack})
+			return syncDryRun(mgr, gh, []*config.Stack{targetStack}, jsonOutput)
 		}
 		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash)
 	}
@@ -117,12 +125,12 @@ func Sync(args []string) error {
 		// On main or not in a stack - show main menu
 		if *allStacksFlag || *allFlag {
 			if dryRun {
-				return syncDryRunAll(mgr, gh)
+				return syncDryRunAll(mgr, gh, jsonOutput)
 			}
 			return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash)
 		}
 		if dryRun {
-			return syncDryRunAll(mgr, gh)
+			return syncDryRunAll(mgr, gh, jsonOutput)
 		}
 		return syncFromMain(mgr, gh, cwd, deleteLocal, autostash)
 	}
@@ -136,9 +144,9 @@ func Sync(args []string) error {
 
 	if dryRun {
 		if *allStacksFlag {
-			return syncDryRunAll(mgr, gh)
+			return syncDryRunAll(mgr, gh, jsonOutput)
 		}
-		return syncDryRun(mgr, gh, []*config.Stack{currentStack})
+		return syncDryRun(mgr, gh, []*config.Stack{currentStack}, jsonOutput)
 	}
 
 	if *allStacksFlag {
@@ -161,10 +169,13 @@ func Sync(args []string) error {
 }
 
 // syncDryRun previews what sync would do for specific stacks
-func syncDryRun(mgr *stack.Manager, gh *github.Client, stacks []*config.Stack) error {
+func syncDryRun(mgr *stack.Manager, gh *github.Client, stacks []*config.Stack, jsonOutput bool) error {
 	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, stacks)
 	if err != nil {
 		return err
+	}
+	if jsonOutput {
+		return printSyncInfoJSON(syncNeeded)
 	}
 	if len(syncNeeded) == 0 {
 		ui.Success("All branches are up to date. Nothing to sync.")
@@ -176,10 +187,13 @@ func syncDryRun(mgr *stack.Manager, gh *github.Client, stacks []*config.Stack) e
 }
 
 // syncDryRunAll previews what sync would do across all stacks
-func syncDryRunAll(mgr *stack.Manager, gh *github.Client) error {
+func syncDryRunAll(mgr *stack.Manager, gh *github.Client, jsonOutput bool) error {
 	syncNeeded, err := mgr.DetectSyncNeededAllStacks(gh)
 	if err != nil {
 		return err
+	}
+	if jsonOutput {
+		return printSyncInfoJSON(syncNeeded)
 	}
 	if len(syncNeeded) == 0 {
 		ui.Success("All branches are up to date. Nothing to sync.")
@@ -241,6 +255,34 @@ func printSyncInfoList(syncNeeded []stack.SyncInfo) {
 		}
 	}
 	fmt.Fprintln(os.Stderr)
+}
+
+// syncInfoJSON represents a sync info entry in JSON output
+type syncInfoJSON struct {
+	Branch       string `json:"branch"`
+	NeedsSync    bool   `json:"needs_sync"`
+	MergedParent string `json:"merged_parent,omitempty"`
+	BehindParent string `json:"behind_parent,omitempty"`
+	BehindBy     int    `json:"behind_by,omitempty"`
+	StackRoot    string `json:"stack_root"`
+}
+
+// printSyncInfoJSON outputs sync info as JSON to stdout
+func printSyncInfoJSON(syncNeeded []stack.SyncInfo) error {
+	result := make([]syncInfoJSON, 0, len(syncNeeded))
+	for _, info := range syncNeeded {
+		result = append(result, syncInfoJSON{
+			Branch:       info.Branch,
+			NeedsSync:    info.NeedsSync,
+			MergedParent: info.MergedParent,
+			BehindParent: info.BehindParent,
+			BehindBy:     info.BehindBy,
+			StackRoot:    info.StackRoot,
+		})
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(result)
 }
 
 // printMergedBranchesList prints the list of merged branches.

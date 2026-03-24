@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"sync"
@@ -28,11 +29,13 @@ func List(args []string) error {
 
 %sOPTIONS%s
     -a, --all     Show all stacks
+    --json        Output as JSON (machine-readable)
     -d, --debug   Show debug output
     -h, --help    Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	all := fs.BoolP("all", "a", false, "Show all stacks")
+	jsonFlag := fs.Bool("json", false, "Output as JSON")
 	debug := fs.BoolP("debug", "d", false, "Show debug output")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
@@ -73,24 +76,77 @@ func List(args []string) error {
 
 	stacks := mgr.ListStacks()
 	if len(stacks) == 0 {
+		if *jsonFlag {
+			fmt.Println("[]")
+			return nil
+		}
 		ui.Info("No stacks found. Create one with: ezs new <branch-name>")
 		return nil
 	}
 
-	printStack := func(s *config.Stack) {
+	var stacksToShow []*config.Stack
+	currentStack, _, csErr := mgr.GetCurrentStack()
+	if *all || csErr != nil {
+		stacksToShow = stacks
+	} else {
+		stacksToShow = []*config.Stack{currentStack}
+	}
+
+	if *jsonFlag {
+		return printStacksJSON(stacksToShow, currentBranch)
+	}
+
+	for _, s := range stacksToShow {
 		ui.PrintStack(s, currentBranch, false, nil)
 	}
-
-	currentStack, _, err := mgr.GetCurrentStack()
-	if *all || err != nil {
-		for _, s := range stacks {
-			printStack(s)
-		}
-	} else {
-		printStack(currentStack)
-	}
-
 	return nil
+}
+
+// stackJSON represents a stack in JSON output
+type stackJSON struct {
+	Hash     string       `json:"hash"`
+	Name     string       `json:"name,omitempty"`
+	Root     string       `json:"root"`
+	Branches []branchJSON `json:"branches"`
+}
+
+// branchJSON represents a branch in JSON output
+type branchJSON struct {
+	Name         string `json:"name"`
+	Parent       string `json:"parent"`
+	IsMerged     bool   `json:"is_merged"`
+	IsCurrent    bool   `json:"is_current"`
+	PRNumber     int    `json:"pr_number,omitempty"`
+	PRUrl        string `json:"pr_url,omitempty"`
+	WorktreePath string `json:"worktree_path,omitempty"`
+}
+
+// printStacksJSON outputs stacks as JSON to stdout
+func printStacksJSON(stacks []*config.Stack, currentBranch string) error {
+	result := make([]stackJSON, 0, len(stacks))
+	for _, s := range stacks {
+		sj := stackJSON{
+			Hash:     s.Hash,
+			Name:     s.Name,
+			Root:     s.Root,
+			Branches: make([]branchJSON, 0, len(s.Branches)),
+		}
+		for _, b := range s.Branches {
+			sj.Branches = append(sj.Branches, branchJSON{
+				Name:         b.Name,
+				Parent:       b.Parent,
+				IsMerged:     b.IsMerged,
+				IsCurrent:    b.Name == currentBranch,
+				PRNumber:     b.PRNumber,
+				PRUrl:        b.PRUrl,
+				WorktreePath: b.WorktreePath,
+			})
+		}
+		result = append(result, sj)
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(result)
 }
 
 // Status shows the status of current stack or all stacks with PR and CI info
