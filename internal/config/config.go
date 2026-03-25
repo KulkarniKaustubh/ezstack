@@ -7,6 +7,7 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -1068,7 +1069,7 @@ func (s *Stack) walkTree(treeParent, effectiveParent string, tree BranchTree, ca
 	for k := range tree {
 		keys = append(keys, k)
 	}
-	sortStrings(keys)
+	sort.Strings(keys)
 
 	for _, branchName := range keys {
 		children := tree[branchName]
@@ -1108,17 +1109,6 @@ func (s *Stack) walkTree(treeParent, effectiveParent string, tree BranchTree, ca
 		}
 
 		s.walkTree(branchName, childEffectiveParent, children, cache, branches)
-	}
-}
-
-// sortStrings sorts a slice of strings alphabetically (simple bubble sort)
-func sortStrings(s []string) {
-	for i := 0; i < len(s)-1; i++ {
-		for j := i + 1; j < len(s); j++ {
-			if s[i] > s[j] {
-				s[i], s[j] = s[j], s[i]
-			}
-		}
 	}
 }
 
@@ -1249,7 +1239,7 @@ func (s *Stack) HasBranch(branchName string) bool {
 // GetChildren returns the immediate children of a branch
 func (s *Stack) GetChildren(branchName string) []string {
 	children := s.findChildrenInTree(s.Tree, branchName)
-	sortStrings(children)
+	sort.Strings(children)
 	return children
 }
 
