@@ -25,7 +25,6 @@ func New(args []string) error {
 %sOPTIONS%s
     -p, --parent <branch>     Parent branch (defaults to current branch)
     -w, --worktree <path>     Worktree path (defaults to configured base dir + branch name)
-    -W, --no-worktree         Create branch without a worktree (just git branch)
     -c, --cd                  Change to the new worktree after creation
     -C, --no-cd               Don't change to the new worktree (overrides config)
     -f, --from-worktree       Register an existing worktree as a stack root
@@ -44,7 +43,6 @@ func New(args []string) error {
 	cdFlag := fs.BoolP("cd", "c", false, "Change to worktree")
 	noCdFlag := fs.BoolP("no-cd", "C", false, "Don't change to worktree")
 	fromWorktree := fs.BoolP("from-worktree", "f", false, "Register an existing worktree as a stack root")
-	noWorktreeFlag := fs.BoolP("no-worktree", "W", false, "Create branch without a worktree")
 	fromRemote := fs.BoolP("from-remote", "r", false, "Create stack from remote branch")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
@@ -279,11 +277,6 @@ func New(args []string) error {
 
 	repoDir := mgr.GetRepoDir()
 	useWorktrees := cfg.GetUseWorktrees(repoDir)
-
-	// --no-worktree flag overrides config
-	if *noWorktreeFlag {
-		useWorktrees = false
-	}
 
 	// If worktree path was explicitly specified, use worktrees regardless of config
 	if *worktree != "" {
