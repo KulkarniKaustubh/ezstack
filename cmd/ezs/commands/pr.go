@@ -676,8 +676,12 @@ func prMerge(args []string) error {
 	}
 
 	ui.Success(fmt.Sprintf("Merged PR #%d via %s", branch.PRNumber, mergeMethod))
-	ui.Info("Run 'ezs sync' to update the stack and clean up merged branches")
 
+	if ui.ConfirmTUIWithDefault("Run sync to update the stack and clean up merged branches?", true) {
+		return Sync([]string{"-a"})
+	}
+
+	ui.Info("Run 'ezs sync' later to update the stack")
 	return nil
 }
 
