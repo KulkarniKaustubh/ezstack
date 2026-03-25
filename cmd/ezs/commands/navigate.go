@@ -87,12 +87,21 @@ func navigate(direction string, steps int) error {
 		if direction == "up" {
 			// Navigate toward parent
 			if targetBranch.Parent == currentStack.Root {
-				if i == 0 {
-					ui.Info(fmt.Sprintf("Already at stack root (parent is %s)", currentStack.Root))
-				} else {
-					ui.Info(fmt.Sprintf("Reached stack root after %d step(s) (parent is %s)", i, currentStack.Root))
+				if i > 0 {
+					ui.Info(fmt.Sprintf("Reached stack root after %d step(s)", i))
 				}
-				break
+				mainPath := getMainWorktreePath(g)
+				if mainPath != "" {
+					ui.Info(fmt.Sprintf("Navigating to %s (%s)", currentStack.Root, mainPath))
+					EmitCd(mainPath)
+				} else {
+					if err := g.CheckoutBranch(currentStack.Root); err != nil {
+						ui.Warn(fmt.Sprintf("Failed to switch to %s: %v", currentStack.Root, err))
+					} else {
+						ui.Success(fmt.Sprintf("Switched to branch '%s'", currentStack.Root))
+					}
+				}
+				return nil
 			}
 			parentBranch := mgr.GetBranch(targetBranch.Parent)
 			if parentBranch == nil {
