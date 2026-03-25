@@ -14,8 +14,6 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// debugMode is set by --debug flag to show verbose output
-var debugMode bool
 
 // List lists all stacks and branches
 func List(args []string) error {
@@ -50,8 +48,6 @@ func List(args []string) error {
 		return nil
 	}
 
-	debugMode = *debug
-
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -60,7 +56,7 @@ func List(args []string) error {
 	g := git.New(cwd)
 	currentBranch, _ := g.CurrentBranch()
 
-	if debugMode {
+	if *debug {
 		remoteURL, err := g.GetRemote("origin")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "[DEBUG] GetRemote error: %v\n", err)
@@ -181,8 +177,6 @@ func Status(args []string) error {
 		fs.Usage()
 		return nil
 	}
-	debugMode = *debug
-
 	ghAvailable := github.CheckAuth() == nil
 
 	cwd, err := os.Getwd()
@@ -219,7 +213,7 @@ func Status(args []string) error {
 				wg.Add(1)
 				go func(idx int, stack *config.Stack) {
 					defer wg.Done()
-					statusMaps[idx] = fetchBranchStatuses(g, stack)
+					statusMaps[idx] = fetchBranchStatuses(g, stack, *debug)
 				}(i, s)
 			}
 
@@ -250,7 +244,7 @@ func Status(args []string) error {
 	if ghAvailable {
 		spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
 		spinner.Start()
-		statusMap = fetchBranchStatuses(g, currentStack)
+		statusMap = fetchBranchStatuses(g, currentStack, *debug)
 		spinner.Stop()
 	}
 

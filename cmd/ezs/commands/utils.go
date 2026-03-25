@@ -229,22 +229,22 @@ func printRemoteBranchWarning() {
 
 // discoverAndCachePRs discovers PRs from GitHub for branches that don't have PR numbers cached
 // and saves them to the config. Returns a GitHub client for further use (or nil if unavailable).
-func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
+func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client {
 	remoteURL, err := g.GetRemote("origin")
 	if err != nil {
-		if debugMode {
+		if debug {
 			fmt.Fprintf(os.Stderr, "[DEBUG] discoverAndCachePRs: GetRemote error: %v\n", err)
 		}
 		return nil
 	}
 
-	if debugMode {
+	if debug {
 		fmt.Fprintf(os.Stderr, "[DEBUG] discoverAndCachePRs: remoteURL=%s\n", remoteURL)
 	}
 
 	gh, err := github.NewClient(remoteURL)
 	if err != nil {
-		if debugMode {
+		if debug {
 			fmt.Fprintf(os.Stderr, "[DEBUG] discoverAndCachePRs: NewClient error: %v\n", err)
 		}
 		return nil
@@ -255,14 +255,14 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
 	mainWorktree := getMainWorktreePath(g)
 
 	for _, branch := range s.Branches {
-		if debugMode {
+		if debug {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Checking branch %s (PRNumber=%d)\n", branch.Name, branch.PRNumber)
 		}
 
 		if branch.PRNumber == 0 {
 			pr, err := gh.GetPRByBranch(branch.Name)
 			if err != nil {
-				if debugMode {
+				if debug {
 					fmt.Fprintf(os.Stderr, "[DEBUG] GetPRByBranch(%s) error: %v\n", branch.Name, err)
 				}
 				if !ghAccessWarningShown {
@@ -276,7 +276,7 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
 				continue
 			}
 			if pr != nil {
-				if debugMode {
+				if debug {
 					fmt.Fprintf(os.Stderr, "[DEBUG] Found PR #%d for branch %s\n", pr.Number, branch.Name)
 				}
 				branch.PRNumber = pr.Number
@@ -307,16 +307,16 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack) *github.Client {
 
 // fetchBranchStatuses fetches PR and CI status for all branches in a stack (used by ezs status)
 // Also caches merged status to the config when detected
-func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
+func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui.BranchStatus {
 	statusMap := make(map[string]*ui.BranchStatus)
 
-	if debugMode {
+	if debug {
 		fmt.Fprintf(os.Stderr, "[DEBUG] fetchBranchStatuses for stack %s with %d branches\n", s.Hash, len(s.Branches))
 	}
 
-	gh := discoverAndCachePRs(g, s)
+	gh := discoverAndCachePRs(g, s, debug)
 	if gh == nil {
-		if debugMode {
+		if debug {
 			fmt.Fprintf(os.Stderr, "[DEBUG] gh client is nil, returning empty statusMap\n")
 		}
 		return statusMap
@@ -329,7 +329,7 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 	sem := make(chan struct{}, 10)
 
 	for _, branch := range s.Branches {
-		if debugMode {
+		if debug {
 			fmt.Fprintf(os.Stderr, "[DEBUG] branch %s PRNumber=%d\n", branch.Name, branch.PRNumber)
 		}
 		if branch.PRNumber == 0 {
@@ -377,7 +377,7 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 					mu.Lock()
 					if !b.IsMerged {
 						b.IsMerged = true
-						if debugMode {
+						if debug {
 							fmt.Fprintf(os.Stderr, "[DEBUG] Marking branch %s as merged\n", b.Name)
 						}
 					}
@@ -400,7 +400,7 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack) map[string]*ui.BranchStatu
 
 			// Process checks data
 			if checksErr == nil && checksData != nil {
-				if debugMode {
+				if debug {
 					fmt.Fprintf(os.Stderr, "[DEBUG] GetPRChecks(%d): state=%s summary=%s\n", b.PRNumber, checksData.State, checksData.Summary)
 				}
 				status.CIState = checksData.State
