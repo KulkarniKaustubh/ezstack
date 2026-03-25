@@ -127,8 +127,6 @@ func main() {
 		err = commands.Delete(args)
 	case "reparent", "rp":
 		err = commands.Reparent(args)
-	case "update":
-		err = commands.Update(args)
 	case "stack":
 		err = commands.Stack(args)
 	case "unstack":
@@ -170,7 +168,6 @@ func runInteractiveMenu() error {
 			ui.IconUp + "  reparent - Change the parent of a branch",
 			ui.IconNew + "  stack    - Add a branch to a stack",
 			ui.IconCancel + "  unstack  - Remove a branch from tracking",
-			ui.IconSync + "  update   - Sync config with git (detect changes)",
 			ui.IconCancel + "  delete   - Delete a branch and its worktree",
 			ui.IconBullet + "  config   - Configure ezstack",
 			ui.IconInfo + "  help     - Show help",
@@ -200,12 +197,10 @@ func runInteractiveMenu() error {
 		case 7:
 			cmdErr = commands.Unstack(nil)
 		case 8:
-			cmdErr = commands.Update(nil)
-		case 9:
 			cmdErr = commands.Delete(nil)
-		case 10:
+		case 9:
 			cmdErr = commands.Config(nil)
-		case 11:
+		case 10:
 			printUsage()
 			return nil
 		}
@@ -237,7 +232,6 @@ func printUsage() {
     reparent, rp  Change the parent of a branch
     stack         Add a branch to a stack
     unstack       Remove a branch from tracking (keeps git branch)
-    update        Sync config with git (detect manual changes)
     delete, del, rm  Delete a branch and its worktree
     commit, ci    Commit and auto-sync child branches
     amend         Amend last commit and auto-sync children

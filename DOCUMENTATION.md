@@ -12,7 +12,7 @@
 
 [Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows)
 
-**Commands:** [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [update](#ezs-update) · [config](#ezs-config)
+**Commands:** [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [config](#ezs-config)
 
 ---
 
@@ -324,22 +324,6 @@ Options:
 
 ---
 
-### `ezs update`
-
-Reconcile ezstack config with git reality.
-
-```
-ezs update [options]
-
-Options:
-    -a, --auto        Auto-accept all changes without prompting
-    -d, --dry-run     Show what would be changed without making changes
-```
-
-Detects renamed branches, removes orphaned entries, and cleans up stale config.
-
----
-
 ### `ezs config`
 
 Configure ezstack for the current repository. Aliases: `cfg`
@@ -356,14 +340,14 @@ Subcommands:
 
 ## Manual Git Operations
 
-If you rename or delete branches outside of ezstack, run `ezs update` to reconcile:
+If you rename or delete branches outside of ezstack, the next `ezs` command will automatically detect the change and reconcile config:
 
 ```bash
 git branch -m old-name new-name
-ezs update    # detects the rename, preserves stack position and PR metadata
+ezs status    # auto-detects the rename, preserves stack position and PR metadata
 
 git branch -D some-branch
-ezs update    # removes orphaned branch from config
+ezs ls        # auto-removes orphaned branch from config
 ```
 
 ---
