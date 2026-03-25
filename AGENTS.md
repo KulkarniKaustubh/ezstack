@@ -75,7 +75,8 @@ ezs -y sync -a
 
 ## Architecture Notes
 
-- **Config location:** `~/.ezstack/config.json` (global), `~/.ezstack/stacks.json` (stack state)
+- **Config location:** `~/.ezstack/config.json` (global), `~/.ezstack/stacks.json` (stack state + branch cache)
+- **PR data:** PR numbers are derived from PR URLs at runtime, not stored separately. The URL is the source of truth.
 - **Worktrees:** Optional, controlled by `use_worktrees` config. When disabled, branches use `git checkout`
 - **Shell integration:** `eval "$(ezs --shell-init)"` enables cd support. Without it, commands print paths instead
 - **GitHub integration:** Requires `gh` CLI authenticated via `gh auth login`
