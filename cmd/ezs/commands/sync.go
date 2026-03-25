@@ -138,7 +138,7 @@ func Sync(args []string) error {
 	// In a stack worktree - existing behavior
 	spinner := ui.NewDelayedSpinner("Fetching branch status...")
 	spinner.Start()
-	statusMap := fetchBranchStatuses(g, currentStack)
+	statusMap := fetchBranchStatuses(g, currentStack, false)
 	spinner.Stop()
 	ui.PrintStack(currentStack, branch.Name, true, statusMap)
 
