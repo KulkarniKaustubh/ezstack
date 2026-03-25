@@ -936,7 +936,10 @@ func (m *Manager) RebaseChildren() ([]RebaseResult, error) {
 		if err != nil {
 			continue
 		}
-		childResults, _ := childMgr.RebaseChildren()
+		childResults, err := childMgr.RebaseChildren()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: failed to rebase children of %s: %v\n", child.Name, err)
+		}
 		results = append(results, childResults...)
 	}
 
