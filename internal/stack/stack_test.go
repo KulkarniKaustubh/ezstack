@@ -609,14 +609,15 @@ func TestManager_DetectOrphanedBranches(t *testing.T) {
 	exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", filepath.Join(worktreeBaseDir, "feature-a")).Run()
 	exec.Command("git", "-C", repoDir, "branch", "-D", "feature-a").Run()
 
-	// Reload manager
+	// Reload manager — Reconcile() runs automatically and cleans up the orphan
 	mgr, _ = NewManager(repoDir)
 	orphaned = mgr.DetectOrphanedBranches()
-	if len(orphaned) != 1 {
-		t.Errorf("DetectOrphanedBranches() returned %d, want 1", len(orphaned))
+	if len(orphaned) != 0 {
+		t.Errorf("After Reconcile(), DetectOrphanedBranches() returned %d, want 0 (should be auto-cleaned)", len(orphaned))
 	}
-	if len(orphaned) > 0 && orphaned[0] != "feature-a" {
-		t.Errorf("DetectOrphanedBranches() returned %q, want 'feature-a'", orphaned[0])
+	// Verify the branch was removed from config
+	if mgr.GetBranch("feature-a") != nil {
+		t.Errorf("feature-a should have been removed from config by Reconcile()")
 	}
 }
 

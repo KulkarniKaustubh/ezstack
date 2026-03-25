@@ -89,7 +89,6 @@ ezs sync -a
 | `reparent` | `rp` | Change the parent of a branch |
 | `stack` | | Add a branch to a stack |
 | `unstack` | | Remove a branch from tracking |
-| `update` | | Sync config with git (detects renames, orphans) |
 | `delete` | `del`, `rm` | Delete a branch and its worktree |
 | `commit` | `ci` | Commit and auto-sync child branches |
 | `amend` | | Amend last commit and auto-sync children |

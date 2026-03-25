@@ -42,18 +42,66 @@ func NewManager(repoDir string) (*Manager, error) {
 		return nil, fmt.Errorf("failed to load stack config: %w", err)
 	}
 
-	return &Manager{
+	mgr := &Manager{
 		git:         g,
 		config:      cfg,
 		repoConfig:  repoConfig,
 		stackConfig: stackCfg,
 		repoDir:     mainWorktree,
-	}, nil
+	}
+	mgr.Reconcile()
+	return mgr, nil
 }
 
 // GetRepoDir returns the main repository directory
 func (m *Manager) GetRepoDir() string {
 	return m.repoDir
+}
+
+// Reconcile silently reconciles ezstack config with git reality.
+// It detects renamed branches, removes orphaned entries, and cleans up
+// missing worktrees. This runs automatically when a Manager is created,
+// so commands always see consistent state.
+func (m *Manager) Reconcile() {
+	// Prune stale git worktree metadata
+	m.git.PruneWorktrees()
+
+	// Remove branches whose worktree directories were manually deleted
+	missingWorktrees := m.DetectMissingWorktrees()
+	if len(missingWorktrees) > 0 {
+		m.HandleMissingWorktrees(missingWorktrees)
+	}
+
+	// Detect orphaned branches (in config but not in git) and untracked worktrees
+	orphaned := m.DetectOrphanedBranches()
+	untracked, err := m.GetUnregisteredWorktrees()
+	if err != nil {
+		return
+	}
+
+	// Detect renames (orphaned + untracked at same worktree path)
+	renames := m.DetectRenamedBranches(orphaned, untracked)
+	if len(renames) > 0 {
+		m.ApplyBranchRenames(renames)
+
+		// Filter renamed branches out of orphaned list
+		renamedOld := make(map[string]bool)
+		for _, r := range renames {
+			renamedOld[r.OldName] = true
+		}
+		var remaining []string
+		for _, name := range orphaned {
+			if !renamedOld[name] {
+				remaining = append(remaining, name)
+			}
+		}
+		orphaned = remaining
+	}
+
+	// Remove remaining orphaned branches from config
+	if len(orphaned) > 0 {
+		m.RemoveOrphanedBranches(orphaned)
+	}
 }
 
 // RegisterExistingBranch registers an existing branch/worktree as the root of a new stack
