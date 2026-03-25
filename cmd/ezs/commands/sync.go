@@ -788,6 +788,9 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 			fmt.Fprintf(os.Stderr, "%sResolve in:%s %s\n", ui.Gray, ui.Reset, result.WorktreePath)
 		}
 		fmt.Fprintf(os.Stderr, "%sTo resolve: fix conflicts, then run 'git rebase --continue'%s\n", ui.Gray, ui.Reset)
+		if didStash {
+			ui.Warn("Uncommitted changes were stashed. Run 'git stash pop' after resolving conflicts.")
+		}
 	} else if result.Error != nil {
 		ui.Error(fmt.Sprintf("Failed to sync %s: %v", result.Branch, result.Error))
 	}
