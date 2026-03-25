@@ -58,7 +58,7 @@ func CreateBranch(t *testing.T, env *TestEnv, name, parent string) {
 		t.Fatalf("NewManager failed: %v", err)
 	}
 
-	_, err = mgr.CreateBranch(name, parent, "")
+	_, err = mgr.CreateBranch(name, parent, "", "")
 	if err != nil {
 		t.Fatalf("CreateBranch(%s) failed: %v", name, err)
 	}

@@ -85,7 +85,7 @@ func TestManager_CreateBranch(t *testing.T) {
 
 	mgr, _ := NewManager(repoDir)
 
-	branch, err := mgr.CreateBranch("feature-a", "main", "")
+	branch, err := mgr.CreateBranch("feature-a", "main", "", "")
 	if err != nil {
 		t.Fatalf("CreateBranch() error = %v", err)
 	}
@@ -113,7 +113,7 @@ func TestManager_GetBranch(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	branch := mgr.GetBranch("feature-a")
 	if branch == nil {
@@ -141,7 +141,7 @@ func TestManager_ListStacks(t *testing.T) {
 		t.Errorf("len(ListStacks()) = %d, want 0", len(stacks))
 	}
 
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	stacks = mgr.ListStacks()
 	if len(stacks) != 1 {
@@ -173,10 +173,10 @@ func TestManager_GetChildren(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-b", "feature-a", "")
+	mgr.CreateBranch("feature-b", "feature-a", "", "")
 
 	mgr, _ = NewManager(repoDir)
 	children := mgr.GetChildren("feature-a")
@@ -199,7 +199,7 @@ func TestManager_DeleteBranch(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
 
@@ -219,10 +219,10 @@ func TestManager_DeleteBranch_WithChildren_NoForce(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-b", "feature-a", "")
+	mgr.CreateBranch("feature-b", "feature-a", "", "")
 
 	mgr, _ = NewManager(repoDir)
 
@@ -236,10 +236,10 @@ func TestManager_DeleteBranch_WithChildren_Force(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-b", "feature-a", "")
+	mgr.CreateBranch("feature-b", "feature-a", "", "")
 
 	mgr, _ = NewManager(repoDir)
 
@@ -405,7 +405,7 @@ func TestManager_MarkBranchMerged(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
 
@@ -436,13 +436,13 @@ func TestManager_ReparentBranch_SameStack(t *testing.T) {
 
 	// Create a stack: main -> feature-a -> feature-b -> feature-c
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-b", "feature-a", "")
+	mgr.CreateBranch("feature-b", "feature-a", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-c", "feature-b", "")
+	mgr.CreateBranch("feature-c", "feature-b", "", "")
 
 	// Reparent feature-c to feature-a (skipping feature-b)
 	mgr, _ = NewManager(repoDir)
@@ -470,10 +470,10 @@ func TestManager_ReparentBranch_ToMain(t *testing.T) {
 
 	// Create a stack: main -> feature-a -> feature-b
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-b", "feature-a", "")
+	mgr.CreateBranch("feature-b", "feature-a", "", "")
 
 	// Reparent feature-b to main
 	mgr, _ = NewManager(repoDir)
@@ -494,13 +494,13 @@ func TestManager_ReparentBranch_CycleDetection(t *testing.T) {
 
 	// Create a stack: main -> feature-a -> feature-b -> feature-c
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-b", "feature-a", "")
+	mgr.CreateBranch("feature-b", "feature-a", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-c", "feature-b", "")
+	mgr.CreateBranch("feature-c", "feature-b", "", "")
 
 	// Try to reparent feature-a to feature-c (would create cycle)
 	mgr, _ = NewManager(repoDir)
@@ -519,7 +519,7 @@ func TestManager_ReparentBranch_NonExistentParent(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
 	_, err := mgr.ReparentBranch("feature-a", "nonexistent", false)
@@ -534,10 +534,10 @@ func TestManager_GetAllBranchesInAllStacks(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-b", "feature-a", "")
+	mgr.CreateBranch("feature-b", "feature-a", "", "")
 
 	mgr, _ = NewManager(repoDir)
 	branches := mgr.GetAllBranchesInAllStacks()
@@ -553,13 +553,13 @@ func TestManager_WouldCreateCycle(t *testing.T) {
 
 	// Create a stack: main -> a -> b -> c
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("a", "main", "")
+	mgr.CreateBranch("a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("b", "a", "")
+	mgr.CreateBranch("b", "a", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("c", "b", "")
+	mgr.CreateBranch("c", "b", "", "")
 
 	mgr, _ = NewManager(repoDir)
 
@@ -594,7 +594,7 @@ func TestManager_DetectOrphanedBranches(t *testing.T) {
 	}
 
 	// Create a branch with worktree
-	_, err = mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"))
+	_, err = mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch failed: %v", err)
 	}
@@ -631,11 +631,11 @@ func TestManager_RemoveOrphanedBranches(t *testing.T) {
 	}
 
 	// Create branches
-	_, err = mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"))
+	_, err = mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch failed: %v", err)
 	}
-	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"))
+	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch failed: %v", err)
 	}
@@ -705,7 +705,7 @@ func TestManager_UntrackBranch(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	// Verify branch exists
 	branch := mgr.GetBranch("feature-a")
@@ -753,8 +753,8 @@ func TestManager_UntrackBranch_WithChildren(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
-	mgr.CreateBranch("feature-b", "feature-a", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
+	mgr.CreateBranch("feature-b", "feature-a", "", "")
 
 	// Verify parent-child relationship
 	children := mgr.GetChildren("feature-a")
@@ -789,9 +789,9 @@ func TestManager_UntrackBranch_MiddleOfStack(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
-	mgr.CreateBranch("feature-b", "feature-a", "")
-	mgr.CreateBranch("feature-c", "feature-b", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
+	mgr.CreateBranch("feature-b", "feature-a", "", "")
+	mgr.CreateBranch("feature-c", "feature-b", "", "")
 
 	// Untrack the middle branch
 	err := mgr.UntrackBranch("feature-b")
@@ -938,7 +938,7 @@ func TestManager_CreateBranch_NonMainRoot(t *testing.T) {
 	createGitBranch(t, repoDir, "develop")
 
 	mgr, _ := NewManager(repoDir)
-	branch, err := mgr.CreateBranch("feature-a", "develop", "")
+	branch, err := mgr.CreateBranch("feature-a", "develop", "", "")
 	if err != nil {
 		t.Fatalf("CreateBranch() error = %v", err)
 	}
@@ -962,7 +962,7 @@ func TestManager_CreateBranch_NonMainRoot(t *testing.T) {
 
 	// Verify we can add child branches to a non-main-rooted stack
 	mgr, _ = NewManager(repoDir)
-	child, err := mgr.CreateBranch("feature-b", "feature-a", "")
+	child, err := mgr.CreateBranch("feature-b", "feature-a", "", "")
 	if err != nil {
 		t.Fatalf("CreateBranch() child error = %v", err)
 	}
@@ -989,7 +989,7 @@ func TestManager_GetStackForBranch(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
 	stack := mgr.GetStackForBranch("feature-a")
@@ -1020,7 +1020,7 @@ func TestManager_ReparentBranch_ToNonMainRoot(t *testing.T) {
 
 	// Create a stack: main -> feature-a
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	// Reparent feature-a from main to develop
 	mgr, _ = NewManager(repoDir)
@@ -1053,11 +1053,11 @@ func TestManager_ReparentBranch_CrossStack_NonMainRoot(t *testing.T) {
 
 	// Create stack 1: develop -> feature-a
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "develop", "")
+	mgr.CreateBranch("feature-a", "develop", "", "")
 
 	// Create stack 2: staging -> feature-b
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-b", "staging", "")
+	mgr.CreateBranch("feature-b", "staging", "", "")
 
 	// Reparent feature-a to feature-b (cross-stack)
 	mgr, _ = NewManager(repoDir)
@@ -1121,10 +1121,10 @@ func TestManager_CycleDetection_NonMainRoot(t *testing.T) {
 	createGitBranch(t, repoDir, "develop")
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "develop", "")
+	mgr.CreateBranch("feature-a", "develop", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-b", "feature-a", "")
+	mgr.CreateBranch("feature-b", "feature-a", "", "")
 
 	// Try to reparent feature-a to feature-b (cycle)
 	mgr, _ = NewManager(repoDir)
@@ -1143,7 +1143,7 @@ func TestManager_GetParentRef(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
 
@@ -1166,10 +1166,10 @@ func TestManager_DeleteBranch_NonMainRoot(t *testing.T) {
 	createGitBranch(t, repoDir, "develop")
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "develop", "")
+	mgr.CreateBranch("feature-a", "develop", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-b", "feature-a", "")
+	mgr.CreateBranch("feature-b", "feature-a", "", "")
 
 	// Delete feature-a (has children, needs force)
 	mgr, _ = NewManager(repoDir)
@@ -1201,10 +1201,10 @@ func TestManager_MultipleStacksSameRoot(t *testing.T) {
 	createGitBranch(t, repoDir, "develop")
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "develop", "")
+	mgr.CreateBranch("feature-a", "develop", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	mgr.CreateBranch("feature-b", "develop", "")
+	mgr.CreateBranch("feature-b", "develop", "", "")
 
 	mgr, _ = NewManager(repoDir)
 	stacks := mgr.ListStacks()
@@ -1249,7 +1249,7 @@ func TestManager_ReparentBranch_ConflictSavesConfig(t *testing.T) {
 
 	// Create stack: main -> feature-a with a commit modifying a file
 	mgr, _ := NewManager(repoDir)
-	_, err := mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"))
+	_, err := mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch feature-a failed: %v", err)
 	}
@@ -1262,7 +1262,7 @@ func TestManager_ReparentBranch_ConflictSavesConfig(t *testing.T) {
 
 	// Create feature-b from feature-a with its own commit
 	mgr, _ = NewManager(repoDir)
-	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"))
+	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch feature-b failed: %v", err)
 	}
@@ -1324,7 +1324,7 @@ func TestManager_ReparentBranch_NoConflictReturnsCleanResult(t *testing.T) {
 
 	// Create stack: main -> feature-a
 	mgr, _ := NewManager(repoDir)
-	_, err := mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"))
+	_, err := mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch feature-a failed: %v", err)
 	}
@@ -1337,7 +1337,7 @@ func TestManager_ReparentBranch_NoConflictReturnsCleanResult(t *testing.T) {
 
 	// Create feature-b from feature-a
 	mgr, _ = NewManager(repoDir)
-	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"))
+	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch feature-b failed: %v", err)
 	}
@@ -1380,7 +1380,7 @@ func TestManager_ReparentBranch_AddStandaloneBranchWithConflict(t *testing.T) {
 
 	// Create a tracked branch with conflicting content
 	mgr, _ := NewManager(repoDir)
-	_, err := mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"))
+	_, err := mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch feature-a failed: %v", err)
 	}
@@ -1424,7 +1424,7 @@ func TestManager_SetStackName(t *testing.T) {
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "")
+	mgr.CreateBranch("feature-a", "main", "", "")
 
 	// Find the stack for feature-a
 	s := mgr.GetStackForBranch("feature-a")
@@ -1484,5 +1484,72 @@ func TestManager_SetStackName_NotFound(t *testing.T) {
 	err := mgr.SetStackName("nonexistent", "name")
 	if err == nil {
 		t.Error("SetStackName() should error for nonexistent stack")
+	}
+}
+
+func TestManager_CreateBranch_ForceNewStack(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "", "")
+
+	// Verify one stack exists
+	stacks := mgr.ListStacks()
+	if len(stacks) != 1 {
+		t.Fatalf("Expected 1 stack, got %d", len(stacks))
+	}
+	stack1Hash := stacks[0].Hash
+
+	mgr, _ = NewManager(repoDir)
+
+	// Create a second branch with forceNewStack — should NOT go into the first stack
+	mgr.CreateBranch("feature-b", "main", "", "new")
+
+	mgr, _ = NewManager(repoDir)
+	stacks = mgr.ListStacks()
+	if len(stacks) != 2 {
+		t.Fatalf("Expected 2 stacks after forceNewStack, got %d", len(stacks))
+	}
+
+	// feature-a should be in the original stack
+	sa := mgr.GetStackForBranch("feature-a")
+	if sa == nil || sa.Hash != stack1Hash {
+		t.Errorf("feature-a should be in original stack %s", stack1Hash)
+	}
+
+	// feature-b should be in a different stack
+	sb := mgr.GetStackForBranch("feature-b")
+	if sb == nil || sb.Hash == stack1Hash {
+		t.Errorf("feature-b should be in a NEW stack, not %s", stack1Hash)
+	}
+}
+
+func TestManager_CreateBranch_TargetSpecificStack(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "", "")
+	mgr.CreateBranch("feature-b", "main", "", "new")
+
+	mgr, _ = NewManager(repoDir)
+	stacks := mgr.ListStacks()
+	if len(stacks) != 2 {
+		t.Fatalf("Expected 2 stacks, got %d", len(stacks))
+	}
+
+	// Find the stack that contains feature-b
+	sbHash := mgr.GetStackForBranch("feature-b").Hash
+
+	mgr, _ = NewManager(repoDir)
+
+	// Create feature-c targeting feature-b's stack explicitly
+	mgr.CreateBranch("feature-c", "main", "", sbHash)
+
+	mgr, _ = NewManager(repoDir)
+	sc := mgr.GetStackForBranch("feature-c")
+	if sc == nil || sc.Hash != sbHash {
+		t.Errorf("feature-c should be in stack %s, got %v", sbHash, sc)
 	}
 }
