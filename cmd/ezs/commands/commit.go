@@ -109,6 +109,24 @@ func commitInternal(args []string, amend bool) error {
 		ui.Success(action)
 	}
 
+	currentBranch, _ := g.CurrentBranch()
+	if currentBranch != "" && g.RemoteBranchExists(currentBranch) {
+		if ui.ConfirmTUIWithDefault("Push to remote?", true) {
+			if err := g.Push(false); err != nil {
+				ui.Warn(fmt.Sprintf("Push failed: %v", err))
+				if ui.ConfirmTUI("Force push?") {
+					if err := g.PushForce(); err != nil {
+						ui.Warn(fmt.Sprintf("Force push failed: %v", err))
+					} else {
+						ui.Success("Pushed to remote")
+					}
+				}
+			} else {
+				ui.Success("Pushed to remote")
+			}
+		}
+	}
+
 	// Auto-sync children
 	mgr, err := stack.NewManager(cwd)
 	if err != nil {
@@ -116,13 +134,13 @@ func commitInternal(args []string, amend bool) error {
 		return nil
 	}
 
-	_, currentBranch, err := mgr.GetCurrentStack()
+	_, stackBranch, err := mgr.GetCurrentStack()
 	if err != nil {
 		// Current branch not in a stack — nothing to sync
 		return nil
 	}
 
-	children := mgr.GetChildren(currentBranch.Name)
+	children := mgr.GetChildren(stackBranch.Name)
 	if len(children) == 0 {
 		return nil
 	}
