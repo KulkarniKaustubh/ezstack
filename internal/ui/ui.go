@@ -41,30 +41,57 @@ const (
 	Gray          = "\033[90m"
 )
 
-// Nerd Font icons for consistent terminal rendering
-const (
-	IconSuccess  = "\uf00c" // nf-fa-check
-	IconError    = "\uf00d" // nf-fa-times
-	IconWarning  = "\uf071" // nf-fa-exclamation_triangle
-	IconInfo     = "\uf05a" // nf-fa-info_circle
-	IconPending  = "\uf192" // nf-fa-dot_circle_o
-	IconArrow    = "\uf061" // nf-fa-arrow_right
-	IconPointer  = "\uf0a4" // nf-fa-hand_o_right
-	IconBranch   = "\ue725" // nf-dev-git_branch
-	IconUp       = "\uf062" // nf-fa-arrow_up
-	IconDown     = "\uf063" // nf-fa-arrow_down
-	IconSync     = "\uf021" // nf-fa-refresh
-	IconCancel   = "\uf05e" // nf-fa-ban
-	IconBullet   = "\uf111" // nf-fa-circle
-	IconApproved = "\uf058" // nf-fa-check_circle
-	IconChanges  = "\uf06a" // nf-fa-exclamation_circle
-	IconConflict = "\uf071" // nf-fa-exclamation_triangle
-	IconNew      = "\uf067" // nf-fa-plus
-	IconPush     = "\uf093" // nf-fa-upload
-	IconStack    = "\uf24d" // nf-fa-clone (stack of items)
-	IconRocket   = "\uf135" // nf-fa-rocket
-	IconBack     = "\uf060" // nf-fa-arrow_left
+// Icons for terminal rendering. Defaults to Nerd Font glyphs; set
+// EZS_ASCII=1 to use plain ASCII fallbacks.
+var (
+	IconSuccess  = "\uf00c"
+	IconError    = "\uf00d"
+	IconWarning  = "\uf071"
+	IconInfo     = "\uf05a"
+	IconPending  = "\uf192"
+	IconArrow    = "\uf061"
+	IconPointer  = "\uf0a4"
+	IconBranch   = "\ue725"
+	IconUp       = "\uf062"
+	IconDown     = "\uf063"
+	IconSync     = "\uf021"
+	IconCancel   = "\uf05e"
+	IconBullet   = "\uf111"
+	IconApproved = "\uf058"
+	IconChanges  = "\uf06a"
+	IconConflict = "\uf071"
+	IconNew      = "\uf067"
+	IconPush     = "\uf093"
+	IconStack    = "\uf24d"
+	IconRocket   = "\uf135"
+	IconBack     = "\uf060"
 )
+
+func init() {
+	if os.Getenv("EZS_ASCII") != "" {
+		IconSuccess = "✓"
+		IconError = "✗"
+		IconWarning = "!"
+		IconInfo = "i"
+		IconPending = "○"
+		IconArrow = "→"
+		IconPointer = ">"
+		IconBranch = "⎇"
+		IconUp = "↑"
+		IconDown = "↓"
+		IconSync = "⟳"
+		IconCancel = "⊘"
+		IconBullet = "•"
+		IconApproved = "✓"
+		IconChanges = "!"
+		IconConflict = "!"
+		IconNew = "+"
+		IconPush = "↑"
+		IconStack = "≡"
+		IconRocket = "*"
+		IconBack = "←"
+	}
+}
 
 // Hyperlink wraps text in OSC 8 escape sequence for clickable terminal links
 func Hyperlink(url, text string) string {
