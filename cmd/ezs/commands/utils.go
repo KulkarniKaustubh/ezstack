@@ -53,6 +53,35 @@ func updateStackDescriptions(gh *github.Client, s *config.Stack, activeBranch st
 	return gh.UpdateStackDescription(s, activeBranch)
 }
 
+// updatePRMetadata updates base branches and stack descriptions for all PRs in the stack.
+// Called after pushes and stack mutations to keep PR metadata in sync.
+func updatePRMetadata(gh *github.Client, mgr *stack.Manager, s *config.Stack, currentBranch *config.Branch) {
+	// Update base branches for all PRs in the stack
+	for _, b := range s.Branches {
+		if b.PRNumber == 0 {
+			continue
+		}
+		pr, err := gh.GetPR(b.PRNumber)
+		if err != nil {
+			continue
+		}
+		if pr.Base != b.Parent {
+			if err := gh.UpdatePRBase(b.PRNumber, b.Parent); err != nil {
+				ui.Warn(fmt.Sprintf("Failed to update base branch for PR #%d: %v", b.PRNumber, err))
+			}
+		}
+	}
+
+	// Update stack descriptions
+	activeName := ""
+	if currentBranch != nil {
+		activeName = currentBranch.Name
+	}
+	if err := gh.UpdateStackDescription(s, activeName); err != nil {
+		ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
+	}
+}
+
 // OfferForcePush prompts the user to force push a branch with --force-with-lease
 // Returns true if push was successful, false otherwise
 func OfferForcePush(branchName, worktreePath string) bool {
