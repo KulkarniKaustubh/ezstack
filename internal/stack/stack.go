@@ -441,21 +441,6 @@ func (m *Manager) GetStackForBranch(branchName string) *config.Stack {
 	return m.stackConfig.Stacks[key]
 }
 
-// getRebaseRef returns the git ref to use when rebasing onto parentName.
-// For parents not tracked in any stack (roots, external branches), uses
-// origin/<name> when the remote branch exists. For tracked stack branches,
-// uses the local branch name.
-func (m *Manager) getRebaseRef(parentName string) string {
-	parentBranch := m.GetBranch(parentName)
-	if parentBranch == nil {
-		// Parent is a root or external branch — prefer origin ref
-		if m.git.RemoteBranchExists(parentName) {
-			return "origin/" + parentName
-		}
-		return parentName
-	}
-	return parentName
-}
 
 // GetStackByHash finds a stack by hash prefix (minimum 3 characters). Returns error if 0 or >1 stacks match.
 func (m *Manager) GetStackByHash(prefix string) (*config.Stack, error) {
@@ -709,7 +694,7 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 			mergeBase = oldParentRef
 		}
 
-		newParentRef := m.getRebaseRef(newParentName)
+		newParentRef := m.getParentRef(newParentName)
 
 		// Rebase onto new parent
 		rebaseResult := g.RebaseOntoNonInteractive(newParentRef, mergeBase)
@@ -787,7 +772,7 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 	if doRebase && worktreePath != "" {
 		g := git.New(worktreePath)
 
-		newParentRef := m.getRebaseRef(newParentName)
+		newParentRef := m.getParentRef(newParentName)
 
 		// Simple rebase onto new parent
 		rebaseResult := g.RebaseNonInteractive(newParentRef)

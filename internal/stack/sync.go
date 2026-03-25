@@ -536,7 +536,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					mergeBase = oldParentRef
 				}
 
-				rebaseTarget := m.getRebaseRef(newParent)
+				rebaseTarget := m.getParentRef(newParent)
 				if newParent == stack.Root {
 					rebaseTarget = "origin/" + stack.Root
 				}

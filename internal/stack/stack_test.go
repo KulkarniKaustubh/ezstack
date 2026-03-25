@@ -1137,8 +1137,8 @@ func TestManager_CycleDetection_NonMainRoot(t *testing.T) {
 	}
 }
 
-// TestManager_GetRebaseRef tests the getRebaseRef helper
-func TestManager_GetRebaseRef(t *testing.T) {
+// TestManager_GetParentRef tests the getParentRef helper
+func TestManager_GetParentRef(t *testing.T) {
 	repoDir, _, cleanup := setupTestEnv(t)
 	defer cleanup()
 
@@ -1147,16 +1147,14 @@ func TestManager_GetRebaseRef(t *testing.T) {
 
 	mgr, _ = NewManager(repoDir)
 
-	// Tracked branch should return the local branch name
-	ref := mgr.getRebaseRef("feature-a")
+	ref := mgr.getParentRef("feature-a")
 	if ref != "feature-a" {
-		t.Errorf("getRebaseRef('feature-a') = %q, want %q", ref, "feature-a")
+		t.Errorf("getParentRef('feature-a') = %q, want %q", ref, "feature-a")
 	}
 
-	// main is not tracked in any stack (it's a root), no remote, so returns local
-	ref = mgr.getRebaseRef("main")
+	ref = mgr.getParentRef("main")
 	if ref != "main" {
-		t.Errorf("getRebaseRef('main') = %q, want %q", ref, "main")
+		t.Errorf("getParentRef('main') = %q, want %q", ref, "main")
 	}
 }
 
