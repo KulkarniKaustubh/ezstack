@@ -7,10 +7,29 @@ import (
 	"hash/fnv"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/viper"
 )
+
+// PRNumberFromURL extracts the PR number from a GitHub PR URL.
+// e.g. "https://github.com/owner/repo/pull/123" → 123
+// Returns 0 if the URL is empty or unparseable.
+func PRNumberFromURL(url string) int {
+	if url == "" {
+		return 0
+	}
+	parts := strings.Split(strings.TrimRight(url, "/"), "/")
+	if len(parts) < 2 || parts[len(parts)-2] != "pull" {
+		return 0
+	}
+	n, err := strconv.Atoi(parts[len(parts)-1])
+	if err != nil {
+		return 0
+	}
+	return n
+}
 
 var v *viper.Viper
 
@@ -124,7 +143,7 @@ type Stack struct {
 	Hash            string       `json:"-"`                           // Populated from map key at load time
 	Name            string       `json:"name,omitempty"`              // Optional user-given name for the stack
 	Root            string       `json:"root"`                       // The base branch (e.g. "main", or a remote branch name)
-	RootPRNumber    int          `json:"root_pr_number,omitempty"`    // PR number of the root branch (for remote base branches)
+	RootPRNumber    int          `json:"-"`                           // Runtime-only: derived from RootPRUrl
 	RootPRUrl       string       `json:"root_pr_url,omitempty"`      // PR URL of the root branch (for remote base branches)
 	DeleteDeclined  bool         `json:"delete_declined,omitempty"`   // User declined cleanup prompt; don't re-ask
 	Tree            BranchTree   `json:"tree"`                       // The tree of branches
@@ -150,7 +169,7 @@ func GenerateStackHash(name string) string {
 // BranchCache holds cached metadata for a branch
 type BranchCache struct {
 	WorktreePath string `json:"worktree_path,omitempty"`
-	PRNumber     int    `json:"pr_number,omitempty"`
+	PRNumber     int    `json:"-"`                      // Runtime-only: derived from PRUrl via PRNumberFromURL
 	PRUrl        string `json:"pr_url,omitempty"`
 	PRState      string `json:"pr_state,omitempty"` // Cached: "OPEN", "DRAFT", "MERGED", "CLOSED"
 	IsMerged     bool   `json:"is_merged,omitempty"`
@@ -168,7 +187,7 @@ type Branch struct {
 	Name         string `json:"name"`
 	Parent       string `json:"parent"`
 	WorktreePath string `json:"worktree_path"`
-	PRNumber     int    `json:"pr_number,omitempty"`
+	PRNumber     int    `json:"-"`                   // Runtime-only: derived from PRUrl via PRNumberFromURL
 	PRUrl        string `json:"pr_url,omitempty"`
 	PRState      string `json:"pr_state,omitempty"`  // Cached: "OPEN", "DRAFT", "MERGED", "CLOSED"
 	BaseBranch   string `json:"base_branch"`         // original tree parent, used for display ordering
@@ -619,8 +638,8 @@ func migrateV3ToV4(data []byte) ([]byte, error) {
 				if bc != nil && bc.IsRemote {
 					// This remote branch becomes the new root
 					newStack.Root = branchName
-					newStack.RootPRNumber = bc.PRNumber
 					newStack.RootPRUrl = bc.PRUrl
+					newStack.RootPRNumber = PRNumberFromURL(bc.PRUrl)
 
 					// Promote children to top-level tree nodes
 					delete(newStack.Tree, branchName)
@@ -828,6 +847,7 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 	for hash, stack := range sc.Stacks {
 		stack.Hash = hash
 		stack.cache = sc.Cache
+		stack.RootPRNumber = PRNumberFromURL(stack.RootPRUrl)
 		stack.PopulateBranches()
 	}
 
@@ -1071,8 +1091,8 @@ func (s *Stack) walkTree(treeParent, effectiveParent string, tree BranchTree, ca
 		if cache != nil {
 			if bc := cache.GetBranchCache(branchName); bc != nil {
 				branch.WorktreePath = bc.WorktreePath
-				branch.PRNumber = bc.PRNumber
 				branch.PRUrl = bc.PRUrl
+				branch.PRNumber = PRNumberFromURL(bc.PRUrl)
 				branch.PRState = bc.PRState
 				branch.IsMerged = bc.IsMerged
 				branch.IsRemote = bc.IsRemote
