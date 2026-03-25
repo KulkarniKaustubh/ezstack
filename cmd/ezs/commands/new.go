@@ -264,6 +264,10 @@ func New(args []string) error {
 		branchName = ui.PromptRequired("Enter new branch name")
 	}
 
+	if err := git.ValidateBranchName(branchName); err != nil {
+		return err
+	}
+
 	// Create the manager first to get repo-specific config
 	mgr, err := stack.NewManager(cwd)
 	if err != nil {

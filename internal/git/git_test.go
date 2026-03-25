@@ -398,3 +398,19 @@ func TestListLocalBranches_Empty(t *testing.T) {
 		t.Errorf("ListLocalBranches() returned %d branches, expected at least 1", len(branches))
 	}
 }
+
+func TestValidateBranchName(t *testing.T) {
+	valid := []string{"feature-foo", "fix/bar", "my_branch", "a"}
+	for _, name := range valid {
+		if err := ValidateBranchName(name); err != nil {
+			t.Errorf("ValidateBranchName(%q) unexpected error: %v", name, err)
+		}
+	}
+
+	invalid := []string{"", "-starts-with-dash", "has space", "has..dots", "ends.lock"}
+	for _, name := range invalid {
+		if err := ValidateBranchName(name); err == nil {
+			t.Errorf("ValidateBranchName(%q) expected error, got nil", name)
+		}
+	}
+}

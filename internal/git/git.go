@@ -311,6 +311,21 @@ func (g *Git) BranchExists(branch string) bool {
 	return err == nil
 }
 
+// ValidateBranchName checks if a name is valid for a git branch.
+func ValidateBranchName(name string) error {
+	if name == "" {
+		return fmt.Errorf("branch name cannot be empty")
+	}
+	if strings.HasPrefix(name, "-") {
+		return fmt.Errorf("branch name cannot start with '-'")
+	}
+	cmd := exec.Command("git", "check-ref-format", "--branch", name)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("invalid branch name '%s': contains forbidden characters or patterns", name)
+	}
+	return nil
+}
+
 // HasDivergedFromOrigin checks if local and remote branches have diverged
 // Returns (hasDiverged, localAhead, remoteBehind, error)
 // hasDiverged is true if both local has commits not in remote AND remote has commits not in local
