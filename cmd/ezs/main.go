@@ -74,6 +74,9 @@ func main() {
 	case "--shell-init":
 		printShellInit()
 		return
+	case "--completions":
+		printCompletions(args)
+		return
 	case "-h", "--help":
 		printUsage()
 		return
@@ -293,5 +296,44 @@ ezs() {
             ;;
     esac
 }
+
+# Tab completion
+_ezs_completions() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    local prev="${COMP_WORDS[COMP_CWORD-1]}"
+    COMPREPLY=($(compgen -W "$(command ezs --completions "${COMP_WORDS[@]:1}" 2>/dev/null)" -- "$cur"))
+}
+complete -F _ezs_completions ezs 2>/dev/null
+
+# Zsh completion via bashcompinit
+if [ -n "$ZSH_VERSION" ]; then
+    autoload -Uz bashcompinit && bashcompinit 2>/dev/null
+    complete -F _ezs_completions ezs 2>/dev/null
+fi
 `)
+}
+
+var topLevelCommands = []string{
+	"new", "list", "status", "sync", "goto", "up", "down",
+	"reparent", "stack", "unstack", "delete", "commit", "amend",
+	"diff", "push", "pr", "config", "menu",
+}
+
+var prSubcommands = []string{"create", "update", "merge", "draft", "stack"}
+
+func printCompletions(args []string) {
+	if len(args) == 0 || (len(args) == 1 && args[0] == "") {
+		for _, cmd := range topLevelCommands {
+			fmt.Println(cmd)
+		}
+		return
+	}
+
+	cmd := args[0]
+	switch cmd {
+	case "pr":
+		for _, sub := range prSubcommands {
+			fmt.Println(sub)
+		}
+	}
 }
