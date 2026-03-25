@@ -316,6 +316,15 @@ func prCreate(args []string) error {
 		return fmt.Errorf("no commits to create PR from. This branch has no commits ahead of '%s'.\nPlease make at least one commit first", branch.Parent)
 	}
 
+	if !mgr.IsMainBranch(branch.Parent) && !g.RemoteBranchExists(branch.Parent) {
+		ui.Warn(fmt.Sprintf("Parent branch '%s' has not been pushed to remote.", branch.Parent))
+		ui.Warn("The PR base branch won't exist on GitHub until it is pushed.")
+		if !ui.ConfirmTUI("Continue anyway?") {
+			ui.Warn("Cancelled")
+			return nil
+		}
+	}
+
 	gh, err := newGitHubClient(g)
 	if err != nil {
 		return err
