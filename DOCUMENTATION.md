@@ -125,13 +125,14 @@ ezs new [branch-name] [options]
 Options:
     -p, --parent <branch>     Parent branch (defaults to current branch)
     -w, --worktree <path>     Worktree path (defaults to configured base dir + branch name)
+    -W, --no-worktree         Create branch without a worktree (just git branch)
     -c, --cd                  Change to the new worktree after creation
     -C, --no-cd               Don't change to the new worktree (overrides config)
     -f, --from-worktree       Register an existing worktree as a stack root
     -r, --from-remote         Create a stack from a remote branch
 ```
 
-When `use_worktrees` is disabled, creates a git branch without a worktree and optionally checks it out.
+When `use_worktrees` is disabled or `--no-worktree` is passed, creates a git branch without a worktree and optionally checks it out.
 
 ---
 
