@@ -232,8 +232,10 @@ func (m *Manager) AddBranchToStack(name, parentBranch, worktreeDir string) (*con
 	return nil, fmt.Errorf("failed to add branch")
 }
 
-// CreateBranch creates a new branch in the stack
-func (m *Manager) CreateBranch(name, parentBranch, worktreeDir string) (*config.Branch, error) {
+// CreateBranch creates a new branch in the stack.
+// targetStackHash controls stack placement: "" for auto-detect, "new" for a new stack,
+// or a specific stack hash to add to.
+func (m *Manager) CreateBranch(name, parentBranch, worktreeDir, targetStackHash string) (*config.Branch, error) {
 	// If no worktree dir specified, use the configured base dir for this repo
 	if worktreeDir == "" {
 		if m.repoConfig != nil && m.repoConfig.WorktreeBaseDir != "" {
@@ -248,27 +250,7 @@ func (m *Manager) CreateBranch(name, parentBranch, worktreeDir string) (*config.
 		return nil, fmt.Errorf("failed to create worktree: %w", err)
 	}
 
-	// Find or create the stack — check both branches and roots
-	stackKey := m.findStackForBranch(parentBranch)
-	if stackKey == "" {
-		stackKey = m.findStackByRoot(parentBranch)
-	}
-	var stack *config.Stack
-	if stackKey == "" {
-		hash := config.GenerateStackHash(name)
-		stack = &config.Stack{
-			Hash: hash,
-			Root: parentBranch,
-			Tree: config.BranchTree{
-				name: config.BranchTree{},
-			},
-		}
-		m.stackConfig.Stacks[hash] = stack
-	} else {
-		// Add to existing stack
-		stack = m.stackConfig.Stacks[stackKey]
-		stack.AddBranch(name, parentBranch)
-	}
+	stack := m.findOrCreateStack(name, parentBranch, targetStackHash)
 
 	// Update cache
 	cache := m.stackConfig.Cache
@@ -293,33 +275,16 @@ func (m *Manager) CreateBranch(name, parentBranch, worktreeDir string) (*config.
 	return nil, fmt.Errorf("failed to create branch")
 }
 
-// CreateBranchNoWorktree creates a new branch without a worktree and adds it to a stack
-func (m *Manager) CreateBranchNoWorktree(name, parentBranch string) (*config.Branch, error) {
+// CreateBranchNoWorktree creates a new branch without a worktree and adds it to a stack.
+// targetStackHash controls stack placement: "" for auto-detect, "new" for a new stack,
+// or a specific stack hash to add to.
+func (m *Manager) CreateBranchNoWorktree(name, parentBranch, targetStackHash string) (*config.Branch, error) {
 	// Create the git branch
 	if err := m.git.CreateBranchOnly(name, parentBranch); err != nil {
 		return nil, fmt.Errorf("failed to create branch: %w", err)
 	}
 
-	// Find or create the stack — check both branches and roots
-	stackKey := m.findStackForBranch(parentBranch)
-	if stackKey == "" {
-		stackKey = m.findStackByRoot(parentBranch)
-	}
-	var stack *config.Stack
-	if stackKey == "" {
-		hash := config.GenerateStackHash(name)
-		stack = &config.Stack{
-			Hash: hash,
-			Root: parentBranch,
-			Tree: config.BranchTree{
-				name: config.BranchTree{},
-			},
-		}
-		m.stackConfig.Stacks[hash] = stack
-	} else {
-		stack = m.stackConfig.Stacks[stackKey]
-		stack.AddBranch(name, parentBranch)
-	}
+	stack := m.findOrCreateStack(name, parentBranch, targetStackHash)
 
 	// Update cache (no worktree path)
 	cache := m.stackConfig.Cache
@@ -850,9 +815,55 @@ func (m *Manager) moveBranchToStack(branchName, fromStackName, toStackName, newP
 	return nil
 }
 
+// findOrCreateStack locates or creates a stack for a new branch.
+// targetStackHash controls which stack to use:
+//   - "" (empty): auto-detect from parent branch or parent root
+//   - "new": always create a new stack
+//   - any other value: use the stack with that hash
+func (m *Manager) findOrCreateStack(branchName, parentBranch, targetStackHash string) *config.Stack {
+	if targetStackHash != "new" {
+		var stackKey string
+		if targetStackHash != "" {
+			stackKey = targetStackHash
+		} else {
+			stackKey = m.findStackForBranch(parentBranch)
+			if stackKey == "" {
+				stackKey = m.findStackByRoot(parentBranch)
+			}
+		}
+		if stackKey != "" {
+			s := m.stackConfig.Stacks[stackKey]
+			s.AddBranch(branchName, parentBranch)
+			return s
+		}
+	}
+
+	hash := config.GenerateStackHash(branchName)
+	s := &config.Stack{
+		Hash: hash,
+		Root: parentBranch,
+		Tree: config.BranchTree{
+			branchName: config.BranchTree{},
+		},
+	}
+	m.stackConfig.Stacks[hash] = s
+	return s
+}
+
 // HasStackWithRoot checks if any stack uses rootName as its root
 func (m *Manager) HasStackWithRoot(rootName string) bool {
 	return m.findStackByRoot(rootName) != ""
+}
+
+// GetStacksWithRoot returns all stacks that use rootName as their root
+func (m *Manager) GetStacksWithRoot(rootName string) []*config.Stack {
+	var result []*config.Stack
+	for _, s := range m.stackConfig.Stacks {
+		if s.Root == rootName {
+			result = append(result, s)
+		}
+	}
+	return result
 }
 
 func (m *Manager) findStackByRoot(rootName string) string {

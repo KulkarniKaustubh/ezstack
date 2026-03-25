@@ -75,7 +75,7 @@ func TestSyncStack_StopsOnConflict(t *testing.T) {
 
 	// Create a stack: main -> feature-a -> feature-b
 	mgr, _ := NewManager(repoDir)
-	_, err := mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"))
+	_, err := mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch feature-a failed: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestSyncStack_StopsOnConflict(t *testing.T) {
 	exec.Command("git", "-C", featureAPath, "commit", "-m", "Add conflict.txt in feature-a").Run()
 
 	mgr, _ = NewManager(repoDir)
-	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"))
+	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch feature-b failed: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestRebaseChildren_StopsOnConflict(t *testing.T) {
 
 	// Create parent branch
 	mgr, _ := NewManager(repoDir)
-	_, err := mgr.CreateBranch("parent", "main", filepath.Join(worktreeBaseDir, "parent"))
+	_, err := mgr.CreateBranch("parent", "main", filepath.Join(worktreeBaseDir, "parent"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch parent failed: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestRebaseChildren_StopsOnConflict(t *testing.T) {
 
 	// Create first child that will have conflicts
 	mgr, _ = NewManager(repoDir)
-	_, err = mgr.CreateBranch("child-a", "parent", filepath.Join(worktreeBaseDir, "child-a"))
+	_, err = mgr.CreateBranch("child-a", "parent", filepath.Join(worktreeBaseDir, "child-a"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch child-a failed: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestRebaseChildren_StopsOnConflict(t *testing.T) {
 
 	// Create second child
 	mgr, _ = NewManager(repoDir)
-	_, err = mgr.CreateBranch("child-b", "parent", filepath.Join(worktreeBaseDir, "child-b"))
+	_, err = mgr.CreateBranch("child-b", "parent", filepath.Join(worktreeBaseDir, "child-b"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch child-b failed: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestSyncStack_ContinuesWithoutConflict(t *testing.T) {
 
 	// Create a simple stack without conflicts
 	mgr, _ := NewManager(repoDir)
-	_, err := mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"))
+	_, err := mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch feature-a failed: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestSyncStack_ContinuesWithoutConflict(t *testing.T) {
 	exec.Command("git", "-C", featureAPath, "commit", "-m", "Add file-a").Run()
 
 	mgr, _ = NewManager(repoDir)
-	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"))
+	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch feature-b failed: %v", err)
 	}
@@ -318,7 +318,7 @@ func TestDetectSyncNeeded_NonMainRoot(t *testing.T) {
 
 	// Create a stack rooted on develop
 	mgr, _ := NewManager(repoDir)
-	_, err := mgr.CreateBranch("feature-x", "develop", filepath.Join(worktreeBaseDir, "feature-x"))
+	_, err := mgr.CreateBranch("feature-x", "develop", filepath.Join(worktreeBaseDir, "feature-x"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch feature-x failed: %v", err)
 	}
@@ -388,7 +388,7 @@ func TestDetectSyncNeeded_NonMainRoot_NotBehindMain(t *testing.T) {
 
 	// Create a stack rooted on develop
 	mgr, _ := NewManager(repoDir)
-	_, err := mgr.CreateBranch("feature-y", "develop", filepath.Join(worktreeBaseDir, "feature-y"))
+	_, err := mgr.CreateBranch("feature-y", "develop", filepath.Join(worktreeBaseDir, "feature-y"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch feature-y failed: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestSyncStack_NonMainRoot(t *testing.T) {
 
 	// Create stack: develop -> feature-z
 	mgr, _ := NewManager(repoDir)
-	_, err := mgr.CreateBranch("feature-z", "develop", filepath.Join(worktreeBaseDir, "feature-z"))
+	_, err := mgr.CreateBranch("feature-z", "develop", filepath.Join(worktreeBaseDir, "feature-z"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch feature-z failed: %v", err)
 	}
@@ -512,7 +512,7 @@ func TestDetectSyncNeededForBranch_StackRoot(t *testing.T) {
 
 	// Create stack rooted on staging
 	mgr, _ := NewManager(repoDir)
-	_, err := mgr.CreateBranch("hotfix-1", "staging", filepath.Join(worktreeBaseDir, "hotfix-1"))
+	_, err := mgr.CreateBranch("hotfix-1", "staging", filepath.Join(worktreeBaseDir, "hotfix-1"), "")
 	if err != nil {
 		t.Fatalf("CreateBranch hotfix-1 failed: %v", err)
 	}
