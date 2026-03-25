@@ -305,7 +305,10 @@ func New(args []string) error {
 		ui.Info(fmt.Sprintf("Creating branch '%s' from '%s'", branchName, parentBranch))
 		ui.Info(fmt.Sprintf("Worktree path: %s", worktreePath))
 
-		targetStack, isNewStack, skip := resolveStackIntent(mgr, parentBranch, branchName, worktreePath)
+		targetStack, isNewStack, skip, err := resolveStackIntent(mgr, parentBranch, branchName, worktreePath)
+		if err != nil {
+			return err
+		}
 		if skip {
 			if err := mgr.CreateWorktreeOnly(branchName, parentBranch, worktreePath); err != nil {
 				return err
@@ -339,7 +342,10 @@ func New(args []string) error {
 		// No worktrees mode: create a git branch and track it
 		ui.Info(fmt.Sprintf("Creating branch '%s' from '%s' (no worktree)", branchName, parentBranch))
 
-		targetStack, isNewStack, _ := resolveStackIntent(mgr, parentBranch, branchName, "")
+		targetStack, isNewStack, _, err := resolveStackIntent(mgr, parentBranch, branchName, "")
+		if err != nil {
+			return err
+		}
 
 		branch, err := mgr.CreateBranchNoWorktree(branchName, parentBranch, targetStack)
 		if err != nil {
@@ -371,54 +377,19 @@ func New(args []string) error {
 // create a new stack, or skip stack tracking entirely.
 // Returns (targetStackHash, isNewStack, skipStack).
 // targetStackHash is "" for auto-detect, "new" for a new stack, or a specific hash.
-func resolveStackIntent(mgr *stack.Manager, parentBranch, branchName, worktreePath string) (string, bool, bool) {
+func resolveStackIntent(mgr *stack.Manager, parentBranch, branchName, worktreePath string) (string, bool, bool, error) {
 	// Parent is already a tracked branch — always add to its stack
 	if mgr.GetBranch(parentBranch) != nil {
-		return "", false, false
+		return "", false, false, nil
 	}
 
-	existingStacks := mgr.GetStacksWithRoot(parentBranch)
-
-	// No existing stacks with this root — new stack
-	if len(existingStacks) == 0 {
-		if worktreePath != "" {
-			if !ui.ConfirmTUIWithDefault("Make this a stack root? (allows stacking more branches on top)", true) {
-				return "", false, true
-			}
-		}
-		return "", true, false
-	}
-
-	// Existing stacks share this root — ask the user
-	options := []string{
-		fmt.Sprintf("Start a new stack (off %s)", parentBranch),
-	}
-	for _, s := range existingStacks {
-		label := s.DisplayName()
-		if len(s.Branches) > 0 {
-			label += fmt.Sprintf(" (%d branch(es))", len(s.Branches))
-		}
-		options = append(options, fmt.Sprintf("Add to existing stack: %s", label))
-	}
+	// Parent is not in a stack — ask if this should be a stack root
 	if worktreePath != "" {
-		options = append(options, "Don't add to any stack (standalone worktree)")
+		if !ui.ConfirmTUIWithDefault("Make this a stack root? (allows stacking more branches on top)", true) {
+			return "", false, true, nil
+		}
 	}
-
-	selected, err := ui.SelectOption(options, fmt.Sprintf("Stacks already exist off '%s'. What would you like to do?", parentBranch))
-	if err != nil {
-		return "new", true, false
-	}
-
-	if selected == 0 {
-		return "new", true, false
-	}
-	if worktreePath != "" && selected == len(options)-1 {
-		return "", false, true
-	}
-
-	// User chose an existing stack — pass its hash directly
-	chosenStack := existingStacks[selected-1]
-	return chosenStack.Hash, false, false
+	return "new", true, false, nil
 }
 
 // getCdAfterNew determines if we should cd after creating a new worktree
