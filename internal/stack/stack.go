@@ -133,7 +133,7 @@ func (m *Manager) RegisterExistingBranch(branchName, worktreePath, baseBranch st
 	}
 
 	// Create a new stack with this branch as the root
-	hash := config.GenerateStackHash(branchName)
+	hash := m.generateUniqueHash(branchName)
 	stack := &config.Stack{
 		Hash: hash,
 		Root: baseBranch,
@@ -175,7 +175,7 @@ func (m *Manager) RegisterRemoteBranch(branchName string, prNumber int, prURL st
 		return nil
 	}
 
-	hash := config.GenerateStackHash(branchName)
+	hash := m.generateUniqueHash(branchName)
 	stack := &config.Stack{
 		Hash:         hash,
 		Root:         branchName,
@@ -637,7 +637,7 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 				if len(oldStack.Tree) == 0 {
 					delete(m.stackConfig.Stacks, oldStackKey)
 				}
-				hash := config.GenerateStackHash(branch.Name)
+				hash := m.generateUniqueHash(branch.Name)
 				newStack := &config.Stack{
 					Hash: hash,
 					Root: newParentName,
@@ -719,7 +719,7 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 		targetStack = m.stackConfig.Stacks[newParentStackKey]
 		targetStack.AddBranch(branchName, newParentName)
 	} else {
-		hash := config.GenerateStackHash(branchName)
+		hash := m.generateUniqueHash(branchName)
 		targetStack = &config.Stack{
 			Hash: hash,
 			Root: newParentName,
@@ -838,7 +838,7 @@ func (m *Manager) findOrCreateStack(branchName, parentBranch, targetStackHash st
 		}
 	}
 
-	hash := config.GenerateStackHash(branchName)
+	hash := m.generateUniqueHash(branchName)
 	s := &config.Stack{
 		Hash: hash,
 		Root: parentBranch,
@@ -848,6 +848,19 @@ func (m *Manager) findOrCreateStack(branchName, parentBranch, targetStackHash st
 	}
 	m.stackConfig.Stacks[hash] = s
 	return s
+}
+
+func (m *Manager) generateUniqueHash(seed string) string {
+	for i := 0; ; i++ {
+		candidate := seed
+		if i > 0 {
+			candidate = fmt.Sprintf("%s-%d", seed, i)
+		}
+		hash := config.GenerateStackHash(candidate)
+		if _, exists := m.stackConfig.Stacks[hash]; !exists {
+			return hash
+		}
+	}
 }
 
 // HasStackWithRoot checks if any stack uses rootName as its root
@@ -1123,7 +1136,7 @@ func (m *Manager) AddWorktreeToStack(branchName, worktreePath, parentName string
 	var stack *config.Stack
 	if stackKey == "" {
 		// Parent is main/master - create new stack
-		hash := config.GenerateStackHash(branchName)
+		hash := m.generateUniqueHash(branchName)
 		stack = &config.Stack{
 			Hash: hash,
 			Root: parentName,
