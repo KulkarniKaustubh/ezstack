@@ -79,13 +79,11 @@ func Delete(args []string) error {
 		if cbErr == nil && currentBranch != "" && !mgr.IsMainBranch(currentBranch) {
 			branchName = currentBranch
 		} else {
-			worktrees, err := g.ListWorktrees()
-			if err != nil {
-				return fmt.Errorf("failed to list worktrees: %w", err)
-			}
-
-			// Filter out main branch
+			// Collect branches from both worktrees and stack tracking
+			seen := make(map[string]bool)
 			var wtInfos []ui.WorktreeInfo
+
+			worktrees, _ := g.ListWorktrees()
 			for _, wt := range worktrees {
 				if mgr.IsMainBranch(wt.Branch) {
 					continue
@@ -93,6 +91,22 @@ func Delete(args []string) error {
 				wtInfos = append(wtInfos, ui.WorktreeInfo{
 					Path:   wt.Path,
 					Branch: wt.Branch,
+				})
+				seen[wt.Branch] = true
+			}
+
+			// Include tracked branches that don't have worktrees
+			for _, b := range mgr.GetAllBranchesInAllStacks() {
+				if seen[b.Name] || mgr.IsMainBranch(b.Name) {
+					continue
+				}
+				path := b.WorktreePath
+				if path == "" {
+					path = "(no worktree)"
+				}
+				wtInfos = append(wtInfos, ui.WorktreeInfo{
+					Path:   path,
+					Branch: b.Name,
 				})
 			}
 
