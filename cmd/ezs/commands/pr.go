@@ -221,8 +221,7 @@ func prCreateAll(currentStack *config.Stack) error {
 			continue
 		}
 
-		// Create the PR (not as draft for bulk creation)
-		pr, err := gh.CreatePR(b.Name, "", b.Name, b.Parent, false)
+		pr, err := gh.CreatePR(formatBranchTitle(b.Name), "", b.Name, b.Parent, false)
 		if err != nil {
 			ui.Warn(fmt.Sprintf("Failed to create PR for %s: %v", b.Name, err))
 			failed++
@@ -436,6 +435,20 @@ func prCreate(args []string) error {
 	}
 
 	return nil
+}
+
+// formatBranchTitle converts a branch name like "fix/my-cool-feature" into "Fix my cool feature".
+func formatBranchTitle(branch string) string {
+	// Strip common prefixes like "feature/", "fix/", etc.
+	if idx := strings.LastIndex(branch, "/"); idx >= 0 {
+		branch = branch[idx+1:]
+	}
+	title := strings.ReplaceAll(branch, "-", " ")
+	title = strings.ReplaceAll(title, "_", " ")
+	if len(title) > 0 {
+		title = strings.ToUpper(title[:1]) + title[1:]
+	}
+	return title
 }
 
 // startsWithWIP checks if a string starts with "wip" (case-insensitive)
