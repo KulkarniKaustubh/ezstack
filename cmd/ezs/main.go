@@ -135,6 +135,8 @@ func main() {
 		err = commands.Commit(args)
 	case "amend":
 		err = commands.Amend(args)
+	case "diff":
+		err = commands.Diff(args)
 	case "up":
 		err = commands.Up(args)
 	case "down":
@@ -235,6 +237,7 @@ func printUsage() {
     delete, del, rm  Delete a branch and its worktree
     commit, ci    Commit and auto-sync child branches
     amend         Amend last commit and auto-sync children
+    diff          Show diff against parent branch
     pr            Manage pull requests
     config        Configure ezstack
     menu          Interactive command menu
