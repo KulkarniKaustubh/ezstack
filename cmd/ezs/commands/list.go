@@ -183,9 +183,7 @@ func Status(args []string) error {
 	}
 	debugMode = *debug
 
-	if err := github.CheckAuth(); err != nil {
-		return err
-	}
+	ghAvailable := github.CheckAuth() == nil
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -211,40 +209,52 @@ func Status(args []string) error {
 
 	// Helper to fetch and print all stacks with status
 	printAllStacksWithStatus := func() {
-		spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
-		spinner.Start()
-		statusMaps := make([]map[string]*ui.BranchStatus, len(stacks))
-		var wg sync.WaitGroup
+		if ghAvailable {
+			spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
+			spinner.Start()
+			statusMaps := make([]map[string]*ui.BranchStatus, len(stacks))
+			var wg sync.WaitGroup
 
-		for i, s := range stacks {
-			wg.Add(1)
-			go func(idx int, stack *config.Stack) {
-				defer wg.Done()
-				statusMaps[idx] = fetchBranchStatuses(g, stack)
-			}(i, s)
-		}
+			for i, s := range stacks {
+				wg.Add(1)
+				go func(idx int, stack *config.Stack) {
+					defer wg.Done()
+					statusMaps[idx] = fetchBranchStatuses(g, stack)
+				}(i, s)
+			}
 
-		wg.Wait()
-		spinner.Stop()
+			wg.Wait()
+			spinner.Stop()
 
-		for i, s := range stacks {
-			ui.PrintStack(s, currentBranch, true, statusMaps[i])
+			for i, s := range stacks {
+				ui.PrintStack(s, currentBranch, true, statusMaps[i])
+			}
+		} else {
+			for _, s := range stacks {
+				ui.PrintStack(s, currentBranch, false, nil)
+			}
+			ui.Warn("GitHub CLI not authenticated. Run 'gh auth login' for PR/CI status.")
 		}
 	}
 
 	currentStack, branch, err := mgr.GetCurrentStack()
 	if *all || err != nil {
 		printAllStacksWithStatus()
-		offerFullyMergedStackCleanup(mgr, stacks)
+		if ghAvailable {
+			offerFullyMergedStackCleanup(mgr, stacks)
+		}
 		return nil
 	}
 
-	spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
-	spinner.Start()
-	statusMap := fetchBranchStatuses(g, currentStack)
-	spinner.Stop()
+	var statusMap map[string]*ui.BranchStatus
+	if ghAvailable {
+		spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
+		spinner.Start()
+		statusMap = fetchBranchStatuses(g, currentStack)
+		spinner.Stop()
+	}
 
-	ui.PrintStack(currentStack, currentBranch, true, statusMap)
+	ui.PrintStack(currentStack, currentBranch, ghAvailable, statusMap)
 
 	parentRef := branch.Parent
 	if g.RemoteBranchExists(branch.Parent) {
@@ -264,7 +274,13 @@ func Status(args []string) error {
 		ui.Warn("Rebase in progress! Resolve conflicts and run: git rebase --continue")
 	}
 
-	offerFullyMergedStackCleanup(mgr, []*config.Stack{currentStack})
+	if ghAvailable {
+		offerFullyMergedStackCleanup(mgr, []*config.Stack{currentStack})
+	}
+
+	if !ghAvailable {
+		ui.Warn("GitHub CLI not authenticated. Run 'gh auth login' for PR/CI status.")
+	}
 
 	return nil
 }
