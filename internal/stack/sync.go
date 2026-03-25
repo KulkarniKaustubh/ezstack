@@ -137,8 +137,8 @@ func (m *Manager) DetectSyncNeededForStacks(gh *github.Client, stacks []*config.
 
 // detectSyncNeededInternal is the internal implementation that can work on current stack, all stacks, or specific stacks
 func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly bool, specificStacks []*config.Stack) ([]SyncInfo, error) {
-	if err := m.git.Fetch(); err != nil {
-		return nil, fmt.Errorf("failed to fetch: %w", err)
+	if err := m.Fetch(); err != nil {
+		return nil, err
 	}
 
 	var results []SyncInfo
@@ -310,8 +310,8 @@ func (m *Manager) SyncSpecificStacks(stacks []*config.Stack, gh *github.Client, 
 
 // syncStackInternal is the internal implementation that can work on current stack, all stacks, or specific stacks
 func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks, currentStackOnly bool, specificStacks []*config.Stack) ([]RebaseResult, error) {
-	if err := m.git.Fetch(); err != nil {
-		return nil, fmt.Errorf("failed to fetch: %w", err)
+	if err := m.Fetch(); err != nil {
+		return nil, err
 	}
 
 	var results []RebaseResult

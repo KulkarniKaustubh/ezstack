@@ -17,6 +17,19 @@ type Manager struct {
 	repoConfig  *config.RepoConfig
 	stackConfig *config.StackConfig
 	repoDir     string
+	fetched     bool
+}
+
+// Fetch runs git fetch once per Manager lifetime. Subsequent calls are no-ops.
+func (m *Manager) Fetch() error {
+	if m.fetched {
+		return nil
+	}
+	if err := m.git.Fetch(); err != nil {
+		return fmt.Errorf("failed to fetch: %w", err)
+	}
+	m.fetched = true
+	return nil
 }
 
 // NewManager creates a new stack manager
