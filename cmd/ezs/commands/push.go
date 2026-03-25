@@ -20,12 +20,12 @@ func Push(args []string) error {
     ezs push [options]
 
 %sOPTIONS%s
-    -a, --all      Push all branches in the current stack
+    -s, --stack    Push all branches in the current stack
     -f, --force    Force push
     -h, --help     Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	allFlag := fs.BoolP("all", "a", false, "Push all branches in the current stack")
+	stackFlag := fs.BoolP("stack", "s", false, "Push all branches in the current stack")
 	force := fs.BoolP("force", "f", false, "Force push")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
@@ -47,7 +47,7 @@ func Push(args []string) error {
 
 	g := git.New(cwd)
 
-	if !*allFlag {
+	if !*stackFlag {
 		return pushBranch(g, *force)
 	}
 

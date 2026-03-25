@@ -266,14 +266,14 @@ func prCreate(args []string) error {
     ezs pr create [options]
 
 %sOPTIONS%s
-    -a, --all              Create PRs for all branches in the current stack
+    -s, --stack            Create PRs for all branches in the current stack
     -t, --title <title>    PR title (defaults to branch name)
     -b, --body <body>      PR body/description
     -d, --draft            Create as draft PR
     -h, --help             Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	allFlag := fs.BoolP("all", "a", false, "Create PRs for all branches in the current stack")
+	stackFlag := fs.BoolP("stack", "s", false, "Create PRs for all branches in the current stack")
 	title := fs.StringP("title", "t", "", "PR title")
 	body := fs.StringP("body", "b", "", "PR body")
 	draft := fs.BoolP("draft", "d", false, "Create as draft PR")
@@ -300,7 +300,7 @@ func prCreate(args []string) error {
 		return err
 	}
 
-	if *allFlag {
+	if *stackFlag {
 		currentStack, _, err := mgr.GetCurrentStack()
 		if err != nil {
 			return err
