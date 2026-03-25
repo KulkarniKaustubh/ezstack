@@ -24,8 +24,8 @@ func Sync(args []string) error {
     ezs sync <hash-prefix>    Sync a specific stack by hash (min 3 characters)
 
 %sOPTIONS%s
-    -a, --all              Sync current stack (auto-detect what needs syncing)
-    --all-stacks           Sync ALL stacks (not just current stack)
+    -s, --stack            Sync current stack (auto-detect what needs syncing)
+    -a, --all              Sync ALL stacks
     -c, --current          Sync current branch only (auto-detect what it needs)
     -p, --parent           Rebase current branch onto its parent
     -C, --children         Rebase child branches onto current branch
@@ -52,8 +52,8 @@ func Sync(args []string) error {
 %sEXAMPLES%s
     ezs sync              Interactive menu
     ezs sync a1b2c        Sync stack matching hash prefix
-    ezs sync -a           Auto-sync current stack
-    ezs sync --all-stacks Auto-sync all stacks
+    ezs sync -s           Auto-sync current stack
+    ezs sync -a           Auto-sync all stacks
     ezs sync -c           Sync current branch only
     ezs sync -p           Rebase current onto parent
     ezs sync -C           Rebase children onto current
@@ -61,8 +61,8 @@ func Sync(args []string) error {
 	}
 
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
-	allFlag := fs.BoolP("all", "a", false, "Sync current stack")
-	allStacksFlag := fs.Bool("all-stacks", false, "Sync all stacks")
+	stackFlag := fs.BoolP("stack", "s", false, "Sync current stack")
+	allFlag := fs.BoolP("all", "a", false, "Sync all stacks")
 	currentFlag := fs.BoolP("current", "c", false, "Sync current branch only")
 	parentFlag := fs.BoolP("parent", "p", false, "Rebase onto parent")
 	childrenFlag := fs.BoolP("children", "C", false, "Rebase children")
@@ -123,7 +123,7 @@ func Sync(args []string) error {
 	currentStack, branch, err := mgr.GetCurrentStack()
 	if err != nil {
 		// On main or not in a stack - show main menu
-		if *allStacksFlag || *allFlag {
+		if *allFlag || *stackFlag {
 			if dryRun {
 				return syncDryRunAll(mgr, gh, jsonOutput)
 			}
@@ -143,16 +143,16 @@ func Sync(args []string) error {
 	ui.PrintStack(currentStack, branch.Name, true, statusMap)
 
 	if dryRun {
-		if *allStacksFlag {
+		if *allFlag {
 			return syncDryRunAll(mgr, gh, jsonOutput)
 		}
 		return syncDryRun(mgr, gh, []*config.Stack{currentStack}, jsonOutput)
 	}
 
-	if *allStacksFlag {
+	if *allFlag {
 		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash)
 	}
-	if *allFlag {
+	if *stackFlag {
 		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash)
 	}
 	if *currentFlag {
