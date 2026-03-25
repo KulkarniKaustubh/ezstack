@@ -225,7 +225,7 @@ ezs pr <subcommand> [options]
 
 Subcommands:
     create    Create a new pull request
-    update    Push changes to existing PR
+    update    Push changes and update PR metadata (base branch, descriptions)
     merge     Merge a pull request
     draft     Toggle PR between draft and ready
     stack     Update all PR descriptions with stack info

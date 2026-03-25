@@ -447,14 +447,18 @@ func startsWithWIP(s string) bool {
 func prUpdate(args []string) error {
 	fs := pflag.NewFlagSet("pr update", pflag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `%sPush changes to existing pull request%s
+		fmt.Fprintf(os.Stderr, `%sPush changes and update PR metadata%s
 
 %sUSAGE%s
     ezs pr update [options]
 
+%sDESCRIPTION%s
+    Pushes code changes and also updates the PR base branch and stack
+    descriptions to match the current stack structure.
+
 %sOPTIONS%s
     -h, --help    Show this help message
-`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 	if err := fs.Parse(args); err != nil {
@@ -479,7 +483,7 @@ func prUpdate(args []string) error {
 		return err
 	}
 
-	_, branch, err := mgr.GetCurrentStack()
+	currentStack, branch, err := mgr.GetCurrentStack()
 	if err != nil {
 		return err
 	}
@@ -555,6 +559,13 @@ func prUpdate(args []string) error {
 	}
 
 	ui.Success(fmt.Sprintf("Updated PR #%d", branch.PRNumber))
+
+	// Also update PR base branch and stack descriptions
+	gh, ghErr := newGitHubClient(g)
+	if ghErr == nil {
+		updatePRMetadata(gh, mgr, currentStack, branch)
+	}
+
 	return nil
 }
 
