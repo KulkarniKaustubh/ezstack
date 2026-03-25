@@ -186,6 +186,9 @@ func Stack(args []string) error {
 	if err != nil {
 		return err
 	}
+	if result == nil || result.Branch == nil {
+		return fmt.Errorf("failed to add branch to stack: unexpected nil result")
+	}
 
 	branch := result.Branch
 	ui.Success(fmt.Sprintf("Added '%s' to stack with parent '%s'", branch.Name, branch.Parent))
