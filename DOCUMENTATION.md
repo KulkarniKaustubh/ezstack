@@ -74,7 +74,7 @@ echo 'eval "$(ezs --shell-init)"' >> ~/.bashrc
 echo 'eval "$(ezs --shell-init)"' >> ~/.zshrc
 ```
 
-This enables automatic directory changes for `goto`, `new`, `delete`, `sync`, `up`, `down`, `commit`, and `amend` commands.
+This enables automatic directory changes for `goto`, `new`, `delete`, `sync` (and aliases `rebase`, `rb`), `up`, and `down` commands.
 
 Without shell integration, commands that would change your directory will instead print a helpful message with the path to `cd` to manually.
 
