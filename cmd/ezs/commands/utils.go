@@ -20,13 +20,18 @@ func IsShellWrapped() bool {
 	return os.Getenv("EZS_SHELL_WRAPPER") == "1"
 }
 
+// ShellQuote returns a single-quoted shell string, escaping any embedded single quotes.
+func ShellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 // EmitCd outputs a cd command to stdout if running through the shell wrapper,
 // otherwise prints a message to stderr telling the user to cd manually.
 func EmitCd(path string) {
 	if IsShellWrapped() {
-		fmt.Printf("cd %s\n", path)
+		fmt.Printf("cd %s\n", ShellQuote(path))
 	} else {
-		ui.Info(fmt.Sprintf("Run: cd %s", path))
+		ui.Info(fmt.Sprintf("Run: cd %s", ShellQuote(path)))
 		ui.Info("Tip: Add to your shell config for automatic cd: eval \"$(ezs --shell-init)\"")
 	}
 }
