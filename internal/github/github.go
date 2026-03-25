@@ -247,7 +247,7 @@ type OpenPR struct {
 
 // ListOpenPRs returns all open PRs in the repository
 func (c *Client) ListOpenPRs() ([]OpenPR, error) {
-	output, err := c.runGH("pr", "list", "--state", "open", "--json", "number,title,headRefName,url,author", "--limit", "100")
+	output, err := c.runGH("pr", "list", "--state", "open", "--json", "number,title,headRefName,url,author", "--limit", "300")
 	if err != nil {
 		return nil, err
 	}
