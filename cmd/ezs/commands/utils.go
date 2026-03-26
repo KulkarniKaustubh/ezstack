@@ -70,6 +70,9 @@ func updatePRMetadata(gh *github.Client, mgr *stack.Manager, s *config.Stack, cu
 		if err != nil {
 			continue
 		}
+		if pr.State == "CLOSED" || pr.Merged {
+			continue
+		}
 		if pr.Base != b.Parent {
 			if err := gh.UpdatePRBase(b.PRNumber, b.Parent); err != nil {
 				ui.Warn(fmt.Sprintf("Failed to update base branch for PR #%d: %v", b.PRNumber, err))

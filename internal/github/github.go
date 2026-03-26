@@ -335,6 +335,9 @@ func (c *Client) EnsureCorrectBaseBranches(stack *config.Stack) error {
 		if err != nil {
 			continue
 		}
+		if pr.State == "CLOSED" || pr.Merged {
+			continue
+		}
 
 		if pr.Base != branch.Parent {
 			if err := c.UpdatePRBase(branch.PRNumber, branch.Parent); err != nil {
