@@ -224,6 +224,34 @@ func Stack(args []string) error {
 
 // stackRename handles the "ezs stack rename" subcommand
 func stackRename(args []string) error {
+	fs := pflag.NewFlagSet("stack rename", pflag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `%sRename a stack%s
+
+%sUSAGE%s
+    ezs stack rename [stack-hash] [name]
+
+%sARGUMENTS%s
+    stack-hash    Stack hash prefix (min 3 chars). Omit for interactive selection.
+    name          New name for the stack. Omit to be prompted (empty clears name).
+
+%sOPTIONS%s
+    -h, --help    Show this help message
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
+	}
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
+	if err := fs.Parse(args); err != nil {
+		if err == pflag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	if *helpFlag {
+		fs.Usage()
+		return nil
+	}
+	positionalArgs := fs.Args()
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -242,15 +270,14 @@ func stackRename(args []string) error {
 	var targetStack *config.Stack
 	var newName string
 
-	if len(args) >= 1 {
-		// First arg is stack hash prefix
-		targetStack, err = mgr.GetStackByHash(args[0])
+	if len(positionalArgs) >= 1 {
+		targetStack, err = mgr.GetStackByHash(positionalArgs[0])
 		if err != nil {
 			return err
 		}
 	}
-	if len(args) >= 2 {
-		newName = args[1]
+	if len(positionalArgs) >= 2 {
+		newName = positionalArgs[1]
 	}
 
 	// Interactive: select stack if not provided
