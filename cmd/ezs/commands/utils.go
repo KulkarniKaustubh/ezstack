@@ -60,17 +60,45 @@ func updateStackDescriptions(gh *github.Client, s *config.Stack, activeBranch st
 
 // updatePRMetadata updates base branches and stack descriptions for all PRs in the stack.
 // Called after pushes and stack mutations to keep PR metadata in sync.
-func updatePRMetadata(gh *github.Client, mgr *stack.Manager, s *config.Stack, currentBranch *config.Branch) {
-	// Update base branches for all PRs in the stack
+// All GitHub API calls are parallelized to avoid serial latency.
+func updatePRMetadata(gh *github.Client, s *config.Stack, currentBranch *config.Branch) {
+	// Collect branches with PRs
+	var prBranches []*config.Branch
 	for _, b := range s.Branches {
-		if b.PRNumber == 0 {
-			continue
+		if b.PRNumber > 0 {
+			prBranches = append(prBranches, b)
 		}
-		pr, err := gh.GetPR(b.PRNumber)
-		if err != nil {
-			continue
-		}
-		if pr.State == "CLOSED" || pr.Merged {
+	}
+	if len(prBranches) == 0 {
+		return
+	}
+
+	// Fetch all PR data in parallel
+	prMap := make(map[int]*github.PR) // PR number -> PR data
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 10)
+
+	for _, b := range prBranches {
+		wg.Add(1)
+		go func(branch *config.Branch) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			pr, err := gh.GetPR(branch.PRNumber)
+			if err == nil {
+				mu.Lock()
+				prMap[branch.PRNumber] = pr
+				mu.Unlock()
+			}
+		}(b)
+	}
+	wg.Wait()
+
+	// Update base branches where needed
+	for _, b := range prBranches {
+		pr := prMap[b.PRNumber]
+		if pr == nil || pr.State == "CLOSED" || pr.Merged {
 			continue
 		}
 		if pr.Base != b.Parent {
@@ -80,12 +108,12 @@ func updatePRMetadata(gh *github.Client, mgr *stack.Manager, s *config.Stack, cu
 		}
 	}
 
-	// Update stack descriptions
+	// Update stack descriptions, passing pre-fetched PR data to avoid re-fetching
 	activeName := ""
 	if currentBranch != nil {
 		activeName = currentBranch.Name
 	}
-	if err := gh.UpdateStackDescription(s, activeName); err != nil {
+	if err := gh.UpdateStackDescriptionCached(s, activeName, prMap); err != nil {
 		ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
 	}
 }
@@ -253,43 +281,72 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 		return nil
 	}
 
-	discoveredPRs := false
-	ghAccessWarningShown := false
-	mainWorktree := getMainWorktreePath(g)
-
+	// Collect branches that need PR discovery
+	var uncached []*config.Branch
 	for _, branch := range s.Branches {
 		if debug {
 			fmt.Fprintf(os.Stderr, "[DEBUG] Checking branch %s (PRNumber=%d)\n", branch.Name, branch.PRNumber)
 		}
-
 		if branch.PRNumber == 0 {
-			pr, err := gh.GetPRByBranch(branch.Name)
-			if err != nil {
-				if debug {
-					fmt.Fprintf(os.Stderr, "[DEBUG] GetPRByBranch(%s) error: %v\n", branch.Name, err)
-				}
-				if !ghAccessWarningShown {
-					errStr := err.Error()
-					if strings.Contains(errStr, "cannot access repository") ||
-						strings.Contains(errStr, "authentication") {
-						ui.Warn(errStr)
-						ghAccessWarningShown = true
-					}
-				}
-				continue
+			uncached = append(uncached, branch)
+		}
+	}
+
+	if len(uncached) == 0 {
+		return gh
+	}
+
+	// Discover PRs in parallel
+	type result struct {
+		branch *config.Branch
+		pr     *github.PR
+		err    error
+	}
+	results := make([]result, len(uncached))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 10)
+
+	for i, branch := range uncached {
+		wg.Add(1)
+		go func(idx int, b *config.Branch) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			pr, err := gh.GetPRByBranch(b.Name)
+			results[idx] = result{branch: b, pr: pr, err: err}
+		}(i, branch)
+	}
+	wg.Wait()
+
+	discoveredPRs := false
+	ghAccessWarningShown := false
+	for _, r := range results {
+		if r.err != nil {
+			if debug {
+				fmt.Fprintf(os.Stderr, "[DEBUG] GetPRByBranch(%s) error: %v\n", r.branch.Name, r.err)
 			}
-			if pr != nil {
-				if debug {
-					fmt.Fprintf(os.Stderr, "[DEBUG] Found PR #%d for branch %s\n", pr.Number, branch.Name)
+			if !ghAccessWarningShown {
+				errStr := r.err.Error()
+				if strings.Contains(errStr, "cannot access repository") ||
+					strings.Contains(errStr, "authentication") {
+					ui.Warn(errStr)
+					ghAccessWarningShown = true
 				}
-				branch.PRNumber = pr.Number
-				branch.PRUrl = pr.URL
-				discoveredPRs = true
 			}
+			continue
+		}
+		if r.pr != nil {
+			if debug {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Found PR #%d for branch %s\n", r.pr.Number, r.branch.Name)
+			}
+			r.branch.PRNumber = r.pr.Number
+			r.branch.PRUrl = r.pr.URL
+			discoveredPRs = true
 		}
 	}
 
 	if discoveredPRs {
+		mainWorktree := getMainWorktreePath(g)
 		cache, _ := config.LoadCacheConfig(mainWorktree)
 		for _, branch := range s.Branches {
 			if branch.PRNumber > 0 {
@@ -448,4 +505,17 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 	}
 
 	return statusMap
+}
+
+// NavigateToBranch navigates to a branch by cd-ing to its worktree or checking out the branch.
+func NavigateToBranch(g *git.Git, branchName, worktreePath string) error {
+	if worktreePath != "" {
+		EmitCd(worktreePath)
+		return nil
+	}
+	if err := g.CheckoutBranch(branchName); err != nil {
+		return fmt.Errorf("failed to switch to branch '%s': %w", branchName, err)
+	}
+	ui.Success(fmt.Sprintf("Switched to branch '%s'", branchName))
+	return nil
 }

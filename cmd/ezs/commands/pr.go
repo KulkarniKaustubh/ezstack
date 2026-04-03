@@ -3,7 +3,6 @@ package commands
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
@@ -169,6 +168,9 @@ func prCreateAll(currentStack *config.Stack) error {
 
 	branchesToCreate := []*config.Branch{}
 	for _, b := range currentStack.Branches {
+		if b.IsMerged {
+			continue
+		}
 		if b.PRNumber == 0 {
 			// Check GitHub for an existing open PR (handles stale cache)
 			existingPR, err := gh.GetPRByBranch(b.Name)
@@ -215,7 +217,7 @@ func prCreateAll(currentStack *config.Stack) error {
 		ui.Info(fmt.Sprintf("Creating PR for %s...", b.Name))
 
 		// Push the branch first
-		if err := runGitCommand(cwd, "push", "-u", "origin", b.Name); err != nil {
+		if err := g.RunInteractive("push", "-u", "origin", b.Name); err != nil {
 			ui.Warn(fmt.Sprintf("Failed to push %s: %v", b.Name, err))
 			failed++
 			continue
@@ -247,14 +249,6 @@ func prCreateAll(currentStack *config.Stack) error {
 		ui.Success(fmt.Sprintf("Created %d PR(s)", created))
 	}
 	return nil
-}
-
-// runGitCommand runs a git command
-func runGitCommand(dir string, args ...string) error {
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 func prCreate(args []string) error {
@@ -596,7 +590,7 @@ func prUpdate(args []string) error {
 	// Also update PR base branch and stack descriptions
 	gh, ghErr := newGitHubClient(g)
 	if ghErr == nil {
-		updatePRMetadata(gh, mgr, currentStack, branch)
+		updatePRMetadata(gh, currentStack, branch)
 	}
 
 	return nil

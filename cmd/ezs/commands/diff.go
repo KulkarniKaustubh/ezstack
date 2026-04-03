@@ -47,18 +47,21 @@ func Diff(args []string) error {
 	}
 
 	g := git.New(cwd)
-	mgr, err := stack.NewManager(cwd)
+	mgr, err := stack.NewReadOnlyManager(cwd)
 	if err != nil {
 		return err
 	}
 
-	_, branch, err := mgr.GetCurrentStack()
+	currentStack, branch, err := mgr.GetCurrentStack()
 	if err != nil {
 		return err
 	}
 
+	// Use origin/ only for the stack root (e.g. main), not for stacked parents.
+	// Stacked parents may have been rebased locally but not yet pushed, so the
+	// local ref is the correct base for the diff.
 	parentRef := branch.Parent
-	if g.RemoteBranchExists(branch.Parent) {
+	if branch.Parent == currentStack.Root && g.RemoteBranchExists(branch.Parent) {
 		parentRef = "origin/" + branch.Parent
 	}
 

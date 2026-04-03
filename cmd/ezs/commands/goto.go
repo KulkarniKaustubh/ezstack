@@ -49,7 +49,7 @@ func Goto(args []string) error {
 	}
 
 	g := git.New(cwd)
-	mgr, err := stack.NewManager(cwd)
+	mgr, err := stack.NewReadOnlyManager(cwd)
 	if err != nil {
 		return err
 	}
@@ -62,16 +62,7 @@ func Goto(args []string) error {
 			if targetBranch.IsMerged {
 				return fmt.Errorf("branch '%s' has been merged and its worktree was deleted", branchName)
 			}
-			if targetBranch.WorktreePath != "" {
-				EmitCd(targetBranch.WorktreePath)
-				return nil
-			}
-			// No worktree — fall back to git checkout
-			if err := g.CheckoutBranch(branchName); err != nil {
-				return fmt.Errorf("failed to switch to branch '%s': %w", branchName, err)
-			}
-			ui.Success(fmt.Sprintf("Switched to branch '%s'", branchName))
-			return nil
+			return NavigateToBranch(g, branchName, targetBranch.WorktreePath)
 		}
 
 		// Not in a stack - search all worktrees

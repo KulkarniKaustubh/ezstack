@@ -119,10 +119,7 @@ func New(args []string) error {
 			return err
 		}
 
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
+		cfg := mgr.GetConfig()
 		baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
 
 		ui.Info(fmt.Sprintf("Registering '%s' as a stack root (base: %s)", selected.Branch, baseBranch))
@@ -179,10 +176,7 @@ func New(args []string) error {
 
 		newBranchName := ui.PromptRequired("Enter name for your new branch (stacked on " + selectedPR.Branch + ")")
 
-		cfg, err := config.Load()
-		if err != nil {
-			return err
-		}
+		cfg := mgr.GetConfig()
 
 		worktreePath := *worktree
 		if worktreePath == "" {
@@ -231,10 +225,7 @@ func New(args []string) error {
 				return err
 			}
 
-			cfg, err := config.Load()
-			if err != nil {
-				return err
-			}
+			cfg := mgr.GetConfig()
 			baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
 
 			branchOptions := []string{baseBranch}
@@ -274,10 +265,7 @@ func New(args []string) error {
 		return err
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
+	cfg := mgr.GetConfig()
 
 	repoDir := mgr.GetRepoDir()
 	useWorktrees := cfg.GetUseWorktrees(repoDir)

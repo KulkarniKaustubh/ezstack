@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
@@ -242,16 +241,6 @@ func valueOrDefault(val, def string) string {
 	return val
 }
 
-// isInsidePath checks if child path is inside or equal to parent path
-func isInsidePath(child, parent string) bool {
-	rel, err := filepath.Rel(parent, child)
-	if err != nil {
-		return false
-	}
-	// If relative path starts with "..", it's outside parent
-	return !strings.HasPrefix(rel, "..") && rel != ".."
-}
-
 // configInteractive walks through config options interactively
 func configInteractive() error {
 	repoPath, err := getCurrentRepoPath()
@@ -315,8 +304,8 @@ func configInteractive() error {
 				worktreeBaseDir = filepath.Clean(worktreeBaseDir)
 
 				// Check if path is inside repo root
-				if isInsidePath(worktreeBaseDir, repoPath) {
-					ui.Error("Worktree directory cannot be inside the repository root")
+				if err := ValidateWorktreeBaseDir(worktreeBaseDir, repoPath); err != nil {
+					ui.Error(err.Error())
 					continue
 				}
 
