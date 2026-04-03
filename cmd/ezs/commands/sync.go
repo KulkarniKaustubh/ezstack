@@ -530,15 +530,10 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 	// Check for stacks that were already fully merged in cache before this sync run
 	cleanupFullyMergedStacks(mgr, stacks)
 
-	// Ensure all PR base branches and stack descriptions are correct
+	// Update PR base branches and stack descriptions (parallelized per stack)
 	if gh != nil {
 		for _, s := range stacks {
-			if err := gh.EnsureCorrectBaseBranches(s); err != nil {
-				ui.Warn(fmt.Sprintf("Failed to update PR base branches: %v", err))
-			}
-			if err := gh.UpdateStackDescription(s, ""); err != nil {
-				ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
-			}
+			updatePRMetadata(gh, s, nil)
 		}
 	}
 

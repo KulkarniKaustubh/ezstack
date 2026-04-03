@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
@@ -64,7 +65,10 @@ func Down(args []string) error {
 	return navigate("down", steps)
 }
 
-// navigate handles the shared logic for up/down navigation
+// navigate handles the shared logic for up/down navigation.
+// Navigation follows the original tree structure (BaseBranch) so that
+// merged branches are still traversable. Up stops at the top of the
+// stack (does NOT go to main/root).
 func navigate(direction string, steps int) error {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -72,12 +76,12 @@ func navigate(direction string, steps int) error {
 	}
 
 	g := git.New(cwd)
-	mgr, err := stack.NewManager(cwd)
+	mgr, err := stack.NewReadOnlyManager(cwd)
 	if err != nil {
 		return err
 	}
 
-	currentStack, branch, err := mgr.GetCurrentStack()
+	_, branch, err := mgr.GetCurrentStack()
 	if err != nil {
 		return ui.NewExitError(ui.ExitNotInStack, "not in a stack. Navigation requires being on a stacked branch")
 	}
@@ -85,32 +89,29 @@ func navigate(direction string, steps int) error {
 	targetBranch := branch
 	for i := 0; i < steps; i++ {
 		if direction == "up" {
-			// Navigate toward parent
-			if targetBranch.Parent == currentStack.Root {
-				if i > 0 {
-					ui.Info(fmt.Sprintf("Reached stack root after %d step(s)", i))
-				}
-				mainPath := getMainWorktreePath(g)
-				if mainPath != "" {
-					ui.Info(fmt.Sprintf("Navigating to %s (%s)", currentStack.Root, mainPath))
-					EmitCd(mainPath)
+			// Navigate toward the tree parent (BaseBranch), not the effective parent.
+			// BaseBranch is the original parent in the tree hierarchy.
+			treePar := mgr.GetBranch(targetBranch.BaseBranch)
+			if treePar == nil {
+				// BaseBranch is not in the stack (it's the root) — stop here
+				if i == 0 {
+					ui.Info("Already at the top of the stack")
 				} else {
-					if err := g.CheckoutBranch(currentStack.Root); err != nil {
-						ui.Warn(fmt.Sprintf("Failed to switch to %s: %v", currentStack.Root, err))
-					} else {
-						ui.Success(fmt.Sprintf("Switched to branch '%s'", currentStack.Root))
-					}
+					ui.Info(fmt.Sprintf("Reached top of the stack after %d step(s)", i))
 				}
-				return nil
+				break
 			}
-			parentBranch := mgr.GetBranch(targetBranch.Parent)
-			if parentBranch == nil {
-				return fmt.Errorf("parent branch '%s' not found in stack", targetBranch.Parent)
-			}
-			targetBranch = parentBranch
+			targetBranch = treePar
 		} else {
-			// Navigate toward child
-			children := mgr.GetChildren(targetBranch.Name)
+			// Navigate toward tree children (branches whose BaseBranch == current).
+			// Skip merged branches whose worktrees are deleted.
+			allChildren := mgr.GetTreeChildren(targetBranch.Name)
+			var children []*config.Branch
+			for _, c := range allChildren {
+				if !c.IsMerged {
+					children = append(children, c)
+				}
+			}
 			if len(children) == 0 {
 				if i == 0 {
 					ui.Info("No child branches. Already at stack leaf")
@@ -141,15 +142,5 @@ func navigate(direction string, steps int) error {
 	}
 
 	// Navigate to the target
-	if targetBranch.WorktreePath != "" {
-		EmitCd(targetBranch.WorktreePath)
-	} else {
-		// No worktree — fall back to git checkout
-		if err := g.CheckoutBranch(targetBranch.Name); err != nil {
-			return fmt.Errorf("failed to switch to branch '%s': %w", targetBranch.Name, err)
-		}
-		ui.Success(fmt.Sprintf("Switched to branch '%s'", targetBranch.Name))
-	}
-
-	return nil
+	return NavigateToBranch(g, targetBranch.Name, targetBranch.WorktreePath)
 }

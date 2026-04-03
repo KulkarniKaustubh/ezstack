@@ -103,10 +103,7 @@ func Stack(args []string) error {
 		parentName = fs.Arg(1)
 	}
 
-	cfg, err := config.Load()
-	if err != nil {
-		return err
-	}
+	cfg := mgr.GetConfig()
 	baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
 
 	// Fully interactive mode: no branch or parent specified
@@ -175,48 +172,14 @@ func Stack(args []string) error {
 		}
 	}
 
-	// Use reparent logic (with no rebase by default for adding)
-	ui.Info(fmt.Sprintf("Adding '%s' to stack with parent '%s'", branchName, parentName))
-	if !ui.ConfirmTUI("Proceed?") {
-		ui.Warn("Cancelled")
-		return nil
-	}
-
-	result, err := mgr.ReparentBranch(branchName, parentName, false)
-	if err != nil {
+	// Use shared reparent logic (no rebase for stack add)
+	if err := doReparentNoRebase(mgr, branchName, parentName); err != nil {
 		return err
 	}
-	if result == nil || result.Branch == nil {
-		return fmt.Errorf("failed to add branch to stack: unexpected nil result")
-	}
-
-	branch := result.Branch
-	ui.Success(fmt.Sprintf("Added '%s' to stack with parent '%s'", branch.Name, branch.Parent))
 
 	// Prompt for stack name if this created a new stack
 	if isNewStack {
 		promptStackName(mgr, branchName)
-	}
-
-	// Update PR base branch on GitHub if the branch has a PR
-	if branch.PRNumber > 0 {
-		gh, ghErr := newGitHubClient(g)
-		if ghErr == nil {
-			ui.Info(fmt.Sprintf("Updating PR #%d base branch to '%s'...", branch.PRNumber, parentName))
-			if err := gh.UpdatePRBase(branch.PRNumber, parentName); err != nil {
-				ui.Warn(fmt.Sprintf("Failed to update PR base branch: %v", err))
-			} else {
-				ui.Success(fmt.Sprintf("Updated PR #%d base branch to '%s'", branch.PRNumber, parentName))
-			}
-
-			// Also update stack descriptions in all PRs
-			currentStack := mgr.GetStackForBranch(branchName)
-			if currentStack != nil {
-				if err := updateStackDescriptions(gh, currentStack, branchName); err != nil {
-					ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
-				}
-			}
-		}
 	}
 
 	return nil

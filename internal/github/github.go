@@ -321,33 +321,6 @@ func (c *Client) runGH(args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// EnsureCorrectBaseBranches ensures each PR's base branch matches the expected parent branch.
-func (c *Client) EnsureCorrectBaseBranches(stack *config.Stack) error {
-	for _, branch := range stack.Branches {
-		if branch.PRNumber == 0 {
-			continue
-		}
-		if branch.IsMerged {
-			continue
-		}
-
-		pr, err := c.GetPR(branch.PRNumber)
-		if err != nil {
-			continue
-		}
-		if pr.State == "CLOSED" || pr.Merged {
-			continue
-		}
-
-		if pr.Base != branch.Parent {
-			if err := c.UpdatePRBase(branch.PRNumber, branch.Parent); err != nil {
-				return fmt.Errorf("failed to update base branch for PR #%d (%s): %w", branch.PRNumber, branch.Name, err)
-			}
-		}
-	}
-	return nil
-}
-
 // UpdateStackDescription updates PR descriptions with stack info.
 func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch string) error {
 	// Count how many PRs are in the stack (including root PR if present)
@@ -382,6 +355,47 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 		stackSection := generateStackSection(stack, branch.Name)
 
 		// Update the body with the stack section
+		newBody := updateBodyWithStack(pr.Body, stackSection, branch.Name == currentBranch)
+		if newBody != pr.Body {
+			if err := c.UpdatePR(branch.PRNumber, newBody); err != nil {
+				return fmt.Errorf("failed to update PR #%d: %w", branch.PRNumber, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// UpdateStackDescriptionCached updates PR descriptions using pre-fetched PR data to avoid extra API calls.
+func (c *Client) UpdateStackDescriptionCached(stack *config.Stack, currentBranch string, prMap map[int]*PR) error {
+	// Count how many PRs are in the stack (including root PR if present)
+	prCount := 0
+	if stack.RootPRNumber > 0 {
+		prCount++
+	}
+	for _, branch := range stack.Branches {
+		if branch.PRNumber > 0 {
+			prCount++
+		}
+	}
+
+	// Only update descriptions when there are 2+ PRs in the stack
+	if prCount < 2 {
+		return nil
+	}
+
+	for _, branch := range stack.Branches {
+		if branch.PRNumber == 0 {
+			continue
+		}
+
+		// Use pre-fetched PR data instead of making another API call
+		pr := prMap[branch.PRNumber]
+		if pr == nil {
+			continue
+		}
+
+		stackSection := generateStackSection(stack, branch.Name)
 		newBody := updateBodyWithStack(pr.Body, stackSection, branch.Name == currentBranch)
 		if newBody != pr.Body {
 			if err := c.UpdatePR(branch.PRNumber, newBody); err != nil {

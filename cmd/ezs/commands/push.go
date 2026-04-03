@@ -51,7 +51,7 @@ func Push(args []string) error {
 		return pushBranch(g, *force)
 	}
 
-	mgr, err := stack.NewManager(cwd)
+	mgr, err := stack.NewReadOnlyManager(cwd)
 	if err != nil {
 		return err
 	}
@@ -79,6 +79,9 @@ func pushBranch(g *git.Git, force bool) error {
 func pushStack(g *git.Git, s *config.Stack, force bool) error {
 	failed := 0
 	for _, b := range s.Branches {
+		if b.IsMerged {
+			continue
+		}
 		args := []string{"push", "-u", "origin", b.Name}
 		if force {
 			args = []string{"push", "-u", "--force-with-lease", "origin", b.Name}

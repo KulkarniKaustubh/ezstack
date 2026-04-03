@@ -32,8 +32,20 @@ func (m *Manager) Fetch() error {
 	return nil
 }
 
-// NewManager creates a new stack manager
+// NewManager creates a new stack manager and reconciles config with git state.
+// Use this for commands that mutate state (new, delete, sync, reparent, stack, etc.).
 func NewManager(repoDir string) (*Manager, error) {
+	return newManager(repoDir, true)
+}
+
+// NewReadOnlyManager creates a stack manager without reconciliation.
+// Use this for read-only commands (diff, goto, list, status, up, down, push)
+// where the ~100ms reconciliation cost is unnecessary.
+func NewReadOnlyManager(repoDir string) (*Manager, error) {
+	return newManager(repoDir, false)
+}
+
+func newManager(repoDir string, reconcile bool) (*Manager, error) {
 	g := git.New(repoDir)
 
 	// Get the main worktree (the actual repo root)
@@ -62,13 +74,20 @@ func NewManager(repoDir string) (*Manager, error) {
 		stackConfig: stackCfg,
 		repoDir:     mainWorktree,
 	}
-	mgr.Reconcile()
+	if reconcile {
+		mgr.Reconcile()
+	}
 	return mgr, nil
 }
 
 // GetRepoDir returns the main repository directory
 func (m *Manager) GetRepoDir() string {
 	return m.repoDir
+}
+
+// GetConfig returns the loaded global config, avoiding redundant config.Load() calls.
+func (m *Manager) GetConfig() *config.Config {
+	return m.config
 }
 
 // Reconcile silently reconciles ezstack config with git reality.
@@ -402,6 +421,21 @@ func (m *Manager) GetChildren(branchName string) []*config.Branch {
 	return children
 }
 
+// GetTreeChildren returns child branches based on the original tree structure (BaseBranch),
+// not the effective parent. This is used for navigation (up/down) where we want to
+// follow the tree hierarchy even when parents have been merged and children reparented.
+func (m *Manager) GetTreeChildren(branchName string) []*config.Branch {
+	var children []*config.Branch
+	for _, stack := range m.stackConfig.Stacks {
+		for _, branch := range stack.Branches {
+			if branch.BaseBranch == branchName {
+				children = append(children, branch)
+			}
+		}
+	}
+	return children
+}
+
 // IsMainBranch checks if a branch is the main/master branch.
 // Use only for protection (e.g. preventing deletion of main). For stack-root
 // logic, compare against Stack.Root or use GetStackForBranch instead.
@@ -707,15 +741,15 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 		}
 	}
 
-	// Find the stack for the new parent — check both branches and roots
+	// Find the stack for the new parent.
+	// Only match if parent is a tracked branch in a stack — NOT just a root.
+	// This ensures "ezs stack -b X -p main" always creates a new stack
+	// instead of randomly picking an existing one when multiple stacks share the same root.
 	newParentStackKey := m.findStackForBranch(newParentName)
-	if newParentStackKey == "" {
-		newParentStackKey = m.findStackByRoot(newParentName)
-	}
 	var targetStack *config.Stack
 
 	if newParentStackKey != "" {
-		// Add to existing stack
+		// Add to existing stack (parent is a tracked branch)
 		targetStack = m.stackConfig.Stacks[newParentStackKey]
 		targetStack.AddBranch(branchName, newParentName)
 	} else {

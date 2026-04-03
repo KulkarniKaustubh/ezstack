@@ -111,18 +111,29 @@ func commitInternal(args []string, amend bool) error {
 
 	currentBranch, _ := g.CurrentBranch()
 	if currentBranch != "" && g.RemoteBranchExists(currentBranch) {
-		if ui.ConfirmTUIWithDefault("Push to remote?", true) {
-			if err := g.Push(false); err != nil {
-				ui.Warn(fmt.Sprintf("Push failed: %v", err))
-				if ui.ConfirmTUI("Force push?") {
-					if err := g.PushForce(); err != nil {
-						ui.Warn(fmt.Sprintf("Force push failed: %v", err))
-					} else {
-						ui.Success("Pushed to remote")
-					}
+		if amend {
+			// Amend rewrites history — regular push will always fail, so offer force push directly
+			if ui.ConfirmTUIWithDefault("Force push to remote? (amend rewrites history)", true) {
+				if err := g.PushForce(); err != nil {
+					ui.Warn(fmt.Sprintf("Force push failed: %v", err))
+				} else {
+					ui.Success("Pushed to remote")
 				}
-			} else {
-				ui.Success("Pushed to remote")
+			}
+		} else {
+			if ui.ConfirmTUIWithDefault("Push to remote?", true) {
+				if err := g.Push(false); err != nil {
+					ui.Warn(fmt.Sprintf("Push failed: %v", err))
+					if ui.ConfirmTUI("Force push?") {
+						if err := g.PushForce(); err != nil {
+							ui.Warn(fmt.Sprintf("Force push failed: %v", err))
+						} else {
+							ui.Success("Pushed to remote")
+						}
+					}
+				} else {
+					ui.Success("Pushed to remote")
+				}
 			}
 		}
 	}

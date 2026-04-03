@@ -65,7 +65,7 @@ func List(args []string) error {
 		}
 	}
 
-	mgr, err := stack.NewManager(cwd)
+	mgr, err := stack.NewReadOnlyManager(cwd)
 	if err != nil {
 		return err
 	}
@@ -82,8 +82,14 @@ func List(args []string) error {
 
 	var stacksToShow []*config.Stack
 	currentStack, _, csErr := mgr.GetCurrentStack()
-	if *all || csErr != nil {
+	if *all {
 		stacksToShow = stacks
+	} else if csErr != nil {
+		// Not on a stacked branch — only show stacks rooted on the current branch
+		stacksToShow = mgr.GetStacksWithRoot(currentBranch)
+		if len(stacksToShow) == 0 {
+			return ui.NewExitError(ui.ExitNotInStack, "current branch '%s' is not part of any stack. Use -a to show all stacks", currentBranch)
+		}
 	} else {
 		stacksToShow = []*config.Stack{currentStack}
 	}
@@ -177,7 +183,12 @@ func Status(args []string) error {
 		fs.Usage()
 		return nil
 	}
-	ghAvailable := github.CheckAuth() == nil
+
+	// Check gh auth in background while we load config
+	ghAvailableCh := make(chan bool, 1)
+	go func() {
+		ghAvailableCh <- github.CheckAuth() == nil
+	}()
 
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -190,7 +201,7 @@ func Status(args []string) error {
 		return err
 	}
 
-	mgr, err := stack.NewManager(cwd)
+	mgr, err := stack.NewReadOnlyManager(cwd)
 	if err != nil {
 		return err
 	}
@@ -200,6 +211,8 @@ func Status(args []string) error {
 		ui.Info("No stacks found. Create one with: ezs new <branch-name>")
 		return nil
 	}
+
+	ghAvailable := <-ghAvailableCh
 
 	// Helper to fetch and print all stacks with status
 	printAllStacksWithStatus := func() {
@@ -232,10 +245,45 @@ func Status(args []string) error {
 	}
 
 	currentStack, branch, err := mgr.GetCurrentStack()
-	if *all || err != nil {
+	if *all {
 		printAllStacksWithStatus()
 		if ghAvailable {
 			offerFullyMergedStackCleanup(mgr, stacks)
+		}
+		return nil
+	}
+	if err != nil {
+		// Not on a stacked branch — only show stacks rooted on the current branch
+		rootStacks := mgr.GetStacksWithRoot(currentBranch)
+		if len(rootStacks) == 0 {
+			return ui.NewExitError(ui.ExitNotInStack, "current branch '%s' is not part of any stack. Use -a to show all stacks", currentBranch)
+		}
+		// Show the root stacks with status
+		if ghAvailable {
+			spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
+			spinner.Start()
+			statusMaps := make([]map[string]*ui.BranchStatus, len(rootStacks))
+			var wg sync.WaitGroup
+			for i, s := range rootStacks {
+				wg.Add(1)
+				go func(idx int, stack *config.Stack) {
+					defer wg.Done()
+					statusMaps[idx] = fetchBranchStatuses(g, stack, *debug)
+				}(i, s)
+			}
+			wg.Wait()
+			spinner.Stop()
+			for i, s := range rootStacks {
+				ui.PrintStack(s, currentBranch, true, statusMaps[i])
+			}
+		} else {
+			for _, s := range rootStacks {
+				ui.PrintStack(s, currentBranch, false, nil)
+			}
+			ui.Warn("GitHub CLI not authenticated. Run 'gh auth login' for PR/CI status.")
+		}
+		if ghAvailable {
+			offerFullyMergedStackCleanup(mgr, rootStacks)
 		}
 		return nil
 	}
