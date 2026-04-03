@@ -1242,6 +1242,9 @@ func (m *Manager) DeleteStack(stackHash string) error {
 
 	cache := m.stackConfig.Cache
 
+	// Determine the current branch so we don't try to delete it (git refuses)
+	currentBranch, _ := m.git.CurrentBranch()
+
 	// Clean up any remaining worktrees and git branches
 	for _, branch := range stack.Branches {
 		// Try to remove worktree if it exists
@@ -1250,8 +1253,8 @@ func (m *Manager) DeleteStack(stackHash string) error {
 				_ = m.git.RemoveWorktree(branch.WorktreePath, true, branch.Name)
 			}
 		}
-		// Try to delete git branch if it still exists
-		if m.git.BranchExists(branch.Name) {
+		// Try to delete git branch if it still exists (skip current branch — git won't allow it)
+		if branch.Name != currentBranch && m.git.BranchExists(branch.Name) {
 			_ = m.git.DeleteBranch(branch.Name, true)
 		}
 		// Remove from cache

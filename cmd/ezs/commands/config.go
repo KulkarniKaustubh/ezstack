@@ -176,58 +176,58 @@ func configShow() error {
 	configDir, _ := config.ConfigDir()
 	ezstackHome := os.Getenv("EZSTACK_HOME")
 
-	fmt.Printf("%sezstack configuration%s\n", ui.Bold, ui.Reset)
-	fmt.Printf("Config directory: %s\n", configDir)
+	fmt.Fprintf(os.Stderr, "%sezstack configuration%s\n", ui.Bold, ui.Reset)
+	fmt.Fprintf(os.Stderr, "Config directory: %s\n", configDir)
 	if ezstackHome != "" {
-		fmt.Printf("  (set via EZSTACK_HOME environment variable)\n")
+		fmt.Fprintf(os.Stderr, "  (set via EZSTACK_HOME environment variable)\n")
 	} else {
-		fmt.Printf("  (default: $HOME/.ezstack, override with EZSTACK_HOME env var)\n")
+		fmt.Fprintf(os.Stderr, "  (default: $HOME/.ezstack, override with EZSTACK_HOME env var)\n")
 	}
-	fmt.Printf("Config file: %s/config.json\n\n", configDir)
+	fmt.Fprintf(os.Stderr, "Config file: %s/config.json\n\n", configDir)
 
-	fmt.Printf("%sGlobal Settings:%s\n", ui.Bold, ui.Reset)
-	fmt.Printf("  default_base_branch: %s\n", valueOrDefault(cfg.DefaultBaseBranch, "main"))
+	fmt.Fprintf(os.Stderr, "%sGlobal Settings:%s\n", ui.Bold, ui.Reset)
+	fmt.Fprintf(os.Stderr, "  default_base_branch: %s\n", valueOrDefault(cfg.DefaultBaseBranch, "main"))
 	if cfg.GitHubToken != "" {
-		fmt.Printf("  github_token:        %s\n", "****** (set)")
+		fmt.Fprintf(os.Stderr, "  github_token:        %s\n", "****** (set)")
 	} else {
-		fmt.Printf("  github_token:        %s\n", "(not set - using gh cli)")
+		fmt.Fprintf(os.Stderr, "  github_token:        %s\n", "(not set - using gh cli)")
 	}
 
 	repoPath, err := getCurrentRepoPath()
 	if err == nil {
-		fmt.Printf("\n%sCurrent Repository:%s\n", ui.Bold, ui.Reset)
-		fmt.Printf("  repo_path: %s\n", repoPath)
+		fmt.Fprintf(os.Stderr, "\n%sCurrent Repository:%s\n", ui.Bold, ui.Reset)
+		fmt.Fprintf(os.Stderr, "  repo_path: %s\n", repoPath)
 		repoCfg := cfg.GetRepoConfig(repoPath)
 		if repoCfg != nil {
-			fmt.Printf("  worktree_base_dir: %s\n", valueOrDefault(repoCfg.WorktreeBaseDir, "(not set)"))
+			fmt.Fprintf(os.Stderr, "  worktree_base_dir: %s\n", valueOrDefault(repoCfg.WorktreeBaseDir, "(not set)"))
 			if repoCfg.DefaultBaseBranch != "" {
-				fmt.Printf("  default_base_branch: %s (repo override)\n", repoCfg.DefaultBaseBranch)
+				fmt.Fprintf(os.Stderr, "  default_base_branch: %s (repo override)\n", repoCfg.DefaultBaseBranch)
 			}
 			if repoCfg.CdAfterNew != nil {
-				fmt.Printf("  cd_after_new: %v\n", *repoCfg.CdAfterNew)
+				fmt.Fprintf(os.Stderr, "  cd_after_new: %v\n", *repoCfg.CdAfterNew)
 			} else {
-				fmt.Printf("  cd_after_new: true (default)\n")
+				fmt.Fprintf(os.Stderr, "  cd_after_new: true (default)\n")
 			}
 			if repoCfg.UseWorktrees != nil {
-				fmt.Printf("  use_worktrees: %v\n", *repoCfg.UseWorktrees)
+				fmt.Fprintf(os.Stderr, "  use_worktrees: %v\n", *repoCfg.UseWorktrees)
 			} else {
-				fmt.Printf("  use_worktrees: true (default)\n")
+				fmt.Fprintf(os.Stderr, "  use_worktrees: true (default)\n")
 			}
 		} else {
-			fmt.Printf("  worktree_base_dir: %s(not configured for this repo)%s\n", ui.Yellow, ui.Reset)
-			fmt.Printf("  Run: ezs config set worktree_base_dir <path>\n")
+			fmt.Fprintf(os.Stderr, "  worktree_base_dir: %s(not configured for this repo)%s\n", ui.Yellow, ui.Reset)
+			fmt.Fprintf(os.Stderr, "  Run: ezs config set worktree_base_dir <path>\n")
 		}
 	}
 
 	if len(cfg.Repos) > 0 {
-		fmt.Printf("\n%sConfigured Repositories:%s\n", ui.Bold, ui.Reset)
+		fmt.Fprintf(os.Stderr, "\n%sConfigured Repositories:%s\n", ui.Bold, ui.Reset)
 		for path, repoCfg := range cfg.Repos {
 			marker := ""
 			if path == repoPath {
 				marker = " (current)"
 			}
-			fmt.Printf("  %s%s%s%s\n", ui.Cyan, path, marker, ui.Reset)
-			fmt.Printf("    worktree_base_dir: %s\n", repoCfg.WorktreeBaseDir)
+			fmt.Fprintf(os.Stderr, "  %s%s%s%s\n", ui.Cyan, path, marker, ui.Reset)
+			fmt.Fprintf(os.Stderr, "    worktree_base_dir: %s\n", repoCfg.WorktreeBaseDir)
 		}
 	}
 
@@ -253,8 +253,8 @@ func configInteractive() error {
 		return err
 	}
 
-	fmt.Printf("\n%sConfiguring ezstack for repository:%s\n", ui.Bold, ui.Reset)
-	fmt.Printf("  %s%s%s\n\n", ui.Cyan, repoPath, ui.Reset)
+	fmt.Fprintf(os.Stderr, "\n%sConfiguring ezstack for repository:%s\n", ui.Bold, ui.Reset)
+	fmt.Fprintf(os.Stderr, "  %s%s%s\n\n", ui.Cyan, repoPath, ui.Reset)
 
 	repoCfg := cfg.GetRepoConfig(repoPath)
 	currentWorktreeBaseDir := ""
