@@ -153,7 +153,7 @@ func Delete(args []string) error {
 		if len(children) > 0 && !*force {
 			ui.Error(fmt.Sprintf("Branch '%s' has child branches:", branchName))
 			for _, c := range children {
-				fmt.Printf("  - %s\n", c.Name)
+				fmt.Fprintf(os.Stderr, "  - %s\n", c.Name)
 			}
 			return fmt.Errorf("cannot delete branch with children. Use --force to delete anyway")
 		}

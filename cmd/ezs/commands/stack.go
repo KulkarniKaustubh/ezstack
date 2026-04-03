@@ -367,7 +367,7 @@ func Unstack(args []string) error {
 	if len(children) > 0 {
 		ui.Warn(fmt.Sprintf("Children will be reparented to '%s':", branch.Parent))
 		for _, c := range children {
-			fmt.Printf("  • %s\n", c.Name)
+			fmt.Fprintf(os.Stderr, "  • %s\n", c.Name)
 		}
 	}
 
