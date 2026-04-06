@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -412,5 +413,176 @@ func TestValidateBranchName(t *testing.T) {
 		if err := ValidateBranchName(name); err == nil {
 			t.Errorf("ValidateBranchName(%q) expected error, got nil", name)
 		}
+	}
+}
+
+func TestFindEzstackStash_Found(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// Create a file with uncommitted changes, then stash with ezstack message
+	filePath := filepath.Join(dir, "test.txt")
+	os.WriteFile(filePath, []byte("changes"), 0644)
+	exec.Command("git", "-C", dir, "add", "test.txt").Run()
+
+	if err := g.StashPush(); err != nil {
+		t.Fatalf("StashPush failed: %v", err)
+	}
+
+	branch, _ := g.CurrentBranch()
+	idx, found := g.FindEzstackStash(branch)
+	if !found {
+		t.Fatal("FindEzstackStash should find the stash")
+	}
+	if idx != 0 {
+		t.Errorf("expected index 0, got %d", idx)
+	}
+}
+
+func TestFindEzstackStash_NotFound(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	_, found := g.FindEzstackStash("main")
+	if found {
+		t.Error("FindEzstackStash should not find anything in empty stash list")
+	}
+}
+
+func TestFindEzstackStash_IgnoresOtherBranches(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// Create stash on current branch (main/master)
+	filePath := filepath.Join(dir, "test.txt")
+	os.WriteFile(filePath, []byte("changes"), 0644)
+	exec.Command("git", "-C", dir, "add", "test.txt").Run()
+	g.StashPush()
+
+	// Search for a different branch name — should not find it
+	_, found := g.FindEzstackStash("some-other-branch")
+	if found {
+		t.Error("FindEzstackStash should not find stash from a different branch")
+	}
+}
+
+func TestFindEzstackStash_IgnoresUserStashes(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+	branch, _ := g.CurrentBranch()
+
+	// Create a user stash (not ezstack)
+	filePath := filepath.Join(dir, "user.txt")
+	os.WriteFile(filePath, []byte("user work"), 0644)
+	exec.Command("git", "-C", dir, "add", "user.txt").Run()
+	exec.Command("git", "-C", dir, "stash", "push", "-m", "my user stash").Run()
+
+	// Should NOT find an ezstack stash
+	_, found := g.FindEzstackStash(branch)
+	if found {
+		t.Error("FindEzstackStash should not match user stashes")
+	}
+}
+
+func TestFindEzstackStash_WithMixedStashes(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+	branch, _ := g.CurrentBranch()
+
+	// Create user stash first (will be at higher index)
+	filePath := filepath.Join(dir, "user.txt")
+	os.WriteFile(filePath, []byte("user work"), 0644)
+	exec.Command("git", "-C", dir, "add", "user.txt").Run()
+	exec.Command("git", "-C", dir, "stash", "push", "-m", "my user stash").Run()
+
+	// Create ezstack stash (will be at index 0, user stash at index 1)
+	os.WriteFile(filePath, []byte("ezstack work"), 0644)
+	exec.Command("git", "-C", dir, "add", "user.txt").Run()
+	g.StashPush()
+
+	idx, found := g.FindEzstackStash(branch)
+	if !found {
+		t.Fatal("FindEzstackStash should find the ezstack stash")
+	}
+	if idx != 0 {
+		t.Errorf("expected ezstack stash at index 0, got %d", idx)
+	}
+}
+
+func TestStashPopIndex(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// Create a stash
+	filePath := filepath.Join(dir, "test.txt")
+	os.WriteFile(filePath, []byte("stashed content"), 0644)
+	exec.Command("git", "-C", dir, "add", "test.txt").Run()
+	g.StashPush()
+
+	// Pop by index
+	if err := g.StashPopIndex(0); err != nil {
+		t.Fatalf("StashPopIndex(0) failed: %v", err)
+	}
+
+	// Verify stash is gone
+	output, _ := g.run("stash", "list")
+	if output != "" {
+		t.Errorf("stash list should be empty after pop, got: %s", output)
+	}
+
+	// Verify file was restored
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		t.Fatalf("Failed to read file: %v", err)
+	}
+	if string(content) != "stashed content" {
+		t.Errorf("expected 'stashed content', got %q", string(content))
+	}
+}
+
+func TestStashPop_Targeted(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// Create user stash first
+	filePath := filepath.Join(dir, "file.txt")
+	os.WriteFile(filePath, []byte("user data"), 0644)
+	exec.Command("git", "-C", dir, "add", "file.txt").Run()
+	exec.Command("git", "-C", dir, "stash", "push", "-m", "user stash").Run()
+
+	// Create ezstack stash (now at index 0, user stash at index 1)
+	os.WriteFile(filePath, []byte("ezstack data"), 0644)
+	exec.Command("git", "-C", dir, "add", "file.txt").Run()
+	g.StashPush()
+
+	// Pop should target the ezstack stash, not the user stash
+	if err := g.StashPop(); err != nil {
+		t.Fatalf("StashPop failed: %v", err)
+	}
+
+	// Verify user stash is still there
+	output, _ := g.run("stash", "list")
+	if output == "" {
+		t.Fatal("user stash should still exist after targeted pop")
+	}
+	if !strings.Contains(output, "user stash") {
+		t.Errorf("user stash should be preserved, got: %s", output)
+	}
+	if strings.Contains(output, "ezstack-autostash") {
+		t.Error("ezstack stash should have been popped")
 	}
 }

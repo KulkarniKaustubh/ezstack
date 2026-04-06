@@ -185,6 +185,89 @@ func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) st
 	return pushed
 }
 
+// OfferPush prompts the user to push a branch (regular push, not force).
+// Used after merge operations where history is not rewritten.
+// Returns true if push was successful or not needed, false if declined.
+func OfferPush(branchName, worktreePath string) bool {
+	g := git.New(worktreePath)
+
+	needsPush, err := g.IsLocalAheadOfOrigin(branchName)
+	if err != nil {
+		ui.Warn(fmt.Sprintf("Could not check if push is needed: %v", err))
+		needsPush = true
+	}
+
+	if !needsPush {
+		return true
+	}
+
+	fmt.Fprintln(os.Stderr)
+	if ui.ConfirmTUI(fmt.Sprintf("Push %s to remote", branchName)) {
+		ui.Info("Pushing...")
+		if err := g.Push(false); err != nil {
+			// If regular push fails (e.g., diverged history from prior rebase), offer force push
+			ui.Warn(fmt.Sprintf("Push failed: %v", err))
+			if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease)", branchName)) {
+				if err := g.PushForce(); err != nil {
+					ui.Error(fmt.Sprintf("Force push failed: %v", err))
+					return false
+				}
+				ui.Success("Pushed successfully")
+				return true
+			}
+			return false
+		}
+		ui.Success("Pushed successfully")
+		return true
+	}
+
+	return false
+}
+
+// OfferPushMultiple prompts the user to push multiple branches (regular push, not force).
+// Used after merge operations where history is not rewritten.
+// Returns the number of successfully pushed branches.
+func OfferPushMultiple(branches []string, getBranchWorktree func(string) string) int {
+	if len(branches) == 0 {
+		return 0
+	}
+
+	fmt.Fprintln(os.Stderr)
+
+	pushed := 0
+	for _, branchName := range branches {
+		worktreePath := getBranchWorktree(branchName)
+		if worktreePath == "" {
+			continue
+		}
+
+		g := git.New(worktreePath)
+		needsPush, err := g.IsLocalAheadOfOrigin(branchName)
+		if err != nil || !needsPush {
+			continue
+		}
+
+		if ui.ConfirmTUI(fmt.Sprintf("Push %s to remote", branchName)) {
+			ui.Info(fmt.Sprintf("Pushing %s...", branchName))
+			if err := g.Push(false); err != nil {
+				// Fall back to force push if regular push fails
+				ui.Warn(fmt.Sprintf("Push failed: %v. Trying force push...", err))
+				if err := g.PushForce(); err != nil {
+					ui.Error(fmt.Sprintf("Force push failed for %s: %v", branchName, err))
+				} else {
+					ui.Success(fmt.Sprintf("Pushed %s successfully (force)", branchName))
+					pushed++
+				}
+			} else {
+				ui.Success(fmt.Sprintf("Pushed %s successfully", branchName))
+				pushed++
+			}
+		}
+	}
+
+	return pushed
+}
+
 // getMainWorktreePath returns the main worktree path, falling back to cwd.
 func getMainWorktreePath(g *git.Git) string {
 	mainWorktree, _ := g.GetMainWorktree()
