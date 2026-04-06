@@ -29,6 +29,7 @@ func Sync(args []string) error {
     -c, --current          Sync current branch only (auto-detect what it needs)
     -p, --parent           Rebase current branch onto its parent
     -C, --children         Rebase child branches onto current branch
+    --merge                Use git merge instead of git rebase
     --no-delete-local      Don't delete local branches after their PRs are merged
     --dry-run              Preview what would be synced without making changes
     --no-autostash         Don't stash uncommitted changes before rebase
@@ -44,6 +45,9 @@ func Sync(args []string) error {
     3. Sync only the current branch (wherever it is in the chain)
     4. Rebase current branch onto its parent
     5. Rebase child branches onto current branch
+
+    By default, sync uses git rebase. Use --merge to use git merge instead,
+    which preserves commit history and avoids force pushes.
 
     When run from main (not in a stack worktree), shows a menu to choose
     which stack to sync. You can also pass a stack hash prefix (minimum
@@ -66,6 +70,7 @@ func Sync(args []string) error {
 	currentFlag := fs.BoolP("current", "c", false, "Sync current branch only")
 	parentFlag := fs.BoolP("parent", "p", false, "Rebase onto parent")
 	childrenFlag := fs.BoolP("children", "C", false, "Rebase children")
+	mergeFlag := fs.Bool("merge", false, "Use git merge instead of git rebase")
 	noDeleteLocal := fs.Bool("no-delete-local", false, "Don't delete local branches after their PRs are merged")
 	dryRunFlag := fs.Bool("dry-run", false, "Preview what would be synced")
 	noAutostashFlag := fs.Bool("no-autostash", false, "Don't stash uncommitted changes before rebase")
@@ -99,6 +104,7 @@ func Sync(args []string) error {
 
 	dryRun := *dryRunFlag
 	autostash := !*noAutostashFlag
+	useMerge := *mergeFlag
 	jsonOutput := *jsonFlag
 
 	if jsonOutput && !dryRun {
@@ -116,7 +122,7 @@ func Sync(args []string) error {
 		if dryRun {
 			return syncDryRun(mgr, gh, []*config.Stack{targetStack}, jsonOutput)
 		}
-		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash)
+		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash, useMerge)
 	}
 
 	// Try to get current stack (may fail if on main)
@@ -127,12 +133,12 @@ func Sync(args []string) error {
 			if dryRun {
 				return syncDryRunAll(mgr, gh, jsonOutput)
 			}
-			return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash)
+			return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge)
 		}
 		if dryRun {
 			return syncDryRunAll(mgr, gh, jsonOutput)
 		}
-		return syncFromMain(mgr, gh, cwd, deleteLocal, autostash)
+		return syncFromMain(mgr, gh, cwd, deleteLocal, autostash, useMerge)
 	}
 
 	// In a stack worktree - existing behavior
@@ -150,22 +156,22 @@ func Sync(args []string) error {
 	}
 
 	if *allFlag {
-		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash)
+		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge)
 	}
 	if *stackFlag {
-		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash)
+		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash, useMerge)
 	}
 	if *currentFlag {
-		return syncCurrentBranch(mgr, gh, branch, cwd, autostash)
+		return syncCurrentBranch(mgr, gh, branch, cwd, autostash, useMerge)
 	}
 	if *parentFlag {
-		return syncOntoParent(mgr, branch)
+		return syncOntoParent(mgr, branch, useMerge)
 	}
 	if *childrenFlag {
-		return syncChildren(mgr, branch)
+		return syncChildren(mgr, branch, useMerge)
 	}
 
-	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal, autostash)
+	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal, autostash, useMerge)
 }
 
 // syncDryRun previews what sync would do for specific stacks
@@ -205,7 +211,7 @@ func syncDryRunAll(mgr *stack.Manager, gh *github.Client, jsonOutput bool) error
 }
 
 // syncFromMain shows an interactive menu when running sync from main (not in a stack worktree)
-func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, autostash bool) error {
+func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, autostash bool, useMerge bool) error {
 	stacks := mgr.ListStacks()
 	if len(stacks) == 0 {
 		ui.Info("No stacks found. Create a branch first with: ezs new <branch-name>")
@@ -227,13 +233,13 @@ func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal
 
 	switch selected {
 	case 0:
-		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash)
+		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge)
 	case 1:
 		targetStack, err := ui.SelectStack(stacks, "Select a stack to sync")
 		if err != nil {
 			return err
 		}
-		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash)
+		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash, useMerge)
 	}
 
 	return nil
@@ -312,10 +318,14 @@ func formatSyncConfirmMsg(info stack.SyncInfo) string {
 // makeSyncCallbacks creates standard sync callbacks for interactive syncing.
 // When singleStackMode is true, declining a push shows a more detailed error
 // explaining that child branches can't be synced without pushing the parent.
-func makeSyncCallbacks(singleStackMode bool, autostash bool) *stack.SyncCallbacks {
+func makeSyncCallbacks(singleStackMode bool, autostash bool, useMerge bool) *stack.SyncCallbacks {
 	beforeRebase := func(info stack.SyncInfo) bool {
 		if ui.ConfirmTUI(formatSyncConfirmMsg(info)) {
-			ui.Info("Rebasing...")
+			if useMerge {
+				ui.Info("Merging...")
+			} else {
+				ui.Info("Rebasing...")
+			}
 			return true
 		}
 		return false
@@ -323,18 +333,36 @@ func makeSyncCallbacks(singleStackMode bool, autostash bool) *stack.SyncCallback
 
 	afterRebase := func(result stack.RebaseResult, g *git.Git) bool {
 		fmt.Fprintln(os.Stderr)
-		ui.Success(fmt.Sprintf("Rebased %s", result.Branch))
+		if useMerge {
+			ui.Success(fmt.Sprintf("Merged into %s", result.Branch))
+		} else {
+			ui.Success(fmt.Sprintf("Rebased %s", result.Branch))
+		}
 
-		if !OfferForcePush(result.Branch, result.WorktreePath) {
-			if singleStackMode {
-				fmt.Fprintln(os.Stderr)
-				ui.Error("Cannot continue syncing child branches without pushing parent first.")
-				ui.Info("The rebased parent branch must be pushed before child branches can be synced.")
-				ui.Info("Run 'ezs sync' again after pushing to continue.")
-			} else {
-				ui.Warn("Skipping remaining branches in this stack (push required for children)")
+		if useMerge {
+			if !OfferPush(result.Branch, result.WorktreePath) {
+				if singleStackMode {
+					fmt.Fprintln(os.Stderr)
+					ui.Error("Cannot continue syncing child branches without pushing parent first.")
+					ui.Info("The merged parent branch must be pushed before child branches can be synced.")
+					ui.Info("Run 'ezs sync' again after pushing to continue.")
+				} else {
+					ui.Warn("Skipping remaining branches in this stack (push required for children)")
+				}
+				return false
 			}
-			return false
+		} else {
+			if !OfferForcePush(result.Branch, result.WorktreePath) {
+				if singleStackMode {
+					fmt.Fprintln(os.Stderr)
+					ui.Error("Cannot continue syncing child branches without pushing parent first.")
+					ui.Info("The rebased parent branch must be pushed before child branches can be synced.")
+					ui.Info("Run 'ezs sync' again after pushing to continue.")
+				} else {
+					ui.Warn("Skipping remaining branches in this stack (push required for children)")
+				}
+				return false
+			}
 		}
 
 		return true
@@ -344,11 +372,12 @@ func makeSyncCallbacks(singleStackMode bool, autostash bool) *stack.SyncCallback
 		BeforeRebase: beforeRebase,
 		AfterRebase:  afterRebase,
 		Autostash:    autostash,
+		UseMerge:     useMerge,
 	}
 }
 
 // printSyncSummary prints the summary after sync operations complete.
-func printSyncSummary(results []stack.RebaseResult) {
+func printSyncSummary(results []stack.RebaseResult, useMerge bool) {
 	hasConflicts := false
 	successCount := 0
 	for _, r := range results {
@@ -362,7 +391,11 @@ func printSyncSummary(results []stack.RebaseResult) {
 
 	fmt.Fprintln(os.Stderr)
 	if hasConflicts {
-		ui.Warn("Some branches have conflicts. Resolve them and run 'git rebase --continue' in each worktree.")
+		if useMerge {
+			ui.Warn("Some branches have conflicts. Resolve them and run 'git merge --continue' in each worktree.")
+		} else {
+			ui.Warn("Some branches have conflicts. Resolve them and run 'git rebase --continue' in each worktree.")
+		}
 	}
 	if successCount > 0 {
 		ui.Success(fmt.Sprintf("Synced %d branch(es)!", successCount))
@@ -479,7 +512,7 @@ func handleMergedBranchCleanup(mgr *stack.Manager, mergedBranches []stack.Merged
 }
 
 // syncSpecificStacks syncs a specific set of stacks
-func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, stacks []*config.Stack, autostash bool) error {
+func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, stacks []*config.Stack, autostash bool, useMerge bool) error {
 	ui.Info("Fetching latest changes...")
 
 	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, stacks)
@@ -513,14 +546,14 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 	if len(syncNeeded) > 0 {
 		fmt.Fprintln(os.Stderr)
 
-		callbacks := makeSyncCallbacks(len(stacks) == 1, autostash)
+		callbacks := makeSyncCallbacks(len(stacks) == 1, autostash, useMerge)
 		results, err := mgr.SyncSpecificStacks(stacks, gh, callbacks)
 		if err != nil {
 			return err
 		}
 
-		printSyncResults(results)
-		printSyncSummary(results)
+		printSyncResults(results, useMerge)
+		printSyncSummary(results, useMerge)
 	}
 
 	if len(mergedBranches) > 0 {
@@ -541,7 +574,7 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 }
 
 // syncInteractive shows an interactive menu for sync operations
-func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config.Stack, branch *config.Branch, cwd string, deleteLocal bool, autostash bool) error {
+func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config.Stack, branch *config.Branch, cwd string, deleteLocal bool, autostash bool, useMerge bool) error {
 	options := []string{}
 	optionActions := []string{}
 
@@ -599,22 +632,22 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 	action := optionActions[selected]
 	switch action {
 	case "auto":
-		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash)
+		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash, useMerge)
 	case "auto-all":
-		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash)
+		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge)
 	case "current":
-		return syncCurrentBranch(mgr, gh, branch, cwd, autostash)
+		return syncCurrentBranch(mgr, gh, branch, cwd, autostash, useMerge)
 	case "parent":
-		return syncOntoParent(mgr, branch)
+		return syncOntoParent(mgr, branch, useMerge)
 	case "children":
-		return syncChildren(mgr, branch)
+		return syncChildren(mgr, branch, useMerge)
 	}
 
 	return nil
 }
 
 // syncStacks resolves the target stacks and delegates to syncSpecificStacks.
-func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, allStacks bool, autostash bool) error {
+func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, allStacks bool, autostash bool, useMerge bool) error {
 	var stacks []*config.Stack
 	if allStacks {
 		stacks = mgr.ListStacks()
@@ -629,47 +662,72 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 		}
 		stacks = []*config.Stack{currentStack}
 	}
-	return syncSpecificStacks(mgr, gh, cwd, deleteLocal, stacks, autostash)
+	return syncSpecificStacks(mgr, gh, cwd, deleteLocal, stacks, autostash, useMerge)
 }
 
-// syncOntoParent rebases the current branch onto its parent
-func syncOntoParent(mgr *stack.Manager, branch *config.Branch) error {
+// syncOntoParent syncs the current branch onto its parent (rebase or merge)
+func syncOntoParent(mgr *stack.Manager, branch *config.Branch, useMerge bool) error {
 	stack := mgr.GetStackForBranch(branch.Name)
 	if stack != nil && branch.Parent == stack.Root {
-		ui.Info(fmt.Sprintf("Parent is %s - use 'Auto-sync' to rebase onto latest origin/%s", stack.Root, stack.Root))
+		ui.Info(fmt.Sprintf("Parent is %s - use 'Auto-sync' to sync onto latest origin/%s", stack.Root, stack.Root))
 		return nil
 	}
 
-	if !ui.ConfirmTUI(fmt.Sprintf("Rebase %s onto %s", branch.Name, branch.Parent)) {
+	var confirmMsg string
+	if useMerge {
+		confirmMsg = fmt.Sprintf("Merge %s into %s", branch.Parent, branch.Name)
+	} else {
+		confirmMsg = fmt.Sprintf("Rebase %s onto %s", branch.Name, branch.Parent)
+	}
+	if !ui.ConfirmTUI(confirmMsg) {
 		ui.Warn("Cancelled")
 		return nil
 	}
 
-	ui.Info("Rebasing onto parent...")
-	if err := mgr.RebaseOnParent(); err != nil {
+	if useMerge {
+		ui.Info("Merging parent...")
+	} else {
+		ui.Info("Rebasing onto parent...")
+	}
+	if err := mgr.RebaseOnParent(useMerge); err != nil {
 		return err
 	}
-	ui.Success("Rebase complete")
-	OfferForcePush(branch.Name, branch.WorktreePath)
+	if useMerge {
+		ui.Success("Merge complete")
+		OfferPush(branch.Name, branch.WorktreePath)
+	} else {
+		ui.Success("Rebase complete")
+		OfferForcePush(branch.Name, branch.WorktreePath)
+	}
 	return nil
 }
 
 // syncChildren rebases child branches onto the current branch
-func syncChildren(mgr *stack.Manager, branch *config.Branch) error {
+func syncChildren(mgr *stack.Manager, branch *config.Branch, useMerge bool) error {
 	localChildren := mgr.GetChildren(branch.Name)
 
 	if len(localChildren) == 0 {
-		ui.Info("No local child branches to rebase")
+		ui.Info("No local child branches to sync")
 		return nil
 	}
 
-	if !ui.ConfirmTUI(fmt.Sprintf("Rebase %d child branch(es) onto %s", len(localChildren), branch.Name)) {
+	var confirmMsg string
+	if useMerge {
+		confirmMsg = fmt.Sprintf("Merge %s into %d child branch(es)", branch.Name, len(localChildren))
+	} else {
+		confirmMsg = fmt.Sprintf("Rebase %d child branch(es) onto %s", len(localChildren), branch.Name)
+	}
+	if !ui.ConfirmTUI(confirmMsg) {
 		ui.Warn("Cancelled")
 		return nil
 	}
 
-	ui.Info("Rebasing child branches...")
-	results, err := mgr.RebaseChildren()
+	if useMerge {
+		ui.Info("Merging into child branches...")
+	} else {
+		ui.Info("Rebasing child branches...")
+	}
+	results, err := mgr.RebaseChildren(useMerge)
 	if err != nil {
 		return err
 	}
@@ -679,33 +737,51 @@ func syncChildren(mgr *stack.Manager, branch *config.Branch) error {
 	var successfulBranches []string
 	for _, r := range results {
 		if r.Success {
-			ui.Success(fmt.Sprintf("Rebased %s", r.Branch))
+			if useMerge {
+				ui.Success(fmt.Sprintf("Merged into %s", r.Branch))
+			} else {
+				ui.Success(fmt.Sprintf("Rebased %s", r.Branch))
+			}
 			successCount++
 			successfulBranches = append(successfulBranches, r.Branch)
 		} else if r.HasConflict {
 			ui.Warn(fmt.Sprintf("Conflict in %s", r.Branch))
 			hasConflicts = true
 		} else if r.Error != nil {
-			ui.Error(fmt.Sprintf("Failed to rebase %s: %v", r.Branch, r.Error))
+			ui.Error(fmt.Sprintf("Failed to sync %s: %v", r.Branch, r.Error))
 		}
 	}
 
 	fmt.Fprintln(os.Stderr)
 	if hasConflicts {
-		ui.Warn("Some branches have conflicts. Resolve them and run 'git rebase --continue' in each worktree.")
+		if useMerge {
+			ui.Warn("Some branches have conflicts. Resolve them and run 'git merge --continue' in each worktree.")
+		} else {
+			ui.Warn("Some branches have conflicts. Resolve them and run 'git rebase --continue' in each worktree.")
+		}
 	}
 	if successCount > 0 {
-		ui.Success(fmt.Sprintf("Rebased %d child branch(es)!", successCount))
+		ui.Success(fmt.Sprintf("Synced %d child branch(es)!", successCount))
 
-		// Offer to push successfully rebased branches
+		// Offer to push successfully synced branches
 		if len(successfulBranches) > 0 {
-			OfferForcePushMultiple(successfulBranches, func(branchName string) string {
-				childBranch := mgr.GetBranch(branchName)
-				if childBranch == nil {
-					return ""
-				}
-				return childBranch.WorktreePath
-			})
+			if useMerge {
+				OfferPushMultiple(successfulBranches, func(branchName string) string {
+					childBranch := mgr.GetBranch(branchName)
+					if childBranch == nil {
+						return ""
+					}
+					return childBranch.WorktreePath
+				})
+			} else {
+				OfferForcePushMultiple(successfulBranches, func(branchName string) string {
+					childBranch := mgr.GetBranch(branchName)
+					if childBranch == nil {
+						return ""
+					}
+					return childBranch.WorktreePath
+				})
+			}
 		}
 	}
 
@@ -713,7 +789,7 @@ func syncChildren(mgr *stack.Manager, branch *config.Branch) error {
 }
 
 // syncCurrentBranch syncs only the current branch (wherever it is in the chain)
-func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Branch, cwd string, autostash bool) error {
+func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Branch, cwd string, autostash bool, useMerge bool) error {
 	ui.Info("Fetching latest changes...")
 	g := git.New(cwd)
 	if err := g.Fetch(); err != nil {
@@ -727,7 +803,11 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 	}
 
 	if syncInfo.MergedParent != "" {
-		ui.Info(fmt.Sprintf("Parent %s was merged to %s. Will rebase onto %s.", syncInfo.MergedParent, syncInfo.StackRoot, syncInfo.StackRoot))
+		if useMerge {
+			ui.Info(fmt.Sprintf("Parent %s was merged to %s. Will merge %s.", syncInfo.MergedParent, syncInfo.StackRoot, syncInfo.StackRoot))
+		} else {
+			ui.Info(fmt.Sprintf("Parent %s was merged to %s. Will rebase onto %s.", syncInfo.MergedParent, syncInfo.StackRoot, syncInfo.StackRoot))
+		}
 	} else if syncInfo.BehindParent != "" {
 		ui.Info(fmt.Sprintf("Current branch is %d commits behind %s.", syncInfo.BehindBy, syncInfo.BehindParent))
 	} else if syncInfo.BehindBy > 0 {
@@ -739,10 +819,15 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 		return nil
 	}
 
-	// Autostash: stash uncommitted changes before rebase
+	// Autostash: stash uncommitted changes before sync
 	didStash := false
 	if autostash {
-		if hasChanges, _ := g.HasChanges(); hasChanges {
+		// Check for orphaned ezstack stash from a previous conflicted sync
+		if _, found := g.FindEzstackStash(branch.Name); found {
+			ui.Warn(fmt.Sprintf("Existing autostash found for %s (from a previous sync)", branch.Name))
+			ui.Info("Skipping autostash. Run 'git stash pop' in the worktree to restore, or 'git stash drop' to discard.")
+			// Don't create another stash on top — the old one already has the user's changes
+		} else if hasChanges, _ := g.HasChanges(); hasChanges {
 			if err := g.StashPush(); err == nil {
 				didStash = true
 				ui.Info("Stashed uncommitted changes")
@@ -751,7 +836,7 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 	}
 
 	ui.Info("Syncing current branch...")
-	result, err := mgr.SyncBranch(branch.Name, gh)
+	result, err := mgr.SyncBranch(branch.Name, gh, useMerge)
 	if err != nil {
 		if didStash {
 			g.StashPop()
@@ -776,15 +861,23 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 		} else {
 			ui.Success(fmt.Sprintf("Synced %s", result.Branch))
 		}
-		OfferForcePush(result.Branch, result.WorktreePath)
+		if useMerge {
+			OfferPush(result.Branch, result.WorktreePath)
+		} else {
+			OfferForcePush(result.Branch, result.WorktreePath)
+		}
 	} else if result.HasConflict {
 		ui.Warn(fmt.Sprintf("Conflict in %s", result.Branch))
 		if result.WorktreePath != "" {
 			fmt.Fprintf(os.Stderr, "%sResolve in:%s %s\n", ui.Gray, ui.Reset, result.WorktreePath)
 		}
-		fmt.Fprintf(os.Stderr, "%sTo resolve: fix conflicts, then run 'git rebase --continue'%s\n", ui.Gray, ui.Reset)
+		if useMerge {
+			fmt.Fprintf(os.Stderr, "%sTo resolve: fix conflicts, then run 'git merge --continue'%s\n", ui.Gray, ui.Reset)
+		} else {
+			fmt.Fprintf(os.Stderr, "%sTo resolve: fix conflicts, then run 'git rebase --continue'%s\n", ui.Gray, ui.Reset)
+		}
 		if didStash {
-			ui.Warn("Uncommitted changes were stashed. Run 'git stash pop' after resolving conflicts.")
+			ui.Warn("Uncommitted changes were stashed. They will be restored on next successful sync, or run 'git stash pop' manually.")
 		}
 	} else if result.Error != nil {
 		ui.Error(fmt.Sprintf("Failed to sync %s: %v", result.Branch, result.Error))
@@ -794,7 +887,7 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 }
 
 // printSyncResults prints the results of a sync operation
-func printSyncResults(results []stack.RebaseResult) {
+func printSyncResults(results []stack.RebaseResult, useMerge bool) {
 	var conflicts []stack.RebaseResult
 	for _, r := range results {
 		if r.Success {
@@ -823,7 +916,11 @@ func printSyncResults(results []stack.RebaseResult) {
 			}
 		}
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "%sTo resolve: cd to each worktree, fix conflicts, then run 'git rebase --continue'%s\n", ui.Gray, ui.Reset)
+		if useMerge {
+			fmt.Fprintf(os.Stderr, "%sTo resolve: cd to each worktree, fix conflicts, then run 'git merge --continue'%s\n", ui.Gray, ui.Reset)
+		} else {
+			fmt.Fprintf(os.Stderr, "%sTo resolve: cd to each worktree, fix conflicts, then run 'git rebase --continue'%s\n", ui.Gray, ui.Reset)
+		}
 	}
 }
 

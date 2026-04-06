@@ -429,15 +429,82 @@ func (g *Git) Rebase(target string) error {
 	return g.RunInteractive("rebase", target)
 }
 
+// MergeNonInteractive merges target into the current branch without interactive mode
+// Returns structured result for conflict handling, matching RebaseResult for compatibility
+func (g *Git) MergeNonInteractive(target string) RebaseResult {
+	spinner := ui.NewDelayedSpinner(fmt.Sprintf("Merging %s...", target))
+	spinner.Start()
+	defer spinner.Stop()
+
+	cmd := exec.Command("git", "merge", target, "--no-edit")
+	cmd.Dir = g.RepoDir
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	err := cmd.Run()
+	if err != nil {
+		stderrStr := stderr.String()
+		if strings.Contains(stderrStr, "CONFLICT") ||
+			strings.Contains(stderrStr, "Automatic merge failed") ||
+			strings.Contains(stderrStr, "fix conflicts") {
+			return RebaseResult{HasConflict: true, Error: fmt.Errorf("merge conflict")}
+		}
+		return RebaseResult{Error: fmt.Errorf("merge failed: %s", stderrStr)}
+	}
+	return RebaseResult{Success: true}
+}
+
+// Merge merges target into the current branch interactively
+func (g *Git) Merge(target string) error {
+	return g.RunInteractive("merge", target)
+}
+
 // StashPush stashes all changes including untracked files
 func (g *Git) StashPush() error {
 	_, err := g.run("stash", "push", "-u", "-m", "ezstack-autostash")
 	return err
 }
 
-// StashPop pops the top stash entry
+// StashPop pops the ezstack autostash entry for the current branch.
+// Uses targeted lookup to avoid popping user stashes or stashes from other branches.
+// Returns nil if no ezstack stash is found (nothing to pop).
 func (g *Git) StashPop() error {
-	_, err := g.run("stash", "pop")
+	branch, _ := g.CurrentBranch()
+	if branch == "" {
+		// Fallback: can't determine branch (e.g., detached HEAD during rebase)
+		// Use blind pop — same as previous behavior
+		_, err := g.run("stash", "pop")
+		return err
+	}
+	idx, found := g.FindEzstackStash(branch)
+	if !found {
+		return nil // no ezstack stash to pop
+	}
+	return g.StashPopIndex(idx)
+}
+
+// FindEzstackStash finds the stash index of an ezstack autostash entry for a specific branch.
+// Git stash entries look like: "stash@{N}: On <branch>: ezstack-autostash"
+// Returns (index, true) if found, (-1, false) if not found.
+// Matches both branch name and message to avoid touching stashes from other worktrees.
+func (g *Git) FindEzstackStash(branchName string) (int, bool) {
+	output, err := g.run("stash", "list")
+	if err != nil || output == "" {
+		return -1, false
+	}
+
+	needle := "On " + branchName + ": ezstack-autostash"
+	for i, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, needle) {
+			return i, true
+		}
+	}
+	return -1, false
+}
+
+// StashPopIndex pops a specific stash entry by index.
+func (g *Git) StashPopIndex(index int) error {
+	_, err := g.run("stash", "pop", fmt.Sprintf("stash@{%d}", index))
 	return err
 }
 

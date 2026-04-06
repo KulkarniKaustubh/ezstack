@@ -98,6 +98,7 @@ type SyncCallbacks struct {
 	BeforeRebase BeforeRebaseCallback
 	AfterRebase  AfterRebaseCallback
 	Autostash    bool // Stash uncommitted changes before rebase, pop after
+	UseMerge     bool // Use git merge instead of git rebase
 }
 
 // getParentRef returns the git ref for a parent branch.
@@ -316,6 +317,28 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 
 	var results []RebaseResult
 
+	useMerge := callbacks != nil && callbacks.UseMerge
+
+	// doSync performs a rebase or merge depending on the useMerge flag.
+	// For rebase, it uses RebaseNonInteractive(target).
+	// For merge, it uses MergeNonInteractive(target).
+	doSync := func(g *git.Git, target string) git.RebaseResult {
+		if useMerge {
+			return g.MergeNonInteractive(target)
+		}
+		return g.RebaseNonInteractive(target)
+	}
+
+	// doSyncOnto performs a rebase --onto or merge depending on the useMerge flag.
+	// For rebase, it uses RebaseOntoNonInteractive(newBase, oldBase).
+	// For merge, the oldBase is irrelevant — just merge newBase.
+	doSyncOnto := func(g *git.Git, newBase, oldBase string) git.RebaseResult {
+		if useMerge {
+			return g.MergeNonInteractive(newBase)
+		}
+		return g.RebaseOntoNonInteractive(newBase, oldBase)
+	}
+
 	// saveState persists cache and config; logs warnings on failure.
 	saveState := func(sc *syncCache) {
 		if err := sc.save(); err != nil {
@@ -386,7 +409,12 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			// Autostash: stash uncommitted changes before rebase
 			didStash := false
 			if callbacks != nil && callbacks.Autostash {
-				if hasChanges, _ := g.HasChanges(); hasChanges {
+				// Check for orphaned ezstack stash from a previous conflicted sync
+				if _, found := g.FindEzstackStash(branch.Name); found {
+					fmt.Fprintf(os.Stderr, "  Note: existing autostash found for %s (from a previous sync)\n", branch.Name)
+					fmt.Fprintf(os.Stderr, "  Skipping autostash. Run 'git stash pop' in the worktree to restore, or 'git stash drop' to discard.\n")
+					// Don't create another stash on top — the old one already has the user's changes
+				} else if hasChanges, _ := g.HasChanges(); hasChanges {
 					if err := g.StashPush(); err == nil {
 						didStash = true
 					}
@@ -405,7 +433,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			conflictMsg := func() string {
 				msg := fmt.Sprintf("resolve conflicts in: %s", branch.WorktreePath)
 				if didStash {
-					msg += " (uncommitted changes stashed — run 'git stash pop' after resolving)"
+					msg += " (uncommitted changes stashed — will be restored on next successful sync, or run 'git stash pop' manually)"
 				}
 				return msg
 			}
@@ -433,8 +461,8 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					}
 				}
 
-				rebaseResult := g.RebaseNonInteractive("origin/" + stack.Root)
-				if rebaseResult.HasConflict {
+				syncResult := doSync(g, "origin/"+stack.Root)
+				if syncResult.HasConflict {
 					result.HasConflict = true
 					result.Error = fmt.Errorf("%s", conflictMsg())
 					results = append(results, result)
@@ -443,9 +471,9 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					}
 					stackHasConflict = true
 					continue
-				} else if rebaseResult.Error != nil {
+				} else if syncResult.Error != nil {
 					popStash()
-					result.Error = rebaseResult.Error
+					result.Error = syncResult.Error
 					results = append(results, result)
 					if !allStacks {
 						return results, nil
@@ -541,8 +569,8 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					rebaseTarget = "origin/" + stack.Root
 				}
 
-				rebaseResult := g.RebaseOntoNonInteractive(rebaseTarget, mergeBase)
-				if rebaseResult.HasConflict {
+				syncResult := doSyncOnto(g, rebaseTarget, mergeBase)
+				if syncResult.HasConflict {
 					result.HasConflict = true
 					result.Error = fmt.Errorf("%s", conflictMsg())
 					results = append(results, result)
@@ -552,9 +580,9 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					}
 					stackHasConflict = true
 					continue
-				} else if rebaseResult.Error != nil {
+				} else if syncResult.Error != nil {
 					popStash()
-					result.Error = rebaseResult.Error
+					result.Error = syncResult.Error
 					results = append(results, result)
 					saveState(sc)
 					if !allStacks {
@@ -632,8 +660,8 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					continue
 				}
 
-				rebaseResult := g.RebaseOntoNonInteractive(parentRef, oldParentHead)
-				if rebaseResult.HasConflict {
+				syncResult := doSyncOnto(g, parentRef, oldParentHead)
+				if syncResult.HasConflict {
 					result.HasConflict = true
 					result.Error = fmt.Errorf("%s", conflictMsg())
 					results = append(results, result)
@@ -642,9 +670,9 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					}
 					stackHasConflict = true
 					continue
-				} else if rebaseResult.Error != nil {
+				} else if syncResult.Error != nil {
 					popStash()
-					result.Error = rebaseResult.Error
+					result.Error = syncResult.Error
 					results = append(results, result)
 					if !allStacks {
 						return results, nil
@@ -667,9 +695,9 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				continue
 			}
 
-			// Fallback: no old HEAD recorded, try simple rebase
-			rebaseResult := g.RebaseNonInteractive(parentRef)
-			if rebaseResult.HasConflict {
+			// Fallback: no old HEAD recorded, try simple sync
+			syncResult := doSync(g, parentRef)
+			if syncResult.HasConflict {
 				result.HasConflict = true
 				result.Error = fmt.Errorf("%s", conflictMsg())
 				results = append(results, result)
@@ -678,9 +706,9 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				}
 				stackHasConflict = true
 				continue
-			} else if rebaseResult.Error != nil {
+			} else if syncResult.Error != nil {
 				popStash()
-				result.Error = rebaseResult.Error
+				result.Error = syncResult.Error
 				results = append(results, result)
 				if !allStacks {
 					return results, nil
@@ -718,9 +746,11 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 
 // SyncBranch syncs a specific branch, handling all cases:
 // - Branch is behind origin/main (parent is main)
-// - Parent branch was merged (rebase --onto main)
-// - Branch is behind its parent (rebase onto parent)
-func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResult, error) {
+// - Parent branch was merged (rebase --onto main or merge)
+// - Branch is behind its parent (rebase onto parent or merge)
+// When useMerge is true, git merge is used instead of git rebase.
+func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...bool) (*RebaseResult, error) {
+	merge := len(useMerge) > 0 && useMerge[0]
 	branch := m.GetBranch(branchName)
 	if branch == nil {
 		return nil, fmt.Errorf("branch '%s' not found", branchName)
@@ -744,13 +774,18 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 		result.BehindBy = behindBy
 		result.SyncedParent = "origin/" + stack.Root
 
-		rebaseResult := g.RebaseNonInteractive("origin/" + stack.Root)
-		if rebaseResult.HasConflict {
+		var syncResult git.RebaseResult
+		if merge {
+			syncResult = g.MergeNonInteractive("origin/" + stack.Root)
+		} else {
+			syncResult = g.RebaseNonInteractive("origin/" + stack.Root)
+		}
+		if syncResult.HasConflict {
 			result.HasConflict = true
 			result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 			return result, nil
-		} else if rebaseResult.Error != nil {
-			result.Error = rebaseResult.Error
+		} else if syncResult.Error != nil {
+			result.Error = syncResult.Error
 			return result, nil
 		}
 		result.Success = true
@@ -804,12 +839,17 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 			mergeBase = oldParentRef
 		}
 
-		rebaseResult := g.RebaseOntoNonInteractive("origin/"+stack.Root, mergeBase)
-		if rebaseResult.HasConflict {
+		var syncResult git.RebaseResult
+		if merge {
+			syncResult = g.MergeNonInteractive("origin/" + stack.Root)
+		} else {
+			syncResult = g.RebaseOntoNonInteractive("origin/"+stack.Root, mergeBase)
+		}
+		if syncResult.HasConflict {
 			result.HasConflict = true
 			result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
-		} else if rebaseResult.Error != nil {
-			result.Error = rebaseResult.Error
+		} else if syncResult.Error != nil {
+			result.Error = syncResult.Error
 		} else {
 			result.Success = true
 		}
@@ -848,22 +888,30 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client) (*RebaseResul
 		return result, nil
 	}
 
-	// Has commits - rebase normally, let conflicts bubble up
-	rebaseResult := g.RebaseNonInteractive(parentRef)
-	if rebaseResult.HasConflict {
+	// Has commits - sync normally, let conflicts bubble up
+	var syncResult git.RebaseResult
+	if merge {
+		syncResult = g.MergeNonInteractive(parentRef)
+	} else {
+		syncResult = g.RebaseNonInteractive(parentRef)
+	}
+	if syncResult.HasConflict {
 		result.HasConflict = true
 		result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
 		return result, nil
-	} else if rebaseResult.Error != nil {
-		result.Error = rebaseResult.Error
+	} else if syncResult.Error != nil {
+		result.Error = syncResult.Error
 		return result, nil
 	}
 	result.Success = true
 	return result, nil
 }
 
-// RebaseOnParent rebases the current branch onto its updated parent
-func (m *Manager) RebaseOnParent() error {
+// RebaseOnParent syncs the current branch onto its updated parent.
+// When useMerge is true, git merge is used instead of git rebase.
+func (m *Manager) RebaseOnParent(useMerge ...bool) error {
+	merge := len(useMerge) > 0 && useMerge[0]
+
 	currentStack, currentBranch, err := m.GetCurrentStack()
 	if err != nil {
 		return err
@@ -875,13 +923,20 @@ func (m *Manager) RebaseOnParent() error {
 		parentRef = "origin/" + currentBranch.Parent
 	}
 
+	if merge {
+		fmt.Fprintf(os.Stderr, "Merging %s into %s\n", parentRef, currentBranch.Name)
+		return m.git.Merge(parentRef)
+	}
 	fmt.Fprintf(os.Stderr, "Rebasing %s onto %s\n", currentBranch.Name, parentRef)
 	return m.git.Rebase(parentRef)
 }
 
-// RebaseChildren rebases all child branches after updating the current branch
-// Returns results for each child branch processed
-func (m *Manager) RebaseChildren() ([]RebaseResult, error) {
+// RebaseChildren syncs all child branches after updating the current branch.
+// When useMerge is true, git merge is used instead of git rebase.
+// Returns results for each child branch processed.
+func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
+	merge := len(useMerge) > 0 && useMerge[0]
+
 	_, currentBranch, err := m.GetCurrentStack()
 	if err != nil {
 		return nil, err
@@ -913,16 +968,21 @@ func (m *Manager) RebaseChildren() ([]RebaseResult, error) {
 			result.Success = true
 			results = append(results, result)
 		} else {
-			// Has commits - rebase normally, let conflicts bubble up
-			rebaseResult := g.RebaseNonInteractive(currentBranch.Name)
-			if rebaseResult.HasConflict {
+			// Has commits - sync normally, let conflicts bubble up
+			var syncResult git.RebaseResult
+			if merge {
+				syncResult = g.MergeNonInteractive(currentBranch.Name)
+			} else {
+				syncResult = g.RebaseNonInteractive(currentBranch.Name)
+			}
+			if syncResult.HasConflict {
 				result.HasConflict = true
 				result.Error = fmt.Errorf("resolve conflicts in: %s", child.WorktreePath)
 				results = append(results, result)
 				// Stop immediately on conflict - user must resolve before continuing
 				return results, nil
-			} else if rebaseResult.Error != nil {
-				result.Error = rebaseResult.Error
+			} else if syncResult.Error != nil {
+				result.Error = syncResult.Error
 				results = append(results, result)
 				// Stop on error as well
 				return results, nil
@@ -931,14 +991,14 @@ func (m *Manager) RebaseChildren() ([]RebaseResult, error) {
 			results = append(results, result)
 		}
 
-		// Recursively rebase this child's children
+		// Recursively sync this child's children
 		childMgr, err := NewManager(child.WorktreePath)
 		if err != nil {
 			continue
 		}
-		childResults, err := childMgr.RebaseChildren()
+		childResults, err := childMgr.RebaseChildren(merge)
 		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: failed to rebase children of %s: %v\n", child.Name, err)
+			fmt.Fprintf(os.Stderr, "  Warning: failed to sync children of %s: %v\n", child.Name, err)
 		}
 		results = append(results, childResults...)
 	}
