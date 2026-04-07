@@ -40,6 +40,7 @@ func EmitCd(path string) {
 func savePRToCache(cacheDir, branchName string, prNum int, prURL string) {
 	cache, err := config.LoadCacheConfig(cacheDir)
 	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to load cache for PR save: %v\n", err)
 		return
 	}
 	bc := cache.GetBranchCache(branchName)
@@ -49,7 +50,9 @@ func savePRToCache(cacheDir, branchName string, prNum int, prURL string) {
 	bc.PRNumber = prNum
 	bc.PRUrl = prURL
 	cache.SetBranchCache(branchName, bc)
-	cache.Save(cacheDir)
+	if err := cache.Save(cacheDir); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save PR cache: %v\n", err)
+	}
 }
 
 // updateStackDescriptions updates PR descriptions for all PRs in the given stack.
