@@ -7,37 +7,37 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
-	"github.com/spf13/pflag"
 )
 
 // Commit wraps git commit and auto-syncs child branches
 func Commit(args []string) error {
-	fs := pflag.NewFlagSet("commit", pflag.ContinueOnError)
-	fs.Usage = func() {
+	// Only parse --help ourselves; pass everything else to git
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		fmt.Fprintf(os.Stderr, `%sCommit changes and auto-sync child branches%s
 
 %sUSAGE%s
-    ezs commit [git-commit-options]
+    ezs commit [git-commit-options] [--merge|--rebase]
 
 %sDESCRIPTION%s
-    Wraps 'git commit' and then automatically rebases any child branches
+    Wraps 'git commit' and then automatically syncs any child branches
     in the stack onto the updated branch. All arguments are passed through
     to git commit.
+
+    Uses the configured sync_strategy (default: rebase). Override with
+    --merge or --rebase.
 
 %sEXAMPLES%s
     ezs commit -m "Add feature"
     ezs commit -a -m "Fix bug"
     ezs commit --amend
+    ezs commit -m "Fix" --merge
 
 %sOPTIONS%s
+    --merge       Use git merge to sync children (overrides config)
+    --rebase      Use git rebase to sync children (overrides config)
     -h, --help    Show this help message
     All other flags are passed directly to git commit.
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
-	}
-
-	// Only parse --help ourselves; pass everything else to git
-	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
-		fs.Usage()
 		return nil
 	}
 
@@ -46,16 +46,18 @@ func Commit(args []string) error {
 
 // Amend wraps git commit --amend and auto-syncs child branches
 func Amend(args []string) error {
-	fs := pflag.NewFlagSet("amend", pflag.ContinueOnError)
-	fs.Usage = func() {
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		fmt.Fprintf(os.Stderr, `%sAmend the last commit and auto-sync child branches%s
 
 %sUSAGE%s
-    ezs amend [git-commit-options]
+    ezs amend [git-commit-options] [--merge|--rebase]
 
 %sDESCRIPTION%s
-    Wraps 'git commit --amend' and then automatically rebases any child
+    Wraps 'git commit --amend' and then automatically syncs any child
     branches in the stack onto the updated branch.
+
+    Uses the configured sync_strategy (default: rebase). Override with
+    --merge or --rebase.
 
 %sEXAMPLES%s
     ezs amend                        # amend with editor
@@ -63,13 +65,11 @@ func Amend(args []string) error {
     ezs amend -m "New message"       # amend with new message
 
 %sOPTIONS%s
+    --merge       Use git merge to sync children (overrides config)
+    --rebase      Use git rebase to sync children (overrides config)
     -h, --help    Show this help message
     All other flags are passed directly to git commit --amend.
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
-	}
-
-	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
-		fs.Usage()
 		return nil
 	}
 
@@ -85,12 +85,29 @@ func commitInternal(args []string, amend bool) error {
 
 	g := git.New(cwd)
 
+	// Extract --merge/--rebase flags before passing args to git
+	var mergeOverride, rebaseOverride bool
+	var gitPassthroughArgs []string
+	for _, arg := range args {
+		switch arg {
+		case "--merge":
+			mergeOverride = true
+		case "--rebase":
+			rebaseOverride = true
+		default:
+			gitPassthroughArgs = append(gitPassthroughArgs, arg)
+		}
+	}
+	if mergeOverride && rebaseOverride {
+		return fmt.Errorf("cannot use both --merge and --rebase")
+	}
+
 	// Build git commit args
 	gitArgs := []string{"commit"}
 	if amend {
 		gitArgs = append(gitArgs, "--amend")
 	}
-	gitArgs = append(gitArgs, args...)
+	gitArgs = append(gitArgs, gitPassthroughArgs...)
 
 	// Run git commit interactively so the user can use their editor
 	if err := g.RunInteractive(gitArgs...); err != nil {
@@ -156,17 +173,32 @@ func commitInternal(args []string, amend bool) error {
 		return nil
 	}
 
+	// Resolve merge vs rebase: flags override config
+	useMerge := false
+	if mergeOverride {
+		useMerge = true
+	} else if rebaseOverride {
+		useMerge = false
+	} else {
+		useMerge = mgr.GetConfig().GetSyncStrategy(mgr.GetRepoDir()) == "merge"
+	}
+
 	ui.Info(fmt.Sprintf("Syncing %d child branch(es)...", len(children)))
-	results, err := mgr.RebaseChildren()
+	results, err := mgr.RebaseChildren(useMerge)
 	if err != nil {
 		ui.Warn(fmt.Sprintf("Failed to sync children: %v", err))
 		return nil
 	}
 
+	continueCmd := "git rebase --continue"
+	if useMerge {
+		continueCmd = "git merge --continue"
+	}
+
 	for _, result := range results {
 		if result.HasConflict {
 			ui.Warn(fmt.Sprintf("Conflict in '%s': resolve in %s", result.Branch, result.WorktreePath))
-			ui.Info("To resolve: cd to the worktree, fix conflicts, run 'git add .' then 'git rebase --continue'")
+			ui.Info(fmt.Sprintf("To resolve: cd to the worktree, fix conflicts, run 'git add .' then '%s'", continueCmd))
 			return nil
 		} else if result.Error != nil {
 			ui.Warn(fmt.Sprintf("Failed to sync '%s': %v", result.Branch, result.Error))

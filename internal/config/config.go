@@ -57,6 +57,7 @@ type RepoConfig struct {
 	CdAfterNew          *bool  `json:"cd_after_new,omitempty"`
 	UseWorktrees        *bool  `json:"use_worktrees,omitempty"`
 	AutoDraftWipCommits *bool  `json:"auto_draft_wip_commits,omitempty"`
+	SyncStrategy        string `json:"sync_strategy,omitempty"` // "rebase" (default) or "merge"
 }
 
 // GetRepoConfig returns the configuration for a specific repo path
@@ -109,6 +110,14 @@ func (c *Config) GetUseWorktrees(repoPath string) bool {
 		return *repoCfg.UseWorktrees
 	}
 	return true
+}
+
+// GetSyncStrategy returns the sync strategy for a repo ("rebase" or "merge", default "rebase")
+func (c *Config) GetSyncStrategy(repoPath string) string {
+	if repoCfg := c.GetRepoConfig(repoPath); repoCfg != nil && repoCfg.SyncStrategy != "" {
+		return repoCfg.SyncStrategy
+	}
+	return "rebase"
 }
 
 // BranchTree is a recursive map representing the stack hierarchy

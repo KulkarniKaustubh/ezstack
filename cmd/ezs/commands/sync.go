@@ -30,6 +30,7 @@ func Sync(args []string) error {
     -p, --parent           Rebase current branch onto its parent
     -C, --children         Rebase child branches onto current branch
     --merge                Use git merge instead of git rebase
+    --rebase               Use git rebase (overrides sync_strategy config)
     --no-delete-local      Don't delete local branches after their PRs are merged
     --dry-run              Preview what would be synced without making changes
     --no-autostash         Don't stash uncommitted changes before rebase
@@ -47,7 +48,9 @@ func Sync(args []string) error {
     5. Rebase child branches onto current branch
 
     By default, sync uses git rebase. Use --merge to use git merge instead,
-    which preserves commit history and avoids force pushes.
+    which preserves commit history and avoids force pushes. The default
+    strategy can be set per-repo with: ezs config set sync_strategy merge
+    Use --rebase or --merge to override the configured strategy.
 
     When run from main (not in a stack worktree), shows a menu to choose
     which stack to sync. You can also pass a stack hash prefix (minimum
@@ -71,6 +74,7 @@ func Sync(args []string) error {
 	parentFlag := fs.BoolP("parent", "p", false, "Rebase onto parent")
 	childrenFlag := fs.BoolP("children", "C", false, "Rebase children")
 	mergeFlag := fs.Bool("merge", false, "Use git merge instead of git rebase")
+	rebaseFlag := fs.Bool("rebase", false, "Use git rebase (overrides config)")
 	noDeleteLocal := fs.Bool("no-delete-local", false, "Don't delete local branches after their PRs are merged")
 	dryRunFlag := fs.Bool("dry-run", false, "Preview what would be synced")
 	noAutostashFlag := fs.Bool("no-autostash", false, "Don't stash uncommitted changes before rebase")
@@ -104,8 +108,20 @@ func Sync(args []string) error {
 
 	dryRun := *dryRunFlag
 	autostash := !*noAutostashFlag
-	useMerge := *mergeFlag
 	jsonOutput := *jsonFlag
+
+	// Resolve merge vs rebase: flags override config
+	useMerge := false
+	if *mergeFlag && *rebaseFlag {
+		return fmt.Errorf("cannot use both --merge and --rebase")
+	} else if *mergeFlag {
+		useMerge = true
+	} else if *rebaseFlag {
+		useMerge = false
+	} else {
+		// No flag specified — use config
+		useMerge = mgr.GetConfig().GetSyncStrategy(mgr.GetRepoDir()) == "merge"
+	}
 
 	if jsonOutput && !dryRun {
 		return fmt.Errorf("--json requires --dry-run")
