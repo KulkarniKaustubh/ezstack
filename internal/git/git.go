@@ -312,7 +312,7 @@ func (g *Git) ListLocalBranches() ([]string, error) {
 
 // BranchExists checks if a local branch exists
 func (g *Git) BranchExists(branch string) bool {
-	_, err := g.run("rev-parse", "--verify", branch)
+	_, err := g.run("rev-parse", "--verify", "refs/heads/"+branch)
 	return err == nil
 }
 
