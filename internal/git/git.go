@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
@@ -496,9 +497,23 @@ func (g *Git) FindEzstackStash(branchName string) (int, bool) {
 	}
 
 	needle := "On " + branchName + ": ezstack-autostash"
-	for i, line := range strings.Split(output, "\n") {
+	for _, line := range strings.Split(output, "\n") {
 		if strings.Contains(line, needle) {
-			return i, true
+			// Parse stash index from "stash@{N}: ..."
+			start := strings.Index(line, "stash@{")
+			if start == -1 {
+				continue
+			}
+			end := strings.Index(line[start:], "}")
+			if end == -1 {
+				continue
+			}
+			idxStr := line[start+7 : start+end]
+			idx, err := strconv.Atoi(idxStr)
+			if err != nil {
+				continue
+			}
+			return idx, true
 		}
 	}
 	return -1, false

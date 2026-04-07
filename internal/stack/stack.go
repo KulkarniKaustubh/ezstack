@@ -114,7 +114,9 @@ func (m *Manager) Reconcile() {
 	// Detect renames (orphaned + untracked at same worktree path)
 	renames := m.DetectRenamedBranches(orphaned, untracked)
 	if len(renames) > 0 {
-		m.ApplyBranchRenames(renames)
+		if err := m.ApplyBranchRenames(renames); err != nil {
+			return
+		}
 
 		// Filter renamed branches out of orphaned list
 		renamedOld := make(map[string]bool)
@@ -652,6 +654,9 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 
 	// Handle stack reorganization using tree methods — BEFORE rebase
 	oldStack := m.stackConfig.Stacks[oldStackKey]
+	if oldStack == nil {
+		return nil, fmt.Errorf("branch '%s' not found in any stack", branch.Name)
+	}
 
 	if oldStackKey != newParentStackKey && newParentStackKey != "" {
 		if err := m.moveBranchToStack(branch.Name, oldStackKey, newParentStackKey, newParentName); err != nil {
@@ -861,7 +866,9 @@ func (m *Manager) moveBranchToStack(branchName, fromStackName, toStackName, newP
 		delete(m.stackConfig.Stacks, fromStackName)
 	}
 
-	toStack.AddSubtree(branchName, subtree, newParentName)
+	if !toStack.AddSubtree(branchName, subtree, newParentName) {
+		return fmt.Errorf("parent '%s' not found in target stack", newParentName)
+	}
 	toStack.PopulateBranchesWithCache(cache)
 
 	return nil
@@ -1236,13 +1243,13 @@ func (m *Manager) SetStackName(stackHash, name string) error {
 }
 
 // DeclineStackDelete marks a stack so cleanup prompts are not repeated.
-func (m *Manager) DeclineStackDelete(stackHash string) {
+func (m *Manager) DeclineStackDelete(stackHash string) error {
 	stack := m.stackConfig.Stacks[stackHash]
 	if stack == nil {
-		return
+		return nil
 	}
 	stack.DeleteDeclined = true
-	m.stackConfig.Save(m.repoDir)
+	return m.stackConfig.Save(m.repoDir)
 }
 
 // GetStackByHashExact returns a stack by its exact hash (no prefix matching).
