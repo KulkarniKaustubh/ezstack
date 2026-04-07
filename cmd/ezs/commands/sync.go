@@ -472,10 +472,14 @@ func handleMergedBranchCleanup(mgr *stack.Manager, mergedBranches []stack.Merged
 		}
 		fmt.Fprintln(os.Stderr)
 		if ui.ConfirmTUI(fmt.Sprintf("Delete all worktrees, branches, and tracking for stack '%s'", s.DisplayName())) {
-			if err := mgr.DeleteStack(hash); err != nil {
+			needsCd, err := mgr.DeleteStack(hash)
+			if err != nil {
 				ui.Warn(fmt.Sprintf("Failed to clean up stack '%s': %v", s.DisplayName(), err))
 			} else {
 				ui.Success(fmt.Sprintf("Removed fully merged stack '%s'", s.DisplayName()))
+				if needsCd {
+					EmitCd(mgr.GetRepoDir())
+				}
 			}
 		} else {
 			mgr.DeclineStackDelete(hash)
@@ -979,17 +983,21 @@ func cleanupFullyMergedStacks(mgr *stack.Manager, stacks []*config.Stack) {
 			// Some worktrees or git branches still exist locally
 			ui.Info(fmt.Sprintf("Stack '%s' is fully merged but has remaining local branches/worktrees", displayName))
 			if ui.ConfirmTUI(fmt.Sprintf("Delete all remaining worktrees and branches for stack '%s'", displayName)) {
-				if err := mgr.DeleteStack(info.StackHash); err != nil {
+				needsCd, err := mgr.DeleteStack(info.StackHash)
+				if err != nil {
 					ui.Warn(fmt.Sprintf("Failed to delete stack '%s': %v", displayName, err))
 				} else {
 					ui.Success(fmt.Sprintf("Removed fully merged stack '%s'", displayName))
+					if needsCd {
+						EmitCd(mgr.GetRepoDir())
+					}
 				}
 			} else {
 				mgr.DeclineStackDelete(info.StackHash)
 			}
 		} else {
 			// Everything already cleaned up - remove stack from config automatically
-			if err := mgr.DeleteStack(info.StackHash); err != nil {
+			if _, err := mgr.DeleteStack(info.StackHash); err != nil {
 				ui.Warn(fmt.Sprintf("Failed to remove stack '%s' from config: %v", displayName, err))
 			} else {
 				ui.Success(fmt.Sprintf("Removed fully merged stack '%s' (all branches already cleaned up)", displayName))

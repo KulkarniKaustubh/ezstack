@@ -242,7 +242,7 @@ func deleteStack(mgr *stack.Manager, hashPrefix string) error {
 		return fmt.Errorf("failed to change to repo root: %w", err)
 	}
 
-	if err := mgr.DeleteStack(s.Hash); err != nil {
+	if _, err := mgr.DeleteStack(s.Hash); err != nil {
 		return fmt.Errorf("failed to delete stack: %w", err)
 	}
 

@@ -372,10 +372,14 @@ func offerFullyMergedStackCleanup(mgr *stack.Manager, stacks []*config.Stack) {
 				ui.Warn(fmt.Sprintf("Failed to clean up stack '%s': could not create manager", s.DisplayName()))
 				continue
 			}
-			if err := m.DeleteStack(s.Hash); err != nil {
+			needsCd, err := m.DeleteStack(s.Hash)
+			if err != nil {
 				ui.Warn(fmt.Sprintf("Failed to clean up stack '%s': %v", s.DisplayName(), err))
 			} else {
 				ui.Success(fmt.Sprintf("Removed fully merged stack '%s'", s.DisplayName()))
+				if needsCd {
+					EmitCd(m.GetRepoDir())
+				}
 			}
 		} else {
 			m := getMutMgr()

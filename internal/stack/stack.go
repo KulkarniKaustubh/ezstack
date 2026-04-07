@@ -1278,10 +1278,12 @@ func (m *Manager) GetStackByHashExact(hash string) *config.Stack {
 
 // DeleteStack removes an entire stack from config, cleaning up any remaining worktrees and git branches.
 // This is intended for fully merged stacks where all branches have been completed.
-func (m *Manager) DeleteStack(stackHash string) error {
+// Returns (needsCd, error) — needsCd is true when the process had to leave a worktree
+// that was deleted, so the caller can emit a cd to the main repo.
+func (m *Manager) DeleteStack(stackHash string) (bool, error) {
 	stack := m.stackConfig.Stacks[stackHash]
 	if stack == nil {
-		return fmt.Errorf("stack '%s' not found", stackHash)
+		return false, fmt.Errorf("stack '%s' not found", stackHash)
 	}
 
 	cache := m.stackConfig.Cache
@@ -1289,17 +1291,35 @@ func (m *Manager) DeleteStack(stackHash string) error {
 	// Determine the current branch so we don't try to delete it (git refuses)
 	currentBranch, _ := m.git.CurrentBranch()
 
+	// Determine current directory so we can detect if we're inside a worktree being deleted
+	cwd, _ := os.Getwd()
+	needsCd := false
+
 	// Clean up any remaining worktrees and git branches
 	for _, branch := range stack.Branches {
 		// Try to remove worktree if it exists
 		if branch.WorktreePath != "" {
 			if _, err := os.Stat(branch.WorktreePath); err == nil {
-				_ = m.git.RemoveWorktree(branch.WorktreePath, true, branch.Name)
+				// If we're inside this worktree, move out first so git can remove it
+				if cwd == branch.WorktreePath {
+					if err := os.Chdir(m.repoDir); err != nil {
+						fmt.Fprintf(os.Stderr, "  Warning: failed to leave worktree %s: %v\n", branch.WorktreePath, err)
+					} else {
+						needsCd = true
+						// Update the git instance to run from the main repo
+						m.git = git.New(m.repoDir)
+					}
+				}
+				if err := m.git.RemoveWorktree(branch.WorktreePath, true, branch.Name); err != nil {
+					fmt.Fprintf(os.Stderr, "  Warning: failed to remove worktree %s: %v\n", branch.WorktreePath, err)
+				}
 			}
 		}
 		// Try to delete git branch if it still exists (skip current branch — git won't allow it)
 		if branch.Name != currentBranch && m.git.BranchExists(branch.Name) {
-			_ = m.git.DeleteBranch(branch.Name, true)
+			if err := m.git.DeleteBranch(branch.Name, true); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to delete branch %s: %v\n", branch.Name, err)
+			}
 		}
 		// Remove from cache
 		delete(cache.Branches, branch.Name)
@@ -1308,7 +1328,7 @@ func (m *Manager) DeleteStack(stackHash string) error {
 	// Remove the stack
 	delete(m.stackConfig.Stacks, stackHash)
 
-	return m.stackConfig.Save(m.repoDir)
+	return needsCd, m.stackConfig.Save(m.repoDir)
 }
 
 // MarkBranchMerged marks a branch as merged - deletes worktree and git branch but keeps metadata in config
