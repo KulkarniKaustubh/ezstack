@@ -822,11 +822,12 @@ func syncChildren(mgr *stack.Manager, branch *config.Branch, useMerge bool) erro
 // syncCurrentBranch syncs only the current branch (wherever it is in the chain)
 func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Branch, cwd string, autostash bool, useMerge bool) error {
 	ui.Info("Fetching latest changes...")
-	g := git.New(cwd)
-	if err := g.Fetch(); err != nil {
+	// Use Manager.Fetch() so the fetch is deduped if already done earlier
+	if err := mgr.Fetch(); err != nil {
 		return fmt.Errorf("failed to fetch from remote: %w. Check your network connection and that the remote is accessible", err)
 	}
 
+	g := git.New(cwd)
 	syncInfo := mgr.DetectSyncNeededForBranch(branch.Name, gh)
 	if syncInfo == nil || !syncInfo.NeedsSync {
 		ui.Success("Current branch is up to date. No sync needed.")

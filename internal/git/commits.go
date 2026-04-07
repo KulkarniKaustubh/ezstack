@@ -2,6 +2,7 @@ package git
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -49,8 +50,10 @@ func (g *Git) GetCommitCount(base, head string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	var count int
-	fmt.Sscanf(output, "%d", &count)
+	count, err := strconv.Atoi(strings.TrimSpace(output))
+	if err != nil {
+		return 0, fmt.Errorf("failed to parse commit count: %w", err)
+	}
 	return count, nil
 }
 

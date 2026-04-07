@@ -887,7 +887,10 @@ func (m *Manager) findOrCreateStack(branchName, parentBranch, targetStackHash st
 		} else {
 			stackKey = m.findStackForBranch(parentBranch)
 			if stackKey == "" {
-				stackKey = m.findStackByRoot(parentBranch)
+				// Parent is a root, not a tracked branch. Only use an existing
+				// stack if exactly one matches — when multiple stacks share the
+				// same root, picking one at random would be wrong.
+				stackKey = m.findUniqueStackByRoot(parentBranch)
 			}
 		}
 		if stackKey != "" {
@@ -945,6 +948,22 @@ func (m *Manager) findStackByRoot(rootName string) string {
 		}
 	}
 	return ""
+}
+
+// findUniqueStackByRoot returns the stack key if exactly one stack uses rootName
+// as its root. Returns "" if zero or multiple stacks match, avoiding non-deterministic
+// selection when multiple stacks share the same root.
+func (m *Manager) findUniqueStackByRoot(rootName string) string {
+	var found string
+	for stackName, stack := range m.stackConfig.Stacks {
+		if stack.Root == rootName {
+			if found != "" {
+				return "" // ambiguous — multiple stacks share this root
+			}
+			found = stackName
+		}
+	}
+	return found
 }
 
 // GetAllBranchesInAllStacks returns all branches across all stacks
