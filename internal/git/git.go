@@ -438,18 +438,20 @@ func (g *Git) MergeNonInteractive(target string) RebaseResult {
 
 	cmd := exec.Command("git", "merge", target, "--no-edit")
 	cmd.Dir = g.RepoDir
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
 	if err != nil {
-		stderrStr := stderr.String()
-		if strings.Contains(stderrStr, "CONFLICT") ||
-			strings.Contains(stderrStr, "Automatic merge failed") ||
-			strings.Contains(stderrStr, "fix conflicts") {
+		// git merge outputs conflict info to stdout, not stderr
+		combined := stdout.String() + stderr.String()
+		if strings.Contains(combined, "CONFLICT") ||
+			strings.Contains(combined, "Automatic merge failed") ||
+			strings.Contains(combined, "fix conflicts") {
 			return RebaseResult{HasConflict: true, Error: fmt.Errorf("merge conflict")}
 		}
-		return RebaseResult{Error: fmt.Errorf("merge failed: %s", stderrStr)}
+		return RebaseResult{Error: fmt.Errorf("merge failed: %s", combined)}
 	}
 	return RebaseResult{Success: true}
 }
