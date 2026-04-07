@@ -23,19 +23,21 @@ func Reparent(args []string) error {
 %sOPTIONS%s
     -b, --branch <name>     Branch to reparent
     -p, --parent <name>     New parent branch
+    --merge                 Use git merge instead of git rebase
+    --rebase                Use git rebase (overrides config)
     -h, --help              Show this help message
 
 %sDESCRIPTION%s
-    Changes the parent of a branch and rebases commits onto the new parent.
+    Changes the parent of a branch and syncs commits onto the new parent.
     This can be used to:
 
     1. Move a branch to a different parent within the same stack
     2. Add a standalone worktree/branch to an existing stack
     3. Split a stack by reparenting branches to different parents
 
-    Reparenting always rebases to keep the stack consistent. If the rebase
-    conflicts, the reparent metadata is still updated and you can resolve
-    conflicts manually.
+    Uses the configured sync_strategy (default: rebase). Override with
+    --merge or --rebase. If the sync conflicts, the reparent metadata is
+    still updated and you can resolve conflicts manually.
 
 %sEXAMPLES%s
     ezs reparent                        Interactive mode
@@ -46,6 +48,8 @@ func Reparent(args []string) error {
 
 	branchFlag := fs.StringP("branch", "b", "", "Branch to reparent")
 	parentFlag := fs.StringP("parent", "p", "", "New parent branch")
+	mergeFlag := fs.Bool("merge", false, "Use git merge instead of git rebase")
+	rebaseFlag := fs.Bool("rebase", false, "Use git rebase (overrides config)")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -86,17 +90,30 @@ func Reparent(args []string) error {
 		newParent = fs.Arg(1)
 	}
 
+	// Resolve merge vs rebase: flags override config
+	if *mergeFlag && *rebaseFlag {
+		return fmt.Errorf("cannot use both --merge and --rebase")
+	}
+	useMerge := false
+	if *mergeFlag {
+		useMerge = true
+	} else if *rebaseFlag {
+		useMerge = false
+	} else {
+		useMerge = mgr.GetConfig().GetSyncStrategy(mgr.GetRepoDir()) == "merge"
+	}
+
 	// Interactive mode if branch or parent not specified
 	if branchName == "" || newParent == "" {
-		return reparentInteractive(mgr, g, branchName, newParent)
+		return reparentInteractive(mgr, g, branchName, newParent, useMerge)
 	}
 
 	// Non-interactive mode
-	return doReparent(mgr, branchName, newParent)
+	return doReparentWithMerge(mgr, branchName, newParent, useMerge)
 }
 
 // reparentInteractive handles interactive branch and parent selection
-func reparentInteractive(mgr *stack.Manager, g *git.Git, branchName, newParent string) error {
+func reparentInteractive(mgr *stack.Manager, g *git.Git, branchName, newParent string, useMerge bool) error {
 	cfg := mgr.GetConfig()
 	baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
 
@@ -118,7 +135,7 @@ func reparentInteractive(mgr *stack.Manager, g *git.Git, branchName, newParent s
 		}
 	}
 
-	return doReparent(mgr, branchName, newParent)
+	return doReparentWithMerge(mgr, branchName, newParent, useMerge)
 }
 
 // selectBranchToReparent shows a selection UI for choosing which branch to reparent
@@ -252,20 +269,20 @@ func IsDescendantOf(mgr *stack.Manager, branchName, ancestorName string) bool {
 	}
 }
 
-// doReparent performs the actual reparent operation (used by both `ezs reparent` and `ezs stack`)
-func doReparent(mgr *stack.Manager, branchName, newParent string) error {
-	return doReparentCore(mgr, branchName, newParent, true)
+// doReparentWithMerge performs reparent with explicit merge/rebase choice
+func doReparentWithMerge(mgr *stack.Manager, branchName, newParent string, useMerge bool) error {
+	return doReparentCore(mgr, branchName, newParent, true, useMerge)
 }
 
 // doReparentNoRebase performs a reparent without rebasing (used by `ezs stack`)
 func doReparentNoRebase(mgr *stack.Manager, branchName, newParent string) error {
-	return doReparentCore(mgr, branchName, newParent, false)
+	return doReparentCore(mgr, branchName, newParent, false, false)
 }
 
 // doReparentCore is the shared implementation for reparent and stack commands.
-// When rebase=true, commits are rebased onto the new parent and force-push is offered.
+// When rebase=true, commits are synced onto the new parent and push is offered.
 // When rebase=false, only the tracking metadata is updated.
-func doReparentCore(mgr *stack.Manager, branchName, newParent string, rebase bool) error {
+func doReparentCore(mgr *stack.Manager, branchName, newParent string, rebase bool, useMerge bool) error {
 	// Get current parent for display
 	existingBranch := mgr.GetBranch(branchName)
 	oldParent := ""
@@ -281,7 +298,11 @@ func doReparentCore(mgr *stack.Manager, branchName, newParent string, rebase boo
 	}
 
 	if rebase {
-		ui.Info("Will rebase commits onto new parent")
+		if useMerge {
+			ui.Info("Will merge new parent into branch")
+		} else {
+			ui.Info("Will rebase commits onto new parent")
+		}
 	}
 
 	confirmMsg := "Proceed?"
@@ -294,7 +315,7 @@ func doReparentCore(mgr *stack.Manager, branchName, newParent string, rebase boo
 	}
 
 	oldStack := mgr.GetStackForBranch(branchName)
-	result, err := mgr.ReparentBranch(branchName, newParent, rebase)
+	result, err := mgr.ReparentBranch(branchName, newParent, rebase, useMerge)
 	if err != nil {
 		return err
 	}
@@ -305,9 +326,15 @@ func doReparentCore(mgr *stack.Manager, branchName, newParent string, rebase boo
 	branch := result.Branch
 
 	if result.HasConflict {
-		ui.Warn(fmt.Sprintf("Reparented '%s' to '%s' (config updated), but rebase has conflicts", branch.Name, branch.Parent))
+		syncType := "rebase"
+		continueCmd := "git rebase --continue"
+		if useMerge {
+			syncType = "merge"
+			continueCmd = "git merge --continue"
+		}
+		ui.Warn(fmt.Sprintf("Reparented '%s' to '%s' (config updated), but %s has conflicts", branch.Name, branch.Parent, syncType))
 		ui.Warn(fmt.Sprintf("Resolve conflicts in: %s", result.ConflictDir))
-		ui.Info("Then run: git rebase --continue")
+		ui.Info(fmt.Sprintf("Then run: %s", continueCmd))
 	} else {
 		if oldParent != "" {
 			ui.Success(fmt.Sprintf("Reparented '%s' to '%s'", branch.Name, branch.Parent))
@@ -321,15 +348,20 @@ func doReparentCore(mgr *stack.Manager, branchName, newParent string, rebase boo
 	cwd, _ := os.Getwd()
 	g := git.New(cwd)
 
-	// Offer force push if rebased and branch has a PR
+	// Offer push if synced and branch has a PR
 	pushSucceeded := true
 	if rebase && !result.HasConflict && branch.PRNumber > 0 {
-		ui.Info("Branch was rebased. Force-push required to update the PR.")
 		worktreePath := cwd
 		if branch.WorktreePath != "" {
 			worktreePath = branch.WorktreePath
 		}
-		pushSucceeded = OfferForcePush(branchName, worktreePath)
+		if useMerge {
+			ui.Info("Branch was merged. Push to update the PR.")
+			pushSucceeded = OfferPush(branchName, worktreePath)
+		} else {
+			ui.Info("Branch was rebased. Force-push required to update the PR.")
+			pushSucceeded = OfferForcePush(branchName, worktreePath)
+		}
 	}
 
 	// Update PR metadata on GitHub
