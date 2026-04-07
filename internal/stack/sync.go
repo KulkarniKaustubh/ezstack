@@ -761,6 +761,10 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 		return nil, fmt.Errorf("branch '%s' not found in any stack", branchName)
 	}
 
+	if branch.WorktreePath == "" {
+		return nil, fmt.Errorf("branch '%s' has no worktree path configured", branchName)
+	}
+
 	result := &RebaseResult{Branch: branch.Name, WorktreePath: branch.WorktreePath}
 	g := git.New(branch.WorktreePath)
 

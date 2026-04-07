@@ -1186,6 +1186,9 @@ func (s *Stack) ReparentBranch(branchName, newParent string) {
 	// Then add it under the new parent
 	if newParent == "" || newParent == s.Root {
 		// Make it a root-level branch
+		if s.Tree == nil {
+			s.Tree = make(BranchTree)
+		}
 		s.Tree[branchName] = branchChildren
 	} else {
 		s.addBranchWithChildren(s.Tree, branchName, newParent, branchChildren)
@@ -1211,6 +1214,9 @@ func (s *Stack) findAndExtractBranch(tree BranchTree, branchName string, childre
 func (s *Stack) addBranchWithChildren(tree BranchTree, branchName, parentName string, children BranchTree) bool {
 	for name, subtree := range tree {
 		if name == parentName {
+			if tree[name] == nil {
+				tree[name] = make(BranchTree)
+			}
 			tree[name][branchName] = children
 			return true
 		}
@@ -1312,21 +1318,25 @@ func (s *Stack) renameBranchInTree(tree BranchTree, oldName, newName string) boo
 	return false
 }
 
-// AddSubtree adds a branch with its subtree under a parent
-func (s *Stack) AddSubtree(branchName string, subtree BranchTree, parentName string) {
+// AddSubtree adds a branch with its subtree under a parent.
+// Returns false if parentName was not found in the tree (non-root case).
+func (s *Stack) AddSubtree(branchName string, subtree BranchTree, parentName string) bool {
 	if parentName == s.Root || parentName == "" {
 		// Add as root-level branch
 		s.Tree[branchName] = subtree
-	} else {
-		// Add under parent
-		s.addSubtreeUnderParent(s.Tree, branchName, subtree, parentName)
+		return true
 	}
+	// Add under parent
+	return s.addSubtreeUnderParent(s.Tree, branchName, subtree, parentName)
 }
 
 // addSubtreeUnderParent recursively finds parent and adds subtree
 func (s *Stack) addSubtreeUnderParent(tree BranchTree, branchName string, subtree BranchTree, parentName string) bool {
 	for name, children := range tree {
 		if name == parentName {
+			if tree[name] == nil {
+				tree[name] = make(BranchTree)
+			}
 			tree[name][branchName] = subtree
 			return true
 		}
