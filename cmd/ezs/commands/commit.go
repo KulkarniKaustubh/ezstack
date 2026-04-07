@@ -85,10 +85,19 @@ func commitInternal(args []string, amend bool) error {
 
 	g := git.New(cwd)
 
-	// Extract --merge/--rebase flags before passing args to git
+	// Extract --merge/--rebase flags before passing args to git.
+	// Skip args that are values of git flags that take a string argument
+	// (e.g., -m "--merge" should pass "--merge" as the commit message, not
+	// be interpreted as our flag).
 	var mergeOverride, rebaseOverride bool
 	var gitPassthroughArgs []string
+	skipNext := false
 	for _, arg := range args {
+		if skipNext {
+			gitPassthroughArgs = append(gitPassthroughArgs, arg)
+			skipNext = false
+			continue
+		}
 		switch arg {
 		case "--merge":
 			mergeOverride = true
@@ -96,6 +105,13 @@ func commitInternal(args []string, amend bool) error {
 			rebaseOverride = true
 		default:
 			gitPassthroughArgs = append(gitPassthroughArgs, arg)
+			// These git flags take the next arg as a value — don't interpret it as our flag
+			switch arg {
+			case "-m", "--message", "-F", "--file", "-c", "--reedit-message",
+				"-C", "--reuse-message", "--fixup", "--squash", "--author",
+				"--date", "--cleanup", "-t", "--template", "--trailer":
+				skipNext = true
+			}
 		}
 	}
 	if mergeOverride && rebaseOverride {

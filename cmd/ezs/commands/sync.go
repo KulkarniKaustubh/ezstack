@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
@@ -706,15 +707,21 @@ func syncOntoParent(mgr *stack.Manager, branch *config.Branch, useMerge bool) er
 		ui.Info("Rebasing onto parent...")
 	}
 	if err := mgr.RebaseOnParent(useMerge); err != nil {
-		// Interactive merge/rebase returns an error on conflict — the user
-		// sees the conflict output directly on the terminal, so just give
-		// them the resolution instructions instead of a raw "exit status 1".
-		if useMerge {
-			ui.Warn("Merge has conflicts. Resolve them, then run: git add . && git merge --continue")
-		} else {
-			ui.Warn("Rebase has conflicts. Resolve them, then run: git add . && git rebase --continue")
+		// Interactive merge/rebase returns an exit status error on conflict.
+		// The user sees the conflict output directly on the terminal, so
+		// give them resolution instructions instead of a raw "exit status 1".
+		// But if the error is NOT an exit status (e.g., GetCurrentStack failed),
+		// propagate it as-is.
+		errStr := err.Error()
+		if strings.Contains(errStr, "exit status") {
+			if useMerge {
+				ui.Warn("Merge has conflicts. Resolve them, then run: git add . && git merge --continue")
+			} else {
+				ui.Warn("Rebase has conflicts. Resolve them, then run: git add . && git rebase --continue")
+			}
+			return nil
 		}
-		return nil
+		return err
 	}
 	if useMerge {
 		ui.Success("Merge complete")
