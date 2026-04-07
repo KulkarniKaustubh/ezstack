@@ -525,3 +525,111 @@ func TestBranch_Fields(t *testing.T) {
 		t.Error("IsMerged should be false")
 	}
 }
+
+func TestConfig_GetSyncStrategy(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   *Config
+		repoPath string
+		want     string
+	}{
+		{
+			name: "repo-specific merge",
+			config: &Config{
+				Repos: map[string]*RepoConfig{
+					"/repo": {SyncStrategy: "merge"},
+				},
+			},
+			repoPath: "/repo",
+			want:     "merge",
+		},
+		{
+			name: "repo-specific rebase",
+			config: &Config{
+				Repos: map[string]*RepoConfig{
+					"/repo": {SyncStrategy: "rebase"},
+				},
+			},
+			repoPath: "/repo",
+			want:     "rebase",
+		},
+		{
+			name: "empty defaults to rebase",
+			config: &Config{
+				Repos: map[string]*RepoConfig{
+					"/repo": {},
+				},
+			},
+			repoPath: "/repo",
+			want:     "rebase",
+		},
+		{
+			name: "no repo config defaults to rebase",
+			config: &Config{
+				Repos: make(map[string]*RepoConfig),
+			},
+			repoPath: "/unknown/repo",
+			want:     "rebase",
+		},
+		{
+			name:     "nil repos defaults to rebase",
+			config:   &Config{},
+			repoPath: "/repo",
+			want:     "rebase",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.GetSyncStrategy(tt.repoPath)
+			if got != tt.want {
+				t.Errorf("GetSyncStrategy() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfig_SyncStrategy_Persistence(t *testing.T) {
+	// Test that sync_strategy survives save/load cycle
+	tmpDir, err := os.MkdirTemp("", "ezstack-config-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	originalHome := os.Getenv("EZSTACK_HOME")
+	defer os.Setenv("EZSTACK_HOME", originalHome)
+	os.Setenv("EZSTACK_HOME", tmpDir)
+
+	// Create config with sync_strategy
+	cfg := &Config{
+		DefaultBaseBranch: "main",
+		Repos: map[string]*RepoConfig{
+			"/test/repo": {
+				RepoPath:     "/test/repo",
+				SyncStrategy: "merge",
+			},
+		},
+	}
+
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	// Load it back
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	got := loaded.GetSyncStrategy("/test/repo")
+	if got != "merge" {
+		t.Errorf("After save/load, GetSyncStrategy() = %q, want %q", got, "merge")
+	}
+
+	// Verify empty sync_strategy is also preserved correctly
+	got = loaded.GetSyncStrategy("/other/repo")
+	if got != "rebase" {
+		t.Errorf("Unknown repo GetSyncStrategy() = %q, want %q", got, "rebase")
+	}
+}

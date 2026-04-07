@@ -27,6 +27,7 @@ func printConfigUsage() {
     github_token          GitHub token for API access
     cd_after_new          Auto-cd to new worktree (true/false, per-repo)
     use_worktrees         Use git worktrees for new branches (true/false, per-repo)
+    sync_strategy         Sync method: "rebase" or "merge" (per-repo)
 
 %sOPTIONS%s
     -h, --help    Show this help message
@@ -151,8 +152,23 @@ func configSet(key, value string) error {
 		repoCfg.UseWorktrees = &boolVal
 		cfg.SetRepoConfig(repoPath, repoCfg)
 		ui.Info(fmt.Sprintf("Setting use_worktrees for repo: %s", repoPath))
+	case "sync_strategy":
+		repoPath, err := getCurrentRepoPath()
+		if err != nil {
+			return fmt.Errorf("sync_strategy is a per-repo setting: %w", err)
+		}
+		if value != "rebase" && value != "merge" {
+			return fmt.Errorf("sync_strategy must be 'rebase' or 'merge'")
+		}
+		repoCfg := cfg.GetRepoConfig(repoPath)
+		if repoCfg == nil {
+			repoCfg = &config.RepoConfig{}
+		}
+		repoCfg.SyncStrategy = value
+		cfg.SetRepoConfig(repoPath, repoCfg)
+		ui.Info(fmt.Sprintf("Setting sync_strategy for repo: %s", repoPath))
 	default:
-		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees", key)
+		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, sync_strategy", key)
 	}
 
 	if err := cfg.Save(); err != nil {
@@ -212,6 +228,11 @@ func configShow() error {
 				fmt.Fprintf(os.Stderr, "  use_worktrees: %v\n", *repoCfg.UseWorktrees)
 			} else {
 				fmt.Fprintf(os.Stderr, "  use_worktrees: true (default)\n")
+			}
+			if repoCfg.SyncStrategy != "" {
+				fmt.Fprintf(os.Stderr, "  sync_strategy: %s\n", repoCfg.SyncStrategy)
+			} else {
+				fmt.Fprintf(os.Stderr, "  sync_strategy: rebase (default)\n")
 			}
 		} else {
 			fmt.Fprintf(os.Stderr, "  worktree_base_dir: %s(not configured for this repo)%s\n", ui.Yellow, ui.Reset)
@@ -321,6 +342,20 @@ func configInteractive() error {
 	repoCfg.CdAfterNew = &cdAfterNew
 	configChanged = true
 	ui.Success(fmt.Sprintf("Set cd_after_new = %v", cdAfterNew))
+
+	// Sync strategy: rebase or merge
+	currentSyncStrategy := "rebase"
+	if repoCfg.SyncStrategy != "" {
+		currentSyncStrategy = repoCfg.SyncStrategy
+	}
+	useMergeSync := ui.ConfirmTUIWithDefault("Use merge instead of rebase for sync (avoids force pushes)", currentSyncStrategy == "merge")
+	if useMergeSync {
+		repoCfg.SyncStrategy = "merge"
+	} else {
+		repoCfg.SyncStrategy = "rebase"
+	}
+	configChanged = true
+	ui.Success(fmt.Sprintf("Set sync_strategy = %s", repoCfg.SyncStrategy))
 
 	if configChanged {
 		cfg.SetRepoConfig(repoPath, repoCfg)
