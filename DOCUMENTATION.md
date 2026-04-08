@@ -88,6 +88,7 @@ Run `ezs config` in your repository to configure:
 - **Worktree base directory** — Where branch worktrees will be created
 - **Main branch name** — Usually `main` or `master`
 - **Auto-cd** — Whether to cd into new worktrees after creation (default: yes)
+- **Sync strategy** — Whether to use `rebase` (default) or `merge` when syncing branches
 
 Configuration is stored in `~/.ezstack/config.json`.
 
@@ -98,7 +99,7 @@ ezs config set <key> <value>    Set a configuration value
 ezs config show                 Show current configuration
 ```
 
-**Available keys:** `worktree_base_dir`, `default_base_branch`, `cd_after_new`, `use_worktrees`
+**Available keys:** `worktree_base_dir`, `default_base_branch`, `cd_after_new`, `use_worktrees`, `sync_strategy`
 
 **Global flags**
 
@@ -175,16 +176,20 @@ ezs sync [options]
 ezs sync <hash-prefix>
 
 Options:
-    -a, --all              Sync current stack (auto-detect what needs syncing)
-    --all-stacks           Sync ALL stacks (not just current stack)
+    -s, --stack            Sync current stack (auto-detect what needs syncing)
+    -a, --all              Sync ALL stacks
     -c, --current          Sync current branch only (auto-detect what it needs)
     -p, --parent           Rebase current branch onto its parent
     -C, --children         Rebase child branches onto current branch
+    --merge                Use git merge instead of git rebase
+    --rebase               Use git rebase (overrides sync_strategy config)
     --no-delete-local      Don't delete local branches after their PRs are merged
     --dry-run              Preview what would be synced without making changes
     --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
     --json                 Output dry-run results as JSON (requires --dry-run)
 ```
+
+By default, sync uses git rebase. Use `--merge` to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with `ezs config set sync_strategy merge`. Use `--rebase` or `--merge` to override the configured strategy for a single run.
 
 You can sync a specific stack by passing its hash prefix (minimum 3 characters).
 
@@ -258,11 +263,13 @@ Toggles the current branch's PR between draft and ready-for-review state.
 Wrap `git commit` / `git commit --amend` and auto-sync child branches. Aliases: `ci`
 
 ```
-ezs commit [git-commit-options]
-ezs amend [git-commit-options]
+ezs commit [git-commit-options] [--merge|--rebase]
+ezs amend [git-commit-options] [--merge|--rebase]
 ```
 
-All arguments are passed through to `git commit`. After committing, any child branches in the stack are automatically rebased onto the updated branch.
+All arguments are passed through to `git commit`. After committing, any child branches in the stack are automatically synced onto the updated branch.
+
+Uses the configured `sync_strategy` (default: rebase) for child syncing. Use `--merge` or `--rebase` to override.
 
 ---
 
@@ -283,7 +290,7 @@ Options:
 
 ### `ezs reparent`
 
-Change the parent of a branch. Always rebases onto the new parent. Aliases: `rp`
+Change the parent of a branch and sync commits onto the new parent. Aliases: `rp`
 
 ```
 ezs reparent [branch] [new-parent] [options]
@@ -291,7 +298,11 @@ ezs reparent [branch] [new-parent] [options]
 Options:
     -b, --branch <name>     Branch to reparent
     -p, --parent <name>     New parent branch
+    --merge                 Use git merge instead of git rebase
+    --rebase                Use git rebase (overrides sync_strategy config)
 ```
+
+Uses the configured `sync_strategy` (default: rebase). If the sync conflicts, the reparent metadata is still updated and you can resolve conflicts manually.
 
 ---
 
@@ -335,6 +346,17 @@ Subcommands:
     set <key> <value>    Set a configuration value
     show                 Show current configuration
 ```
+
+**Available keys for `set`:**
+
+| Key | Description | Values |
+|-----|-------------|--------|
+| `worktree_base_dir` | Base directory for worktrees | Path (per-repo) |
+| `default_base_branch` | Default base branch | e.g. `main`, `master` |
+| `cd_after_new` | Auto-cd to new worktree | `true` / `false` (per-repo) |
+| `use_worktrees` | Use git worktrees for new branches | `true` / `false` (per-repo) |
+| `sync_strategy` | Sync method for rebase/merge | `rebase` / `merge` (per-repo) |
+| `github_token` | GitHub token for API access | Token string |
 
 ---
 
