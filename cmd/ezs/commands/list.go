@@ -123,6 +123,24 @@ type branchJSON struct {
 	WorktreePath string `json:"worktree_path,omitempty"`
 }
 
+// statusStackJSON represents a stack in JSON status output (with PR/CI info)
+type statusStackJSON struct {
+	Hash     string             `json:"hash"`
+	Name     string             `json:"name,omitempty"`
+	Root     string             `json:"root"`
+	Branches []statusBranchJSON `json:"branches"`
+}
+
+// statusBranchJSON extends branchJSON with PR and CI status fields
+type statusBranchJSON struct {
+	branchJSON
+	PRState     string `json:"pr_state,omitempty"`
+	CIState     string `json:"ci_state,omitempty"`
+	CISummary   string `json:"ci_summary,omitempty"`
+	Mergeable   string `json:"mergeable,omitempty"`
+	ReviewState string `json:"review_state,omitempty"`
+}
+
 // printStacksJSON outputs stacks as JSON to stdout
 func printStacksJSON(stacks []*config.Stack, currentBranch string) error {
 	result := make([]stackJSON, 0, len(stacks))
@@ -151,6 +169,50 @@ func printStacksJSON(stacks []*config.Stack, currentBranch string) error {
 	return enc.Encode(result)
 }
 
+// printStacksStatusJSON outputs stacks with PR/CI status as JSON to stdout
+func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusMaps []map[string]*ui.BranchStatus) error {
+	result := make([]statusStackJSON, 0, len(stacks))
+	for i, s := range stacks {
+		sj := statusStackJSON{
+			Hash:     s.Hash,
+			Name:     s.Name,
+			Root:     s.Root,
+			Branches: make([]statusBranchJSON, 0, len(s.Branches)),
+		}
+		var sm map[string]*ui.BranchStatus
+		if i < len(statusMaps) {
+			sm = statusMaps[i]
+		}
+		for _, b := range s.Branches {
+			sbj := statusBranchJSON{
+				branchJSON: branchJSON{
+					Name:         b.Name,
+					Parent:       b.Parent,
+					IsMerged:     b.IsMerged,
+					IsCurrent:    b.Name == currentBranch,
+					PRNumber:     b.PRNumber,
+					PRUrl:        b.PRUrl,
+					WorktreePath: b.WorktreePath,
+				},
+			}
+			if sm != nil {
+				if bs, ok := sm[b.Name]; ok {
+					sbj.PRState = bs.PRState
+					sbj.CIState = bs.CIState
+					sbj.CISummary = bs.CISummary
+					sbj.Mergeable = bs.Mergeable
+					sbj.ReviewState = bs.ReviewState
+				}
+			}
+			sj.Branches = append(sj.Branches, sbj)
+		}
+		result = append(result, sj)
+	}
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(result)
+}
+
 // Status shows the status of current stack or all stacks with PR and CI info
 func Status(args []string) error {
 	fs := pflag.NewFlagSet("status", pflag.ContinueOnError)
@@ -167,12 +229,14 @@ func Status(args []string) error {
 %sOPTIONS%s
     -a, --all     Show all stacks
     -d, --debug   Show debug output
+    --json        Output as JSON (machine-readable)
     -h, --help    Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 	all := fs.BoolP("all", "a", false, "Show all stacks")
 	debug := fs.BoolP("debug", "d", false, "Show debug output")
+	jsonFlag := fs.Bool("json", false, "Output as JSON")
 	if err := fs.Parse(args); err != nil {
 		if err == pflag.ErrHelp {
 			return nil
@@ -214,40 +278,54 @@ func Status(args []string) error {
 
 	ghAvailable := <-ghAvailableCh
 
-	// Helper to fetch and print all stacks with status
-	printAllStacksWithStatus := func() {
-		if ghAvailable {
+	// fetchStatusMaps fetches PR/CI status for a list of stacks in parallel
+	fetchStatusMaps := func(targetStacks []*config.Stack) []map[string]*ui.BranchStatus {
+		statusMaps := make([]map[string]*ui.BranchStatus, len(targetStacks))
+		if !ghAvailable {
+			return statusMaps
+		}
+		if !*jsonFlag {
 			spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
 			spinner.Start()
-			statusMaps := make([]map[string]*ui.BranchStatus, len(stacks))
-			var wg sync.WaitGroup
+			defer spinner.Stop()
+		}
+		var wg sync.WaitGroup
+		for i, s := range targetStacks {
+			wg.Add(1)
+			go func(idx int, stack *config.Stack) {
+				defer wg.Done()
+				statusMaps[idx] = fetchBranchStatuses(g, stack, *debug)
+			}(i, s)
+		}
+		wg.Wait()
+		return statusMaps
+	}
 
-			for i, s := range stacks {
-				wg.Add(1)
-				go func(idx int, stack *config.Stack) {
-					defer wg.Done()
-					statusMaps[idx] = fetchBranchStatuses(g, stack, *debug)
-				}(i, s)
+	// printOrJSON prints stacks to terminal or outputs JSON based on --json flag
+	printOrJSON := func(targetStacks []*config.Stack, statusMaps []map[string]*ui.BranchStatus) error {
+		if *jsonFlag {
+			return printStacksStatusJSON(targetStacks, currentBranch, statusMaps)
+		}
+		for i, s := range targetStacks {
+			var sm map[string]*ui.BranchStatus
+			if i < len(statusMaps) {
+				sm = statusMaps[i]
 			}
-
-			wg.Wait()
-			spinner.Stop()
-
-			for i, s := range stacks {
-				ui.PrintStack(s, currentBranch, true, statusMaps[i])
-			}
-		} else {
-			for _, s := range stacks {
-				ui.PrintStack(s, currentBranch, false, nil)
-			}
+			ui.PrintStack(s, currentBranch, ghAvailable, sm)
+		}
+		if !ghAvailable {
 			ui.Warn("GitHub CLI not authenticated. Run 'gh auth login' for PR/CI status.")
 		}
+		return nil
 	}
 
 	currentStack, branch, err := mgr.GetCurrentStack()
 	if *all {
-		printAllStacksWithStatus()
-		if ghAvailable {
+		statusMaps := fetchStatusMaps(stacks)
+		if err := printOrJSON(stacks, statusMaps); err != nil {
+			return err
+		}
+		if !*jsonFlag && ghAvailable {
 			offerFullyMergedStackCleanup(mgr, stacks)
 		}
 		return nil
@@ -256,47 +334,31 @@ func Status(args []string) error {
 		// Not on a stacked branch — only show stacks rooted on the current branch
 		rootStacks := mgr.GetStacksWithRoot(currentBranch)
 		if len(rootStacks) == 0 {
+			if *jsonFlag {
+				fmt.Fprintln(os.Stdout, "[]")
+				return nil
+			}
 			return ui.NewExitError(ui.ExitNotInStack, "current branch '%s' is not part of any stack. Use -a to show all stacks", currentBranch)
 		}
-		// Show the root stacks with status
-		if ghAvailable {
-			spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
-			spinner.Start()
-			statusMaps := make([]map[string]*ui.BranchStatus, len(rootStacks))
-			var wg sync.WaitGroup
-			for i, s := range rootStacks {
-				wg.Add(1)
-				go func(idx int, stack *config.Stack) {
-					defer wg.Done()
-					statusMaps[idx] = fetchBranchStatuses(g, stack, *debug)
-				}(i, s)
-			}
-			wg.Wait()
-			spinner.Stop()
-			for i, s := range rootStacks {
-				ui.PrintStack(s, currentBranch, true, statusMaps[i])
-			}
-		} else {
-			for _, s := range rootStacks {
-				ui.PrintStack(s, currentBranch, false, nil)
-			}
-			ui.Warn("GitHub CLI not authenticated. Run 'gh auth login' for PR/CI status.")
+		statusMaps := fetchStatusMaps(rootStacks)
+		if err := printOrJSON(rootStacks, statusMaps); err != nil {
+			return err
 		}
-		if ghAvailable {
+		if !*jsonFlag && ghAvailable {
 			offerFullyMergedStackCleanup(mgr, rootStacks)
 		}
 		return nil
 	}
 
-	var statusMap map[string]*ui.BranchStatus
-	if ghAvailable {
-		spinner := ui.NewDelayedSpinner("Fetching PR and CI status...")
-		spinner.Start()
-		statusMap = fetchBranchStatuses(g, currentStack, *debug)
-		spinner.Stop()
+	statusMaps := fetchStatusMaps([]*config.Stack{currentStack})
+	if err := printOrJSON([]*config.Stack{currentStack}, statusMaps); err != nil {
+		return err
 	}
 
-	ui.PrintStack(currentStack, currentBranch, ghAvailable, statusMap)
+	// In JSON mode, skip interactive output and return
+	if *jsonFlag {
+		return nil
+	}
 
 	parentRef := branch.Parent
 	if g.RemoteBranchExists(branch.Parent) {
