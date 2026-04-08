@@ -1,0 +1,228 @@
+{
+  "name": "ezstack",
+  "displayName": "ezstack",
+  "description": "Manage stacked pull requests with git worktrees",
+  "version": "0.1.0",
+  "publisher": "kaustubh",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:.git"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "ezstack",
+          "title": "ezstack",
+          "icon": "$(layers)"
+        }
+      ]
+    },
+    "views": {
+      "ezstack": [
+        {
+          "id": "ezstackStacks",
+          "name": "Stacks"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "ezstack.refresh",
+        "title": "Refresh",
+        "category": "ezstack",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "ezstack.newBranch",
+        "title": "New Branch",
+        "category": "ezstack",
+        "icon": "$(add)"
+      },
+      {
+        "command": "ezstack.sync",
+        "title": "Sync",
+        "category": "ezstack",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "ezstack.push",
+        "title": "Push Branch",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.pushStack",
+        "title": "Push Stack",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.prCreate",
+        "title": "Create PR",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.prUpdate",
+        "title": "Update PR",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.prMerge",
+        "title": "Merge PR",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.prDraft",
+        "title": "Toggle PR Draft",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.prStack",
+        "title": "Update Stack Info in PRs",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.goto",
+        "title": "Go to Branch",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.up",
+        "title": "Go to Parent Branch",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.down",
+        "title": "Go to Child Branch",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.delete",
+        "title": "Delete Branch",
+        "category": "ezstack",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "ezstack.reparent",
+        "title": "Reparent Branch",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.openPR",
+        "title": "Open PR in Browser",
+        "category": "ezstack",
+        "icon": "$(link-external)"
+      },
+      {
+        "command": "ezstack.openWorktree",
+        "title": "Open Worktree Folder",
+        "category": "ezstack",
+        "icon": "$(folder-opened)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "ezstack.refresh",
+          "when": "view == ezstackStacks",
+          "group": "navigation"
+        },
+        {
+          "command": "ezstack.newBranch",
+          "when": "view == ezstackStacks",
+          "group": "navigation"
+        },
+        {
+          "command": "ezstack.sync",
+          "when": "view == ezstackStacks",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "ezstack.openWorktree",
+          "when": "view == ezstackStacks && viewItem == branch",
+          "group": "inline"
+        },
+        {
+          "command": "ezstack.openPR",
+          "when": "view == ezstackStacks && viewItem == branchWithPR",
+          "group": "inline"
+        },
+        {
+          "command": "ezstack.push",
+          "when": "view == ezstackStacks && viewItem =~ /^branch/",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "ezstack.prCreate",
+          "when": "view == ezstackStacks && viewItem == branch",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "ezstack.prUpdate",
+          "when": "view == ezstackStacks && viewItem == branchWithPR",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "ezstack.prMerge",
+          "when": "view == ezstackStacks && viewItem == branchWithPR",
+          "group": "1_actions@3"
+        },
+        {
+          "command": "ezstack.prDraft",
+          "when": "view == ezstackStacks && viewItem == branchWithPR",
+          "group": "1_actions@4"
+        },
+        {
+          "command": "ezstack.reparent",
+          "when": "view == ezstackStacks && viewItem =~ /^branch/",
+          "group": "2_modify@1"
+        },
+        {
+          "command": "ezstack.delete",
+          "when": "view == ezstackStacks && viewItem =~ /^branch/",
+          "group": "2_modify@2"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "ezstack",
+      "properties": {
+        "ezstack.cliPath": {
+          "type": "string",
+          "default": "ezs",
+          "description": "Path to the ezs CLI binary"
+        },
+        "ezstack.autoRefresh": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically refresh stack view when config changes"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "watch": "npm run compile -- --watch",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package",
+    "pretest": "npm run compile",
+    "test": "node ./dist/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-electron": "^2.3.0",
+    "@vscode/vsce": "^2.22.0",
+    "esbuild": "^0.19.0",
+    "eslint": "^8.50.0",
+    "typescript": "^5.3.0"
+  }
+}
