@@ -15,7 +15,20 @@ export async function activate(
 
   const cli = new EzsCli(workspaceRoot);
 
-  // Check if ezs is available
+  // Always register tree view and commands first
+  const treeProvider = new StackTreeProvider(cli);
+  const treeView = vscode.window.createTreeView("ezstackStacks", {
+    treeDataProvider: treeProvider,
+    showCollapseAll: true,
+  });
+  context.subscriptions.push(treeView);
+
+  const statusBar = new StatusBarManager(cli);
+  context.subscriptions.push(statusBar);
+
+  registerCommands(context, cli, treeProvider, statusBar);
+
+  // Check if ezs is available — warn but don't bail
   const available = await cli.isAvailable();
   if (!available) {
     vscode.window.showWarningMessage(
@@ -24,17 +37,7 @@ export async function activate(
     return;
   }
 
-  // Tree view
-  const treeProvider = new StackTreeProvider(cli);
-  const treeView = vscode.window.createTreeView("ezstackStacks", {
-    treeDataProvider: treeProvider,
-    showCollapseAll: true,
-  });
-  context.subscriptions.push(treeView);
-
-  // Status bar
-  const statusBar = new StatusBarManager(cli);
-  context.subscriptions.push(statusBar);
+  // Now that we know ezs works, do the initial data load
   await statusBar.update();
 
   // Config watcher for auto-refresh
@@ -44,7 +47,6 @@ export async function activate(
 
   if (autoRefresh) {
     const watcher = new ConfigWatcher(workspaceRoot);
-    // Debounce: wait 500ms after last change before refreshing
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     watcher.onDidChange(() => {
       if (debounceTimer) {
@@ -58,14 +60,10 @@ export async function activate(
     context.subscriptions.push(watcher);
   }
 
-  // Register commands
-  registerCommands(context, cli, treeProvider, statusBar);
-
   // Listen for terminal close to refresh (after interactive commands)
   context.subscriptions.push(
     vscode.window.onDidCloseTerminal((terminal) => {
       if (terminal.name.startsWith("ezstack:")) {
-        // Delay to allow config file to be written
         setTimeout(() => {
           treeProvider.refresh();
           statusBar.update();
