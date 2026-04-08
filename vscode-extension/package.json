@@ -4,6 +4,11 @@
   "description": "Manage stacked pull requests with git worktrees",
   "version": "0.1.0",
   "publisher": "kaustubh",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KulkarniKaustubh/ezstack.git"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
