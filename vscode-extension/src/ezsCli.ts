@@ -10,11 +10,15 @@ import {
 } from "./types";
 
 const COMMON_PATHS = [
+  // make install (XDG convention)
   path.join(os.homedir(), ".local", "bin", "ezs"),
-  "/usr/local/bin/ezs",
+  // go install (GOBIN or GOPATH/bin or ~/go/bin)
+  process.env.GOBIN ? path.join(process.env.GOBIN, "ezs") : "",
+  process.env.GOPATH ? path.join(process.env.GOPATH, "bin", "ezs") : "",
   path.join(os.homedir(), "go", "bin", "ezs"),
-  path.join(process.env.GOPATH || "", "bin", "ezs"),
-];
+  // system-wide
+  "/usr/local/bin/ezs",
+].filter(Boolean);
 
 function findEzsBinary(): string {
   // Try `which ezs` first (works if it's on PATH)
