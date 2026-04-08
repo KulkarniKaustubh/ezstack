@@ -1,7 +1,31 @@
+import * as fs from "fs";
+import * as path from "path";
 import * as vscode from "vscode";
 import { EzsCli } from "../ezsCli";
 import { StackTreeProvider, BranchNode, StackTreeItem } from "../views/stackTreeProvider";
 import { StatusBarManager } from "../views/statusBarManager";
+
+const PR_TEMPLATE_PATHS = [
+  ".github/PULL_REQUEST_TEMPLATE.md",
+  ".github/pull_request_template.md",
+  "PULL_REQUEST_TEMPLATE.md",
+  "pull_request_template.md",
+  "docs/pull_request_template.md",
+];
+
+function findPRTemplate(workspaceRoot: string): string | undefined {
+  for (const p of PR_TEMPLATE_PATHS) {
+    const full = path.join(workspaceRoot, p);
+    if (fs.existsSync(full)) {
+      try {
+        return fs.readFileSync(full, "utf-8");
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return undefined;
+}
 
 export function registerCommands(
   context: vscode.ExtensionContext,
@@ -137,27 +161,98 @@ export function registerCommands(
 
   // ── PR Create ──
   context.subscriptions.push(
-    vscode.commands.registerCommand("ezstack.prCreate", async () => {
-      const title = await vscode.window.showInputBox({
-        prompt: "PR title",
-        placeHolder: "Add feature X",
-      });
-      if (!title) {
-        return;
-      }
+    vscode.commands.registerCommand(
+      "ezstack.prCreate",
+      async (node?: BranchNode) => {
+        // Determine which branch to create the PR for
+        let branchName: string | undefined;
+        if (node) {
+          branchName = node.branch.name;
+        } else {
+          // Pick from list
+          const stacks = await cli.listStacks(true);
+          const branches = stacks
+            .flatMap((s) => s.branches)
+            .filter((b) => !b.pr_number);
+          if (branches.length === 0) {
+            vscode.window.showInformationMessage(
+              "All branches already have PRs.",
+            );
+            return;
+          }
+          const pick = await vscode.window.showQuickPick(
+            branches.map((b) => ({
+              label: b.name,
+              detail: b.worktree_path,
+            })),
+            { placeHolder: "Select branch to create PR for" },
+          );
+          if (!pick) {
+            return;
+          }
+          branchName = pick.label;
+        }
 
-      const draftPick = await vscode.window.showQuickPick(
-        [
-          { label: "Ready for review", value: false },
-          { label: "Draft", value: true },
-        ],
-        { placeHolder: "PR type" },
-      );
+        const title = await vscode.window.showInputBox({
+          prompt: `PR title for "${branchName}"`,
+          placeHolder: "Add feature X",
+          value: branchName,
+        });
+        if (!title) {
+          return;
+        }
 
-      await runWithFeedback("Creating PR...", "PR created.", () =>
-        cli.prCreate(title, draftPick?.value ?? false),
-      );
-    }),
+        const draftPick = await vscode.window.showQuickPick(
+          [
+            { label: "Ready for review", value: false },
+            { label: "Draft", value: true },
+          ],
+          { placeHolder: "PR type" },
+        );
+
+        // Open an editor for the PR description
+        const workspaceRoot =
+          vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
+        const template = findPRTemplate(workspaceRoot);
+        const doc = await vscode.workspace.openTextDocument({
+          language: "markdown",
+          content: template ?? "",
+        });
+        const editor = await vscode.window.showTextDocument(doc, {
+          preview: false,
+        });
+
+        // Show a message telling the user to write the description and save
+        const action = await vscode.window.showInformationMessage(
+          `Write the PR description for "${branchName}", then click "Create PR".`,
+          "Create PR",
+          "Cancel",
+        );
+
+        // Get the body text from the editor
+        const body = editor.document.getText().trim();
+
+        // Close the temp document
+        await vscode.commands.executeCommand(
+          "workbench.action.closeActiveEditor",
+        );
+
+        if (action !== "Create PR") {
+          return;
+        }
+
+        await runWithFeedback(
+          "Creating PR...",
+          `PR created for "${branchName}".`,
+          () =>
+            cli.prCreate(title, {
+              draft: draftPick?.value ?? false,
+              body: body || undefined,
+              branch: branchName,
+            }),
+        );
+      },
+    ),
   );
 
   // ── PR Update ──

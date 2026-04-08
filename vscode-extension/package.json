@@ -163,7 +163,7 @@
       "view/item/context": [
         {
           "command": "ezstack.openWorktree",
-          "when": "view == ezstackStacks && viewItem == branch",
+          "when": "view == ezstackStacks && viewItem =~ /^branch/",
           "group": "inline"
         },
         {
@@ -178,7 +178,7 @@
         },
         {
           "command": "ezstack.prCreate",
-          "when": "view == ezstackStacks && viewItem == branch",
+          "when": "view == ezstackStacks && viewItem =~ /^branch/",
           "group": "1_actions@2"
         },
         {
