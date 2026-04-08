@@ -126,6 +126,10 @@ export class StackTreeProvider
   private stacks: StatusStackJSON[] = [];
   // Map from "stackHash:parentName" → child branches (scoped per stack)
   private childrenMap = new Map<string, StatusBranchJSON[]>();
+  // Map from node key → parent node (for getParent)
+  private parentMap = new Map<string, StackTreeItem>();
+  // Cache of created nodes by key
+  private nodeCache = new Map<string, StackTreeItem>();
 
   constructor(private cli: EzsCli) {}
 
@@ -135,6 +139,13 @@ export class StackTreeProvider
 
   private childrenKey(stackHash: string, parentName: string): string {
     return `${stackHash}:${parentName}`;
+  }
+
+  private nodeKey(element: StackTreeItem): string {
+    if (element instanceof StackNode) {
+      return `stack:${element.stack.hash}`;
+    }
+    return `branch:${element.stackHash}:${element.branch.name}`;
   }
 
   async fetchData(): Promise<void> {
@@ -150,6 +161,8 @@ export class StackTreeProvider
 
     // Build children map, keyed per stack to avoid cross-stack mixing
     this.childrenMap.clear();
+    this.parentMap.clear();
+    this.nodeCache.clear();
     for (const stack of this.stacks) {
       for (const b of stack.branches) {
         const key = this.childrenKey(stack.hash, b.parent);
@@ -171,7 +184,11 @@ export class StackTreeProvider
       if (this.stacks.length === 0) {
         return [];
       }
-      return this.stacks.map((s) => new StackNode(s));
+      const nodes = this.stacks.map((s) => new StackNode(s));
+      for (const n of nodes) {
+        this.nodeCache.set(this.nodeKey(n), n);
+      }
+      return nodes;
     }
 
     if (element instanceof StackNode) {
@@ -179,7 +196,7 @@ export class StackTreeProvider
       const hash = element.stack.hash;
       const key = this.childrenKey(hash, element.stack.root);
       const topBranches = this.childrenMap.get(key) ?? [];
-      return topBranches.map(
+      const nodes = topBranches.map(
         (b) =>
           new BranchNode(
             b,
@@ -187,6 +204,12 @@ export class StackTreeProvider
             (this.childrenMap.get(this.childrenKey(hash, b.name)) ?? []).length > 0,
           ),
       );
+      for (const n of nodes) {
+        const nk = this.nodeKey(n);
+        this.nodeCache.set(nk, n);
+        this.parentMap.set(nk, element);
+      }
+      return nodes;
     }
 
     if (element instanceof BranchNode) {
@@ -194,7 +217,7 @@ export class StackTreeProvider
       const hash = element.stackHash;
       const key = this.childrenKey(hash, element.branch.name);
       const children = this.childrenMap.get(key) ?? [];
-      return children.map(
+      const nodes = children.map(
         (b) =>
           new BranchNode(
             b,
@@ -202,8 +225,18 @@ export class StackTreeProvider
             (this.childrenMap.get(this.childrenKey(hash, b.name)) ?? []).length > 0,
           ),
       );
+      for (const n of nodes) {
+        const nk = this.nodeKey(n);
+        this.nodeCache.set(nk, n);
+        this.parentMap.set(nk, element);
+      }
+      return nodes;
     }
 
     return [];
+  }
+
+  getParent(element: StackTreeItem): StackTreeItem | undefined {
+    return this.parentMap.get(this.nodeKey(element));
   }
 }
