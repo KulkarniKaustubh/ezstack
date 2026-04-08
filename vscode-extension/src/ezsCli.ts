@@ -43,10 +43,17 @@ function findEzsBinary(): string {
 
 export class EzsCli {
   private resolvedPath: string | undefined;
+  private outputChannel: vscode.OutputChannel;
 
   constructor(
     private workspaceRoot: string,
-  ) {}
+  ) {
+    this.outputChannel = vscode.window.createOutputChannel("ezstack");
+  }
+
+  getOutputChannel(): vscode.OutputChannel {
+    return this.outputChannel;
+  }
 
   private get cliPath(): string {
     const configured = vscode.workspace
@@ -73,17 +80,28 @@ export class EzsCli {
   /** Run an ezs command and return stdout. */
   private exec(args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
+      const cmdStr = `ezs ${args.join(" ")}`;
       execFile(
         this.cliPath,
         args,
         { cwd: this.workspaceRoot, timeout: 30_000 },
         (error, stdout, stderr) => {
+          const cleanStderr = EzsCli.stripAnsi(stderr).trim();
+
           if (error) {
-            // Only use stderr lines that look like actual errors, not UI output
-            const cleaned = EzsCli.stripAnsi(stderr).trim();
-            reject(new Error(cleaned || error.message));
+            this.outputChannel.appendLine(`> ${cmdStr}`);
+            if (cleanStderr) {
+              this.outputChannel.appendLine(cleanStderr);
+            }
+            this.outputChannel.appendLine("");
+            reject(new Error(cleanStderr || error.message));
           } else {
-            // ezs writes UI output to stderr even on success — ignore it
+            // Log UI output (stderr) on success
+            if (cleanStderr) {
+              this.outputChannel.appendLine(`> ${cmdStr}`);
+              this.outputChannel.appendLine(cleanStderr);
+              this.outputChannel.appendLine("");
+            }
             resolve(stdout);
           }
         },
