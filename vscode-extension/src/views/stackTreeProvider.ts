@@ -138,16 +138,14 @@ export class StackTreeProvider
   }
 
   async fetchData(): Promise<void> {
+    // Use list (fast, no gh auth needed) as primary data source.
+    // statusStacks adds PR/CI info but requires gh and the --json flag
+    // which may not be available in older ezs versions.
     try {
-      this.stacks = await this.cli.statusStacks(true);
+      const basic = await this.cli.listStacks(true);
+      this.stacks = basic as StatusStackJSON[];
     } catch {
-      // Fall back to list (no status) if status fails
-      try {
-        const basic = await this.cli.listStacks(true);
-        this.stacks = basic as StatusStackJSON[];
-      } catch {
-        this.stacks = [];
-      }
+      this.stacks = [];
     }
 
     // Build children map, keyed per stack to avoid cross-stack mixing
