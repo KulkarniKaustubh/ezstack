@@ -1,4 +1,7 @@
-import { execFile } from "child_process";
+import { execFile, execFileSync } from "child_process";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import * as vscode from "vscode";
 import {
   StackJSON,
@@ -6,15 +9,56 @@ import {
   SyncInfoJSON,
 } from "./types";
 
+const COMMON_PATHS = [
+  path.join(os.homedir(), ".local", "bin", "ezs"),
+  "/usr/local/bin/ezs",
+  path.join(os.homedir(), "go", "bin", "ezs"),
+  path.join(process.env.GOPATH || "", "bin", "ezs"),
+];
+
+function findEzsBinary(): string {
+  // Try `which ezs` first (works if it's on PATH)
+  try {
+    const result = execFileSync("which", ["ezs"], { timeout: 3000 }).toString().trim();
+    if (result && fs.existsSync(result)) {
+      return result;
+    }
+  } catch {
+    // not on PATH
+  }
+
+  // Check common install locations
+  for (const p of COMMON_PATHS) {
+    if (p && fs.existsSync(p)) {
+      return p;
+    }
+  }
+
+  return "ezs"; // fallback — will fail with a clear error
+}
+
 export class EzsCli {
+  private resolvedPath: string | undefined;
+
   constructor(
     private workspaceRoot: string,
   ) {}
 
   private get cliPath(): string {
-    return vscode.workspace
+    const configured = vscode.workspace
       .getConfiguration("ezstack")
       .get<string>("cliPath", "ezs");
+
+    // If user set an explicit path, use it
+    if (configured !== "ezs") {
+      return configured;
+    }
+
+    // Auto-resolve once
+    if (!this.resolvedPath) {
+      this.resolvedPath = findEzsBinary();
+    }
+    return this.resolvedPath;
   }
 
   /** Run an ezs command and return stdout. */
