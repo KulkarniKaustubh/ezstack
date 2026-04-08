@@ -82,7 +82,7 @@ ezs sync -a
 | `new` | `n` | Create a new branch in the stack |
 | `list` | `ls` | List all stacks and branches |
 | `status` | `st` | Show status with PR and CI info |
-| `sync` | `rebase`, `rb` | Sync stack with remote |
+| `sync` | `rebase`, `rb` | Sync stack with remote (rebase or merge) |
 | `goto` | `go` | Navigate to a branch worktree |
 | `up` | | Navigate up the stack (toward parent) |
 | `down` | | Navigate down the stack (toward children) |
@@ -108,6 +108,23 @@ ezstack supports both worktree-based and checkout-based workflows:
 - **No worktrees:** Branches use `git checkout` for a simpler, single-directory workflow
 
 Configure with `ezs config set use_worktrees true/false`.
+
+### Sync Strategy
+
+By default, ezstack uses `git rebase` to sync branches. You can switch to `git merge` per-repo:
+
+```bash
+ezs config set sync_strategy merge
+```
+
+Or override per-command with `--merge` / `--rebase` flags:
+
+```bash
+ezs sync -a --merge       # merge just this once
+ezs commit -m "fix" --rebase  # rebase children even if config says merge
+```
+
+The `--merge` and `--rebase` flags work with `sync`, `commit`, `amend`, and `reparent`.
 
 ## Exit Codes
 
