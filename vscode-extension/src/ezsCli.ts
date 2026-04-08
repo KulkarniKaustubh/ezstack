@@ -107,6 +107,24 @@ export class EzsCli {
     return terminal;
   }
 
+  /** Run a git command and return stdout. */
+  private execGit(args: string[]): Promise<string> {
+    return new Promise((resolve, reject) => {
+      execFile(
+        "git",
+        args,
+        { cwd: this.workspaceRoot, timeout: 10_000 },
+        (error, stdout) => {
+          if (error) {
+            reject(new Error(error.message));
+          } else {
+            resolve(stdout);
+          }
+        },
+      );
+    });
+  }
+
   // ── Read operations ──
 
   async isAvailable(): Promise<boolean> {
@@ -121,6 +139,11 @@ export class EzsCli {
   async getVersion(): Promise<string> {
     const out = await this.exec(["--version"]);
     return out.trim();
+  }
+
+  async getLocalBranches(): Promise<string[]> {
+    const out = await this.execGit(["branch", "--format=%(refname:short)"]);
+    return out.trim().split("\n").filter(Boolean);
   }
 
   async listStacks(all = false): Promise<StackJSON[]> {
