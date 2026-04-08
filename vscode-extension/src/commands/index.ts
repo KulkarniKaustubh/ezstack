@@ -49,15 +49,18 @@ export function registerCommands(
         return;
       }
 
-      // Optionally pick a parent from the current stack
+      // Pick a parent from all local branches
       let parent: string | undefined;
       try {
-        const stacks = await cli.listStacks();
-        const allBranches = stacks.flatMap((s) => [
+        const [stacks, gitBranches] = await Promise.all([
+          cli.listStacks(true).catch(() => []),
+          cli.getLocalBranches().catch(() => []),
+        ]);
+        const stackBranches = stacks.flatMap((s) => [
           s.root,
           ...s.branches.map((b) => b.name),
         ]);
-        const unique = [...new Set(allBranches)];
+        const unique = [...new Set([...stackBranches, ...gitBranches])];
         if (unique.length > 0) {
           parent = await vscode.window.showQuickPick(unique, {
             placeHolder: "Select parent branch (or Esc for current branch)",
