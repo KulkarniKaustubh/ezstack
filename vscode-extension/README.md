@@ -10,7 +10,27 @@ A VSCode extension for managing stacked pull requests, powered by the `ezs` CLI.
 
 ## Installation
 
-### From Source (Development)
+### From Pre-built VSIX (Recommended)
+
+Download the `.vsix` file from the [latest release](https://github.com/KulkarniKaustubh/ezstack/releases) and install it:
+
+```bash
+code --install-extension ezstack-0.1.0.vsix
+```
+
+Or in VSCode: **Extensions** sidebar → `...` menu → **Install from VSIX...** → select the file.
+
+### From Source
+
+```bash
+cd vscode-extension
+npm install
+npm run compile
+npx vsce package        # produces ezstack-0.1.0.vsix
+code --install-extension ezstack-0.1.0.vsix
+```
+
+### Development Mode
 
 ```bash
 cd vscode-extension
@@ -19,16 +39,6 @@ npm run compile
 ```
 
 Then open this folder in VSCode and press **F5** to launch the Extension Development Host.
-
-### From VSIX
-
-```bash
-cd vscode-extension
-npm install
-npm run compile
-npx vsce package
-code --install-extension ezstack-0.1.0.vsix
-```
 
 ## Features
 
