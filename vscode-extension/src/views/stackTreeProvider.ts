@@ -124,15 +124,17 @@ export class StackTreeProvider
   readonly onDidChangeTreeData = this._onDidChangeTreeData.event;
 
   private stacks: StatusStackJSON[] = [];
-  // Map from branch name → child branches (within same stack)
+  // Map from "stackHash:parentName" → child branches (scoped per stack)
   private childrenMap = new Map<string, StatusBranchJSON[]>();
-  // Map from branch name → stack hash
-  private branchStackMap = new Map<string, string>();
 
   constructor(private cli: EzsCli) {}
 
   refresh(): void {
     this._onDidChangeTreeData.fire();
+  }
+
+  private childrenKey(stackHash: string, parentName: string): string {
+    return `${stackHash}:${parentName}`;
   }
 
   async fetchData(): Promise<void> {
@@ -148,15 +150,14 @@ export class StackTreeProvider
       }
     }
 
-    // Build children map
+    // Build children map, keyed per stack to avoid cross-stack mixing
     this.childrenMap.clear();
-    this.branchStackMap.clear();
     for (const stack of this.stacks) {
       for (const b of stack.branches) {
-        this.branchStackMap.set(b.name, stack.hash);
-        const siblings = this.childrenMap.get(b.parent) ?? [];
+        const key = this.childrenKey(stack.hash, b.parent);
+        const siblings = this.childrenMap.get(key) ?? [];
         siblings.push(b);
-        this.childrenMap.set(b.parent, siblings);
+        this.childrenMap.set(key, siblings);
       }
     }
   }
@@ -177,27 +178,30 @@ export class StackTreeProvider
 
     if (element instanceof StackNode) {
       // Stack level: return top-level branches (children of root)
-      const root = element.stack.root;
-      const topBranches = this.childrenMap.get(root) ?? [];
+      const hash = element.stack.hash;
+      const key = this.childrenKey(hash, element.stack.root);
+      const topBranches = this.childrenMap.get(key) ?? [];
       return topBranches.map(
         (b) =>
           new BranchNode(
             b,
-            element.stack.hash,
-            (this.childrenMap.get(b.name) ?? []).length > 0,
+            hash,
+            (this.childrenMap.get(this.childrenKey(hash, b.name)) ?? []).length > 0,
           ),
       );
     }
 
     if (element instanceof BranchNode) {
       // Branch level: return child branches
-      const children = this.childrenMap.get(element.branch.name) ?? [];
+      const hash = element.stackHash;
+      const key = this.childrenKey(hash, element.branch.name);
+      const children = this.childrenMap.get(key) ?? [];
       return children.map(
         (b) =>
           new BranchNode(
             b,
-            element.stackHash,
-            (this.childrenMap.get(b.name) ?? []).length > 0,
+            hash,
+            (this.childrenMap.get(this.childrenKey(hash, b.name)) ?? []).length > 0,
           ),
       );
     }
