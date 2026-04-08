@@ -46,6 +46,12 @@
         "icon": "$(refresh)"
       },
       {
+        "command": "ezstack.expandAll",
+        "title": "Expand All",
+        "category": "ezstack",
+        "icon": "$(expand-all)"
+      },
+      {
         "command": "ezstack.newBranch",
         "title": "New Branch",
         "category": "ezstack",
@@ -135,6 +141,11 @@
       "view/title": [
         {
           "command": "ezstack.refresh",
+          "when": "view == ezstackStacks",
+          "group": "navigation"
+        },
+        {
+          "command": "ezstack.expandAll",
           "when": "view == ezstackStacks",
           "group": "navigation"
         },
