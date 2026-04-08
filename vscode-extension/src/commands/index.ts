@@ -14,6 +14,8 @@ export function registerCommands(
     await statusBar.update();
   };
 
+  const outputChannel = cli.getOutputChannel();
+
   /** Run a CLI mutation with progress notification, success/error toasts, and refresh. */
   const runWithFeedback = async (
     progressLabel: string,
@@ -26,10 +28,19 @@ export function registerCommands(
         fn,
       );
       await refreshAll();
-      vscode.window.showInformationMessage(successLabel);
+      const action = await vscode.window.showInformationMessage(
+        successLabel,
+        "Show Output",
+      );
+      if (action === "Show Output") {
+        outputChannel.show();
+      }
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
-      vscode.window.showErrorMessage(msg);
+      const action = await vscode.window.showErrorMessage(msg, "Show Output");
+      if (action === "Show Output") {
+        outputChannel.show();
+      }
     }
   };
 
