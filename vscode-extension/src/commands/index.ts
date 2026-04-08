@@ -14,14 +14,23 @@ export function registerCommands(
     await statusBar.update();
   };
 
-  const withProgress = <T>(
-    title: string,
-    fn: () => Promise<T>,
-  ): Thenable<T> => {
-    return vscode.window.withProgress(
-      { location: vscode.ProgressLocation.Notification, title },
-      fn,
-    );
+  /** Run a CLI mutation with progress notification, success/error toasts, and refresh. */
+  const runWithFeedback = async (
+    progressLabel: string,
+    successLabel: string,
+    fn: () => Promise<void>,
+  ): Promise<void> => {
+    try {
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: progressLabel },
+        fn,
+      );
+      await refreshAll();
+      vscode.window.showInformationMessage(successLabel);
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      vscode.window.showErrorMessage(msg);
+    }
   };
 
   // ── Refresh ──
@@ -58,10 +67,11 @@ export function registerCommands(
         // If listing fails, proceed without parent selection
       }
 
-      await withProgress("Creating branch...", async () => {
-        await cli.newBranch(name, parent);
-      });
-      await refreshAll();
+      await runWithFeedback(
+        "Creating branch...",
+        `Created branch "${name}".`,
+        () => cli.newBranch(name, parent),
+      );
     }),
   );
 
@@ -86,19 +96,17 @@ export function registerCommands(
 
   // ── Push ──
   context.subscriptions.push(
-    vscode.commands.registerCommand("ezstack.push", async () => {
-      await withProgress("Pushing branch...", () => cli.push());
-      await refreshAll();
-      vscode.window.showInformationMessage("Branch pushed.");
-    }),
+    vscode.commands.registerCommand("ezstack.push", () =>
+      runWithFeedback("Pushing branch...", "Branch pushed.", () => cli.push()),
+    ),
   );
 
   context.subscriptions.push(
-    vscode.commands.registerCommand("ezstack.pushStack", async () => {
-      await withProgress("Pushing stack...", () => cli.pushStack());
-      await refreshAll();
-      vscode.window.showInformationMessage("Stack pushed.");
-    }),
+    vscode.commands.registerCommand("ezstack.pushStack", () =>
+      runWithFeedback("Pushing stack...", "Stack pushed.", () =>
+        cli.pushStack(),
+      ),
+    ),
   );
 
   // ── PR Create ──
@@ -120,21 +128,17 @@ export function registerCommands(
         { placeHolder: "PR type" },
       );
 
-      await withProgress("Creating PR...", () =>
+      await runWithFeedback("Creating PR...", "PR created.", () =>
         cli.prCreate(title, draftPick?.value ?? false),
       );
-      await refreshAll();
-      vscode.window.showInformationMessage("PR created.");
     }),
   );
 
   // ── PR Update ──
   context.subscriptions.push(
-    vscode.commands.registerCommand("ezstack.prUpdate", async () => {
-      await withProgress("Updating PR...", () => cli.prUpdate());
-      await refreshAll();
-      vscode.window.showInformationMessage("PR updated.");
-    }),
+    vscode.commands.registerCommand("ezstack.prUpdate", () =>
+      runWithFeedback("Updating PR...", "PR updated.", () => cli.prUpdate()),
+    ),
   );
 
   // ── PR Merge ──
@@ -161,27 +165,30 @@ export function registerCommands(
         return;
       }
 
-      await withProgress("Merging PR...", () => cli.prMerge(method.value));
-      await refreshAll();
-      vscode.window.showInformationMessage("PR merged.");
+      await runWithFeedback("Merging PR...", "PR merged.", () =>
+        cli.prMerge(method.value),
+      );
     }),
   );
 
   // ── PR Draft Toggle ──
   context.subscriptions.push(
-    vscode.commands.registerCommand("ezstack.prDraft", async () => {
-      await withProgress("Toggling draft...", () => cli.prDraft());
-      await refreshAll();
-    }),
+    vscode.commands.registerCommand("ezstack.prDraft", () =>
+      runWithFeedback("Toggling draft...", "Draft status toggled.", () =>
+        cli.prDraft(),
+      ),
+    ),
   );
 
   // ── PR Stack ──
   context.subscriptions.push(
-    vscode.commands.registerCommand("ezstack.prStack", async () => {
-      await withProgress("Updating stack info in PRs...", () => cli.prStack());
-      await refreshAll();
-      vscode.window.showInformationMessage("Stack info updated in PRs.");
-    }),
+    vscode.commands.registerCommand("ezstack.prStack", () =>
+      runWithFeedback(
+        "Updating stack info in PRs...",
+        "Stack info updated in PRs.",
+        () => cli.prStack(),
+      ),
+    ),
   );
 
   // ── Go to Branch ──
@@ -227,7 +234,6 @@ export function registerCommands(
         if (!current) {
           return;
         }
-        // Find parent branch's worktree
         const parent = stacks
           .flatMap((s) => s.branches)
           .find((b) => b.name === current.parent);
@@ -253,7 +259,6 @@ export function registerCommands(
         if (!current) {
           return;
         }
-        // Find children
         const children = stacks
           .flatMap((s) => s.branches)
           .filter((b) => b.parent === current.name);
@@ -296,7 +301,6 @@ export function registerCommands(
         if (node) {
           branchName = node.branch.name;
         } else {
-          // Pick from list
           const stacks = await cli.listStacks(true);
           const branches = stacks.flatMap((s) =>
             s.branches.map((b) => b.name),
@@ -318,11 +322,11 @@ export function registerCommands(
           return;
         }
 
-        await withProgress("Deleting branch...", () =>
-          cli.deleteBranch(branchName!),
+        await runWithFeedback(
+          "Deleting branch...",
+          `Deleted branch "${branchName}".`,
+          () => cli.deleteBranch(branchName!),
         );
-        await refreshAll();
-        vscode.window.showInformationMessage(`Deleted branch "${branchName}".`);
       },
     ),
   );
@@ -349,7 +353,6 @@ export function registerCommands(
           return;
         }
 
-        // Build list of possible parents (all branches + roots, excluding self)
         const candidates = [
           ...new Set(
             stacks.flatMap((s) => [
@@ -366,12 +369,10 @@ export function registerCommands(
           return;
         }
 
-        await withProgress("Reparenting...", () =>
-          cli.reparent(branchName!, newParent),
-        );
-        await refreshAll();
-        vscode.window.showInformationMessage(
+        await runWithFeedback(
+          "Reparenting...",
           `Reparented "${branchName}" onto "${newParent}".`,
+          () => cli.reparent(branchName!, newParent),
         );
       },
     ),
