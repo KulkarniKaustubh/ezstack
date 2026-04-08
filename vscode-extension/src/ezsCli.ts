@@ -104,7 +104,7 @@ export class EzsCli {
 
   async isAvailable(): Promise<boolean> {
     try {
-      await this.exec(["version"]);
+      await this.exec(["--version"]);
       return true;
     } catch {
       return false;
@@ -112,7 +112,7 @@ export class EzsCli {
   }
 
   async getVersion(): Promise<string> {
-    const out = await this.exec(["version"]);
+    const out = await this.exec(["--version"]);
     return out.trim();
   }
 
