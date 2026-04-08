@@ -1,6 +1,6 @@
 import * as vscode from "vscode";
 import { EzsCli } from "../ezsCli";
-import { StackTreeProvider, BranchNode } from "../views/stackTreeProvider";
+import { StackTreeProvider, BranchNode, StackTreeItem } from "../views/stackTreeProvider";
 import { StatusBarManager } from "../views/statusBarManager";
 
 export function registerCommands(
@@ -8,6 +8,7 @@ export function registerCommands(
   cli: EzsCli,
   treeProvider: StackTreeProvider,
   statusBar: StatusBarManager,
+  treeView: vscode.TreeView<StackTreeItem>,
 ): void {
   const refreshAll = async () => {
     treeProvider.refresh();
@@ -47,6 +48,17 @@ export function registerCommands(
   // ── Refresh ──
   context.subscriptions.push(
     vscode.commands.registerCommand("ezstack.refresh", refreshAll),
+  );
+
+  // ── Expand All ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ezstack.expandAll", async () => {
+      const roots = await treeProvider.getChildren();
+      for (const root of roots) {
+        // expand: number sets depth — 10 is more than enough for any stack
+        await treeView.reveal(root, { expand: 10 });
+      }
+    }),
   );
 
   // ── New Branch ──
