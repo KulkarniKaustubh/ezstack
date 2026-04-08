@@ -65,6 +65,11 @@ export class EzsCli {
     return this.resolvedPath;
   }
 
+  private static stripAnsi(s: string): string {
+    // eslint-disable-next-line no-control-regex
+    return s.replace(/\x1b\[[0-9;]*m/g, "");
+  }
+
   /** Run an ezs command and return stdout. */
   private exec(args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -74,9 +79,11 @@ export class EzsCli {
         { cwd: this.workspaceRoot, timeout: 30_000 },
         (error, stdout, stderr) => {
           if (error) {
-            const msg = stderr.trim() || error.message;
-            reject(new Error(msg));
+            // Only use stderr lines that look like actual errors, not UI output
+            const cleaned = EzsCli.stripAnsi(stderr).trim();
+            reject(new Error(cleaned || error.message));
           } else {
+            // ezs writes UI output to stderr even on success — ignore it
             resolve(stdout);
           }
         },
