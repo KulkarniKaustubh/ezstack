@@ -26,7 +26,7 @@ export async function activate(
   const statusBar = new StatusBarManager(cli);
   context.subscriptions.push(statusBar);
 
-  registerCommands(context, cli, treeProvider, statusBar);
+  registerCommands(context, cli, treeProvider, statusBar, treeView);
 
   // Check if ezs is available — warn but don't bail
   const available = await cli.isAvailable();
