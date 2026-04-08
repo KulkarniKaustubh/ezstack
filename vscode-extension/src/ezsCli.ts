@@ -225,10 +225,16 @@ export class EzsCli {
     await this.execYes(["reparent", branch, newParent]);
   }
 
-  async prCreate(title: string, draft = false): Promise<void> {
+  async prCreate(title: string, opts?: { draft?: boolean; body?: string; branch?: string }): Promise<void> {
     const args = ["pr", "create", "-t", title];
-    if (draft) {
+    if (opts?.draft) {
       args.push("-d");
+    }
+    if (opts?.body) {
+      args.push("-b", opts.body);
+    }
+    if (opts?.branch) {
+      args.push("--branch", opts.branch);
     }
     await this.execYes(args);
   }
