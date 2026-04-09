@@ -56,11 +56,18 @@ export default function App() {
   const [dialog, setDialog] = useState<DialogState>({ type: "none" });
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
+  const [initializing, setInitializing] = useState(true);
 
   // Auto-detect repo path on mount (only when local)
   useEffect(() => {
     if (!repoPath && !remoteConnection) {
-      ezs.getRepoPath(".").then(setRepoPath).catch(() => {});
+      ezs
+        .getRepoPath(".")
+        .then(setRepoPath)
+        .catch(() => {})
+        .finally(() => setInitializing(false));
+    } else {
+      setInitializing(false);
     }
   }, [repoPath, remoteConnection, setRepoPath]);
 
@@ -81,14 +88,18 @@ export default function App() {
   }, [refresh, setDialog]);
 
   const handleSelectRepo = useCallback(async () => {
-    const selected = await open({ directory: true, multiple: false });
-    if (selected) {
-      try {
-        const path = await ezs.getRepoPath(selected as string);
-        setRepoPath(path);
-      } catch {
-        setRepoPath(selected as string);
+    try {
+      const selected = await open({ directory: true, multiple: false, title: "Select Git Repository" });
+      if (selected) {
+        try {
+          const path = await ezs.getRepoPath(selected as string);
+          setRepoPath(path);
+        } catch {
+          setRepoPath(selected as string);
+        }
       }
+    } catch (e) {
+      console.error("Failed to open directory picker:", e);
     }
   }, [setRepoPath]);
 
@@ -149,11 +160,15 @@ export default function App() {
       }
     : null;
 
+  // Show loading screen during initialization or initial data fetch
+  const showLoadingScreen = initializing || (repoPath && !lastRefresh && isLoading);
+
   return (
     <div className="flex flex-col h-screen">
       <TitleBar
         onRefresh={refresh}
         onSettings={() => setDialog({ type: "settings" })}
+        onSelectRepo={handleSelectRepo}
         onConnectRemote={() => setDialog({ type: "connect-remote" })}
         onDisconnectRemote={handleDisconnectRemote}
         isLoading={isLoading}
@@ -161,7 +176,20 @@ export default function App() {
       />
 
       <div className="flex flex-1 min-h-0">
-        {!repoPath ? (
+        {showLoadingScreen ? (
+          <div className="flex flex-col items-center justify-center h-full w-full text-center p-8">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className="text-primary mb-4 animate-pulse">
+              <path
+                d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6l-8-4z"
+                stroke="currentColor"
+                strokeWidth="2"
+                fill="none"
+              />
+              <path d="M8 12h8M12 8v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          </div>
+        ) : !repoPath ? (
           <EmptyState
             type="no-repo"
             onSelectRepo={handleSelectRepo}
