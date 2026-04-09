@@ -6,7 +6,7 @@ const POLL_INTERVAL = 30_000;
 
 export function useStacks() {
   const {
-    repoPath,
+    selectedRepoPath,
     setStacks,
     setCurrentBranch,
     setLoading,
@@ -21,14 +21,14 @@ export function useStacks() {
   selectedStackHashRef.current = selectedStackHash;
 
   const refresh = useCallback(async () => {
-    if (!repoPath) return;
+    if (!selectedRepoPath) return;
 
     setLoading(true);
     setError(null);
     try {
       const [stacks, branch] = await Promise.all([
-        getStacksStatus(repoPath),
-        getCurrentBranch(repoPath),
+        getStacksStatus(selectedRepoPath),
+        getCurrentBranch(selectedRepoPath),
       ]);
       setStacks(stacks);
       setCurrentBranch(branch);
@@ -43,7 +43,7 @@ export function useStacks() {
     } finally {
       setLoading(false);
     }
-  }, [repoPath, setStacks, setCurrentBranch, setLoading, setError, setLastRefresh, selectStack]);
+  }, [selectedRepoPath, setStacks, setCurrentBranch, setLoading, setError, setLastRefresh, selectStack]);
 
   // Polling with focus/blur awareness
   useEffect(() => {
