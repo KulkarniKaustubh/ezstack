@@ -139,6 +139,8 @@ type statusBranchJSON struct {
 	CISummary   string `json:"ci_summary,omitempty"`
 	Mergeable   string `json:"mergeable,omitempty"`
 	ReviewState string `json:"review_state,omitempty"`
+	Additions   int    `json:"additions"`
+	Deletions   int    `json:"deletions"`
 }
 
 // printStacksJSON outputs stacks as JSON to stdout
@@ -202,6 +204,8 @@ func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusM
 					sbj.CISummary = bs.CISummary
 					sbj.Mergeable = bs.Mergeable
 					sbj.ReviewState = bs.ReviewState
+					sbj.Additions = bs.Additions
+					sbj.Deletions = bs.Deletions
 				}
 			}
 			sj.Branches = append(sj.Branches, sbj)
