@@ -8,6 +8,9 @@ EZS="$PROJECT_DIR/bin/ezs"
 TEST_DIR="$PROJECT_DIR/test/testrepo"
 WORKTREE_DIR="$PROJECT_DIR/test/worktrees"
 
+# Isolate test config to avoid wiping user's ~/.ezstack
+export EZSTACK_HOME="$PROJECT_DIR/test/.ezstack-test"
+
 # Colors
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -23,8 +26,7 @@ warn() {
 
 cleanup() {
     log "Cleaning up test directories..."
-    rm -rf "$TEST_DIR" "$WORKTREE_DIR"
-    rm -rf ~/.ezstack  # Clean config for test
+    rm -rf "$TEST_DIR" "$WORKTREE_DIR" "$EZSTACK_HOME"
 }
 
 # Cleanup first
