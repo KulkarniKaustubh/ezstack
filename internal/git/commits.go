@@ -1,7 +1,11 @@
 package git
 
 import (
+	"bytes"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -65,6 +69,52 @@ func (g *Git) IsRebaseInProgress() (bool, error) {
 	}
 	return strings.Contains(output, "rebase in progress") ||
 		strings.Contains(output, "interactive rebase in progress"), nil
+}
+
+// IsMergeInProgress checks if a merge is in progress
+func (g *Git) IsMergeInProgress() (bool, error) {
+	gitDir, err := g.run("rev-parse", "--git-dir")
+	if err != nil {
+		return false, err
+	}
+	mergeHead := filepath.Join(gitDir, "MERGE_HEAD")
+	_, err = os.Stat(mergeHead)
+	return err == nil, nil
+}
+
+// RebaseContinue continues a rebase in progress
+func (g *Git) RebaseContinue() error {
+	cmd := exec.Command("git", "rebase", "--continue")
+	cmd.Dir = g.RepoDir
+	cmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("rebase --continue failed: %s", stderr.String())
+	}
+	return nil
+}
+
+// MergeContinue continues a merge in progress (commits the resolved merge)
+func (g *Git) MergeContinue() error {
+	cmd := exec.Command("git", "commit", "--no-edit")
+	cmd.Dir = g.RepoDir
+	cmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("merge continue failed: %s", stderr.String())
+	}
+	return nil
+}
+
+// HasUnresolvedConflicts checks if there are unresolved merge conflicts
+func (g *Git) HasUnresolvedConflicts() (bool, error) {
+	output, err := g.run("diff", "--name-only", "--diff-filter=U")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(output) != "", nil
 }
 
 // Push pushes the current branch to remote
