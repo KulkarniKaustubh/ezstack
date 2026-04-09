@@ -26,6 +26,7 @@ pub fn run() {
             pr::pr_toggle_draft,
             pr::pr_update_stack,
             // Config
+            config::get_ezstack_repos,
             config::get_config,
             config::set_config,
         ])

@@ -3,22 +3,19 @@ import { Button } from "../ui/button";
 
 interface EmptyStateProps {
   type: "no-repo" | "no-stacks" | "no-selection";
-  onSelectRepo?: () => void;
   onNewBranch?: () => void;
 }
 
-export function EmptyState({ type, onSelectRepo, onNewBranch }: EmptyStateProps) {
+export function EmptyState({ type, onNewBranch }: EmptyStateProps) {
   if (type === "no-repo") {
     return (
       <div className="flex flex-col items-center justify-center h-full text-center p-8">
         <FolderOpen className="h-12 w-12 text-muted-foreground/30 mb-4" />
         <h2 className="text-lg font-semibold mb-1">Welcome to ezstack</h2>
         <p className="text-sm text-muted-foreground mb-4 max-w-sm">
-          Open a git repository to start managing your stacked pull requests.
+          No repositories found in ezstack config.
+          Run <code className="text-xs font-mono bg-muted px-1 py-0.5 rounded">ezs config init</code> in a git repo to get started.
         </p>
-        {onSelectRepo && (
-          <Button onClick={onSelectRepo}>Open Repository</Button>
-        )}
       </div>
     );
   }

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Branch {
@@ -53,4 +54,24 @@ pub struct CommandResult {
     pub stdout: String,
     pub stderr: String,
     pub exit_code: i32,
+}
+
+// Mirrors ~/.ezstack/config.json
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EzstackConfig {
+    #[serde(default)]
+    pub default_base_branch: String,
+    #[serde(default)]
+    pub repos: HashMap<String, RepoConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoConfig {
+    pub repo_path: String,
+    #[serde(default)]
+    pub worktree_base_dir: String,
+    #[serde(default)]
+    pub default_base_branch: Option<String>,
+    #[serde(default)]
+    pub sync_strategy: Option<String>,
 }

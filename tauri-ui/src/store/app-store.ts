@@ -1,8 +1,9 @@
 import { create } from "zustand";
-import type { StatusStack } from "../types/ezstack";
+import type { StatusStack, RepoConfig } from "../types/ezstack";
 
 interface AppState {
-  repoPath: string | null;
+  repos: RepoConfig[];
+  selectedRepoPath: string | null;
   stacks: StatusStack[];
   selectedStackHash: string | null;
   selectedBranchName: string | null;
@@ -13,7 +14,8 @@ interface AppState {
   operationOutput: string | null;
   operationLoading: boolean;
 
-  setRepoPath: (path: string) => void;
+  setRepos: (repos: RepoConfig[]) => void;
+  selectRepo: (path: string | null) => void;
   setStacks: (stacks: StatusStack[]) => void;
   selectStack: (hash: string | null) => void;
   selectBranch: (name: string | null) => void;
@@ -26,7 +28,8 @@ interface AppState {
 }
 
 export const useAppStore = create<AppState>((set) => ({
-  repoPath: null,
+  repos: [],
+  selectedRepoPath: null,
   stacks: [],
   selectedStackHash: null,
   selectedBranchName: null,
@@ -37,7 +40,17 @@ export const useAppStore = create<AppState>((set) => ({
   operationOutput: null,
   operationLoading: false,
 
-  setRepoPath: (path) => set({ repoPath: path }),
+  setRepos: (repos) => set({ repos }),
+  selectRepo: (path) =>
+    set({
+      selectedRepoPath: path,
+      stacks: [],
+      selectedStackHash: null,
+      selectedBranchName: null,
+      currentBranch: null,
+      error: null,
+      lastRefresh: null,
+    }),
   setStacks: (stacks) => set({ stacks }),
   selectStack: (hash) => set({ selectedStackHash: hash, selectedBranchName: null }),
   selectBranch: (name) => set({ selectedBranchName: name }),

@@ -1,7 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { StatusStack, CommandResult } from "../types/ezstack";
+import type { StatusStack, CommandResult, RepoConfig } from "../types/ezstack";
 
 export type { CommandResult };
+
+export async function getEzstackRepos(): Promise<RepoConfig[]> {
+  return invoke<RepoConfig[]>("get_ezstack_repos");
+}
 
 export async function getStacksStatus(repoPath: string): Promise<StatusStack[]> {
   return invoke<StatusStack[]>("get_stacks_status", { repoPath });
