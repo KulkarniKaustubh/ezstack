@@ -8,6 +8,9 @@ EZS="$PROJECT_DIR/bin/ezs-go"
 TEST_DIR="$PROJECT_DIR/test/testrepo_reparent"
 WORKTREE_DIR="$PROJECT_DIR/test/worktrees_reparent"
 
+# Isolate test config to avoid wiping user's ~/.ezstack
+export EZSTACK_HOME="$PROJECT_DIR/test/.ezstack-test"
+
 # Colors
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -27,7 +30,7 @@ assert_parent() {
     local branch="$1"
     local expected_parent="$2"
     # Check the parent by looking at ezs status output or config
-    local actual_parent=$(grep -A5 "\"name\": \"$branch\"" ~/.ezstack/stacks.json | grep '"parent"' | head -1 | sed 's/.*: "\([^"]*\)".*/\1/')
+    local actual_parent=$(grep -A5 "\"name\": \"$branch\"" "$EZSTACK_HOME/stacks.json" | grep '"parent"' | head -1 | sed 's/.*: "\([^"]*\)".*/\1/')
     if [ "$actual_parent" != "$expected_parent" ]; then
         error "Branch $branch has parent '$actual_parent', expected '$expected_parent'"
     fi
@@ -36,8 +39,7 @@ assert_parent() {
 
 cleanup() {
     log "Cleaning up test directories..."
-    rm -rf "$TEST_DIR" "$WORKTREE_DIR"
-    rm -rf ~/.ezstack  # Clean config for test
+    rm -rf "$TEST_DIR" "$WORKTREE_DIR" "$EZSTACK_HOME"
 }
 
 # Cleanup first
@@ -200,5 +202,5 @@ echo "Test directories:"
 echo "  Main repo: $TEST_DIR"
 echo "  Worktrees: $WORKTREE_DIR"
 echo ""
-echo "To cleanup, run: rm -rf $TEST_DIR $WORKTREE_DIR ~/.ezstack"
+echo "To cleanup, run: rm -rf $TEST_DIR $WORKTREE_DIR $EZSTACK_HOME"
 

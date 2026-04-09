@@ -8,6 +8,9 @@ EZS="$SCRIPT_DIR/../bin/ezs-go"
 TEST_DIR="$SCRIPT_DIR/testrepo_update"
 WORKTREE_DIR="$SCRIPT_DIR/worktrees_update"
 
+# Isolate test config to avoid wiping user's ~/.ezstack
+export EZSTACK_HOME="$SCRIPT_DIR/.ezstack-test"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -28,8 +31,7 @@ fail() {
 }
 
 cleanup() {
-    /bin/rm -rf "$TEST_DIR" "$WORKTREE_DIR"
-    /bin/rm -rf ~/.ezstack  # Clean config for test
+    /bin/rm -rf "$TEST_DIR" "$WORKTREE_DIR" "$EZSTACK_HOME"
 }
 
 # Build first
