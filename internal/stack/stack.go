@@ -895,8 +895,10 @@ func (m *Manager) findOrCreateStack(branchName, parentBranch, targetStackHash st
 		}
 		if stackKey != "" {
 			s := m.stackConfig.Stacks[stackKey]
-			s.AddBranch(branchName, parentBranch)
-			return s
+			if s != nil {
+				s.AddBranch(branchName, parentBranch)
+				return s
+			}
 		}
 	}
 
@@ -1301,14 +1303,16 @@ func (m *Manager) DeleteStack(stackHash string) (bool, error) {
 		if branch.WorktreePath != "" {
 			if _, err := os.Stat(branch.WorktreePath); err == nil {
 				// If we're inside this worktree, move out first so git can remove it
-				if cwd == branch.WorktreePath {
+				cwdResolved, _ := filepath.EvalSymlinks(cwd)
+				wtResolved, _ := filepath.EvalSymlinks(branch.WorktreePath)
+				if cwdResolved == wtResolved || strings.HasPrefix(cwdResolved, wtResolved+string(os.PathSeparator)) {
 					if err := os.Chdir(m.repoDir); err != nil {
 						fmt.Fprintf(os.Stderr, "  Warning: failed to leave worktree %s: %v\n", branch.WorktreePath, err)
-					} else {
-						needsCd = true
-						// Update the git instance to run from the main repo
-						m.git = git.New(m.repoDir)
+						continue
 					}
+					needsCd = true
+					// Update the git instance to run from the main repo
+					m.git = git.New(m.repoDir)
 				}
 				if err := m.git.RemoveWorktree(branch.WorktreePath, true, branch.Name); err != nil {
 					fmt.Fprintf(os.Stderr, "  Warning: failed to remove worktree %s: %v\n", branch.WorktreePath, err)

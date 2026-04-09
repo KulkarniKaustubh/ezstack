@@ -477,7 +477,7 @@ func (g *Git) StashPush() error {
 // Returns nil if no ezstack stash is found (nothing to pop).
 func (g *Git) StashPop() error {
 	branch, _ := g.CurrentBranch()
-	if branch == "" {
+	if branch == "" || branch == "HEAD" {
 		// Fallback: can't determine branch (e.g., detached HEAD during rebase)
 		// Use blind pop — same as previous behavior
 		_, err := g.run("stash", "pop")
