@@ -27,7 +27,7 @@ export function TitleBar({ onRefresh, onSync, onSettings, isLoading }: TitleBarP
     >
       <div className="flex items-center gap-2" data-tauri-drag-region>
         <span className="text-sm font-semibold tracking-tight">ezstack</span>
-        <span className="text-[10px] text-muted-foreground font-mono">v2.0.0-beta.2</span>
+        <span className="text-[10px] text-muted-foreground font-mono">v2.0.0-beta.3</span>
       </div>
 
       <div className="flex items-center gap-1">
