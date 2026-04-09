@@ -30,6 +30,7 @@ func Sync(args []string) error {
     -c, --current          Sync current branch only (auto-detect what it needs)
     -p, --parent           Rebase current branch onto its parent
     -C, --children         Rebase child branches onto current branch
+    --continue             Continue after resolving conflicts (completes rebase/merge, pushes, syncs children)
     --merge                Use git merge instead of git rebase
     --rebase               Use git rebase (overrides sync_strategy config)
     --no-delete-local      Don't delete local branches after their PRs are merged
@@ -78,6 +79,7 @@ func Sync(args []string) error {
 	rebaseFlag := fs.Bool("rebase", false, "Use git rebase (overrides config)")
 	noDeleteLocal := fs.Bool("no-delete-local", false, "Don't delete local branches after their PRs are merged")
 	dryRunFlag := fs.Bool("dry-run", false, "Preview what would be synced")
+	continueFlag := fs.Bool("continue", false, "Continue after resolving conflicts")
 	noAutostashFlag := fs.Bool("no-autostash", false, "Don't stash uncommitted changes before rebase")
 	jsonFlag := fs.Bool("json", false, "Output dry-run results as JSON")
 
@@ -122,6 +124,10 @@ func Sync(args []string) error {
 	} else {
 		// No flag specified — use config
 		useMerge = mgr.GetConfig().GetSyncStrategy(mgr.GetRepoDir()) == "merge"
+	}
+
+	if *continueFlag {
+		return syncContinue(mgr, gh, useMerge)
 	}
 
 	if jsonOutput && !dryRun {
@@ -395,11 +401,15 @@ func makeSyncCallbacks(singleStackMode bool, autostash bool, useMerge bool) *sta
 
 // printSyncSummary prints the summary after sync operations complete.
 func printSyncSummary(results []stack.RebaseResult, useMerge bool) {
-	hasConflicts := false
 	successCount := 0
+	conflictStacks := make(map[string]bool)
 	for _, r := range results {
 		if r.HasConflict {
-			hasConflicts = true
+			name := r.StackName
+			if name == "" {
+				name = "(unknown stack)"
+			}
+			conflictStacks[name] = true
 		}
 		if r.Success {
 			successCount++
@@ -407,15 +417,19 @@ func printSyncSummary(results []stack.RebaseResult, useMerge bool) {
 	}
 
 	fmt.Fprintln(os.Stderr)
-	if hasConflicts {
-		if useMerge {
-			ui.Warn("Some branches have conflicts. Resolve them and run 'git merge --continue' in each worktree.")
-		} else {
-			ui.Warn("Some branches have conflicts. Resolve them and run 'git rebase --continue' in each worktree.")
-		}
-	}
 	if successCount > 0 {
 		ui.Success(fmt.Sprintf("Synced %d branch(es)!", successCount))
+	}
+	if len(conflictStacks) > 0 {
+		names := make([]string, 0, len(conflictStacks))
+		for name := range conflictStacks {
+			names = append(names, name)
+		}
+		if useMerge {
+			ui.Warn(fmt.Sprintf("%d stack(s) unsynced due to merge conflicts: %s", len(names), strings.Join(names, ", ")))
+		} else {
+			ui.Warn(fmt.Sprintf("%d stack(s) unsynced due to rebase conflicts: %s", len(names), strings.Join(names, ", ")))
+		}
 	}
 }
 
@@ -686,6 +700,159 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 	return syncSpecificStacks(mgr, gh, cwd, deleteLocal, stacks, autostash, useMerge)
 }
 
+// syncContinue finds branches with in-progress rebase/merge conflicts across all stacks,
+// completes them, offers to push, and then re-syncs any children that were skipped.
+func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool) error {
+	stacks := mgr.ListStacks()
+	if len(stacks) == 0 {
+		ui.Info("No stacks found.")
+		return nil
+	}
+
+	type conflictBranch struct {
+		branch    *config.Branch
+		stack     *config.Stack
+		isRebase  bool
+		isMerge   bool
+	}
+
+	var found []conflictBranch
+	for _, s := range stacks {
+		for _, b := range s.Branches {
+			if b.WorktreePath == "" {
+				continue
+			}
+			g := git.New(b.WorktreePath)
+			rebaseIP, _ := g.IsRebaseInProgress()
+			mergeIP, _ := g.IsMergeInProgress()
+			if rebaseIP || mergeIP {
+				found = append(found, conflictBranch{branch: b, stack: s, isRebase: rebaseIP, isMerge: mergeIP})
+			}
+		}
+	}
+
+	if len(found) == 0 {
+		ui.Success("No in-progress rebase or merge found. Nothing to continue.")
+		return nil
+	}
+
+	ui.Info(fmt.Sprintf("Found %d branch(es) with in-progress rebase/merge:", len(found)))
+	for _, cb := range found {
+		kind := "rebase"
+		if cb.isMerge {
+			kind = "merge"
+		}
+		fmt.Fprintf(os.Stderr, "  %s %s%s%s (%s in %s)\n",
+			ui.IconBullet, ui.Bold, cb.branch.Name, ui.Reset, kind, cb.stack.DisplayName())
+	}
+	fmt.Fprintln(os.Stderr)
+
+	successCount := 0
+	var continuedBranches []conflictBranch
+	for _, cb := range found {
+		g := git.New(cb.branch.WorktreePath)
+
+		// Check for unresolved conflicts
+		hasConflicts, _ := g.HasUnresolvedConflicts()
+		if hasConflicts {
+			ui.Warn(fmt.Sprintf("Skipping %s: still has unresolved conflicts in %s", cb.branch.Name, cb.branch.WorktreePath))
+			continue
+		}
+
+		// Continue the rebase/merge
+		var err error
+		if cb.isRebase {
+			ui.Info(fmt.Sprintf("Continuing rebase for %s...", cb.branch.Name))
+			err = g.RebaseContinue()
+		} else {
+			ui.Info(fmt.Sprintf("Continuing merge for %s...", cb.branch.Name))
+			err = g.MergeContinue()
+		}
+
+		if err != nil {
+			ui.Error(fmt.Sprintf("Failed to continue %s: %v", cb.branch.Name, err))
+			continue
+		}
+
+		ui.Success(fmt.Sprintf("Completed %s", cb.branch.Name))
+		successCount++
+		continuedBranches = append(continuedBranches, cb)
+
+		// Pop autostash if one exists
+		if _, stashFound := g.FindEzstackStash(cb.branch.Name); stashFound {
+			if err := g.StashPop(); err != nil {
+				ui.Warn(fmt.Sprintf("Failed to pop autostash for %s: %v", cb.branch.Name, err))
+			} else {
+				ui.Info(fmt.Sprintf("Restored stashed changes for %s", cb.branch.Name))
+			}
+		}
+
+		// Offer to push
+		if cb.isRebase {
+			OfferForcePush(cb.branch.Name, cb.branch.WorktreePath)
+		} else {
+			OfferPush(cb.branch.Name, cb.branch.WorktreePath)
+		}
+	}
+
+	if successCount == 0 {
+		return nil
+	}
+
+	// Re-sync children of continued branches
+	for _, cb := range continuedBranches {
+		children := mgr.GetChildren(cb.branch.Name)
+		if len(children) == 0 {
+			continue
+		}
+
+		fmt.Fprintln(os.Stderr)
+		childNames := make([]string, len(children))
+		for i, c := range children {
+			childNames[i] = c.Name
+		}
+		ui.Info(fmt.Sprintf("Re-syncing %d child branch(es) of %s: %s",
+			len(children), cb.branch.Name, strings.Join(childNames, ", ")))
+
+		for _, child := range children {
+			if child.WorktreePath == "" {
+				ui.Warn(fmt.Sprintf("Skipping %s: no worktree path", child.Name))
+				continue
+			}
+			childGit := git.New(child.WorktreePath)
+			var syncResult git.RebaseResult
+			if useMerge {
+				syncResult = childGit.MergeNonInteractive(cb.branch.Name)
+			} else {
+				syncResult = childGit.RebaseNonInteractive(cb.branch.Name)
+			}
+			if syncResult.HasConflict {
+				ui.Warn(fmt.Sprintf("Conflict syncing %s — resolve in: %s", child.Name, child.WorktreePath))
+			} else if syncResult.Error != nil {
+				ui.Warn(fmt.Sprintf("Failed to sync %s: %v", child.Name, syncResult.Error))
+			} else {
+				ui.Success(fmt.Sprintf("Synced %s", child.Name))
+				if useMerge {
+					OfferPush(child.Name, child.WorktreePath)
+				} else {
+					OfferForcePush(child.Name, child.WorktreePath)
+				}
+			}
+		}
+	}
+
+	// Update PR metadata
+	if gh != nil {
+		for _, s := range stacks {
+			updatePRMetadata(gh, s, nil)
+		}
+	}
+
+	fmt.Fprintln(os.Stderr)
+	ui.Success(fmt.Sprintf("Continued %d branch(es)!", successCount))
+	return nil
+}
+
 // syncOntoParent syncs the current branch onto its parent (rebase or merge)
 func syncOntoParent(mgr *stack.Manager, branch *config.Branch, useMerge bool) error {
 	stack := mgr.GetStackForBranch(branch.Name)
@@ -949,7 +1116,6 @@ func printSyncResults(results []stack.RebaseResult, useMerge bool) {
 			}
 		} else if r.HasConflict {
 			conflicts = append(conflicts, r)
-			ui.Warn(fmt.Sprintf("Conflict in %s", r.Branch))
 		} else if r.Error != nil {
 			ui.Error(fmt.Sprintf("Failed to sync %s: %v", r.Branch, r.Error))
 		}
@@ -957,11 +1123,34 @@ func printSyncResults(results []stack.RebaseResult, useMerge bool) {
 
 	if len(conflicts) > 0 {
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "%s%s Branches with conflicts (%d):%s\n", ui.Yellow, ui.IconConflict, len(conflicts), ui.Reset)
+		// Group conflicts by stack
+		type stackConflicts struct {
+			name     string
+			branches []stack.RebaseResult
+		}
+		var ordered []stackConflicts
+		seen := make(map[string]int)
 		for _, c := range conflicts {
-			fmt.Fprintf(os.Stderr, "  %s %s%s%s\n", ui.IconBullet, ui.Bold, c.Branch, ui.Reset)
-			if c.WorktreePath != "" {
-				fmt.Fprintf(os.Stderr, "    %sResolve in:%s %s\n", ui.Gray, ui.Reset, c.WorktreePath)
+			name := c.StackName
+			if name == "" {
+				name = "(unknown stack)"
+			}
+			if idx, ok := seen[name]; ok {
+				ordered[idx].branches = append(ordered[idx].branches, c)
+			} else {
+				seen[name] = len(ordered)
+				ordered = append(ordered, stackConflicts{name: name, branches: []stack.RebaseResult{c}})
+			}
+		}
+
+		fmt.Fprintf(os.Stderr, "%s%s Stacks with conflicts (%d):%s\n", ui.Yellow, ui.IconConflict, len(ordered), ui.Reset)
+		for _, sc := range ordered {
+			fmt.Fprintf(os.Stderr, "\n  %s%sStack %s%s\n", ui.Red, ui.Bold, sc.name, ui.Reset)
+			for _, c := range sc.branches {
+				fmt.Fprintf(os.Stderr, "    %s %s%s%s\n", ui.IconBullet, ui.Bold, c.Branch, ui.Reset)
+				if c.WorktreePath != "" {
+					fmt.Fprintf(os.Stderr, "      %sResolve in:%s %s\n", ui.Gray, ui.Reset, c.WorktreePath)
+				}
 			}
 		}
 		fmt.Fprintln(os.Stderr)
