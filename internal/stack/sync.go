@@ -54,6 +54,7 @@ type RebaseResult struct {
 	SyncedParent string // If non-empty, parent was merged and we synced to this new parent
 	WorktreePath string // Path to the worktree (useful for conflict resolution)
 	BehindBy     int    // Number of commits behind (for branches that need sync with origin/main)
+	StackName    string // Display name of the stack this branch belongs to
 }
 
 // SyncInfo contains information about a branch that needs syncing
@@ -403,7 +404,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				continue
 			}
 
-			result := RebaseResult{Branch: branch.Name, WorktreePath: branch.WorktreePath}
+			result := RebaseResult{Branch: branch.Name, WorktreePath: branch.WorktreePath, StackName: stack.DisplayName()}
 			g := git.New(branch.WorktreePath)
 
 			// Autostash: stash uncommitted changes before rebase
