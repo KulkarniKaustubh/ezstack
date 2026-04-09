@@ -264,6 +264,7 @@ func prCreate(args []string) error {
     -t, --title <title>    PR title (defaults to branch name)
     -b, --body <body>      PR body/description
     -d, --draft            Create as draft PR
+    --branch <name>        Create PR for a specific branch (instead of current)
     -h, --help             Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
@@ -271,6 +272,7 @@ func prCreate(args []string) error {
 	title := fs.StringP("title", "t", "", "PR title")
 	body := fs.StringP("body", "b", "", "PR body")
 	draft := fs.BoolP("draft", "d", false, "Create as draft PR")
+	branchFlag := fs.String("branch", "", "Create PR for a specific branch")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -304,9 +306,25 @@ func prCreate(args []string) error {
 
 	g := git.New(cwd)
 
-	currentStack, branch, err := mgr.GetCurrentStack()
-	if err != nil {
-		return err
+	var currentStack *config.Stack
+	var branch *config.Branch
+
+	if *branchFlag != "" {
+		// Look up the specified branch
+		branch = mgr.GetBranch(*branchFlag)
+		if branch == nil {
+			return fmt.Errorf("branch '%s' is not tracked by ezstack", *branchFlag)
+		}
+		currentStack = mgr.GetStackForBranch(*branchFlag)
+		if currentStack == nil {
+			return fmt.Errorf("branch '%s' is not in any stack", *branchFlag)
+		}
+	} else {
+		var err error
+		currentStack, branch, err = mgr.GetCurrentStack()
+		if err != nil {
+			return err
+		}
 	}
 
 	if branch.PRNumber > 0 {
