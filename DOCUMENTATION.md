@@ -12,7 +12,7 @@
 
 [Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows)
 
-**Commands:** [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [config](#ezs-config)
+**Commands:** [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [push](#ezs-push) · [diff](#ezs-diff) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [config](#ezs-config)
 
 ---
 
@@ -165,6 +165,8 @@ Options:
 
 The `--json` flag outputs stack structure to stdout for editor integrations and scripts.
 
+The list view also shows diff stats (+/-) for each branch relative to its parent, giving a quick sense of change size across the stack.
+
 ---
 
 ### `ezs sync`
@@ -185,6 +187,7 @@ Options:
     --rebase               Use git rebase (overrides sync_strategy config)
     --no-delete-local      Don't delete local branches after their PRs are merged
     --dry-run              Preview what would be synced without making changes
+    --continue             Continue after resolving conflicts
     --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
     --json                 Output dry-run results as JSON (requires --dry-run)
 ```
@@ -270,6 +273,35 @@ ezs amend [git-commit-options] [--merge|--rebase]
 All arguments are passed through to `git commit`. After committing, any child branches in the stack are automatically synced onto the updated branch.
 
 Uses the configured `sync_strategy` (default: rebase) for child syncing. Use `--merge` or `--rebase` to override.
+
+---
+
+### `ezs push`
+
+Push current branch or entire stack to remote.
+
+```
+ezs push [options]
+
+Options:
+    -s, --stack    Push all branches in the current stack
+    -f, --force    Force push
+```
+
+---
+
+### `ezs diff`
+
+Show diff against parent branch.
+
+```
+ezs diff [options] [-- git-diff-options]
+
+Options:
+    --stat         Show diffstat only
+```
+
+Shows the diff between the current branch and its parent in the stack. Any arguments after `--` are passed directly to `git diff`.
 
 ---
 
