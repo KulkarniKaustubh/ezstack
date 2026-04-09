@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ezstack - Stacked PRs. Zero friction.</title>
+  <meta name="description" content="ezstack is a CLI tool for managing stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs — all from one CLI.">
+  <meta name="theme-color" content="#09090b">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="ezstack - Stacked PRs. Zero friction.">
+  <meta property="og:description" content="A CLI tool for managing stacked pull requests with git worktrees.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://kulkarnikaustubh.github.io/ezstack/">
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="ezstack - Stacked PRs. Zero friction.">
+  <meta name="twitter:description" content="A CLI tool for managing stacked pull requests with git worktrees.">
+
+  <!-- Favicon -->
+  <link rel="icon" href="img/favicon.svg" type="image/svg+xml">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="#" class="nav-brand">ezstack</a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="nav-links" id="nav-links">
+        <a href="#features">Features</a>
+        <a href="#how-it-works">How It Works</a>
+        <a href="#commands">Commands</a>
+        <a href="#install">Install</a>
+        <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener" class="nav-github">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="hero" id="hero">
+    <div class="hero-glow"></div>
+    <div class="container">
+      <div class="hero-content">
+        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v1.11.0 &mdash; Latest Release</a>
+        <h1>Stacked PRs.<br>Zero friction.</h1>
+        <p class="hero-sub">Manage stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs &mdash; all from one CLI.</p>
+        <div class="hero-actions">
+          <div class="install-cmd" id="hero-install">
+            <span class="install-prompt">$</span>
+            <span class="install-text">go install github.com/KulkarniKaustubh/ezstack/cmd/ezs@latest</span>
+            <button class="copy-btn" data-copy="go install github.com/KulkarniKaustubh/ezstack/cmd/ezs@latest" aria-label="Copy to clipboard">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener" class="btn btn-secondary">
+            <svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+            View on GitHub
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Terminal Demo -->
+  <section class="terminal-section" id="demo">
+    <div class="container">
+      <div class="terminal" data-animate>
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+          </div>
+          <span class="terminal-title">Terminal</span>
+        </div>
+        <div class="terminal-body" id="terminal-body">
+          <div class="terminal-content" id="terminal-content"></div>
+          <div class="terminal-cursor" id="terminal-cursor"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Installation -->
+  <section class="install" id="install">
+    <div class="container">
+      <h2 class="section-title" data-animate>Get started in seconds</h2>
+      <p class="section-sub" data-animate>Choose your preferred installation method.</p>
+
+      <div class="install-tabs" data-animate>
+        <div class="tab-buttons">
+          <button class="tab-btn active" data-tab="go">Go Install</button>
+          <button class="tab-btn" data-tab="homebrew">Homebrew</button>
+          <button class="tab-btn" data-tab="source">From Source</button>
+        </div>
+        <div class="tab-panels">
+          <div class="tab-panel active" id="tab-go">
+            <pre><code><span class="c-prompt">$</span> go install github.com/KulkarniKaustubh/ezstack/cmd/ezs@latest</code></pre>
+            <button class="copy-btn panel-copy" data-copy="go install github.com/KulkarniKaustubh/ezstack/cmd/ezs@latest" aria-label="Copy to clipboard">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <div class="tab-panel" id="tab-homebrew">
+            <pre><code><span class="c-prompt">$</span> brew tap KulkarniKaustubh/ezstack
+<span class="c-prompt">$</span> brew install ezstack</code></pre>
+            <button class="copy-btn panel-copy" data-copy="brew tap KulkarniKaustubh/ezstack && brew install ezstack" aria-label="Copy to clipboard">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <div class="tab-panel" id="tab-source">
+            <pre><code><span class="c-prompt">$</span> git clone https://github.com/KulkarniKaustubh/ezstack.git
+<span class="c-prompt">$</span> cd ezstack
+<span class="c-prompt">$</span> make install</code></pre>
+            <button class="copy-btn panel-copy" data-copy="git clone https://github.com/KulkarniKaustubh/ezstack.git && cd ezstack && make install" aria-label="Copy to clipboard">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div class="install-extras" data-animate>
+        <div class="install-shell">
+          <h3>Shell Integration <span class="recommended-badge">Recommended</span></h3>
+          <p>Enable automatic directory changes for navigation commands.</p>
+          <pre><code><span class="c-comment"># Add to ~/.bashrc or ~/.zshrc</span>
+<span class="c-prompt">$</span> <span class="c-cmd">eval</span> <span class="c-str">"$(ezs --shell-init)"</span></code></pre>
+        </div>
+        <div class="install-reqs">
+          <h3>Requirements</h3>
+          <ul>
+            <li><a href="https://git-scm.com/" target="_blank" rel="noopener">Git</a> 2.20+</li>
+            <li><a href="https://github.com/junegunn/fzf" target="_blank" rel="noopener">fzf</a> for interactive selection</li>
+            <li><a href="https://cli.github.com/" target="_blank" rel="noopener">GitHub CLI</a> (<code>gh</code>) for PR operations</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="install-cta" data-animate>
+        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="btn btn-secondary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download from Releases
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Features -->
+  <section class="features" id="features">
+    <div class="container">
+      <h2 class="section-title" data-animate>Everything you need to ship faster</h2>
+      <p class="section-sub" data-animate>Stop waiting on code reviews. Stack your PRs and develop in parallel.</p>
+      <div class="features-grid">
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+          </div>
+          <h3>Parallel Worktrees</h3>
+          <p>Every branch gets its own directory. Edit feature-1 and feature-2 side by side &mdash; no stashing, no context switching.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>
+          </div>
+          <h3>Auto-Sync Stack</h3>
+          <p><code>ezs commit</code> and <code>ezs amend</code> automatically rebase every child branch. Your stack stays in sync without you thinking about it.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="1.05" y1="12" x2="7" y2="12"/><line x1="17.01" y1="12" x2="22.96" y2="12"/></svg>
+          </div>
+          <h3>Full PR Lifecycle</h3>
+          <p>Create, update, merge, and toggle draft status from the CLI. Stack descriptions update across all PRs with <code>ezs pr stack</code>.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+          </div>
+          <h3>Git-Native</h3>
+          <p>No daemon, no server, no custom storage. ezstack reads from git directly and stores minimal metadata. Delete it and your repo is unchanged.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          </div>
+          <h3>Interactive + Scriptable</h3>
+          <p>Every command works with zero arguments (powered by fzf) or fully scripted with flags, <code>--json</code> output, and structured exit codes.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          </div>
+          <h3>Smart Conflict Handling</h3>
+          <p>Rebase conflicts pause with clear recovery instructions. Autostash is on by default. <code>--dry-run</code> lets you preview before committing.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How It Works -->
+  <section class="how-it-works" id="how-it-works">
+    <div class="container">
+      <h2 class="section-title" data-animate>How it works</h2>
+      <p class="section-sub" data-animate>Three steps to unblock your team.</p>
+      <div class="steps">
+        <div class="step" data-animate>
+          <div class="step-number">1</div>
+          <h3>Create your stack</h3>
+          <p>Branch off any parent. Each branch gets its own worktree directory.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs new</span> auth-service
+<span class="c-dim">Created branch 'auth-service' with worktree</span>
+
+<span class="c-prompt">$</span> <span class="c-cmd">ezs new</span> auth-middleware <span class="c-flag">--parent</span> auth-service
+<span class="c-dim">Created branch 'auth-middleware' with worktree</span></code></pre>
+          </div>
+        </div>
+        <div class="step-connector" data-animate></div>
+        <div class="step" data-animate>
+          <div class="step-number">2</div>
+          <h3>Work in parallel</h3>
+          <p>Each branch is a real directory. Open them in separate editor windows. Commit and children auto-sync.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs commit</span> <span class="c-flag">-m</span> <span class="c-str">"Add auth middleware"</span>
+<span class="c-dim">[auth-middleware abc1234] Add auth middleware</span>
+<span class="c-green">Syncing children... done.</span></code></pre>
+          </div>
+        </div>
+        <div class="step-connector" data-animate></div>
+        <div class="step" data-animate>
+          <div class="step-number">3</div>
+          <h3>Ship with confidence</h3>
+          <p>Create PRs, sync the stack, merge &mdash; all from the CLI. Stack descriptions auto-update.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs pr create</span> <span class="c-flag">-t</span> <span class="c-str">"Add auth service"</span>
+<span class="c-dim">https://github.com/you/repo/pull/42</span>
+
+<span class="c-prompt">$</span> <span class="c-cmd">ezs pr stack</span>
+<span class="c-green">Updated 2 PR descriptions with stack info</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Commands -->
+  <section class="commands" id="commands">
+    <div class="container">
+      <h2 class="section-title" data-animate>Command reference</h2>
+      <p class="section-sub" data-animate>24 commands. Everything aliased for speed. Run <code>ezs &lt;command&gt; --help</code> for details.</p>
+      <div class="accordion" data-animate>
+
+        <div class="accordion-item">
+          <button class="accordion-header" aria-expanded="false">
+            <span class="accordion-label">Stack Management</span>
+            <span class="accordion-count">7 commands</span>
+            <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 8 10 12 14 8"/></svg>
+          </button>
+          <div class="accordion-body">
+            <table class="cmd-table">
+              <tbody>
+                <tr><td class="cmd-name"><code>new</code> <span class="cmd-alias">n</span></td><td>Create a new branch in the stack</td></tr>
+                <tr><td class="cmd-name"><code>list</code> <span class="cmd-alias">ls</span></td><td>List all stacks and branches</td></tr>
+                <tr><td class="cmd-name"><code>status</code> <span class="cmd-alias">st</span></td><td>Show status with PR and CI info</td></tr>
+                <tr><td class="cmd-name"><code>stack</code></td><td>Add a branch to a stack or start a new stack</td></tr>
+                <tr><td class="cmd-name"><code>unstack</code></td><td>Remove a branch from tracking</td></tr>
+                <tr><td class="cmd-name"><code>delete</code> <span class="cmd-alias">del, rm</span></td><td>Delete a branch and its worktree</td></tr>
+                <tr><td class="cmd-name"><code>reparent</code> <span class="cmd-alias">rp</span></td><td>Change the parent of a branch</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" aria-expanded="false">
+            <span class="accordion-label">Navigation</span>
+            <span class="accordion-count">3 commands</span>
+            <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 8 10 12 14 8"/></svg>
+          </button>
+          <div class="accordion-body">
+            <table class="cmd-table">
+              <tbody>
+                <tr><td class="cmd-name"><code>goto</code> <span class="cmd-alias">go</span></td><td>Navigate to a branch worktree (fzf selection if no args)</td></tr>
+                <tr><td class="cmd-name"><code>up</code></td><td>Navigate up the stack toward parent</td></tr>
+                <tr><td class="cmd-name"><code>down</code></td><td>Navigate down the stack toward children</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" aria-expanded="false">
+            <span class="accordion-label">Sync &amp; Workflow</span>
+            <span class="accordion-count">5 commands</span>
+            <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 8 10 12 14 8"/></svg>
+          </button>
+          <div class="accordion-body">
+            <table class="cmd-table">
+              <tbody>
+                <tr><td class="cmd-name"><code>sync</code> <span class="cmd-alias">rebase, rb</span></td><td>Sync stack with remote (rebase or merge)</td></tr>
+                <tr><td class="cmd-name"><code>commit</code> <span class="cmd-alias">ci</span></td><td>Commit and auto-sync child branches</td></tr>
+                <tr><td class="cmd-name"><code>amend</code></td><td>Amend last commit and auto-sync children</td></tr>
+                <tr><td class="cmd-name"><code>push</code></td><td>Push current branch or entire stack</td></tr>
+                <tr><td class="cmd-name"><code>diff</code></td><td>Show diff against parent branch</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" aria-expanded="false">
+            <span class="accordion-label">PR Management</span>
+            <span class="accordion-count">5 commands</span>
+            <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 8 10 12 14 8"/></svg>
+          </button>
+          <div class="accordion-body">
+            <table class="cmd-table">
+              <tbody>
+                <tr><td class="cmd-name"><code>pr create</code></td><td>Create a new pull request</td></tr>
+                <tr><td class="cmd-name"><code>pr update</code></td><td>Push changes and update PR metadata</td></tr>
+                <tr><td class="cmd-name"><code>pr merge</code></td><td>Merge a pull request (merge, squash, or rebase)</td></tr>
+                <tr><td class="cmd-name"><code>pr draft</code></td><td>Toggle PR between draft and ready</td></tr>
+                <tr><td class="cmd-name"><code>pr stack</code></td><td>Update all PR descriptions with stack info</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" aria-expanded="false">
+            <span class="accordion-label">Configuration &amp; Utilities</span>
+            <span class="accordion-count">4 commands</span>
+            <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 8 10 12 14 8"/></svg>
+          </button>
+          <div class="accordion-body">
+            <table class="cmd-table">
+              <tbody>
+                <tr><td class="cmd-name"><code>config</code> <span class="cmd-alias">cfg</span></td><td>Interactive configuration setup</td></tr>
+                <tr><td class="cmd-name"><code>config set</code></td><td>Set a configuration value</td></tr>
+                <tr><td class="cmd-name"><code>config show</code></td><td>Show current configuration</td></tr>
+                <tr><td class="cmd-name"><code>menu</code></td><td>Interactive command menu</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <span class="footer-name">ezstack</span>
+          <span class="footer-meta">MIT License &middot; v1.11.0</span>
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/blob/main/DOCUMENTATION.md" target="_blank" rel="noopener">Docs</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/issues" target="_blank" rel="noopener">Issues</a>
+        </div>
+        <div class="footer-credit">
+          Made by <a href="https://github.com/KulkarniKaustubh" target="_blank" rel="noopener">Kaustubh Kulkarni</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>
