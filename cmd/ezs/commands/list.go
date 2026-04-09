@@ -98,8 +98,14 @@ func List(args []string) error {
 		return printStacksJSON(stacksToShow, currentBranch)
 	}
 
-	for _, s := range stacksToShow {
-		ui.PrintStack(s, currentBranch, false, nil)
+	// Fetch diff stats in parallel (local git ops, fast)
+	diffMaps := make([]map[string]*ui.BranchStatus, len(stacksToShow))
+	for i, s := range stacksToShow {
+		diffMaps[i] = fetchDiffStats(g, s)
+	}
+
+	for i, s := range stacksToShow {
+		ui.PrintStack(s, currentBranch, false, diffMaps[i])
 	}
 	return nil
 }
