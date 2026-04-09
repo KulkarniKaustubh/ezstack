@@ -154,6 +154,8 @@ type BranchStatus struct {
 	CISummary   string // e.g., "3/3 passed"
 	Mergeable   string // "MERGEABLE", "CONFLICTING", "UNKNOWN"
 	ReviewState string // "APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""
+	Additions   int    // Lines added relative to parent
+	Deletions   int    // Lines removed relative to parent
 }
 
 // SelectBranch uses fzf to select a branch from a list
@@ -634,6 +636,9 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 			// PR info
 			prFormatted := getPRFormatted(branch, statusMap, 0)
 
+			// Diff stats
+			diffInfo := getDiffStats(branch, statusMap)
+
 			// Status info
 			statusInfo := ""
 			if showStatus && statusMap != nil {
@@ -642,17 +647,21 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 
 			if shouldStrike {
 				prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
+				diffWithStrike := ""
+				if diffInfo != "" {
+					diffWithStrike = strings.ReplaceAll(diffInfo, Reset, Reset+Strikethrough)
+				}
 				statusWithStrike := ""
 				if statusInfo != "" {
 					statusWithStrike = strings.ReplaceAll(statusInfo, Reset, Reset+Strikethrough)
 				}
-				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s  %s%s%s\n",
+				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s  %s%s%s%s\n",
 					pointer, color, prefix, connector, Strikethrough+Bold, name, Reset+Strikethrough,
-					prWithStrike, statusWithStrike, Reset)
+					prWithStrike, diffWithStrike, statusWithStrike, Reset)
 			} else {
-				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s  %s%s%s\n",
+				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s  %s%s%s%s\n",
 					pointer, color, prefix, connector, Bold, name, Reset,
-					prFormatted, statusInfo, Reset)
+					prFormatted, diffInfo, statusInfo, Reset)
 			}
 
 			if children, ok := childrenMap[branch.Name]; ok {
@@ -779,6 +788,21 @@ func getStatusIcons(branch *config.Branch, statusMap map[string]*BranchStatus) s
 	}
 
 	return statusInfo
+}
+
+// getDiffStats returns formatted diff stats (e.g., " +45 -12") with colors
+func getDiffStats(branch *config.Branch, statusMap map[string]*BranchStatus) string {
+	if statusMap == nil {
+		return ""
+	}
+	status, ok := statusMap[branch.Name]
+	if !ok || status == nil {
+		return ""
+	}
+	if status.Additions == 0 && status.Deletions == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" %s+%d%s %s-%d%s", Green, status.Additions, Reset, Red, status.Deletions, Reset)
 }
 
 // getStatusText returns CI/review status text WITHOUT color codes (for width calculation)
