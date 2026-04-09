@@ -802,6 +802,10 @@ func getDiffStats(branch *config.Branch, statusMap map[string]*BranchStatus) str
 	if status.Additions == 0 && status.Deletions == 0 {
 		return ""
 	}
+	// Hide diff stats for merged/closed branches since they're meaningless
+	if branch.IsMerged || branch.PRState == "MERGED" || branch.PRState == "CLOSED" {
+		return ""
+	}
 	return fmt.Sprintf(" %s+%d%s %s-%d%s", Green, status.Additions, Reset, Red, status.Deletions, Reset)
 }
 

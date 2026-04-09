@@ -462,6 +462,9 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 		wg.Add(1)
 		go func(b *config.Branch) {
 			defer wg.Done()
+			if b.IsMerged {
+				return
+			}
 			// Always use origin/root for the stack root parent
 			parentRef := b.Parent
 			if b.Parent == s.Root && g.RemoteBranchExists(b.Parent) {
