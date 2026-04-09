@@ -273,6 +273,36 @@ func (g *Git) GetCommitsAhead(branch, target string) (int, error) {
 	return count, nil
 }
 
+// GetDiffStat returns the total lines added and removed between base and head.
+// Uses three-dot diff (base...head) to show only changes introduced by head.
+func (g *Git) GetDiffStat(base, head string) (added int, removed int, err error) {
+	output, err := g.run("diff", "--numstat", base+"..."+head)
+	if err != nil {
+		return 0, 0, err
+	}
+	if output == "" {
+		return 0, 0, nil
+	}
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		// Binary files show "-" for both counts
+		if fields[0] == "-" || fields[1] == "-" {
+			continue
+		}
+		a, err1 := strconv.Atoi(fields[0])
+		d, err2 := strconv.Atoi(fields[1])
+		if err1 != nil || err2 != nil {
+			continue
+		}
+		added += a
+		removed += d
+	}
+	return added, removed, nil
+}
+
 // IsLocalAheadOfOrigin checks if the local branch has commits not in origin
 // Returns true if local is ahead (needs push), false if in sync or behind
 func (g *Git) IsLocalAheadOfOrigin(branch string) (bool, error) {

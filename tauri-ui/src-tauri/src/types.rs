@@ -29,6 +29,10 @@ pub struct StatusBranch {
     pub mergeable: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additions: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletions: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

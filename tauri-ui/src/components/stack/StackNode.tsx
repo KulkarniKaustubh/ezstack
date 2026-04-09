@@ -46,6 +46,13 @@ export function StackNode({ branch, isSelected, onClick }: StackNodeProps) {
         <ReviewBadge state={branch.review_state} />
         <CIStatusBadge state={branch.ci_state} summary={branch.ci_summary} />
         <BranchStatusBadge branch={branch} />
+        {(branch.additions || branch.deletions) ? (
+          <span className="text-[10px] font-mono whitespace-nowrap">
+            {branch.additions ? <span className="text-success">+{branch.additions}</span> : null}
+            {branch.additions && branch.deletions ? " " : null}
+            {branch.deletions ? <span className="text-destructive">-{branch.deletions}</span> : null}
+          </span>
+        ) : null}
       </div>
     </button>
   );
