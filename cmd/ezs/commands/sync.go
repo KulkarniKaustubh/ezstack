@@ -395,11 +395,15 @@ func makeSyncCallbacks(singleStackMode bool, autostash bool, useMerge bool) *sta
 
 // printSyncSummary prints the summary after sync operations complete.
 func printSyncSummary(results []stack.RebaseResult, useMerge bool) {
-	hasConflicts := false
 	successCount := 0
+	conflictStacks := make(map[string]bool)
 	for _, r := range results {
 		if r.HasConflict {
-			hasConflicts = true
+			name := r.StackName
+			if name == "" {
+				name = "(unknown stack)"
+			}
+			conflictStacks[name] = true
 		}
 		if r.Success {
 			successCount++
@@ -407,15 +411,19 @@ func printSyncSummary(results []stack.RebaseResult, useMerge bool) {
 	}
 
 	fmt.Fprintln(os.Stderr)
-	if hasConflicts {
-		if useMerge {
-			ui.Warn("Some branches have conflicts. Resolve them and run 'git merge --continue' in each worktree.")
-		} else {
-			ui.Warn("Some branches have conflicts. Resolve them and run 'git rebase --continue' in each worktree.")
-		}
-	}
 	if successCount > 0 {
 		ui.Success(fmt.Sprintf("Synced %d branch(es)!", successCount))
+	}
+	if len(conflictStacks) > 0 {
+		names := make([]string, 0, len(conflictStacks))
+		for name := range conflictStacks {
+			names = append(names, name)
+		}
+		if useMerge {
+			ui.Warn(fmt.Sprintf("%d stack(s) unsynced due to merge conflicts: %s", len(names), strings.Join(names, ", ")))
+		} else {
+			ui.Warn(fmt.Sprintf("%d stack(s) unsynced due to rebase conflicts: %s", len(names), strings.Join(names, ", ")))
+		}
 	}
 }
 
@@ -949,7 +957,6 @@ func printSyncResults(results []stack.RebaseResult, useMerge bool) {
 			}
 		} else if r.HasConflict {
 			conflicts = append(conflicts, r)
-			ui.Warn(fmt.Sprintf("Conflict in %s", r.Branch))
 		} else if r.Error != nil {
 			ui.Error(fmt.Sprintf("Failed to sync %s: %v", r.Branch, r.Error))
 		}
@@ -957,11 +964,34 @@ func printSyncResults(results []stack.RebaseResult, useMerge bool) {
 
 	if len(conflicts) > 0 {
 		fmt.Fprintln(os.Stderr)
-		fmt.Fprintf(os.Stderr, "%s%s Branches with conflicts (%d):%s\n", ui.Yellow, ui.IconConflict, len(conflicts), ui.Reset)
+		// Group conflicts by stack
+		type stackConflicts struct {
+			name     string
+			branches []stack.RebaseResult
+		}
+		var ordered []stackConflicts
+		seen := make(map[string]int)
 		for _, c := range conflicts {
-			fmt.Fprintf(os.Stderr, "  %s %s%s%s\n", ui.IconBullet, ui.Bold, c.Branch, ui.Reset)
-			if c.WorktreePath != "" {
-				fmt.Fprintf(os.Stderr, "    %sResolve in:%s %s\n", ui.Gray, ui.Reset, c.WorktreePath)
+			name := c.StackName
+			if name == "" {
+				name = "(unknown stack)"
+			}
+			if idx, ok := seen[name]; ok {
+				ordered[idx].branches = append(ordered[idx].branches, c)
+			} else {
+				seen[name] = len(ordered)
+				ordered = append(ordered, stackConflicts{name: name, branches: []stack.RebaseResult{c}})
+			}
+		}
+
+		fmt.Fprintf(os.Stderr, "%s%s Stacks with conflicts (%d):%s\n", ui.Yellow, ui.IconConflict, len(ordered), ui.Reset)
+		for _, sc := range ordered {
+			fmt.Fprintf(os.Stderr, "\n  %s%sStack %s%s\n", ui.Red, ui.Bold, sc.name, ui.Reset)
+			for _, c := range sc.branches {
+				fmt.Fprintf(os.Stderr, "    %s %s%s%s\n", ui.IconBullet, ui.Bold, c.Branch, ui.Reset)
+				if c.WorktreePath != "" {
+					fmt.Fprintf(os.Stderr, "      %sResolve in:%s %s\n", ui.Gray, ui.Reset, c.WorktreePath)
+				}
 			}
 		}
 		fmt.Fprintln(os.Stderr)
