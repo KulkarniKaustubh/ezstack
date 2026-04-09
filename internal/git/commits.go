@@ -81,6 +81,16 @@ func (g *Git) Push(force bool) error {
 	return g.RunInteractive(args...)
 }
 
+// PushBranch pushes a specific branch to origin (not necessarily the current branch).
+func (g *Git) PushBranch(branch string, force bool) error {
+	args := []string{"push"}
+	if force {
+		args = append(args, "--force-with-lease")
+	}
+	args = append(args, "origin", branch)
+	return g.RunInteractive(args...)
+}
+
 // PushSetUpstream pushes and sets upstream
 func (g *Git) PushSetUpstream() error {
 	branch, err := g.CurrentBranch()
