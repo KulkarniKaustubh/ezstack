@@ -460,16 +460,41 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 		fmt.Fprintf(os.Stderr, "[DEBUG] fetchBranchStatuses for stack %s with %d branches\n", s.Hash, len(s.Branches))
 	}
 
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+
+	// Fetch diff stats for all branches (local git op, fast)
+	for _, branch := range s.Branches {
+		wg.Add(1)
+		go func(b *config.Branch) {
+			defer wg.Done()
+			added, removed, err := g.GetDiffStat(b.Parent, b.Name)
+			if err != nil {
+				if debug {
+					fmt.Fprintf(os.Stderr, "[DEBUG] GetDiffStat(%s, %s) error: %v\n", b.Parent, b.Name, err)
+				}
+				return
+			}
+			mu.Lock()
+			status := statusMap[b.Name]
+			if status == nil {
+				status = &ui.BranchStatus{}
+				statusMap[b.Name] = status
+			}
+			status.Additions = added
+			status.Deletions = removed
+			mu.Unlock()
+		}(branch)
+	}
+
 	gh := discoverAndCachePRs(g, s, debug)
 	if gh == nil {
 		if debug {
-			fmt.Fprintf(os.Stderr, "[DEBUG] gh client is nil, returning empty statusMap\n")
+			fmt.Fprintf(os.Stderr, "[DEBUG] gh client is nil, waiting for diff stats only\n")
 		}
+		wg.Wait()
 		return statusMap
 	}
-
-	var mu sync.Mutex
-	var wg sync.WaitGroup
 
 	// Semaphore to limit concurrent gh CLI calls
 	sem := make(chan struct{}, 10)
@@ -485,8 +510,6 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 		wg.Add(1)
 		go func(b *config.Branch) {
 			defer wg.Done()
-
-			status := &ui.BranchStatus{}
 
 			// Fetch PR and checks in parallel for this branch
 			var prData *github.PR
@@ -514,20 +537,24 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 
 			innerWg.Wait()
 
+			mu.Lock()
+			status := statusMap[b.Name]
+			if status == nil {
+				status = &ui.BranchStatus{}
+				statusMap[b.Name] = status
+			}
+
 			// Process PR data
 			if prErr == nil {
 				if prData.Merged {
 					status.PRState = "MERGED"
-					// Cache merged status if not already set; the read of b.IsMerged
-					// must be inside the lock to avoid a data race with other goroutines.
-					mu.Lock()
+					// Cache merged status if not already set
 					if !b.IsMerged {
 						b.IsMerged = true
 						if debug {
 							fmt.Fprintf(os.Stderr, "[DEBUG] Marking branch %s as merged\n", b.Name)
 						}
 					}
-					mu.Unlock()
 				} else if prData.State == "CLOSED" {
 					status.PRState = "CLOSED"
 				} else if prData.IsDraft {
@@ -539,9 +566,7 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 				status.ReviewState = prData.ReviewState
 
 				// Cache PR state on the branch for ezs ls
-				mu.Lock()
 				b.PRState = status.PRState
-				mu.Unlock()
 			}
 
 			// Process checks data
@@ -552,9 +577,6 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 				status.CIState = checksData.State
 				status.CISummary = checksData.Summary
 			}
-
-			mu.Lock()
-			statusMap[b.Name] = status
 			mu.Unlock()
 		}(branch)
 	}

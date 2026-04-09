@@ -32,6 +32,8 @@ export interface StatusBranchJSON extends BranchJSON {
   ci_summary?: string;
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" | "";
   review_state?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "";
+  additions?: number;
+  deletions?: number;
 }
 
 /** Mirrors the Go syncInfoJSON struct from cmd/ezs/commands/sync.go */

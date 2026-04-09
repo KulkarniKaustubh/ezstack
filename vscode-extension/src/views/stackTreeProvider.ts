@@ -61,6 +61,9 @@ export class BranchNode extends vscode.TreeItem {
     if (b.review_state) {
       parts.push(b.review_state.replace(/_/g, " "));
     }
+    if (b.additions || b.deletions) {
+      parts.push(`+${b.additions ?? 0} -${b.deletions ?? 0}`);
+    }
     return parts.join(" ");
   }
 
@@ -100,6 +103,9 @@ export class BranchNode extends vscode.TreeItem {
     }
     if (b.review_state) {
       md.appendMarkdown(`Review: ${b.review_state.replace(/_/g, " ")}\n\n`);
+    }
+    if (b.additions || b.deletions) {
+      md.appendMarkdown(`Code Changes: +${b.additions ?? 0} / -${b.deletions ?? 0} lines\n\n`);
     }
     if (b.mergeable) {
       md.appendMarkdown(`Mergeable: ${b.mergeable}\n\n`);
