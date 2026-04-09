@@ -502,9 +502,11 @@ func prUpdate(args []string) error {
     descriptions to match the current stack structure.
 
 %sOPTIONS%s
-    -h, --help    Show this help message
+    --branch <name>    Update PR for a specific branch (instead of current)
+    -h, --help         Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
+	branchFlag := fs.String("branch", "", "Update PR for a specific branch")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 	if err := fs.Parse(args); err != nil {
 		if err == pflag.ErrHelp {
@@ -528,9 +530,24 @@ func prUpdate(args []string) error {
 		return err
 	}
 
-	currentStack, branch, err := mgr.GetCurrentStack()
-	if err != nil {
-		return err
+	var currentStack *config.Stack
+	var branch *config.Branch
+
+	if *branchFlag != "" {
+		branch = mgr.GetBranch(*branchFlag)
+		if branch == nil {
+			return fmt.Errorf("branch '%s' is not tracked by ezstack", *branchFlag)
+		}
+		currentStack = mgr.GetStackForBranch(*branchFlag)
+		if currentStack == nil {
+			return fmt.Errorf("branch '%s' is not in any stack", *branchFlag)
+		}
+	} else {
+		var err error
+		currentStack, branch, err = mgr.GetCurrentStack()
+		if err != nil {
+			return err
+		}
 	}
 
 	if branch.PRNumber == 0 {
@@ -599,7 +616,7 @@ func prUpdate(args []string) error {
 	}
 
 	ui.Info("Pushing changes...")
-	if err := g.Push(needsForcePush); err != nil {
+	if err := g.PushBranch(branch.Name, needsForcePush); err != nil {
 		return fmt.Errorf("failed to push: %w", err)
 	}
 
@@ -624,11 +641,13 @@ func prMerge(args []string) error {
 
 %sOPTIONS%s
     -m, --method <method>  Merge method: merge, squash, rebase (default: squash)
+    --branch <name>        Merge PR for a specific branch (instead of current)
     --no-delete-branch     Don't delete the remote branch after merge
     -h, --help             Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	method := fs.StringP("method", "m", "", "Merge method (merge, squash, rebase)")
+	branchFlag := fs.String("branch", "", "Merge PR for a specific branch")
 	noDeleteBranch := fs.Bool("no-delete-branch", false, "Don't delete remote branch after merge")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
@@ -654,9 +673,22 @@ func prMerge(args []string) error {
 		return err
 	}
 
-	_, branch, err := mgr.GetCurrentStack()
-	if err != nil {
-		return err
+	var branch *config.Branch
+
+	if *branchFlag != "" {
+		branch = mgr.GetBranch(*branchFlag)
+		if branch == nil {
+			return fmt.Errorf("branch '%s' is not tracked by ezstack", *branchFlag)
+		}
+		if mgr.GetStackForBranch(*branchFlag) == nil {
+			return fmt.Errorf("branch '%s' is not in any stack", *branchFlag)
+		}
+	} else {
+		var err error
+		_, branch, err = mgr.GetCurrentStack()
+		if err != nil {
+			return err
+		}
 	}
 
 	if branch.PRNumber == 0 {
@@ -739,9 +771,11 @@ func prDraft(args []string) error {
     ezs pr draft [options]
 
 %sOPTIONS%s
-    -h, --help    Show this help message
+    --branch <name>    Toggle draft for a specific branch (instead of current)
+    -h, --help         Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
+	branchFlag := fs.String("branch", "", "Toggle draft for a specific branch")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -766,9 +800,19 @@ func prDraft(args []string) error {
 		return err
 	}
 
-	_, branch, err := mgr.GetCurrentStack()
-	if err != nil {
-		return err
+	var branch *config.Branch
+
+	if *branchFlag != "" {
+		branch = mgr.GetBranch(*branchFlag)
+		if branch == nil {
+			return fmt.Errorf("branch '%s' is not tracked by ezstack", *branchFlag)
+		}
+	} else {
+		var err error
+		_, branch, err = mgr.GetCurrentStack()
+		if err != nil {
+			return err
+		}
 	}
 
 	if branch.PRNumber == 0 {
