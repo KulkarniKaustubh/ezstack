@@ -29,7 +29,7 @@ export function StackNode({ branch, isSelected, onClick }: StackNodeProps) {
             className={cn(
               "text-sm font-mono truncate",
               branch.is_current && "font-bold text-info",
-              branch.is_merged && "line-through text-muted-foreground",
+              (branch.is_merged || branch.pr_state === "CLOSED") && "line-through text-muted-foreground",
             )}
           >
             {branch.name}
