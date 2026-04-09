@@ -1,13 +1,20 @@
 import { create } from "zustand";
 import type { StatusStack, RepoConfig } from "../types/ezstack";
 
+interface RepoData {
+  stacks: StatusStack[];
+  currentBranch: string | null;
+}
+
 interface AppState {
   repos: RepoConfig[];
+  repoDataCache: Record<string, RepoData>;
   selectedRepoPath: string | null;
   stacks: StatusStack[];
   selectedStackHash: string | null;
   selectedBranchName: string | null;
   currentBranch: string | null;
+  initialLoading: boolean;
   isLoading: boolean;
   error: string | null;
   lastRefresh: Date | null;
@@ -15,11 +22,13 @@ interface AppState {
   operationLoading: boolean;
 
   setRepos: (repos: RepoConfig[]) => void;
+  setRepoData: (repoPath: string, data: RepoData) => void;
   selectRepo: (path: string | null) => void;
   setStacks: (stacks: StatusStack[]) => void;
   selectStack: (hash: string | null) => void;
   selectBranch: (name: string | null) => void;
   setCurrentBranch: (branch: string) => void;
+  setInitialLoading: (loading: boolean) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   setLastRefresh: (date: Date) => void;
@@ -27,13 +36,15 @@ interface AppState {
   setOperationLoading: (loading: boolean) => void;
 }
 
-export const useAppStore = create<AppState>((set) => ({
+export const useAppStore = create<AppState>((set, get) => ({
   repos: [],
+  repoDataCache: {},
   selectedRepoPath: null,
   stacks: [],
   selectedStackHash: null,
   selectedBranchName: null,
   currentBranch: null,
+  initialLoading: true,
   isLoading: false,
   error: null,
   lastRefresh: null,
@@ -41,20 +52,33 @@ export const useAppStore = create<AppState>((set) => ({
   operationLoading: false,
 
   setRepos: (repos) => set({ repos }),
-  selectRepo: (path) =>
+  setRepoData: (repoPath, data) => {
+    const cache = { ...get().repoDataCache, [repoPath]: data };
+    const updates: Partial<AppState> = { repoDataCache: cache };
+    // If this is the currently selected repo, update the active view too
+    if (get().selectedRepoPath === repoPath) {
+      updates.stacks = data.stacks;
+      updates.currentBranch = data.currentBranch;
+    }
+    set(updates);
+  },
+  selectRepo: (path) => {
+    const cached = path ? get().repoDataCache[path] : undefined;
     set({
       selectedRepoPath: path,
-      stacks: [],
-      selectedStackHash: null,
+      stacks: cached?.stacks ?? [],
+      currentBranch: cached?.currentBranch ?? null,
+      selectedStackHash: cached?.stacks?.[0]?.hash ?? null,
       selectedBranchName: null,
-      currentBranch: null,
       error: null,
       lastRefresh: null,
-    }),
+    });
+  },
   setStacks: (stacks) => set({ stacks }),
   selectStack: (hash) => set({ selectedStackHash: hash, selectedBranchName: null }),
   selectBranch: (name) => set({ selectedBranchName: name }),
   setCurrentBranch: (branch) => set({ currentBranch: branch }),
+  setInitialLoading: (loading) => set({ initialLoading: loading }),
   setLoading: (loading) => set({ isLoading: loading }),
   setError: (error) => set({ error }),
   setLastRefresh: (date) => set({ lastRefresh: date }),

@@ -31,13 +31,13 @@ type DialogState =
 export default function App() {
   const {
     repos,
-    setRepos,
     selectedRepoPath,
     selectRepo,
     stacks,
     selectedStackHash,
     selectedBranchName,
     currentBranch,
+    initialLoading,
     isLoading,
     error,
     lastRefresh,
@@ -51,19 +51,6 @@ export default function App() {
   const { refresh } = useStacks();
   const { run } = useOperation();
   const [dialog, setDialog] = useState<DialogState>({ type: "none" });
-  const [reposLoading, setReposLoading] = useState(true);
-
-  // Load all ezstack repos on mount
-  useEffect(() => {
-    setReposLoading(true);
-    ezs.getEzstackRepos().then((r) => {
-      setRepos(r);
-      // Auto-select first repo if we have repos
-      if (r.length > 0 && !selectedRepoPath) {
-        selectRepo(r[0].repo_path);
-      }
-    }).catch(() => {}).finally(() => setReposLoading(false));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -110,6 +97,37 @@ export default function App() {
       }
     : null;
 
+  // Splash screen while loading all repos
+  if (initialLoading) {
+    return (
+      <div className="flex flex-col h-screen bg-background">
+        <div
+          className="flex items-center h-12 px-4 border-b bg-background/80 backdrop-blur-sm select-none"
+          data-tauri-drag-region
+        >
+          <div className="flex items-center gap-2">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-primary">
+              <path
+                d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6l-8-4z"
+                stroke="currentColor"
+                strokeWidth="2"
+                fill="none"
+              />
+              <path d="M8 12h8M12 8v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+            <span className="text-sm font-semibold tracking-tight">ezstack</span>
+          </div>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center gap-4">
+          <div className="flex items-center gap-3">
+            <div className="h-5 w-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm text-muted-foreground">Loading repositories...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-screen">
       <TitleBar
@@ -120,12 +138,8 @@ export default function App() {
       />
 
       <div className="flex flex-1 min-h-0">
-        {repos.length === 0 && !selectedRepoPath && !reposLoading ? (
+        {repos.length === 0 && !selectedRepoPath ? (
           <EmptyState type="no-repo" />
-        ) : reposLoading && repos.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-            Loading repositories...
-          </div>
         ) : (
           <>
             <Sidebar

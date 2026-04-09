@@ -1,17 +1,29 @@
 import { useEffect, useCallback, useRef } from "react";
 import { useAppStore } from "../store/app-store";
-import { getStacksStatus, getCurrentBranch } from "../commands/ezs";
+import { getStacksStatus, getCurrentBranch, getEzstackRepos } from "../commands/ezs";
 
 const POLL_INTERVAL = 30_000;
 
+async function fetchRepoData(repoPath: string) {
+  const [stacks, currentBranch] = await Promise.all([
+    getStacksStatus(repoPath),
+    getCurrentBranch(repoPath),
+  ]);
+  return { stacks, currentBranch };
+}
+
 export function useStacks() {
   const {
+    setRepos,
     selectedRepoPath,
+    setRepoData,
     setStacks,
     setCurrentBranch,
+    setInitialLoading,
     setLoading,
     setError,
     setLastRefresh,
+    selectRepo,
     selectStack,
     selectedStackHash,
   } = useAppStore();
@@ -19,37 +31,99 @@ export function useStacks() {
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const selectedStackHashRef = useRef(selectedStackHash);
   selectedStackHashRef.current = selectedStackHash;
+  const initializedRef = useRef(false);
 
+  // Initial load: fetch all repos and all their stacks in parallel
+  useEffect(() => {
+    if (initializedRef.current) return;
+    initializedRef.current = true;
+
+    (async () => {
+      try {
+        const allRepos = await getEzstackRepos();
+        setRepos(allRepos);
+
+        if (allRepos.length === 0) {
+          setInitialLoading(false);
+          return;
+        }
+
+        // Fetch stacks for ALL repos in parallel
+        const results = await Promise.allSettled(
+          allRepos.map(async (repo) => {
+            const data = await fetchRepoData(repo.repo_path);
+            setRepoData(repo.repo_path, data);
+            return { path: repo.repo_path, data };
+          }),
+        );
+
+        // Auto-select first repo
+        const firstSuccess = results.find((r) => r.status === "fulfilled");
+        if (firstSuccess && firstSuccess.status === "fulfilled") {
+          selectRepo(firstSuccess.value.path);
+          if (firstSuccess.value.data.stacks.length > 0) {
+            selectStack(firstSuccess.value.data.stacks[0].hash);
+          }
+        }
+
+        setLastRefresh(new Date());
+      } catch (e) {
+        setError(String(e));
+      } finally {
+        setInitialLoading(false);
+      }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Refresh the selected repo (used by polling and manual refresh)
   const refresh = useCallback(async () => {
     if (!selectedRepoPath) return;
 
     setLoading(true);
     setError(null);
     try {
-      const [stacks, branch] = await Promise.all([
-        getStacksStatus(selectedRepoPath),
-        getCurrentBranch(selectedRepoPath),
-      ]);
-      setStacks(stacks);
-      setCurrentBranch(branch);
+      const data = await fetchRepoData(selectedRepoPath);
+      setRepoData(selectedRepoPath, data);
+      setStacks(data.stacks);
+      setCurrentBranch(data.currentBranch);
       setLastRefresh(new Date());
 
-      // Auto-select first stack if none selected
-      if (!selectedStackHashRef.current && stacks.length > 0) {
-        selectStack(stacks[0].hash);
+      if (!selectedStackHashRef.current && data.stacks.length > 0) {
+        selectStack(data.stacks[0].hash);
       }
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, [selectedRepoPath, setStacks, setCurrentBranch, setLoading, setError, setLastRefresh, selectStack]);
+  }, [selectedRepoPath, setRepoData, setStacks, setCurrentBranch, setLoading, setError, setLastRefresh, selectStack]);
+
+  // Refresh all repos (used by sync-all)
+  const refreshAll = useCallback(async () => {
+    const allRepos = useAppStore.getState().repos;
+    if (allRepos.length === 0) return;
+
+    setLoading(true);
+    setError(null);
+    try {
+      await Promise.allSettled(
+        allRepos.map(async (repo) => {
+          const data = await fetchRepoData(repo.repo_path);
+          setRepoData(repo.repo_path, data);
+        }),
+      );
+      setLastRefresh(new Date());
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, [setRepoData, setLoading, setError, setLastRefresh]);
 
   // Polling with focus/blur awareness
   useEffect(() => {
     const startPolling = () => {
       if (intervalRef.current) return;
-      refresh();
       intervalRef.current = setInterval(refresh, POLL_INTERVAL);
     };
 
@@ -81,5 +155,5 @@ export function useStacks() {
     };
   }, [refresh]);
 
-  return { refresh };
+  return { refresh, refreshAll };
 }
