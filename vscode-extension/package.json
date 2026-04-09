@@ -2,7 +2,7 @@
   "name": "ezstack",
   "displayName": "ezstack",
   "description": "Manage stacked pull requests with git worktrees",
-  "version": "2.0.0-beta.7",
+  "version": "2.0.0-beta.8",
   "publisher": "kaustubh",
   "license": "MIT",
   "repository": {
@@ -220,7 +220,17 @@
         {
           "command": "ezstack.renameStack",
           "when": "view == ezstackStacks && viewItem == stack",
-          "group": "2_modify@1"
+          "group": "1_stack@1"
+        },
+        {
+          "command": "ezstack.sync",
+          "when": "view == ezstackStacks && viewItem == stack",
+          "group": "1_stack@2"
+        },
+        {
+          "command": "ezstack.newBranch",
+          "when": "view == ezstackStacks && viewItem == stack",
+          "group": "1_stack@3"
         }
       ]
     },
