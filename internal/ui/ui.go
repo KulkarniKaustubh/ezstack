@@ -497,77 +497,77 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 	var output strings.Builder
 	output.WriteString(fmt.Sprintf("%s%s Stack %s%s\\n\\n", bold, cyan, stack.DisplayName(), reset))
 
-	// Sort branches topologically (parent -> child order)
-	sortedBranches := sortBranchesTopologically(stack.Branches)
-
-	// Calculate max widths
-	maxNameWidth := 0
-	maxPRWidth := 0
-	for _, b := range sortedBranches {
-		displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
-		if w := runewidth.StringWidth(displayName); w > maxNameWidth {
-			maxNameWidth = w
-		}
-
-		prText := fzfPRText(b)
-		if w := runewidth.StringWidth(prText); w > maxPRWidth {
-			maxPRWidth = w
-		}
+	// Build children map for tree rendering
+	branches := stack.Branches
+	branchMap := make(map[string]*config.Branch)
+	childrenMap := make(map[string][]*config.Branch)
+	var roots []*config.Branch
+	for _, b := range branches {
+		branchMap[b.Name] = b
 	}
-
-	maxParentWidth := 0
-	for _, b := range sortedBranches {
-		parentText := fmt.Sprintf("(%s %s)", IconArrow, b.Parent)
-		if w := runewidth.StringWidth(parentText); w > maxParentWidth {
-			maxParentWidth = w
+	for _, b := range branches {
+		parentKey := b.Parent
+		if b.BaseBranch != "" && b.BaseBranch != b.Parent {
+			if _, ok := branchMap[b.BaseBranch]; ok {
+				parentKey = b.BaseBranch
+			}
 		}
-	}
-
-	// Format each branch
-	for i, b := range sortedBranches {
-		var prefix string
-		color := ""
-		if b.Name == currentBranch {
-			prefix = "> "
-			color = green
+		if _, ok := branchMap[parentKey]; ok {
+			childrenMap[parentKey] = append(childrenMap[parentKey], b)
 		} else {
-			prefix = "  "
-		}
-
-		connector := "├──"
-		if i == len(sortedBranches)-1 {
-			connector = "└──"
-		}
-
-		displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
-		paddedName := padRight(displayName, maxNameWidth)
-
-		prText, prColor := fzfPRText(b), fzfPRColor(b, cyan, yellow, gray, red)
-
-		paddedPRText := padRight(prText, maxPRWidth)
-
-		parentText := fmt.Sprintf("(%s %s)", IconArrow, b.Parent)
-		paddedParent := padRight(parentText, maxParentWidth)
-
-		if b.IsMerged {
-			output.WriteString(fmt.Sprintf("%s%s%s%s %s%s%s  %s%s%s  %s%s\\n",
-				strikethrough, prefix, color, connector, bold, paddedName, reset+strikethrough,
-				prColor, paddedPRText, reset+strikethrough, paddedParent, reset))
-		} else {
-			output.WriteString(fmt.Sprintf("%s%s%s %s%s%s  %s%s%s  %s%s\\n",
-				prefix, color, connector, bold, paddedName, reset,
-				prColor, paddedPRText, reset, paddedParent, reset))
+			roots = append(roots, b)
 		}
 	}
 
+	// Print root branch name
+	output.WriteString(fmt.Sprintf("  %s%s%s%s\\n", gray, stack.Root, reset, ""))
+
+	// Recursive tree walker
+	var walkTree func(nodes []*config.Branch, prefix string)
+	walkTree = func(nodes []*config.Branch, prefix string) {
+		for i, b := range nodes {
+			isLast := i == len(nodes)-1
+			connector := "├── "
+			childPrefix := "│   "
+			if isLast {
+				connector = "└── "
+				childPrefix = "    "
+			}
+
+			pointer := " "
+			color := ""
+			if b.Name == currentBranch {
+				pointer = ">"
+				color = green
+			}
+
+			displayName := truncateBranchName(b.Name, MaxBranchNameWidth)
+			prText := fzfPRText(b)
+			prColor := fzfPRColor(b, cyan, yellow, gray, red)
+
+			shouldStrike := b.IsMerged || b.PRState == "MERGED" || b.PRState == "CLOSED"
+			if shouldStrike {
+				output.WriteString(fmt.Sprintf("%s%s%s%s%s%s%s  %s%s%s\\n",
+					pointer, color, prefix, connector, strikethrough+bold, displayName, reset+strikethrough,
+					prColor, prText, reset))
+			} else {
+				output.WriteString(fmt.Sprintf("%s%s%s%s%s%s%s  %s%s%s\\n",
+					pointer, color, prefix, connector, bold, displayName, reset,
+					prColor, prText, reset))
+			}
+
+			if children, ok := childrenMap[b.Name]; ok {
+				walkTree(children, prefix+childPrefix)
+			}
+		}
+	}
+
+	walkTree(roots, "  ")
 	return output.String()
 }
 
-// PrintStack prints a visual representation of a stack, always sorting topologically
-// If showStatus is true, includes CI/PR status column
-// Column layout:
-// - showStatus=false: 4 columns - branch name, pr number, parent branch, remote tag
-// - showStatus=true: 5 columns - branch name, pr number, ci status, parent branch, remote tag
+// PrintStack prints a visual representation of a stack using tree-style indentation.
+// If showStatus is true, includes CI/PR status after the PR column.
 func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, statusMap map[string]*BranchStatus) {
 	fmt.Fprintf(os.Stderr, "\n%s%s Stack %s%s\n\n", Bold, Cyan, stack.DisplayName(), Reset)
 
@@ -576,115 +576,92 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 		return
 	}
 
-	// Sort branches topologically (parent -> child order)
-	sortedBranches := sortBranchesTopologically(stack.Branches)
-
-	// Calculate max widths for alignment using runewidth
-	maxNameWidth := 0
-	maxPRWidth := 0
-	maxStatusWidth := 0
-	maxParentWidth := 0
-
-	for _, branch := range sortedBranches {
-		name := truncateBranchName(branch.Name, MaxBranchNameWidth)
-		if w := runewidth.StringWidth(name); w > maxNameWidth {
-			maxNameWidth = w
-		}
-
-		prText := getPRText(branch, statusMap)
-		if w := runewidth.StringWidth(prText); w > maxPRWidth {
-			maxPRWidth = w
-		}
-
-		if showStatus && statusMap != nil {
-			statusText := getStatusText(branch, statusMap)
-			if w := runewidth.StringWidth(statusText); w > maxStatusWidth {
-				maxStatusWidth = w
-			}
-		}
-
-		parentText := fmt.Sprintf("(%s %s)", IconArrow, branch.Parent)
-		if w := runewidth.StringWidth(parentText); w > maxParentWidth {
-			maxParentWidth = w
-		}
+	// Build children map for tree rendering
+	branchMap := make(map[string]*config.Branch)
+	childrenMap := make(map[string][]*config.Branch)
+	var roots []*config.Branch
+	for _, b := range stack.Branches {
+		branchMap[b.Name] = b
 	}
-
-	for i, branch := range sortedBranches {
-		// Check if branch is merged (from cached state or live status)
-		isMerged := branch.IsMerged
-		if !isMerged && statusMap != nil {
-			if status, ok := statusMap[branch.Name]; ok && status != nil {
-				isMerged = status.PRState == "MERGED" || status.PRState == "CLOSED"
+	for _, b := range stack.Branches {
+		parentKey := b.Parent
+		if b.BaseBranch != "" && b.BaseBranch != b.Parent {
+			if _, ok := branchMap[b.BaseBranch]; ok {
+				parentKey = b.BaseBranch
 			}
 		}
-
-		// Pointer for current branch (fixed 2-char width)
-		pointer := "  "
-		color := ""
-		if branch.Name == currentBranch {
-			pointer = "> "
-			color = Green
-		}
-
-		// Tree connector
-		connector := "├──"
-		if i == len(sortedBranches)-1 {
-			connector = "└──"
-		}
-
-		// Branch name (truncated and padded)
-		name := truncateBranchName(branch.Name, MaxBranchNameWidth)
-		paddedName := padRight(name, maxNameWidth)
-
-		// PR info (with color and hyperlink)
-		prFormatted := getPRFormatted(branch, statusMap, maxPRWidth)
-
-		// Parent info (padded)
-		parentInfo := fmt.Sprintf("(%s %s)", IconArrow, branch.Parent)
-		paddedParent := padRight(parentInfo, maxParentWidth)
-
-		if showStatus && statusMap != nil {
-			// 5 columns: branch, PR, status, parent
-			statusText := getStatusText(branch, statusMap)
-			paddedStatus := padRight(statusText, maxStatusWidth)
-			statusColored := getStatusIcons(branch, statusMap)
-			// Use paddedStatus length but display statusColored (with colors)
-			statusPadding := strings.Repeat(" ", runewidth.StringWidth(paddedStatus)-runewidth.StringWidth(statusText))
-
-			if isMerged {
-				// For merged branches, apply strikethrough to entire line
-				// Replace all Reset codes with Reset+Strikethrough to maintain strikethrough
-				prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
-				statusWithStrike := strings.ReplaceAll(statusColored, Reset, Reset+Strikethrough)
-				fmt.Fprintf(os.Stderr, "%s%s%s%s %s%s%s  %s  %s%s  %s%s\n",
-					Strikethrough, pointer, color, connector, Bold, paddedName, Reset+Strikethrough,
-					prWithStrike,
-					statusWithStrike, statusPadding,
-					paddedParent, Reset)
-			} else {
-				fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s  %s%s  %s%s\n",
-					pointer, color, connector, Bold, paddedName, Reset,
-					prFormatted,
-					statusColored, statusPadding,
-					paddedParent, Reset)
-			}
+		if _, ok := branchMap[parentKey]; ok {
+			childrenMap[parentKey] = append(childrenMap[parentKey], b)
 		} else {
-			// 4 columns: branch, PR, parent
-			if isMerged {
-				// For merged branches, apply strikethrough to entire line
+			roots = append(roots, b)
+		}
+	}
+
+	// Print root branch name
+	fmt.Fprintf(os.Stderr, "  %s%s%s\n", Gray, stack.Root, Reset)
+
+	// Recursive tree walker
+	var walkTree func(nodes []*config.Branch, prefix string)
+	walkTree = func(nodes []*config.Branch, prefix string) {
+		for i, branch := range nodes {
+			isLast := i == len(nodes)-1
+			connector := "├── "
+			childPrefix := "│   "
+			if isLast {
+				connector = "└── "
+				childPrefix = "    "
+			}
+
+			// Check if branch should be struck through (merged or closed)
+			shouldStrike := branch.IsMerged || branch.PRState == "MERGED" || branch.PRState == "CLOSED"
+			if !shouldStrike && statusMap != nil {
+				if status, ok := statusMap[branch.Name]; ok && status != nil {
+					shouldStrike = status.PRState == "MERGED" || status.PRState == "CLOSED"
+				}
+			}
+
+			// Pointer for current branch
+			pointer := " "
+			color := ""
+			if branch.Name == currentBranch {
+				pointer = ">"
+				color = Green
+			}
+
+			// Branch name
+			name := truncateBranchName(branch.Name, MaxBranchNameWidth)
+
+			// PR info
+			prFormatted := getPRFormatted(branch, statusMap, 0)
+
+			// Status info
+			statusInfo := ""
+			if showStatus && statusMap != nil {
+				statusInfo = getStatusIcons(branch, statusMap)
+			}
+
+			if shouldStrike {
 				prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
-				fmt.Fprintf(os.Stderr, "%s%s%s%s %s%s%s  %s  %s%s\n",
-					Strikethrough, pointer, color, connector, Bold, paddedName, Reset+Strikethrough,
-					prWithStrike,
-					paddedParent, Reset)
+				statusWithStrike := ""
+				if statusInfo != "" {
+					statusWithStrike = strings.ReplaceAll(statusInfo, Reset, Reset+Strikethrough)
+				}
+				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s  %s%s%s\n",
+					pointer, color, prefix, connector, Strikethrough+Bold, name, Reset+Strikethrough,
+					prWithStrike, statusWithStrike, Reset)
 			} else {
-				fmt.Fprintf(os.Stderr, "%s%s%s %s%s%s  %s  %s%s\n",
-					pointer, color, connector, Bold, paddedName, Reset,
-					prFormatted,
-					paddedParent, Reset)
+				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s  %s%s%s\n",
+					pointer, color, prefix, connector, Bold, name, Reset,
+					prFormatted, statusInfo, Reset)
+			}
+
+			if children, ok := childrenMap[branch.Name]; ok {
+				walkTree(children, prefix+childPrefix)
 			}
 		}
 	}
+
+	walkTree(roots, "  ")
 	fmt.Fprintln(os.Stderr)
 }
 
