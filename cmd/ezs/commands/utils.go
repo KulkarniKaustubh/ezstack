@@ -451,50 +451,50 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 	return gh
 }
 
-// fetchBranchStatuses fetches PR and CI status for all branches in a stack (used by ezs status)
-// Also caches merged status to the config when detected
-func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui.BranchStatus {
+// fetchDiffStats computes diff stats for all branches in a stack using parallel local git ops.
+// This is fast (no network) and safe to call from ezs ls.
+func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 	statusMap := make(map[string]*ui.BranchStatus)
-
-	if debug {
-		fmt.Fprintf(os.Stderr, "[DEBUG] fetchBranchStatuses for stack %s with %d branches\n", s.Hash, len(s.Branches))
-	}
-
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// Fetch diff stats for all branches (local git op, fast)
 	for _, branch := range s.Branches {
 		wg.Add(1)
 		go func(b *config.Branch) {
 			defer wg.Done()
 			added, removed, err := g.GetDiffStat(b.Parent, b.Name)
 			if err != nil {
-				if debug {
-					fmt.Fprintf(os.Stderr, "[DEBUG] GetDiffStat(%s, %s) error: %v\n", b.Parent, b.Name, err)
-				}
 				return
 			}
 			mu.Lock()
-			status := statusMap[b.Name]
-			if status == nil {
-				status = &ui.BranchStatus{}
-				statusMap[b.Name] = status
+			statusMap[b.Name] = &ui.BranchStatus{
+				Additions: added,
+				Deletions: removed,
 			}
-			status.Additions = added
-			status.Deletions = removed
 			mu.Unlock()
 		}(branch)
 	}
 
+	wg.Wait()
+	return statusMap
+}
+
+// fetchBranchStatuses fetches PR and CI status for all branches in a stack (used by ezs status)
+// Also caches merged status to the config when detected
+func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui.BranchStatus {
+	statusMap := fetchDiffStats(g, s)
+
+	if debug {
+		fmt.Fprintf(os.Stderr, "[DEBUG] fetchBranchStatuses for stack %s with %d branches\n", s.Hash, len(s.Branches))
+	}
+
 	gh := discoverAndCachePRs(g, s, debug)
 	if gh == nil {
-		if debug {
-			fmt.Fprintf(os.Stderr, "[DEBUG] gh client is nil, waiting for diff stats only\n")
-		}
-		wg.Wait()
 		return statusMap
 	}
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
 
 	// Semaphore to limit concurrent gh CLI calls
 	sem := make(chan struct{}, 10)
