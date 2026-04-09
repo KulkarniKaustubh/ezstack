@@ -1,19 +1,25 @@
-import { Moon, Sun, Monitor, RefreshCw, Settings } from "lucide-react";
+import { Moon, Sun, RefreshCw, Settings, RefreshCcw } from "lucide-react";
+import { useState } from "react";
 import { Button } from "../ui/button";
 import { Tooltip } from "../ui/tooltip";
 import { useTheme } from "../../hooks/use-theme";
 
 interface TitleBarProps {
   onRefresh: () => void;
+  onSync: () => void;
   onSettings: () => void;
   isLoading: boolean;
 }
 
-export function TitleBar({ onRefresh, onSettings, isLoading }: TitleBarProps) {
-  const { theme, setTheme } = useTheme();
+export function TitleBar({ onRefresh, onSync, onSettings, isLoading }: TitleBarProps) {
+  const { theme, toggle } = useTheme();
+  const [refreshFlash, setRefreshFlash] = useState(false);
 
-  const nextTheme = theme === "light" ? "dark" : theme === "dark" ? "system" : "light";
-  const ThemeIcon = theme === "light" ? Sun : theme === "dark" ? Moon : Monitor;
+  const handleRefresh = () => {
+    onRefresh();
+    setRefreshFlash(true);
+    setTimeout(() => setRefreshFlash(false), 600);
+  };
 
   return (
     <div
@@ -37,14 +43,21 @@ export function TitleBar({ onRefresh, onSettings, isLoading }: TitleBarProps) {
       </div>
 
       <div className="flex items-center gap-1">
-        <Tooltip content={`Switch to ${nextTheme} theme`}>
-          <Button variant="ghost" size="icon-sm" onClick={() => setTheme(nextTheme)}>
-            <ThemeIcon className="h-3.5 w-3.5" />
+        <Tooltip content="Sync all stacks">
+          <Button variant="ghost" size="icon-sm" onClick={onSync} disabled={isLoading}>
+            <RefreshCcw className="h-3.5 w-3.5" />
+          </Button>
+        </Tooltip>
+        <Tooltip content={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}>
+          <Button variant="ghost" size="icon-sm" onClick={toggle}>
+            {theme === "dark" ? <Sun className="h-3.5 w-3.5" /> : <Moon className="h-3.5 w-3.5" />}
           </Button>
         </Tooltip>
         <Tooltip content="Refresh (Cmd+R)">
-          <Button variant="ghost" size="icon-sm" onClick={onRefresh} disabled={isLoading}>
-            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`} />
+          <Button variant="ghost" size="icon-sm" onClick={handleRefresh} disabled={isLoading}>
+            <RefreshCw
+              className={`h-3.5 w-3.5 transition-all ${isLoading ? "animate-spin" : ""} ${refreshFlash ? "text-success" : ""}`}
+            />
           </Button>
         </Tooltip>
         <Tooltip content="Settings">

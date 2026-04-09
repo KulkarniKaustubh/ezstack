@@ -15,6 +15,7 @@ import { DeleteDialog } from "./components/operations/DeleteDialog";
 import { PRCreateDialog } from "./components/operations/PRCreateDialog";
 import { PRMergeDialog } from "./components/operations/PRMergeDialog";
 import { ReparentDialog } from "./components/operations/ReparentDialog";
+import { SettingsDialog } from "./components/operations/SettingsDialog";
 import * as ezs from "./commands/ezs";
 
 type DialogState =
@@ -50,16 +51,18 @@ export default function App() {
   const { refresh } = useStacks();
   const { run } = useOperation();
   const [dialog, setDialog] = useState<DialogState>({ type: "none" });
+  const [reposLoading, setReposLoading] = useState(true);
 
   // Load all ezstack repos on mount
   useEffect(() => {
+    setReposLoading(true);
     ezs.getEzstackRepos().then((r) => {
       setRepos(r);
       // Auto-select first repo if we have repos
       if (r.length > 0 && !selectedRepoPath) {
         selectRepo(r[0].repo_path);
       }
-    }).catch(() => {});
+    }).catch(() => {}).finally(() => setReposLoading(false));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Keyboard shortcuts
@@ -111,13 +114,18 @@ export default function App() {
     <div className="flex flex-col h-screen">
       <TitleBar
         onRefresh={refresh}
+        onSync={() => setDialog({ type: "sync" })}
         onSettings={() => setDialog({ type: "settings" })}
         isLoading={isLoading}
       />
 
       <div className="flex flex-1 min-h-0">
-        {repos.length === 0 && !selectedRepoPath ? (
+        {repos.length === 0 && !selectedRepoPath && !reposLoading ? (
           <EmptyState type="no-repo" />
+        ) : reposLoading && repos.length === 0 ? (
+          <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+            Loading repositories...
+          </div>
         ) : (
           <>
             <Sidebar
@@ -258,6 +266,13 @@ export default function App() {
           )}
         </>
       )}
+
+      <SettingsDialog
+        open={dialog.type === "settings"}
+        onOpenChange={(o) => !o && setDialog({ type: "none" })}
+        repos={repos}
+        selectedRepoPath={selectedRepoPath}
+      />
     </div>
   );
 }
