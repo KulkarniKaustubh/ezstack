@@ -462,7 +462,17 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 		wg.Add(1)
 		go func(b *config.Branch) {
 			defer wg.Done()
-			added, removed, err := g.GetDiffStat(b.Parent, b.Name)
+			// Always use origin/root for the stack root parent
+			parentRef := b.Parent
+			if b.Parent == s.Root && g.RemoteBranchExists(b.Parent) {
+				parentRef = "origin/" + b.Parent
+			}
+			// Use origin/<branch> if it exists, fallback to local branch
+			branchRef := b.Name
+			if g.RemoteBranchExists(b.Name) {
+				branchRef = "origin/" + b.Name
+			}
+			added, removed, err := g.GetDiffStat(parentRef, branchRef)
 			if err != nil {
 				return
 			}

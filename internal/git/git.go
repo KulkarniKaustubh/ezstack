@@ -274,31 +274,23 @@ func (g *Git) GetCommitsAhead(branch, target string) (int, error) {
 }
 
 // GetDiffStat returns the total lines added and removed between base and head.
-// Uses three-dot diff (base...head) to show only changes introduced by head.
 func (g *Git) GetDiffStat(base, head string) (added int, removed int, err error) {
-	output, err := g.run("diff", "--numstat", base+"..."+head)
+	output, err := g.run("diff", "--shortstat", base, head)
 	if err != nil {
 		return 0, 0, err
 	}
+	output = strings.TrimSpace(output)
 	if output == "" {
 		return 0, 0, nil
 	}
-	for _, line := range strings.Split(output, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
-			continue
+	// Parse "N insertions(+)" and "N deletions(-)" from the shortstat line
+	for _, part := range strings.Split(output, ",") {
+		part = strings.TrimSpace(part)
+		if strings.Contains(part, "insertion") {
+			fmt.Sscanf(part, "%d", &added)
+		} else if strings.Contains(part, "deletion") {
+			fmt.Sscanf(part, "%d", &removed)
 		}
-		// Binary files show "-" for both counts
-		if fields[0] == "-" || fields[1] == "-" {
-			continue
-		}
-		a, err1 := strconv.Atoi(fields[0])
-		d, err2 := strconv.Atoi(fields[1])
-		if err1 != nil || err2 != nil {
-			continue
-		}
-		added += a
-		removed += d
 	}
 	return added, removed, nil
 }
