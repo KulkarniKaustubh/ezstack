@@ -209,6 +209,9 @@ export function registerCommands(
           ],
           { placeHolder: "PR type" },
         );
+        if (!draftPick) {
+          return;
+        }
 
         // Open an editor for the PR description
         const workspaceRoot =
@@ -218,35 +221,32 @@ export function registerCommands(
           language: "markdown",
           content: template ?? "",
         });
-        const editor = await vscode.window.showTextDocument(doc, {
-          preview: false,
-        });
+        await vscode.window.showTextDocument(doc, { preview: false });
 
-        // Show a message telling the user to write the description and save
         const action = await vscode.window.showInformationMessage(
           `Write the PR description for "${branchName}", then click "Create PR".`,
           "Create PR",
           "Cancel",
         );
+        if (action !== "Create PR") {
+          await vscode.commands.executeCommand(
+            "workbench.action.closeActiveEditor",
+          );
+          return;
+        }
 
-        // Get the body text from the editor
-        const body = editor.document.getText().trim();
-
-        // Close the temp document
+        // Read body from the editor that's still open
+        const body = doc.getText().trim();
         await vscode.commands.executeCommand(
           "workbench.action.closeActiveEditor",
         );
-
-        if (action !== "Create PR") {
-          return;
-        }
 
         await runWithFeedback(
           "Creating PR...",
           `PR created for "${branchName}".`,
           () =>
             cli.prCreate(title, {
-              draft: draftPick?.value ?? false,
+              draft: draftPick.value,
               body: body || undefined,
               branch: branchName,
             }),
@@ -257,47 +257,77 @@ export function registerCommands(
 
   // ── PR Update ──
   context.subscriptions.push(
-    vscode.commands.registerCommand("ezstack.prUpdate", () =>
-      runWithFeedback("Updating PR...", "PR updated.", () => cli.prUpdate()),
+    vscode.commands.registerCommand(
+      "ezstack.prUpdate",
+      async (node?: BranchNode) => {
+        if (node && !node.branch.is_current) {
+          vscode.window.showWarningMessage(
+            `PR update only works on the current branch. Switch to "${node.branch.name}" first.`,
+          );
+          return;
+        }
+        await runWithFeedback("Updating PR...", "PR updated.", () =>
+          cli.prUpdate(),
+        );
+      },
     ),
   );
 
   // ── PR Merge ──
   context.subscriptions.push(
-    vscode.commands.registerCommand("ezstack.prMerge", async () => {
-      const method = await vscode.window.showQuickPick(
-        [
-          { label: "Squash and merge", value: "squash" as const },
-          { label: "Create merge commit", value: "merge" as const },
-          { label: "Rebase and merge", value: "rebase" as const },
-        ],
-        { placeHolder: "Merge method" },
-      );
-      if (!method) {
-        return;
-      }
+    vscode.commands.registerCommand(
+      "ezstack.prMerge",
+      async (node?: BranchNode) => {
+        if (node && !node.branch.is_current) {
+          vscode.window.showWarningMessage(
+            `PR merge only works on the current branch. Switch to "${node.branch.name}" first.`,
+          );
+          return;
+        }
 
-      const confirm = await vscode.window.showWarningMessage(
-        `Merge this PR using ${method.label}?`,
-        { modal: true },
-        "Merge",
-      );
-      if (confirm !== "Merge") {
-        return;
-      }
+        const method = await vscode.window.showQuickPick(
+          [
+            { label: "Squash and merge", value: "squash" as const },
+            { label: "Create merge commit", value: "merge" as const },
+            { label: "Rebase and merge", value: "rebase" as const },
+          ],
+          { placeHolder: "Merge method" },
+        );
+        if (!method) {
+          return;
+        }
 
-      await runWithFeedback("Merging PR...", "PR merged.", () =>
-        cli.prMerge(method.value),
-      );
-    }),
+        const confirm = await vscode.window.showWarningMessage(
+          `Merge this PR using ${method.label}?`,
+          { modal: true },
+          "Merge",
+        );
+        if (confirm !== "Merge") {
+          return;
+        }
+
+        await runWithFeedback("Merging PR...", "PR merged.", () =>
+          cli.prMerge(method.value),
+        );
+      },
+    ),
   );
 
   // ── PR Draft Toggle ──
   context.subscriptions.push(
-    vscode.commands.registerCommand("ezstack.prDraft", () =>
-      runWithFeedback("Toggling draft...", "Draft status toggled.", () =>
-        cli.prDraft(),
-      ),
+    vscode.commands.registerCommand(
+      "ezstack.prDraft",
+      async (node?: BranchNode) => {
+        if (node && !node.branch.is_current) {
+          vscode.window.showWarningMessage(
+            `Draft toggle only works on the current branch. Switch to "${node.branch.name}" first.`,
+          );
+          return;
+        }
+        await runWithFeedback("Toggling draft...", "Draft status toggled.", () =>
+          cli.prDraft(),
+        );
+      },
     ),
   );
 
@@ -353,17 +383,33 @@ export function registerCommands(
           .flatMap((s) => s.branches)
           .find((b) => b.is_current);
         if (!current) {
+          vscode.window.showInformationMessage("No current branch found in any stack.");
+          return;
+        }
+        if (!current.parent) {
+          vscode.window.showInformationMessage("Already at the top of the stack.");
           return;
         }
         const parent = stacks
           .flatMap((s) => s.branches)
           .find((b) => b.name === current.parent);
-        if (parent?.worktree_path) {
-          const uri = vscode.Uri.file(parent.worktree_path);
-          await vscode.commands.executeCommand("vscode.openFolder", uri, {
-            forceNewWindow: false,
-          });
+        if (!parent) {
+          // Parent is the stack root (e.g., main) — not in branches list
+          vscode.window.showInformationMessage(
+            `Parent "${current.parent}" is the stack root.`,
+          );
+          return;
         }
+        if (!parent.worktree_path) {
+          vscode.window.showInformationMessage(
+            `Parent "${parent.name}" has no worktree.`,
+          );
+          return;
+        }
+        const uri = vscode.Uri.file(parent.worktree_path);
+        await vscode.commands.executeCommand("vscode.openFolder", uri, {
+          forceNewWindow: false,
+        });
       } catch {
         // Silently fail — user can use goto instead
       }
