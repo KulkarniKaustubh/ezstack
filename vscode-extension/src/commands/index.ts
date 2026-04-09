@@ -87,61 +87,83 @@ export function registerCommands(
 
   // ── New Branch ──
   context.subscriptions.push(
-    vscode.commands.registerCommand("ezstack.newBranch", async () => {
-      const name = await vscode.window.showInputBox({
-        prompt: "New branch name",
-        placeHolder: "feature-part-2",
-      });
-      if (!name) {
-        return;
-      }
-
-      // Pick a parent from all local branches
-      let parent: string | undefined;
-      try {
-        const [stacks, gitBranches] = await Promise.all([
-          cli.listStacks(true).catch(() => []),
-          cli.getLocalBranches().catch(() => []),
-        ]);
-        const stackBranches = stacks.flatMap((s) => [
-          s.root,
-          ...s.branches.map((b) => b.name),
-        ]);
-        const unique = [...new Set([...stackBranches, ...gitBranches])];
-        if (unique.length > 0) {
-          parent = await vscode.window.showQuickPick(unique, {
-            placeHolder: "Select parent branch (or Esc for current branch)",
-          });
+    vscode.commands.registerCommand(
+      "ezstack.newBranch",
+      async (node?: StackNode) => {
+        const name = await vscode.window.showInputBox({
+          prompt: "New branch name",
+          placeHolder: "feature-part-2",
+        });
+        if (!name) {
+          return;
         }
-      } catch {
-        // If listing fails, proceed without parent selection
-      }
 
-      await runWithFeedback(
-        "Creating branch...",
-        `Created branch "${name}".`,
-        () => cli.newBranch(name, parent),
-      );
-    }),
+        // Pick a parent — scope to the stack if invoked from a stack node
+        let parent: string | undefined;
+        try {
+          if (node instanceof StackNode) {
+            const candidates = [
+              node.stack.root,
+              ...node.stack.branches.map((b) => b.name),
+            ];
+            parent = await vscode.window.showQuickPick(candidates, {
+              placeHolder: "Select parent branch in this stack",
+            });
+          } else {
+            const [stacks, gitBranches] = await Promise.all([
+              cli.listStacks(true).catch(() => []),
+              cli.getLocalBranches().catch(() => []),
+            ]);
+            const stackBranches = stacks.flatMap((s) => [
+              s.root,
+              ...s.branches.map((b) => b.name),
+            ]);
+            const unique = [...new Set([...stackBranches, ...gitBranches])];
+            if (unique.length > 0) {
+              parent = await vscode.window.showQuickPick(unique, {
+                placeHolder:
+                  "Select parent branch (or Esc for current branch)",
+              });
+            }
+          }
+        } catch {
+          // If listing fails, proceed without parent selection
+        }
+
+        await runWithFeedback(
+          "Creating branch...",
+          `Created branch "${name}".`,
+          () => cli.newBranch(name, parent),
+        );
+      },
+    ),
   );
 
   // ── Sync ──
   context.subscriptions.push(
-    vscode.commands.registerCommand("ezstack.sync", async () => {
-      const mode = await vscode.window.showQuickPick(
-        [
-          { label: "Current stack", value: "stack" as const },
-          { label: "Current branch only", value: "current" as const },
-          { label: "All stacks", value: "all" as const },
-        ],
-        { placeHolder: "Sync scope" },
-      );
-      if (!mode) {
-        return;
-      }
-      // Sync is interactive (may have conflicts), so run in terminal
-      cli.syncInteractive(mode.value);
-    }),
+    vscode.commands.registerCommand(
+      "ezstack.sync",
+      async (node?: StackNode) => {
+        if (node instanceof StackNode) {
+          // Invoked from a stack context — sync that stack directly
+          cli.syncInteractive("stack");
+          return;
+        }
+        const mode = await vscode.window.showQuickPick(
+          [
+            { label: "Current stack", value: "stack" as const },
+            { label: "Current branch only", value: "current" as const },
+            { label: "All stacks", value: "all" as const },
+          ],
+          { placeHolder: "Sync scope" },
+        );
+        if (!mode) {
+          return;
+        }
+        // Sync is interactive (may have conflicts), so run in terminal
+        cli.syncInteractive(mode.value);
+      },
+    ),
   );
 
   // ── Push ──
