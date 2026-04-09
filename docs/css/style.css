@@ -421,7 +421,8 @@ pre code {
 
 .terminal-body {
   padding: 1.25rem 1.5rem;
-  min-height: 280px;
+  height: 280px;
+  overflow-y: auto;
   font-family: var(--font-mono);
   font-size: 0.875rem;
   line-height: 1.7;
@@ -1158,7 +1159,7 @@ pre code {
   .terminal-body {
     font-size: 0.75rem;
     padding: 1rem;
-    min-height: 240px;
+    height: 240px;
   }
 
   .step {
