@@ -260,14 +260,9 @@ export function registerCommands(
     vscode.commands.registerCommand(
       "ezstack.prUpdate",
       async (node?: BranchNode) => {
-        if (node && !node.branch.is_current) {
-          vscode.window.showWarningMessage(
-            `PR update only works on the current branch. Switch to "${node.branch.name}" first.`,
-          );
-          return;
-        }
+        const branch = node?.branch.name;
         await runWithFeedback("Updating PR...", "PR updated.", () =>
-          cli.prUpdate(),
+          cli.prUpdate(branch),
         );
       },
     ),
@@ -278,13 +273,7 @@ export function registerCommands(
     vscode.commands.registerCommand(
       "ezstack.prMerge",
       async (node?: BranchNode) => {
-        if (node && !node.branch.is_current) {
-          vscode.window.showWarningMessage(
-            `PR merge only works on the current branch. Switch to "${node.branch.name}" first.`,
-          );
-          return;
-        }
-
+        const branch = node?.branch.name;
         const method = await vscode.window.showQuickPick(
           [
             { label: "Squash and merge", value: "squash" as const },
@@ -307,7 +296,7 @@ export function registerCommands(
         }
 
         await runWithFeedback("Merging PR...", "PR merged.", () =>
-          cli.prMerge(method.value),
+          cli.prMerge(method.value, branch),
         );
       },
     ),
@@ -318,14 +307,9 @@ export function registerCommands(
     vscode.commands.registerCommand(
       "ezstack.prDraft",
       async (node?: BranchNode) => {
-        if (node && !node.branch.is_current) {
-          vscode.window.showWarningMessage(
-            `Draft toggle only works on the current branch. Switch to "${node.branch.name}" first.`,
-          );
-          return;
-        }
+        const branch = node?.branch.name;
         await runWithFeedback("Toggling draft...", "Draft status toggled.", () =>
-          cli.prDraft(),
+          cli.prDraft(branch),
         );
       },
     ),
