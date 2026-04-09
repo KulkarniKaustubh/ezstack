@@ -1032,7 +1032,11 @@ func (cc *CacheConfig) Save(repoDir string) error {
 	var file stackConfigFile
 
 	data, err := os.ReadFile(stackPath)
-	if err == nil {
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to read stacks.json: %w", err)
+		}
+	} else {
 		if uErr := json.Unmarshal(data, &file); uErr != nil {
 			return fmt.Errorf("failed to parse stacks.json: %w", uErr)
 		}

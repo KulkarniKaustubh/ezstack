@@ -727,12 +727,17 @@ func syncOntoParent(mgr *stack.Manager, branch *config.Branch, useMerge bool) er
 		}
 		return err
 	}
+	worktreePath := branch.WorktreePath
+	if worktreePath == "" {
+		cwd, _ := os.Getwd()
+		worktreePath = cwd
+	}
 	if useMerge {
 		ui.Success("Merge complete")
-		OfferPush(branch.Name, branch.WorktreePath)
+		OfferPush(branch.Name, worktreePath)
 	} else {
 		ui.Success("Rebase complete")
-		OfferForcePush(branch.Name, branch.WorktreePath)
+		OfferForcePush(branch.Name, worktreePath)
 	}
 	return nil
 }
@@ -806,6 +811,10 @@ func syncChildren(mgr *stack.Manager, branch *config.Branch, useMerge bool) erro
 					if childBranch == nil {
 						return ""
 					}
+					if childBranch.WorktreePath == "" {
+						cwd, _ := os.Getwd()
+						return cwd
+					}
 					return childBranch.WorktreePath
 				})
 			} else {
@@ -813,6 +822,10 @@ func syncChildren(mgr *stack.Manager, branch *config.Branch, useMerge bool) erro
 					childBranch := mgr.GetBranch(branchName)
 					if childBranch == nil {
 						return ""
+					}
+					if childBranch.WorktreePath == "" {
+						cwd, _ := os.Getwd()
+						return cwd
 					}
 					return childBranch.WorktreePath
 				})
