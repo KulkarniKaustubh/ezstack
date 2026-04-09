@@ -24,13 +24,9 @@ export function useStacks() {
     setError,
     setLastRefresh,
     selectRepo,
-    selectStack,
-    selectedStackHash,
   } = useAppStore();
 
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const selectedStackHashRef = useRef(selectedStackHash);
-  selectedStackHashRef.current = selectedStackHash;
   const initializedRef = useRef(false);
 
   // Initial load: fetch all repos and all their stacks in parallel
@@ -61,9 +57,6 @@ export function useStacks() {
         const firstSuccess = results.find((r) => r.status === "fulfilled");
         if (firstSuccess && firstSuccess.status === "fulfilled") {
           selectRepo(firstSuccess.value.path);
-          if (firstSuccess.value.data.stacks.length > 0) {
-            selectStack(firstSuccess.value.data.stacks[0].hash);
-          }
         }
 
         setLastRefresh(new Date());
@@ -87,16 +80,12 @@ export function useStacks() {
       setStacks(data.stacks);
       setCurrentBranch(data.currentBranch);
       setLastRefresh(new Date());
-
-      if (!selectedStackHashRef.current && data.stacks.length > 0) {
-        selectStack(data.stacks[0].hash);
-      }
     } catch (e) {
       setError(String(e));
     } finally {
       setLoading(false);
     }
-  }, [selectedRepoPath, setRepoData, setStacks, setCurrentBranch, setLoading, setError, setLastRefresh, selectStack]);
+  }, [selectedRepoPath, setRepoData, setStacks, setCurrentBranch, setLoading, setError, setLastRefresh]);
 
   // Refresh all repos (used by sync-all)
   const refreshAll = useCallback(async () => {

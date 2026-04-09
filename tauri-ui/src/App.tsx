@@ -5,7 +5,7 @@ import { useOperation } from "./hooks/use-operation";
 import { TitleBar } from "./components/layout/TitleBar";
 import { Sidebar } from "./components/layout/Sidebar";
 import { StatusBar } from "./components/layout/StatusBar";
-import { StackGraph } from "./components/stack/StackGraph";
+import { StacksBoard } from "./components/stack/StacksBoard";
 import { BranchDetail } from "./components/branch/BranchDetail";
 import { EmptyState } from "./components/shared/EmptyState";
 import { OperationOutput } from "./components/shared/OperationOutput";
@@ -15,17 +15,19 @@ import { DeleteDialog } from "./components/operations/DeleteDialog";
 import { PRCreateDialog } from "./components/operations/PRCreateDialog";
 import { PRMergeDialog } from "./components/operations/PRMergeDialog";
 import { ReparentDialog } from "./components/operations/ReparentDialog";
+import { RenameStackDialog } from "./components/operations/RenameStackDialog";
 import { SettingsDialog } from "./components/operations/SettingsDialog";
 import * as ezs from "./commands/ezs";
 
 type DialogState =
   | { type: "none" }
-  | { type: "new-branch" }
+  | { type: "new-branch"; forStackHash?: string }
   | { type: "sync"; branch?: string }
   | { type: "delete"; branch: string }
   | { type: "pr-create"; branch: string }
   | { type: "pr-merge"; branch: string; prNumber: number }
   | { type: "reparent"; branch: string }
+  | { type: "rename-stack"; stackHash: string }
   | { type: "settings" };
 
 export default function App() {
@@ -66,7 +68,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [refresh, setDialog]);
+  }, [refresh]);
 
   const selectedStack = stacks.find((s) => s.hash === selectedStackHash);
   const selectedBranch = selectedStack?.branches.find((b) => b.name === selectedBranchName);
@@ -77,6 +79,14 @@ export default function App() {
       refresh();
     },
     [run, refresh],
+  );
+
+  const handleSelectBranch = useCallback(
+    (stackHash: string, branchName: string) => {
+      selectStack(stackHash);
+      selectBranch(branchName);
+    },
+    [selectStack, selectBranch],
   );
 
   // Build action handlers for the selected branch
@@ -105,18 +115,7 @@ export default function App() {
           className="flex items-center h-12 px-4 border-b bg-background/80 backdrop-blur-sm select-none"
           data-tauri-drag-region
         >
-          <div className="flex items-center gap-2">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="text-primary">
-              <path
-                d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6l-8-4z"
-                stroke="currentColor"
-                strokeWidth="2"
-                fill="none"
-              />
-              <path d="M8 12h8M12 8v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            <span className="text-sm font-semibold tracking-tight">ezstack</span>
-          </div>
+          <span className="text-sm font-semibold tracking-tight">ezstack</span>
         </div>
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
           <div className="flex items-center gap-3">
@@ -127,6 +126,11 @@ export default function App() {
       </div>
     );
   }
+
+  // Resolve the stack for "add branch to stack" dialog
+  const forStack = dialog.type === "new-branch" && dialog.forStackHash
+    ? stacks.find((s) => s.hash === dialog.forStackHash)
+    : undefined;
 
   return (
     <div className="flex flex-col h-screen">
@@ -146,32 +150,25 @@ export default function App() {
               repos={repos}
               selectedRepoPath={selectedRepoPath}
               onSelectRepo={selectRepo}
-              stacks={stacks}
-              selectedStackHash={selectedStackHash}
-              onSelectStack={selectStack}
-              onNewBranch={() => setDialog({ type: "new-branch" })}
             />
 
             <div className="flex flex-1 min-w-0">
-              {/* Center: Stack Graph */}
+              {/* Center: All stacks as columns */}
               <div className="flex-1 min-w-0 flex flex-col">
                 {error && (
                   <div className="px-4 py-2 bg-destructive/10 text-destructive text-sm border-b">
                     {error}
                   </div>
                 )}
-                {selectedStack ? (
-                  <StackGraph
-                    stack={selectedStack}
-                    selectedBranch={selectedBranchName}
-                    onSelectBranch={selectBranch}
-                  />
-                ) : (
-                  <EmptyState
-                    type={stacks.length === 0 ? "no-stacks" : "no-selection"}
-                    onNewBranch={() => setDialog({ type: "new-branch" })}
-                  />
-                )}
+
+                <StacksBoard
+                  stacks={stacks}
+                  selectedBranch={selectedBranchName}
+                  onSelectBranch={handleSelectBranch}
+                  onRenameStack={(hash) => setDialog({ type: "rename-stack", stackHash: hash })}
+                  onAddBranchToStack={(hash) => setDialog({ type: "new-branch", forStackHash: hash })}
+                  onNewBranch={() => setDialog({ type: "new-branch" })}
+                />
 
                 {/* Operation output panel */}
                 {operationOutput && (
@@ -206,6 +203,7 @@ export default function App() {
             open={dialog.type === "new-branch"}
             onOpenChange={(o) => !o && setDialog({ type: "none" })}
             stacks={stacks}
+            forStack={forStack}
             isLoading={operationLoading}
             onSubmit={async (name, parent) => {
               await runAndRefresh(() => ezs.createBranch(selectedRepoPath, name, parent));
@@ -274,6 +272,20 @@ export default function App() {
               isLoading={operationLoading}
               onSubmit={async (newParent) => {
                 await runAndRefresh(() => ezs.reparentBranch(selectedRepoPath, dialog.branch, newParent));
+                setDialog({ type: "none" });
+              }}
+            />
+          )}
+
+          {dialog.type === "rename-stack" && (
+            <RenameStackDialog
+              open
+              onOpenChange={(o) => !o && setDialog({ type: "none" })}
+              stackHash={dialog.stackHash}
+              currentName={stacks.find((s) => s.hash === dialog.stackHash)?.name || ""}
+              isLoading={operationLoading}
+              onSubmit={async (name) => {
+                await runAndRefresh(() => ezs.renameStack(selectedRepoPath, dialog.stackHash, name));
                 setDialog({ type: "none" });
               }}
             />

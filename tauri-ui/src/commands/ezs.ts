@@ -58,6 +58,14 @@ export async function reparentBranch(
   return invoke<CommandResult>("reparent_branch", { repoPath, branch, new_parent: newParent });
 }
 
+export async function renameStack(
+  repoPath: string,
+  stackHash: string,
+  name: string,
+): Promise<CommandResult> {
+  return invoke<CommandResult>("rename_stack", { repoPath, stack_hash: stackHash, name });
+}
+
 export async function prCreate(
   repoPath: string,
   title: string,

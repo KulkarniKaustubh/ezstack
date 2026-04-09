@@ -52,3 +52,8 @@ pub fn delete_branch(repo_path: String, branch: String, force: bool) -> Result<C
 pub fn reparent_branch(repo_path: String, branch: String, new_parent: String) -> Result<CommandResult, String> {
     run_ezs(&repo_path, &["-y", "reparent", &branch, &new_parent])
 }
+
+#[tauri::command]
+pub fn rename_stack(repo_path: String, stack_hash: String, name: String) -> Result<CommandResult, String> {
+    run_ezs(&repo_path, &["-y", "stack", "rename", &stack_hash, &name])
+}
