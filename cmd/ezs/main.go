@@ -11,7 +11,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
-const version = "1.8.7"
+const version = "2.0.0-beta.6"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.

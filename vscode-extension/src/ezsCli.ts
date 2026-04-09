@@ -72,9 +72,17 @@ export class EzsCli {
     return this.resolvedPath;
   }
 
+  /** Quote a string for safe shell use. */
+  private static shellQuote(s: string): string {
+    if (/^[a-zA-Z0-9_./:@=-]+$/.test(s)) {
+      return s; // safe, no quoting needed
+    }
+    return `'${s.replace(/'/g, "'\\''")}'`;
+  }
+
   private static stripAnsi(s: string): string {
     // eslint-disable-next-line no-control-regex
-    return s.replace(/\x1b\[[0-9;]*m/g, "");
+    return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
   }
 
   /** Run an ezs command and return stdout. */
@@ -121,7 +129,8 @@ export class EzsCli {
       cwd: this.workspaceRoot,
     });
     terminal.show();
-    terminal.sendText(`${this.cliPath} ${args.join(" ")}`);
+    const quoted = [this.cliPath, ...args].map(EzsCli.shellQuote);
+    terminal.sendText(quoted.join(" "));
     return terminal;
   }
 
@@ -193,12 +202,21 @@ export class EzsCli {
 
   // ── Mutations (headless with -y) ──
 
-  async push(force = false): Promise<void> {
-    const args = ["push"];
-    if (force) {
-      args.push("--force");
+  async push(force = false, branch?: string): Promise<void> {
+    if (branch) {
+      // Push a specific branch by name (for non-current branches)
+      const args = ["push", "-u", "origin", branch];
+      if (force) {
+        args.splice(1, 0, "--force-with-lease");
+      }
+      await this.execGit(args);
+    } else {
+      const args = ["push"];
+      if (force) {
+        args.push("--force");
+      }
+      await this.execYes(args);
     }
-    await this.execYes(args);
   }
 
   async pushStack(force = false): Promise<void> {
@@ -265,6 +283,10 @@ export class EzsCli {
 
   async prStack(): Promise<void> {
     await this.execYes(["pr", "stack"]);
+  }
+
+  async renameStack(stackHash: string, name: string): Promise<void> {
+    await this.exec(["stack", "rename", stackHash, name]);
   }
 
   // ── Interactive (terminal) ──
