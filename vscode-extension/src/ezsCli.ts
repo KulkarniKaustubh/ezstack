@@ -7,6 +7,7 @@ import {
   StackJSON,
   StatusStackJSON,
   SyncInfoJSON,
+  WorktreeGitStatus,
 } from "./types";
 
 const COMMON_PATHS = [
@@ -49,6 +50,10 @@ export class EzsCli {
     private workspaceRoot: string,
   ) {
     this.outputChannel = vscode.window.createOutputChannel("ezstack");
+  }
+
+  getWorkspaceRoot(): string {
+    return this.workspaceRoot;
   }
 
   getOutputChannel(): vscode.OutputChannel {
@@ -134,13 +139,19 @@ export class EzsCli {
     return terminal;
   }
 
+  /** Fetch and pull in the given directory. */
+  async gitFetchPull(cwd?: string): Promise<void> {
+    await this.execGit(["fetch"], cwd);
+    await this.execGit(["pull"], cwd);
+  }
+
   /** Run a git command and return stdout. */
-  private execGit(args: string[]): Promise<string> {
+  private execGit(args: string[], cwd?: string): Promise<string> {
     return new Promise((resolve, reject) => {
       execFile(
         "git",
         args,
-        { cwd: this.workspaceRoot, timeout: 10_000 },
+        { cwd: cwd ?? this.workspaceRoot, timeout: 10_000 },
         (error, stdout) => {
           if (error) {
             reject(new Error(error.message));
@@ -150,6 +161,74 @@ export class EzsCli {
         },
       );
     });
+  }
+
+  /** Get git working tree status for a worktree directory. */
+  async getWorktreeGitStatus(worktreePath: string): Promise<WorktreeGitStatus> {
+    const result: WorktreeGitStatus = {
+      modified: 0,
+      staged: 0,
+      untracked: 0,
+      ahead: 0,
+      behind: 0,
+      files: new Map(),
+    };
+
+    try {
+      const porcelain = await this.execGit(
+        ["status", "--porcelain", "--branch"],
+        worktreePath,
+      );
+      const lines = porcelain.trim().split("\n").filter(Boolean);
+      for (const line of lines) {
+        if (line.startsWith("##")) {
+          const aheadMatch = line.match(/ahead (\d+)/);
+          const behindMatch = line.match(/behind (\d+)/);
+          if (aheadMatch) {
+            result.ahead = parseInt(aheadMatch[1], 10);
+          }
+          if (behindMatch) {
+            result.behind = parseInt(behindMatch[1], 10);
+          }
+          continue;
+        }
+        const indexChar = line[0];
+        const worktreeChar = line[1];
+        // File path starts at column 3; handle renames ("old -> new")
+        let filePath = line.substring(3);
+        const arrowIdx = filePath.indexOf(" -> ");
+        if (arrowIdx !== -1) {
+          filePath = filePath.substring(arrowIdx + 4);
+        }
+
+        if (indexChar === "?" && worktreeChar === "?") {
+          result.untracked++;
+          result.files.set(filePath, "untracked");
+        } else if (indexChar === "U" || worktreeChar === "U") {
+          result.files.set(filePath, "conflict");
+        } else {
+          const isStagedChange = indexChar !== " " && indexChar !== "?";
+          const isWorktreeChange = worktreeChar !== " " && worktreeChar !== "?";
+          if (isStagedChange) {
+            result.staged++;
+          }
+          if (isWorktreeChange) {
+            result.modified++;
+          }
+          if (isStagedChange && isWorktreeChange) {
+            result.files.set(filePath, "both");
+          } else if (isStagedChange) {
+            result.files.set(filePath, "staged");
+          } else {
+            result.files.set(filePath, "modified");
+          }
+        }
+      }
+    } catch {
+      // git status failed — return zeros
+    }
+
+    return result;
   }
 
   // ── Read operations ──
