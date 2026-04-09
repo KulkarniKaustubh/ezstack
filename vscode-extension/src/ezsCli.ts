@@ -239,16 +239,28 @@ export class EzsCli {
     await this.execYes(args);
   }
 
-  async prUpdate(): Promise<void> {
-    await this.execYes(["pr", "update"]);
+  async prUpdate(branch?: string): Promise<void> {
+    const args = ["pr", "update"];
+    if (branch) {
+      args.push("--branch", branch);
+    }
+    await this.execYes(args);
   }
 
-  async prMerge(method: "squash" | "merge" | "rebase" = "squash"): Promise<void> {
-    await this.execYes(["pr", "merge", "-m", method]);
+  async prMerge(method: "squash" | "merge" | "rebase" = "squash", branch?: string): Promise<void> {
+    const args = ["pr", "merge", "-m", method];
+    if (branch) {
+      args.push("--branch", branch);
+    }
+    await this.execYes(args);
   }
 
-  async prDraft(): Promise<void> {
-    await this.execYes(["pr", "draft"]);
+  async prDraft(branch?: string): Promise<void> {
+    const args = ["pr", "draft"];
+    if (branch) {
+      args.push("--branch", branch);
+    }
+    await this.execYes(args);
   }
 
   async prStack(): Promise<void> {
