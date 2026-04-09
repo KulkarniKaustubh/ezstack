@@ -344,12 +344,10 @@ func configInteractive() error {
 	ui.Success(fmt.Sprintf("Set cd_after_new = %v", cdAfterNew))
 
 	// Sync strategy: rebase or merge
-	currentSyncStrategy := "rebase"
-	if repoCfg.SyncStrategy != "" {
-		currentSyncStrategy = repoCfg.SyncStrategy
-	}
-	useMergeSync := ui.ConfirmTUIWithDefault("Use merge instead of rebase for sync (avoids force pushes)", currentSyncStrategy == "merge")
-	if useMergeSync {
+	options := []string{"merge", "rebase"}
+	defaultIdx := 0
+	syncStrategyIdx := ui.SelectTUI(options, "Select your sync strategy (merge is recommended since rebase will force push)", defaultIdx)
+	if syncStrategyIdx == 0 {
 		repoCfg.SyncStrategy = "merge"
 	} else {
 		repoCfg.SyncStrategy = "rebase"
