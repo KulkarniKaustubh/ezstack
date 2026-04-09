@@ -425,13 +425,13 @@ const MaxBranchNameWidth = 50
 
 // truncateBranchName truncates a branch name to maxWidth, appending "..." if needed
 func truncateBranchName(name string, maxWidth int) string {
-	if len(name) <= maxWidth {
+	if runewidth.StringWidth(name) <= maxWidth {
 		return name
 	}
 	if maxWidth <= 3 {
-		return name[:maxWidth]
+		return runewidth.Truncate(name, maxWidth, "")
 	}
-	return name[:maxWidth-3] + "..."
+	return runewidth.Truncate(name, maxWidth, "...")
 }
 
 // sortBranchesTopologically sorts branches so parents come before children
@@ -913,7 +913,9 @@ func confirmTUICore(prompt string, defaultYes bool, escValue bool) bool {
 				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
 				term.Restore(int(os.Stdin.Fd()), oldState)
 				os.Exit(130)
-			case 27: // ESC byte — handled below as single ESC or part of arrow sequence
+			case 27: // ESC
+				fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
+				return escValue
 			case 'k', 'K': // vim-style up
 				selected = 0
 				renderConfirm()
@@ -936,10 +938,6 @@ func confirmTUICore(prompt string, defaultYes bool, escValue bool) bool {
 				selected = 1
 				renderConfirm()
 			}
-		} else if n == 1 && buf[0] == 27 {
-			// Single ESC
-			fmt.Fprint(os.Stderr, "\033[4B\r\033[K")
-			return escValue
 		}
 	}
 
@@ -1045,6 +1043,9 @@ func SelectTUI(options []string, prompt string, defaultIdx int) int {
 					selected--
 					renderMenu()
 				}
+			case 27: // ESC key - cancel
+				fmt.Fprintf(os.Stderr, "\033[%dB\r\033[K", totalLines+1)
+				return -1
 			case 'j', 'J': // vim-style down
 				if selected < numOptions-1 {
 					selected++
@@ -1065,10 +1066,6 @@ func SelectTUI(options []string, prompt string, defaultIdx int) int {
 					renderMenu()
 				}
 			}
-		} else if n == 1 && buf[0] == 27 {
-			// Single ESC key - cancel
-			fmt.Fprintf(os.Stderr, "\033[%dB\r\033[K", totalLines+1)
-			return -1
 		}
 	}
 
@@ -1252,13 +1249,14 @@ func PromptRequired(prompt string) string {
 			tty, err := os.Open("/dev/tty")
 			if err != nil {
 				tty = os.Stdin
-			} else {
-				defer tty.Close()
 			}
 			reader := bufio.NewReader(tty)
 			fmt.Fprintf(os.Stderr, ": ")
-			response, err := reader.ReadString('\n')
-			if err != nil {
+			response, readErr := reader.ReadString('\n')
+			if tty != os.Stdin {
+				tty.Close()
+			}
+			if readErr != nil {
 				continue
 			}
 			response = strings.TrimSpace(response)
@@ -1368,11 +1366,12 @@ const SpinnerDelay = 1500 * time.Millisecond
 
 // Spinner represents a simple loading spinner
 type Spinner struct {
-	message string
-	stop    chan bool
-	wg      sync.WaitGroup
-	started bool
-	mu      sync.Mutex
+	message  string
+	stop     chan bool
+	wg       sync.WaitGroup
+	started  bool
+	mu       sync.Mutex
+	stopOnce sync.Once
 }
 
 // NewSpinner creates a new spinner with the given message
@@ -1414,7 +1413,9 @@ func (s *Spinner) Start() {
 
 // Stop stops the spinner
 func (s *Spinner) Stop() {
-	close(s.stop)
+	s.stopOnce.Do(func() {
+		close(s.stop)
+	})
 	s.wg.Wait()
 }
 
