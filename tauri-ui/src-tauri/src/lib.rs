@@ -22,6 +22,7 @@ pub fn run() {
             operations::push_branch,
             operations::delete_branch,
             operations::reparent_branch,
+            operations::rename_stack,
             // PR operations
             pr::pr_create,
             pr::pr_update,

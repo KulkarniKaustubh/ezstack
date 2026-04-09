@@ -83,3 +83,8 @@ pub fn reparent_branch(
     let conn = state.0.lock().map_err(|e| e.to_string())?;
     run_ezs(&repo_path, &["-y", "reparent", &branch, &new_parent], conn.as_ref())
 }
+
+#[tauri::command]
+pub fn rename_stack(repo_path: String, stack_hash: String, name: String) -> Result<CommandResult, String> {
+    run_ezs(&repo_path, &["-y", "stack", "rename", &stack_hash, &name])
+}
