@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { EzsCli } from "../ezsCli";
-import { StackTreeProvider, BranchNode, StackTreeItem } from "../views/stackTreeProvider";
+import { StackTreeProvider, StackNode, BranchNode, StackTreeItem } from "../views/stackTreeProvider";
 import { StatusBarManager } from "../views/statusBarManager";
 
 const PR_TEMPLATE_PATHS = [
@@ -146,9 +146,14 @@ export function registerCommands(
 
   // ── Push ──
   context.subscriptions.push(
-    vscode.commands.registerCommand("ezstack.push", () =>
-      runWithFeedback("Pushing branch...", "Branch pushed.", () => cli.push()),
-    ),
+    vscode.commands.registerCommand("ezstack.push", (node?: BranchNode) => {
+      const branch = node instanceof BranchNode ? node.branch.name : undefined;
+      const label = branch ? `Pushing "${branch}"...` : "Pushing branch...";
+      const success = branch ? `Pushed "${branch}".` : "Branch pushed.";
+      return runWithFeedback(label, success, () =>
+        cli.push(false, branch && !node?.branch.is_current ? branch : undefined),
+      );
+    }),
   );
 
   context.subscriptions.push(
@@ -394,8 +399,9 @@ export function registerCommands(
         await vscode.commands.executeCommand("vscode.openFolder", uri, {
           forceNewWindow: false,
         });
-      } catch {
-        // Silently fail — user can use goto instead
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        vscode.window.showErrorMessage(`Failed to navigate up: ${msg}`);
       }
     }),
   );
@@ -408,12 +414,14 @@ export function registerCommands(
           .flatMap((s) => s.branches)
           .find((b) => b.is_current);
         if (!current) {
+          vscode.window.showInformationMessage("No current branch found in any stack.");
           return;
         }
         const children = stacks
           .flatMap((s) => s.branches)
           .filter((b) => b.parent === current.name);
         if (children.length === 0) {
+          vscode.window.showInformationMessage("Already at the bottom of the stack.");
           return;
         }
         let target = children[0];
@@ -437,8 +445,9 @@ export function registerCommands(
             forceNewWindow: false,
           });
         }
-      } catch {
-        // Silently fail
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        vscode.window.showErrorMessage(`Failed to navigate down: ${msg}`);
       }
     }),
   );
@@ -534,10 +543,39 @@ export function registerCommands(
     vscode.commands.registerCommand(
       "ezstack.openPR",
       async (node?: BranchNode) => {
+        let prUrl: string | undefined;
         if (node?.branch.pr_url) {
-          await vscode.env.openExternal(
-            vscode.Uri.parse(node.branch.pr_url),
-          );
+          prUrl = node.branch.pr_url;
+        } else {
+          // No node context — pick from branches with PRs
+          try {
+            const stacks = await cli.listStacks(true);
+            const withPRs = stacks
+              .flatMap((s) => s.branches)
+              .filter((b) => b.pr_url);
+            if (withPRs.length === 0) {
+              vscode.window.showInformationMessage("No branches have PRs.");
+              return;
+            }
+            const pick = await vscode.window.showQuickPick(
+              withPRs.map((b) => ({
+                label: b.name,
+                description: `PR #${b.pr_number}`,
+                prUrl: b.pr_url,
+              })),
+              { placeHolder: "Select branch to open PR" },
+            );
+            if (!pick) {
+              return;
+            }
+            prUrl = pick.prUrl;
+          } catch {
+            vscode.window.showErrorMessage("Failed to list branches.");
+            return;
+          }
+        }
+        if (prUrl) {
+          await vscode.env.openExternal(vscode.Uri.parse(prUrl));
         }
       },
     ),
@@ -561,6 +599,62 @@ export function registerCommands(
         await vscode.commands.executeCommand("vscode.openFolder", uri, {
           forceNewWindow: false,
         });
+      },
+    ),
+  );
+
+  // ── Rename Stack ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.renameStack",
+      async (node?: StackNode) => {
+        let stackHash: string | undefined;
+        let currentName: string | undefined;
+
+        if (node instanceof StackNode) {
+          stackHash = node.stack.hash;
+          currentName = node.stack.name;
+        } else {
+          // No node context — pick a stack from the list
+          const stacks = await cli.listStacks(true);
+          if (stacks.length === 0) {
+            vscode.window.showInformationMessage("No stacks found.");
+            return;
+          }
+          const pick = await vscode.window.showQuickPick(
+            stacks.map((s) => ({
+              label: s.name || s.hash,
+              description: s.name ? s.hash : undefined,
+              detail: `root: ${s.root}, ${s.branches.length} branch${s.branches.length === 1 ? "" : "es"}`,
+              hash: s.hash,
+              stackName: s.name,
+            })),
+            { placeHolder: "Select stack to rename" },
+          );
+          if (!pick) {
+            return;
+          }
+          stackHash = pick.hash;
+          currentName = pick.stackName;
+        }
+
+        const newName = await vscode.window.showInputBox({
+          prompt: "Stack name (leave empty to clear)",
+          placeHolder: "my-feature",
+          value: currentName ?? "",
+        });
+        // undefined means the user pressed Escape
+        if (newName === undefined) {
+          return;
+        }
+
+        await runWithFeedback(
+          "Renaming stack...",
+          newName
+            ? `Renamed stack to "${newName}".`
+            : `Cleared name for stack ${stackHash}.`,
+          () => cli.renameStack(stackHash!, newName),
+        );
       },
     ),
   );

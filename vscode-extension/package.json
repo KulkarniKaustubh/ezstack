@@ -2,7 +2,7 @@
   "name": "ezstack",
   "displayName": "ezstack",
   "description": "Manage stacked pull requests with git worktrees",
-  "version": "0.1.0",
+  "version": "2.0.0-beta.7",
   "publisher": "kaustubh",
   "license": "MIT",
   "repository": {
@@ -26,7 +26,7 @@
         {
           "id": "ezstack",
           "title": "ezstack",
-          "icon": "$(layers)"
+          "icon": "resources/icon.svg"
         }
       ]
     },
@@ -135,6 +135,12 @@
         "title": "Open Worktree Folder",
         "category": "ezstack",
         "icon": "$(folder-opened)"
+      },
+      {
+        "command": "ezstack.renameStack",
+        "title": "Rename Stack",
+        "category": "ezstack",
+        "icon": "$(edit)"
       }
     ],
     "menus": {
@@ -162,6 +168,11 @@
       ],
       "view/item/context": [
         {
+          "command": "ezstack.renameStack",
+          "when": "view == ezstackStacks && viewItem == stack",
+          "group": "inline"
+        },
+        {
           "command": "ezstack.openWorktree",
           "when": "view == ezstackStacks && viewItem =~ /^branch/",
           "group": "inline"
@@ -178,7 +189,7 @@
         },
         {
           "command": "ezstack.prCreate",
-          "when": "view == ezstackStacks && viewItem =~ /^branch/",
+          "when": "view == ezstackStacks && viewItem == branch",
           "group": "1_actions@2"
         },
         {
@@ -205,6 +216,11 @@
           "command": "ezstack.delete",
           "when": "view == ezstackStacks && viewItem =~ /^branch/",
           "group": "2_modify@2"
+        },
+        {
+          "command": "ezstack.renameStack",
+          "when": "view == ezstackStacks && viewItem == stack",
+          "group": "2_modify@1"
         }
       ]
     },
