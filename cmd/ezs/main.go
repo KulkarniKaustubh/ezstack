@@ -11,7 +11,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
-const version = "2.1.1"
+const version = "2.2.0-beta.1"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
@@ -146,6 +146,8 @@ func main() {
 		err = commands.Up(args)
 	case "down":
 		err = commands.Down(args)
+	case "agent":
+		err = commands.Agent(args)
 	case "menu":
 		err = runInteractiveMenu()
 	default:
@@ -244,6 +246,7 @@ func printUsage() {
     amend         Amend last commit and auto-sync children
     diff          Show diff against parent branch
     push          Push current branch or entire stack
+    agent         Launch AI agent with stack context
     pr            Manage pull requests
     config        Configure ezstack
     menu          Interactive command menu
@@ -316,7 +319,7 @@ fi
 var topLevelCommands = []string{
 	"new", "list", "status", "sync", "goto", "up", "down",
 	"reparent", "stack", "unstack", "delete", "commit", "amend",
-	"diff", "push", "pr", "config", "menu",
+	"diff", "push", "agent", "pr", "config", "menu",
 }
 
 var prSubcommands = []string{"create", "update", "merge", "draft", "stack"}
@@ -335,5 +338,7 @@ func printCompletions(args []string) {
 		for _, sub := range prSubcommands {
 			fmt.Println(sub)
 		}
+	case "agent":
+		fmt.Println("feature")
 	}
 }
