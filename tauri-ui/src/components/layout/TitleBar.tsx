@@ -30,6 +30,7 @@ export function TitleBar({ onRefresh, onSync, onSettings, isLoading, isConnected
       data-tauri-drag-region
     >
       <div className="flex items-center gap-2" data-tauri-drag-region>
+        <img src="/logo.png" alt="" className="h-5 w-5" draggable={false} />
         <span className="text-sm font-semibold tracking-tight">ezstack</span>
         <span className="text-[10px] text-muted-foreground font-mono">v{APP_VERSION}</span>
       </div>

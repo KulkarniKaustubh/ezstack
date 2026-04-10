@@ -6,30 +6,57 @@ use std::sync::OnceLock;
 /// Cached resolved path to the local `ezs` binary.
 static EZS_BINARY: OnceLock<String> = OnceLock::new();
 
-/// Resolve the local `ezs` binary path, matching the VS Code extension logic:
-///   1. Try `whereis ezs` (finds actual binary, unlike `which` which may show shell functions)
-///   2. Check common install locations
-///   3. Fallback to bare "ezs"
-fn find_ezs_binary() -> String {
-    // 1. Try `whereis ezs` — `which` may return a shell function instead of the binary
-    //    whereis output format: "ezs: /path/to/ezs [/other/path ...]"
-    if let Ok(output) = Command::new("whereis").arg("ezs").output() {
-        if output.status.success() {
-            let line = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            // Strip the "ezs: " prefix and take the first path
-            if let Some(paths) = line.strip_prefix("ezs:") {
-                let paths = paths.trim();
-                if let Some(first) = paths.split_whitespace().next() {
-                    if PathBuf::from(first).exists() {
-                        return first.to_string();
+/// Get the user's home directory reliably.
+/// Tries multiple approaches since Tauri apps launched from Finder/dock
+/// may not inherit the shell's environment variables.
+fn get_home_dir() -> Option<PathBuf> {
+    // 1. Try dirs crate (uses platform-specific APIs, not just env vars)
+    if let Some(home) = dirs::home_dir() {
+        if home.is_absolute() && home.exists() {
+            return Some(home);
+        }
+    }
+
+    // 2. Try HOME env var directly
+    if let Ok(home) = std::env::var("HOME") {
+        let p = PathBuf::from(&home);
+        if p.is_absolute() && p.exists() {
+            return Some(p);
+        }
+    }
+
+    // 3. macOS fallback: /Users/<current_user>
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = Command::new("id").arg("-un").output() {
+            if output.status.success() {
+                let user = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !user.is_empty() {
+                    let p = PathBuf::from(format!("/Users/{}", user));
+                    if p.exists() {
+                        return Some(p);
                     }
                 }
             }
         }
     }
 
-    // 2. Check common install locations
-    let home = dirs::home_dir().unwrap_or_default();
+    None
+}
+
+/// Resolve the local `ezs` binary path.
+/// Tauri apps launched from Finder/dock do NOT inherit the user's shell PATH,
+/// so we must check common install locations directly.
+fn find_ezs_binary() -> String {
+    let home = match get_home_dir() {
+        Some(h) => h,
+        None => {
+            // Can't determine home — try bare "ezs" and hope for the best
+            return "ezs".to_string();
+        }
+    };
+
+    // Check common install locations (same as VS Code extension)
     let mut common_paths: Vec<PathBuf> = vec![
         // make install (XDG convention)
         home.join(".local").join("bin").join("ezs"),
@@ -55,13 +82,16 @@ fn find_ezs_binary() -> String {
     // system-wide
     common_paths.push(PathBuf::from("/usr/local/bin/ezs"));
 
+    // Homebrew on Apple Silicon
+    common_paths.push(PathBuf::from("/opt/homebrew/bin/ezs"));
+
     for p in &common_paths {
         if p.exists() {
             return p.to_string_lossy().to_string();
         }
     }
 
-    // 3. Fallback — will fail with a clear error if not found
+    // Fallback — will fail with a clear error if not found
     "ezs".to_string()
 }
 
@@ -72,11 +102,12 @@ fn ezs_binary() -> &'static str {
 
 /// Run an ezs CLI command in the given repo directory.
 pub fn run_ezs(repo_path: &str, args: &[&str]) -> Result<CommandResult, String> {
-    let output = Command::new(ezs_binary())
+    let binary = ezs_binary();
+    let output = Command::new(binary)
         .args(args)
         .current_dir(repo_path)
         .output()
-        .map_err(|e| format!("Failed to run ezs: {e}. Is ezs installed and on PATH?"))?;
+        .map_err(|e| format!("Failed to run ezs (resolved: {binary}): {e}"))?;
 
     Ok(CommandResult {
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),
@@ -137,7 +168,6 @@ pub fn run_git(repo_path: &str, args: &[&str]) -> Result<CommandResult, String> 
 }
 
 /// Shell-escape a string by wrapping in single quotes.
-#[allow(dead_code)]
 fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
@@ -159,9 +189,12 @@ fn ssh_base(conn: &SshConnection) -> Command {
 }
 
 /// Run a raw SSH command (for connection testing).
+/// Wraps the command in a login shell so the user's PATH is loaded.
 pub fn run_ssh_command(conn: &SshConnection, remote_cmd: &str) -> Result<CommandResult, String> {
     let mut cmd = ssh_base(conn);
-    cmd.arg(remote_cmd);
+    // Use bash -lc to load the user's login profile (PATH, etc.)
+    // This is necessary because BatchMode=yes skips interactive shell init.
+    cmd.arg(format!("bash -lc {}", shell_escape(remote_cmd)));
     let output = cmd
         .output()
         .map_err(|e| format!("Failed to run SSH: {e}"))?;
