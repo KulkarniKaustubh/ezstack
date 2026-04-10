@@ -113,3 +113,19 @@ export async function setConfig(
 ): Promise<CommandResult> {
   return invoke<CommandResult>("set_config", { repoPath, key, value });
 }
+
+export async function openAgent(
+  repoPath: string,
+  stackHash?: string,
+  branch?: string,
+): Promise<void> {
+  return invoke<void>("open_agent", { repoPath, stackHash, branch });
+}
+
+export async function openAgentFeature(
+  repoPath: string,
+  stackHash: string,
+  description: string,
+): Promise<void> {
+  return invoke<void>("open_agent_feature", { repoPath, stackHash, description });
+}

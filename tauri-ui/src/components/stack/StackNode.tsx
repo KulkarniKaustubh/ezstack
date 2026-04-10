@@ -1,4 +1,4 @@
-import { RefreshCw, Upload, GitPullRequest, ArrowRightLeft, Trash2 } from "lucide-react";
+import { RefreshCw, Upload, GitPullRequest, ArrowRightLeft, Trash2, Bot } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { BranchStatusBadge } from "../branch/BranchStatusBadge";
 import { CIStatusBadge } from "../branch/CIStatusBadge";
@@ -12,6 +12,7 @@ export interface StackNodeActions {
   onCreatePR?: (branchName: string) => void;
   onUpdatePR?: (branchName: string) => void;
   onReparent?: (branchName: string) => void;
+  onOpenAgent?: (branchName: string) => void;
   onDelete?: (branchName: string) => void;
 }
 
@@ -35,6 +36,9 @@ export function StackNode({ branch, isSelected, onClick, actions }: StackNodePro
     }
     if (actions.onPush) {
       menuItems.push({ label: "Push", icon: <Upload />, onClick: () => actions.onPush!(branch.name) });
+    }
+    if (actions.onOpenAgent) {
+      menuItems.push({ label: "Open Agent", icon: <Bot />, onClick: () => actions.onOpenAgent!(branch.name) });
     }
     if (!hasPR && !isMerged && actions.onCreatePR) {
       menuItems.push({ label: "Create PR", icon: <GitPullRequest />, onClick: () => actions.onCreatePR!(branch.name) });

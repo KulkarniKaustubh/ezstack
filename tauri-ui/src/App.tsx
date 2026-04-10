@@ -19,6 +19,7 @@ import { PRMergeDialog } from "./components/operations/PRMergeDialog";
 import { ReparentDialog } from "./components/operations/ReparentDialog";
 import { RenameStackDialog } from "./components/operations/RenameStackDialog";
 import { SettingsDialog } from "./components/operations/SettingsDialog";
+import { AgentFeatureDialog } from "./components/operations/AgentFeatureDialog";
 import type { StackNodeActions } from "./components/stack/StackNode";
 import * as ezs from "./commands/ezs";
 
@@ -31,7 +32,8 @@ type DialogState =
   | { type: "pr-merge"; branch: string; prNumber: number }
   | { type: "reparent"; branch: string }
   | { type: "rename-stack"; stackHash: string }
-  | { type: "settings" };
+  | { type: "settings" }
+  | { type: "agent-feature" };
 
 export default function App() {
   const {
@@ -182,6 +184,12 @@ export default function App() {
         onDelete: () => setDialog({ type: "delete", branch: selectedBranch_.name }),
         onReparent: () => setDialog({ type: "reparent", branch: selectedBranch_.name }),
         onUpdateStack: () => runAndRefresh(() => ezs.prUpdateStack(selectedRepoPath)),
+        onOpenAgent: () => {
+          const stack = stacks.find((s) => s.branches.some((b) => b.name === selectedBranchName));
+          if (stack && selectedRepoPath) {
+            ezs.openAgent(selectedRepoPath, stack.hash, selectedBranchName ?? undefined);
+          }
+        },
       }
     : null;
 
@@ -192,10 +200,22 @@ export default function App() {
         onPush: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath)),
         onCreatePR: (branchName) => setDialog({ type: "pr-create", branch: branchName }),
         onUpdatePR: (branchName) => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, branchName)),
+        onOpenAgent: (branchName) => {
+          const stack = stacks.find((s) => s.branches.some((b) => b.name === branchName));
+          if (stack) ezs.openAgent(selectedRepoPath, stack.hash, branchName);
+        },
         onReparent: (branchName) => setDialog({ type: "reparent", branch: branchName }),
         onDelete: (branchName) => setDialog({ type: "delete", branch: branchName }),
       }
     : undefined;
+
+  const handleOpenAgentOnStack = useCallback(
+    (stackHash: string) => {
+      if (!selectedRepoPath) return;
+      ezs.openAgent(selectedRepoPath, stackHash);
+    },
+    [selectedRepoPath],
+  );
 
   const handleSyncStack = useCallback(
     (_stackHash: string) => {
@@ -271,6 +291,8 @@ export default function App() {
                   onAddBranchToStack={(hash) => setDialog({ type: "new-branch", forStackHash: hash })}
                   onSyncStack={handleSyncStack}
                   onNewBranch={() => setDialog({ type: "new-branch" })}
+                  onOpenAgent={handleOpenAgentOnStack}
+                  onBuildFeature={() => setDialog({ type: "agent-feature" })}
                   actions={stackNodeActions}
                 />
 
@@ -385,6 +407,17 @@ export default function App() {
               }}
             />
           )}
+
+          <AgentFeatureDialog
+            open={dialog.type === "agent-feature"}
+            onOpenChange={(o) => !o && setDialog({ type: "none" })}
+            stacks={stacks}
+            selectedStackHash={selectedStackHash}
+            onSubmit={async (stackHash, description) => {
+              await ezs.openAgentFeature(selectedRepoPath, stackHash, description);
+              setDialog({ type: "none" });
+            }}
+          />
 
           {dialog.type === "rename-stack" && (
             <RenameStackDialog

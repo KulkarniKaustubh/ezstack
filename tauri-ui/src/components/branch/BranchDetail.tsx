@@ -23,6 +23,7 @@ interface BranchDetailProps {
   onDelete: () => void;
   onReparent: () => void;
   onUpdateStack: () => void;
+  onOpenAgent: () => void;
   isLoading: boolean;
   width?: number;
 }
@@ -40,6 +41,7 @@ export function BranchDetail({
   onDelete,
   onReparent,
   onUpdateStack,
+  onOpenAgent,
   isLoading,
   width,
 }: BranchDetailProps) {
@@ -161,6 +163,7 @@ export function BranchDetail({
           onDelete={onDelete}
           onReparent={onReparent}
           onUpdateStack={onUpdateStack}
+          onOpenAgent={onOpenAgent}
           isLoading={isLoading}
         />
       </ScrollArea>
