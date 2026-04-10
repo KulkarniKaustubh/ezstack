@@ -21,10 +21,10 @@ func printPRUsage() {
 
 %sSUBCOMMANDS%s
     create    Create a new pull request
-    update    Push changes to existing PR
-    merge     Merge a pull request
     draft     Toggle PR between draft and ready
+    merge     Merge a pull request
     stack     Update all PR descriptions with stack info
+    update    Push changes to existing PR
 
 %sOPTIONS%s
     -h, --help    Show this help message

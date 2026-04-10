@@ -2,7 +2,7 @@
   "name": "ezstack",
   "displayName": "ezstack",
   "description": "Manage stacked pull requests with git worktrees",
-  "version": "2.1.0",
+  "version": "2.2.0-beta.2",
   "icon": "resources/icon.png",
   "publisher": "kaustubh",
   "license": "MIT",
@@ -201,6 +201,18 @@
         "category": "ezstack"
       },
       {
+        "command": "ezstack.openAgent",
+        "title": "Open Agent",
+        "category": "ezstack",
+        "icon": "$(hubot)"
+      },
+      {
+        "command": "ezstack.openAgentFeature",
+        "title": "Build Feature with Agent",
+        "category": "ezstack",
+        "icon": "$(wand)"
+      },
+      {
         "command": "ezstack.openInNextPR",
         "title": "Open File in Next PR",
         "category": "ezstack"
@@ -257,6 +269,11 @@
         },
         {
           "command": "ezstack.sync",
+          "when": "view == ezstackStacks",
+          "group": "navigation"
+        },
+        {
+          "command": "ezstack.openAgentFeature",
           "when": "view == ezstackStacks",
           "group": "navigation"
         }
@@ -430,6 +447,21 @@
           "command": "ezstack.newBranch",
           "when": "view == ezstackStacks && viewItem == stack",
           "group": "1_stack@3"
+        },
+        {
+          "command": "ezstack.openAgent",
+          "when": "view == ezstackStacks && viewItem == stack",
+          "group": "2_agent@1"
+        },
+        {
+          "command": "ezstack.openAgentFeature",
+          "when": "view == ezstackStacks && viewItem == stack",
+          "group": "2_agent@2"
+        },
+        {
+          "command": "ezstack.openAgent",
+          "when": "view == ezstackStacks && viewItem =~ /^branch/",
+          "group": "2_agent@1"
         }
       ]
     },
