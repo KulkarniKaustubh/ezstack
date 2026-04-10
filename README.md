@@ -101,7 +101,7 @@ ezs sync -a
 | `reparent` | `rp` | Change the parent of a branch |
 | `stack` | | Add a branch to a stack |
 | `status` | `st` | Show status with PR and CI info |
-| `sync` | `rebase`, `rb` | Sync stack with remote (rebase or merge) |
+| `sync` | | Sync stack with remote (rebase or merge) |
 | `unstack` | | Remove a branch from tracking |
 | `up` | | Navigate up the stack (toward parent) |
 
