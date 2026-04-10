@@ -8,3 +8,10 @@ ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     <App />
   </React.StrictMode>,
 );
+
+// Dismiss the HTML splash screen once React has mounted
+const splash = document.getElementById("splash");
+if (splash) {
+  splash.classList.add("hidden");
+  setTimeout(() => splash.remove(), 200);
+}
