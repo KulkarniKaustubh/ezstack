@@ -85,24 +85,25 @@ ezs sync -a
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `new` | `n` | Create a new branch in the stack |
-| `list` | `ls` | List all stacks and branches |
-| `status` | `st` | Show status with PR and CI info |
-| `sync` | `rebase`, `rb` | Sync stack with remote (rebase or merge) |
-| `goto` | `go` | Navigate to a branch worktree |
-| `up` | | Navigate up the stack (toward parent) |
+| `agent` | | Launch AI agent with stack context |
+| `amend` | | Amend last commit and auto-sync children |
+| `commit` | `ci` | Commit and auto-sync child branches |
+| `config` | `cfg` | Configure ezstack |
+| `delete` | `del`, `rm` | Delete a branch and its worktree |
+| `diff` | | Show diff against parent branch |
 | `down` | | Navigate down the stack (toward children) |
+| `goto` | `go` | Navigate to a branch worktree |
+| `list` | `ls` | List all stacks and branches |
+| `menu` | | Interactive command menu |
+| `new` | `n` | Create a new branch in the stack |
+| `pr` | | Manage pull requests (create, update, merge, draft, stack) |
+| `push` | | Push current branch or entire stack |
 | `reparent` | `rp` | Change the parent of a branch |
 | `stack` | | Add a branch to a stack |
+| `status` | `st` | Show status with PR and CI info |
+| `sync` | `rebase`, `rb` | Sync stack with remote (rebase or merge) |
 | `unstack` | | Remove a branch from tracking |
-| `delete` | `del`, `rm` | Delete a branch and its worktree |
-| `commit` | `ci` | Commit and auto-sync child branches |
-| `amend` | | Amend last commit and auto-sync children |
-| `push` | | Push current branch or entire stack |
-| `diff` | | Show diff against parent branch |
-| `pr` | | Manage pull requests (create, update, merge, draft, stack) |
-| `config` | `cfg` | Configure ezstack |
-| `menu` | | Interactive command menu |
+| `up` | | Navigate up the stack (toward parent) |
 
 **Global flags:** `-y, --yes` auto-confirm prompts · `-h, --help` · `-v, --version`
 

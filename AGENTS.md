@@ -73,6 +73,45 @@ ezs sync --dry-run --json
 ezs -y sync -a
 ```
 
+## Built-in Agent Command
+
+ezstack can launch an AI agent with full stack context injected automatically:
+
+### Work Session — Agent scoped to current branch
+
+```bash
+# Launch agent on current branch with stack context
+ezs agent
+
+# Launch on a specific branch
+ezs agent --branch feature-auth
+```
+
+The agent is launched in the branch's worktree directory with a system prompt containing:
+- Current stack structure (branches, parents, worktree paths)
+- Current branch and parent info
+- Available ezs commands with `-y` flag for non-interactive use
+
+### Feature Builder — Agent creates stacked branches
+
+```bash
+# Agent plans and implements a feature as incremental stacked branches
+ezs agent feature "Add user authentication with JWT tokens"
+```
+
+The agent will:
+1. Explore the codebase
+2. Present a plan of stacked branches for approval
+3. Create each branch with `ezs -y new`, implement changes, commit, and push
+4. Each branch is one small, reviewable unit of work
+
+### Configuration
+
+```bash
+# Set the agent CLI (default: claude)
+ezs config set agent_command claude
+```
+
 ## Architecture Notes
 
 - **Config location:** `~/.ezstack/config.json` (global), `~/.ezstack/stacks.json` (stack state + branch cache)

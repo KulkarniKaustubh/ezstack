@@ -682,6 +682,76 @@ export function registerCommands(
     ),
   );
 
+  // ── Open Agent ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.openAgent",
+      (node?: StackNode | BranchNode) => {
+        if (node instanceof StackNode) {
+          cli.openAgent(node.stack.hash);
+        } else if (node instanceof BranchNode) {
+          cli.openAgentOnBranch(node.branch.name);
+        } else {
+          // No node context — let the CLI handle interactive selection
+          cli.runInTerminal(["agent"]);
+        }
+      },
+    ),
+  );
+
+  // ── Build Feature with Agent ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.openAgentFeature",
+      async (node?: StackNode) => {
+        let stackHash: string | undefined;
+
+        if (node instanceof StackNode) {
+          stackHash = node.stack.hash;
+        } else {
+          // Pick a stack
+          try {
+            const stacks = await cli.listStacks(true);
+            if (stacks.length === 0) {
+              vscode.window.showInformationMessage("No stacks found. Create one with 'ezs new'.");
+              return;
+            }
+            if (stacks.length === 1) {
+              stackHash = stacks[0].hash;
+            } else {
+              const pick = await vscode.window.showQuickPick(
+                stacks.map((s) => ({
+                  label: s.name || s.hash,
+                  description: s.name ? s.hash : undefined,
+                  detail: `root: ${s.root}, ${s.branches.length} branch${s.branches.length === 1 ? "" : "es"}`,
+                  hash: s.hash,
+                })),
+                { placeHolder: "Select stack to build feature on" },
+              );
+              if (!pick) {
+                return;
+              }
+              stackHash = pick.hash;
+            }
+          } catch {
+            vscode.window.showErrorMessage("Failed to list stacks.");
+            return;
+          }
+        }
+
+        const description = await vscode.window.showInputBox({
+          prompt: "Describe the feature to build",
+          placeHolder: "Add user authentication with JWT tokens",
+        });
+        if (!description) {
+          return;
+        }
+
+        cli.openAgentFeature(stackHash!, description);
+      },
+    ),
+  );
+
   // ── Fetch & Pull ──
   context.subscriptions.push(
     vscode.commands.registerCommand(

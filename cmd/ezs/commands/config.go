@@ -28,6 +28,7 @@ func printConfigUsage() {
     cd_after_new          Auto-cd to new worktree (true/false, per-repo)
     use_worktrees         Use git worktrees for new branches (true/false, per-repo)
     sync_strategy         Sync method: "rebase" or "merge" (per-repo)
+    agent_command         AI agent CLI command (default: "claude", per-repo)
 
 %sOPTIONS%s
     -h, --help    Show this help message
@@ -166,8 +167,23 @@ func configSet(key, value string) error {
 		repoCfg.SyncStrategy = value
 		cfg.SetRepoConfig(repoPath, repoCfg)
 		ui.Info(fmt.Sprintf("Setting sync_strategy for repo: %s", repoPath))
+	case "agent_command":
+		repoPath, err := getCurrentRepoPath()
+		if err != nil {
+			return fmt.Errorf("agent_command is a per-repo setting: %w", err)
+		}
+		if value == "" {
+			return fmt.Errorf("agent_command must not be empty")
+		}
+		repoCfg := cfg.GetRepoConfig(repoPath)
+		if repoCfg == nil {
+			repoCfg = &config.RepoConfig{}
+		}
+		repoCfg.AgentCommand = value
+		cfg.SetRepoConfig(repoPath, repoCfg)
+		ui.Info(fmt.Sprintf("Setting agent_command for repo: %s", repoPath))
 	default:
-		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, sync_strategy", key)
+		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, sync_strategy, agent_command", key)
 	}
 
 	if err := cfg.Save(); err != nil {
@@ -232,6 +248,11 @@ func configShow() error {
 				fmt.Fprintf(os.Stderr, "  sync_strategy: %s\n", repoCfg.SyncStrategy)
 			} else {
 				fmt.Fprintf(os.Stderr, "  sync_strategy: rebase (default)\n")
+			}
+			if repoCfg.AgentCommand != "" {
+				fmt.Fprintf(os.Stderr, "  agent_command: %s\n", repoCfg.AgentCommand)
+			} else {
+				fmt.Fprintf(os.Stderr, "  agent_command: claude (default)\n")
 			}
 		} else {
 			fmt.Fprintf(os.Stderr, "  worktree_base_dir: %s(not configured for this repo)%s\n", ui.Yellow, ui.Reset)
