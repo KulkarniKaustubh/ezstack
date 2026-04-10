@@ -11,7 +11,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
-const version = "2.2.0-nvim-beta.5"
+const version = "3.0.0-nvim-beta.5"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
@@ -118,7 +118,7 @@ func main() {
 		err = commands.List(args)
 	case "status", "st":
 		err = commands.Status(args)
-	case "sync", "rebase", "rb":
+	case "sync":
 		err = commands.Sync(args)
 	case "pr":
 		err = commands.PR(args)
@@ -247,7 +247,7 @@ func printUsage() {
     reparent, rp  Change the parent of a branch
     stack         Add a branch to a stack
     status, st    Show status of current stack
-    sync, rb      Sync stack with remote (accepts stack hash prefix, min 3 chars)
+    sync          Sync stack with remote (accepts stack hash prefix, min 3 chars)
     unstack       Remove a branch from tracking (keeps git branch)
     up            Navigate up the stack (toward parent)
 
@@ -290,7 +290,7 @@ func printShellInit() {
 # Add this to your shell config: eval "$(ezs --shell-init)"
 ezs() {
     case "${1:-}" in
-        goto|go|new|n|delete|del|rm|sync|rebase|rb|up|down)
+        goto|go|new|n|delete|del|rm|sync|up|down)
             # These commands may output "cd <path>" which we need to eval
             eval "$(EZS_SHELL_WRAPPER=1 command ezs "$@")"
             ;;
@@ -340,5 +340,6 @@ func printCompletions(args []string) {
 		}
 	case "agent":
 		fmt.Println("feature")
+		fmt.Println("prompt")
 	}
 }

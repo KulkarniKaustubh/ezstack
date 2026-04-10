@@ -85,7 +85,7 @@
     <div class="hero-glow"></div>
     <div class="container">
       <div class="hero-content">
-        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v2.1.1 &mdash; Latest Release</a>
+        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v3.0.0 &mdash; Latest Release</a>
         <h1>Stacked PRs.<br>Zero friction.</h1>
         <p class="hero-sub">Manage stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs &mdash; all from one CLI.</p>
         <div class="hero-actions">
@@ -247,6 +247,13 @@
           <h3>Rich Stack Visualization</h3>
           <p>Tree-style branch display shows parent-child relationships at a glance. <code>ezs ls</code> includes <code>+/-</code> diff stats per branch and strikes through merged PRs.</p>
         </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 014 4c0 1.95-1.4 3.57-3.25 3.92L12 10l-.75-.08A4.001 4.001 0 0112 2z"/><path d="M8 14h8"/><path d="M9 18h6"/><path d="M10 22h4"/><path d="M7 10.5C4.79 11.15 3 13.12 3 16h18c0-2.88-1.79-4.85-4-5.5"/></svg>
+          </div>
+          <h3>Built-in AI Agent</h3>
+          <p>Launch an AI coding agent scoped to your stack. Full context injected &mdash; branches, worktrees, commands. Customizable prompts with template variables.</p>
+        </div>
       </div>
     </div>
   </section>
@@ -301,7 +308,7 @@
   <section class="commands" id="commands">
     <div class="container">
       <h2 class="section-title" data-animate>Command reference</h2>
-      <p class="section-sub" data-animate>24 commands. Everything aliased for speed. Run <code>ezs &lt;command&gt; --help</code> for details.</p>
+      <p class="section-sub" data-animate>26 commands. Everything aliased for speed. Run <code>ezs &lt;command&gt; --help</code> for details.</p>
       <div class="accordion" data-animate>
 
         <div class="accordion-item">
@@ -351,7 +358,7 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>sync</code> <span class="cmd-alias">rebase, rb</span></td><td>Sync stack with remote (rebase or merge). Use <code>--continue</code> after resolving conflicts</td></tr>
+                <tr><td class="cmd-name"><code>sync</code></td><td>Sync stack with remote (rebase or merge). Use <code>--continue</code> after resolving conflicts</td></tr>
                 <tr><td class="cmd-name"><code>commit</code> <span class="cmd-alias">ci</span></td><td>Commit and auto-sync child branches</td></tr>
                 <tr><td class="cmd-name"><code>amend</code></td><td>Amend last commit and auto-sync children</td></tr>
                 <tr><td class="cmd-name"><code>push</code></td><td>Push current branch or entire stack</td></tr>
@@ -395,6 +402,31 @@
                 <tr><td class="cmd-name"><code>menu</code></td><td>Interactive command menu</td></tr>
               </tbody>
             </table>
+          </div>
+        </div>
+
+        <div class="accordion-item">
+          <button class="accordion-header" aria-expanded="false">
+            <span class="accordion-label">AI Agent</span>
+            <span class="accordion-count">2 commands</span>
+            <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 8 10 12 14 8"/></svg>
+          </button>
+          <div class="accordion-body">
+            <table class="cmd-table">
+              <tbody>
+                <tr><td class="cmd-name"><code>agent</code></td><td>Launch AI agent scoped to a stack. Use <code>agent feature "desc"</code> to build a feature as stacked branches</td></tr>
+                <tr><td class="cmd-name"><code>agent prompt</code></td><td>View or edit agent prompt templates. Use <code>--edit</code> to open in <code>$EDITOR</code>, <code>--reset</code> to restore defaults</td></tr>
+              </tbody>
+            </table>
+            <div class="cmd-detail">
+              <h4>Prompt Templates</h4>
+              <p>Agent prompts are stored as editable Markdown files in <code>~/.ezstack/</code>:</p>
+              <ul>
+                <li><code>agent-work-prompt.md</code> &mdash; Work session prompt</li>
+                <li><code>agent-feature-prompt.md</code> &mdash; Feature builder prompt</li>
+              </ul>
+              <p>Prompts use template variables replaced at runtime: <code>{{STACK_JSON}}</code>, <code>{{BRANCH_NAME}}</code>, <code>{{PARENT_NAME}}</code>, <code>{{WORKTREE_PATH}}</code>, <code>{{EZS_COMMANDS}}</code>, <code>{{EZS_DOCS}}</code>, <code>{{FEATURE_DESCRIPTION}}</code>.</p>
+            </div>
           </div>
         </div>
 
@@ -446,14 +478,14 @@
           <div class="eco-install">
             <h4>Install</h4>
             <ol>
-              <li>Download <code>ezstack-2.1.1.vsix</code> from the release page</li>
+              <li>Download <code>ezstack-3.0.0.vsix</code> from the release page</li>
               <li>In VS Code: <code>Cmd+Shift+P</code> &rarr; "Install from VSIX" &rarr; select the file</li>
               <li>Open a repo with ezstack configured &mdash; the panel appears in the sidebar</li>
             </ol>
           </div>
-          <a href="https://github.com/KulkarniKaustubh/ezstack/releases/tag/v2.1.1" target="_blank" rel="noopener" class="btn btn-secondary eco-btn">
+          <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="btn btn-secondary eco-btn">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Download v2.1.1 VSIX
+            Download v3.0.0 VSIX
           </a>
         </div>
 
@@ -491,7 +523,7 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v2.1.1</span>
+          <span class="footer-meta">MIT License &middot; v3.0.0</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

@@ -12,7 +12,7 @@
 
 [Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows)
 
-**Commands:** [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [push](#ezs-push) · [diff](#ezs-diff) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [config](#ezs-config)
+**Commands:** [agent](#ezs-agent) · [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [push](#ezs-push) · [diff](#ezs-diff) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [config](#ezs-config)
 
 ---
 
@@ -74,7 +74,7 @@ echo 'eval "$(ezs --shell-init)"' >> ~/.bashrc
 echo 'eval "$(ezs --shell-init)"' >> ~/.zshrc
 ```
 
-This enables automatic directory changes for `goto`, `new`, `delete`, `sync` (and aliases `rebase`, `rb`), `up`, and `down` commands.
+This enables automatic directory changes for `goto`, `new`, `delete`, `sync`, `up`, and `down` commands.
 
 Without shell integration, commands that would change your directory will instead print a helpful message with the path to `cd` to manually.
 
@@ -115,6 +115,86 @@ These flags work with any command and can appear in any position:
 ---
 
 ## Commands
+
+### `ezs agent`
+
+Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically.
+
+```
+ezs agent [options]
+ezs agent feature "description"
+ezs agent prompt [options]
+
+Modes:
+    (default)   Work session — agent scoped to a stack with full context
+    feature     Feature builder — agent breaks a feature into stacked branches
+    prompt      View or edit the prompt templates used by the agent
+
+Options:
+    --cmd <command>      Agent CLI to use (default: configured or "claude")
+    -s, --stack <hash>   Stack to work on (hash prefix or "name")
+    -b, --branch <name>  Branch to work in (implies stack)
+```
+
+#### Prompt Templates
+
+Agent prompts are stored as editable Markdown files in `~/.ezstack/`:
+
+| File | Purpose |
+|------|---------|
+| `agent-work-prompt.md` | Work session prompt (used by `ezs agent`) |
+| `agent-feature-prompt.md` | Feature builder prompt (used by `ezs agent feature`) |
+
+These files use template variables that are replaced at runtime:
+
+| Variable | Description |
+|----------|-------------|
+| `{{STACK_JSON}}` | Current stack structure as JSON |
+| `{{BRANCH_NAME}}` | Current branch name |
+| `{{PARENT_NAME}}` | Parent branch name |
+| `{{WORKTREE_PATH}}` | Path to the current worktree |
+| `{{EZS_COMMANDS}}` | Available ezs commands reference |
+| `{{EZS_DOCS}}` | Full ezstack documentation for AI agents |
+| `{{FEATURE_DESCRIPTION}}` | Feature description (feature mode only) |
+
+#### `ezs agent prompt`
+
+View or edit the prompt templates.
+
+```
+Options:
+    --edit        Open the prompt file in your editor ($EDITOR)
+    --work        Target the work session prompt only
+    --feature     Target the feature builder prompt only
+    --reset       Reset prompt(s) to the built-in default
+```
+
+The recommended way to edit prompts is through `ezs agent prompt --edit`.
+
+**Examples:**
+
+```bash
+# View both prompts
+ezs agent prompt
+
+# Edit the work session prompt
+ezs agent prompt --edit --work
+
+# Edit the feature builder prompt
+ezs agent prompt --edit --feature
+
+# Reset a prompt to the built-in default
+ezs agent prompt --reset --work
+```
+
+#### Configuration
+
+```bash
+# Set the agent CLI (default: claude)
+ezs config set agent_command claude
+```
+
+---
 
 ### `ezs commit` / `ezs amend`
 
@@ -352,7 +432,7 @@ Options:
 
 ### `ezs sync`
 
-Sync stack with remote. Handles rebasing onto updated parents, cleaning up merged branches, and force pushing after rebase. Aliases: `rebase`, `rb`
+Sync stack with remote. Handles rebasing onto updated parents, cleaning up merged branches, and force pushing after rebase.
 
 ```
 ezs sync [options]

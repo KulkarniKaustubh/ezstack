@@ -85,7 +85,8 @@ ezs sync -a
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `agent` | | Launch AI agent with stack context |
+| `agent` | | Launch AI agent with stack context (work session or feature builder) |
+| `agent prompt` | | View or edit agent prompt templates |
 | `amend` | | Amend last commit and auto-sync children |
 | `commit` | `ci` | Commit and auto-sync child branches |
 | `config` | `cfg` | Configure ezstack |
@@ -101,13 +102,31 @@ ezs sync -a
 | `reparent` | `rp` | Change the parent of a branch |
 | `stack` | | Add a branch to a stack |
 | `status` | `st` | Show status with PR and CI info |
-| `sync` | `rebase`, `rb` | Sync stack with remote (rebase or merge) |
+| `sync` | | Sync stack with remote (rebase or merge) |
 | `unstack` | | Remove a branch from tracking |
 | `up` | | Navigate up the stack (toward parent) |
 
 **Global flags:** `-y, --yes` auto-confirm prompts · `-h, --help` · `-v, --version`
 
 Run `ezs <command> --help` for command-specific help.
+
+## AI Agent
+
+ezstack can launch an AI coding agent (Claude, Cursor, etc.) with full stack context injected automatically. The agent is scoped to a single stack and knows about all branches, worktree paths, and available commands.
+
+```bash
+# Launch agent on current stack
+ezs agent
+
+# Build a feature as stacked branches
+ezs agent feature "Add user authentication with JWT tokens"
+
+# View or edit the agent's prompt templates
+ezs agent prompt
+ezs agent prompt --edit --work
+```
+
+Agent prompts are stored as editable Markdown files in `~/.ezstack/` and use template variables (`{{STACK_JSON}}`, `{{BRANCH_NAME}}`, etc.) that are replaced at runtime. See [AGENTS.md](AGENTS.md) for full details.
 
 ## Configuration
 
