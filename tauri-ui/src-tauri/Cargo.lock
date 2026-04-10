@@ -735,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "ezstack-desktop"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.4"
 dependencies = [
  "serde",
  "serde_json",

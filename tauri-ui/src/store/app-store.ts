@@ -13,6 +13,7 @@ interface AppState {
   stacks: StatusStack[];
   selectedStackHash: string | null;
   selectedBranchName: string | null;
+  focusedBranchIndex: number;
   currentBranch: string | null;
   initialLoading: boolean;
   isLoading: boolean;
@@ -27,6 +28,7 @@ interface AppState {
   setStacks: (stacks: StatusStack[]) => void;
   selectStack: (hash: string | null) => void;
   selectBranch: (name: string | null) => void;
+  setFocusedBranchIndex: (index: number) => void;
   setCurrentBranch: (branch: string) => void;
   setInitialLoading: (loading: boolean) => void;
   setLoading: (loading: boolean) => void;
@@ -43,6 +45,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   stacks: [],
   selectedStackHash: null,
   selectedBranchName: null,
+  focusedBranchIndex: 0,
   currentBranch: null,
   initialLoading: true,
   isLoading: false,
@@ -75,8 +78,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
   setStacks: (stacks) => set({ stacks }),
-  selectStack: (hash) => set({ selectedStackHash: hash }),
+  selectStack: (hash) => set({ selectedStackHash: hash, focusedBranchIndex: 0 }),
   selectBranch: (name) => set({ selectedBranchName: name }),
+  setFocusedBranchIndex: (index) => set({ focusedBranchIndex: index }),
   setCurrentBranch: (branch) => set({ currentBranch: branch }),
   setInitialLoading: (loading) => set({ initialLoading: loading }),
   setLoading: (loading) => set({ isLoading: loading }),

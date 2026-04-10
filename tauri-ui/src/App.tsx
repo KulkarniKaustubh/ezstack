@@ -2,9 +2,11 @@ import { useEffect, useState, useCallback } from "react";
 import { useAppStore } from "./store/app-store";
 import { useStacks } from "./hooks/use-stacks";
 import { useOperation } from "./hooks/use-operation";
+import { useResizable } from "./hooks/use-resizable";
 import { TitleBar } from "./components/layout/TitleBar";
 import { Sidebar } from "./components/layout/Sidebar";
 import { StatusBar } from "./components/layout/StatusBar";
+import { ResizeHandle } from "./components/ui/resize-handle";
 import { StacksBoard } from "./components/stack/StacksBoard";
 import { BranchDetail } from "./components/branch/BranchDetail";
 import { EmptyState } from "./components/shared/EmptyState";
@@ -17,6 +19,7 @@ import { PRMergeDialog } from "./components/operations/PRMergeDialog";
 import { ReparentDialog } from "./components/operations/ReparentDialog";
 import { RenameStackDialog } from "./components/operations/RenameStackDialog";
 import { SettingsDialog } from "./components/operations/SettingsDialog";
+import type { StackNodeActions } from "./components/stack/StackNode";
 import * as ezs from "./commands/ezs";
 
 type DialogState =
@@ -38,6 +41,7 @@ export default function App() {
     stacks,
     selectedStackHash,
     selectedBranchName,
+    focusedBranchIndex,
     currentBranch,
     initialLoading,
     isLoading,
@@ -47,6 +51,7 @@ export default function App() {
     operationLoading,
     selectStack,
     selectBranch,
+    setFocusedBranchIndex,
     setOperationOutput,
   } = useAppStore();
 
@@ -54,24 +59,89 @@ export default function App() {
   const { run } = useOperation();
   const [dialog, setDialog] = useState<DialogState>({ type: "none" });
 
+  // Resizable sidebar
+  const sidebar = useResizable({
+    initialWidth: 192,
+    minWidth: 120,
+    maxWidth: 360,
+    side: "left",
+    storageKey: "ezstack-sidebar-width",
+  });
+
+  // Resizable detail panel
+  const detail = useResizable({
+    initialWidth: 320,
+    minWidth: 240,
+    maxWidth: 500,
+    side: "right",
+    storageKey: "ezstack-detail-width",
+  });
+
+  const selectedStack = stacks.find((s) => s.hash === selectedStackHash);
+  const selectedBranch_ = selectedStack?.branches.find((b) => b.name === selectedBranchName);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return;
+
       if (e.metaKey && e.key === "r") {
         e.preventDefault();
         refresh();
+        return;
       }
       if (e.metaKey && e.key === "n") {
         e.preventDefault();
         setDialog({ type: "new-branch" });
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        selectBranch(null);
+        return;
+      }
+
+      // Arrow key navigation within the selected stack's branches
+      if (selectedStack && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        const branches = selectedStack.branches;
+        if (branches.length === 0) return;
+        const newIndex = e.key === "ArrowDown"
+          ? Math.min(focusedBranchIndex + 1, branches.length - 1)
+          : Math.max(focusedBranchIndex - 1, 0);
+        setFocusedBranchIndex(newIndex);
+        selectBranch(branches[newIndex].name);
+        return;
+      }
+
+      // Left/Right or [/] to navigate between stacks
+      if (stacks.length > 0 && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "[" || e.key === "]")) {
+        e.preventDefault();
+        const currentIdx = stacks.findIndex((s) => s.hash === selectedStackHash);
+        let newIdx: number;
+        if (e.key === "ArrowRight" || e.key === "]") {
+          newIdx = currentIdx < stacks.length - 1 ? currentIdx + 1 : 0;
+        } else {
+          newIdx = currentIdx > 0 ? currentIdx - 1 : stacks.length - 1;
+        }
+        selectStack(stacks[newIdx].hash);
+        return;
+      }
+
+      // Enter to select the focused branch
+      if (e.key === "Enter" && selectedStack) {
+        e.preventDefault();
+        const branches = selectedStack.branches;
+        if (branches.length > 0 && focusedBranchIndex < branches.length) {
+          selectBranch(branches[focusedBranchIndex].name);
+        }
+        return;
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [refresh]);
-
-  const selectedStack = stacks.find((s) => s.hash === selectedStackHash);
-  const selectedBranch = selectedStack?.branches.find((b) => b.name === selectedBranchName);
+  }, [refresh, stacks, selectedStack, selectedStackHash, focusedBranchIndex, selectStack, selectBranch, setFocusedBranchIndex]);
 
   const runAndRefresh = useCallback(
     async (op: () => Promise<ezs.CommandResult>) => {
@@ -85,27 +155,55 @@ export default function App() {
     (stackHash: string, branchName: string) => {
       selectStack(stackHash);
       selectBranch(branchName);
+      // Sync focused index
+      const stack = stacks.find((s) => s.hash === stackHash);
+      if (stack) {
+        const idx = stack.branches.findIndex((b) => b.name === branchName);
+        if (idx >= 0) setFocusedBranchIndex(idx);
+      }
     },
-    [selectStack, selectBranch],
+    [selectStack, selectBranch, setFocusedBranchIndex, stacks],
   );
 
   // Build action handlers for the selected branch
-  const branchActions = selectedBranch && selectedRepoPath
+  const branchActions = selectedBranch_ && selectedRepoPath
     ? {
-        onSync: () => setDialog({ type: "sync", branch: selectedBranch.name }),
+        onSync: () => setDialog({ type: "sync", branch: selectedBranch_.name }),
         onPush: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath)),
-        onCreatePR: () => setDialog({ type: "pr-create", branch: selectedBranch.name }),
-        onUpdatePR: () => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, selectedBranch.name)),
+        onCreatePR: () => setDialog({ type: "pr-create", branch: selectedBranch_.name }),
+        onUpdatePR: () => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, selectedBranch_.name)),
         onMergePR: () =>
-          selectedBranch.pr_number
-            ? setDialog({ type: "pr-merge", branch: selectedBranch.name, prNumber: selectedBranch.pr_number })
+          selectedBranch_.pr_number
+            ? setDialog({ type: "pr-merge", branch: selectedBranch_.name, prNumber: selectedBranch_.pr_number })
             : undefined,
-        onToggleDraft: () => runAndRefresh(() => ezs.prToggleDraft(selectedRepoPath, selectedBranch.name)),
-        onDelete: () => setDialog({ type: "delete", branch: selectedBranch.name }),
-        onReparent: () => setDialog({ type: "reparent", branch: selectedBranch.name }),
+        onToggleDraft: () => runAndRefresh(() => ezs.prToggleDraft(selectedRepoPath, selectedBranch_.name)),
+        onDelete: () => setDialog({ type: "delete", branch: selectedBranch_.name }),
+        onReparent: () => setDialog({ type: "reparent", branch: selectedBranch_.name }),
         onUpdateStack: () => runAndRefresh(() => ezs.prUpdateStack(selectedRepoPath)),
       }
     : null;
+
+  // Context menu actions for stack nodes (passed down to all branches)
+  const stackNodeActions: StackNodeActions | undefined = selectedRepoPath
+    ? {
+        onSync: (branchName) => setDialog({ type: "sync", branch: branchName }),
+        onPush: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath)),
+        onCreatePR: (branchName) => setDialog({ type: "pr-create", branch: branchName }),
+        onUpdatePR: (branchName) => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, branchName)),
+        onReparent: (branchName) => setDialog({ type: "reparent", branch: branchName }),
+        onDelete: (branchName) => setDialog({ type: "delete", branch: branchName }),
+      }
+    : undefined;
+
+  const handleSyncStack = useCallback(
+    (_stackHash: string) => {
+      if (!selectedRepoPath) return;
+      runAndRefresh(() => ezs.syncBranch(selectedRepoPath, "stack"));
+    },
+    [selectedRepoPath, runAndRefresh],
+  );
+
+  const isAnyResizing = sidebar.isResizing || detail.isResizing;
 
   // Splash screen while loading all repos
   if (initialLoading) {
@@ -133,7 +231,7 @@ export default function App() {
     : undefined;
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className={`flex flex-col h-screen ${isAnyResizing ? "select-none" : ""}`}>
       <TitleBar
         onRefresh={refresh}
         onSync={() => setDialog({ type: "sync" })}
@@ -150,7 +248,9 @@ export default function App() {
               repos={repos}
               selectedRepoPath={selectedRepoPath}
               onSelectRepo={selectRepo}
+              width={sidebar.width}
             />
+            <ResizeHandle onMouseDown={sidebar.handleMouseDown} isResizing={sidebar.isResizing} />
 
             <div className="flex flex-1 min-w-0">
               {/* Center: All stacks as columns */}
@@ -167,7 +267,9 @@ export default function App() {
                   onSelectBranch={handleSelectBranch}
                   onRenameStack={(hash) => setDialog({ type: "rename-stack", stackHash: hash })}
                   onAddBranchToStack={(hash) => setDialog({ type: "new-branch", forStackHash: hash })}
+                  onSyncStack={handleSyncStack}
                   onNewBranch={() => setDialog({ type: "new-branch" })}
+                  actions={stackNodeActions}
                 />
 
                 {/* Operation output panel */}
@@ -181,13 +283,17 @@ export default function App() {
               </div>
 
               {/* Right: Branch Detail */}
-              {selectedBranch && branchActions && (
-                <BranchDetail
-                  branch={selectedBranch}
-                  onClose={() => selectBranch(null)}
-                  isLoading={operationLoading}
-                  {...branchActions}
-                />
+              {selectedBranch_ && branchActions && (
+                <>
+                  <ResizeHandle onMouseDown={detail.handleMouseDown} isResizing={detail.isResizing} />
+                  <BranchDetail
+                    branch={selectedBranch_}
+                    onClose={() => selectBranch(null)}
+                    isLoading={operationLoading}
+                    width={detail.width}
+                    {...branchActions}
+                  />
+                </>
               )}
             </div>
           </>

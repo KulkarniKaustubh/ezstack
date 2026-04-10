@@ -23,6 +23,7 @@ interface BranchDetailProps {
   onReparent: () => void;
   onUpdateStack: () => void;
   isLoading: boolean;
+  width?: number;
 }
 
 export function BranchDetail({
@@ -38,9 +39,10 @@ export function BranchDetail({
   onReparent,
   onUpdateStack,
   isLoading,
+  width,
 }: BranchDetailProps) {
   return (
-    <div className="flex flex-col h-full w-80 border-l bg-surface/30">
+    <div className="flex flex-col h-full border-l bg-surface/30" style={width ? { width } : { width: 320 }}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b">
         <div className="flex items-center gap-2 min-w-0">

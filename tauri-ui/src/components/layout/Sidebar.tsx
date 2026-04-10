@@ -6,6 +6,7 @@ interface SidebarProps {
   repos: RepoConfig[];
   selectedRepoPath: string | null;
   onSelectRepo: (path: string) => void;
+  width?: number;
 }
 
 function repoDisplayName(path: string): string {
@@ -16,9 +17,10 @@ export function Sidebar({
   repos,
   selectedRepoPath,
   onSelectRepo,
+  width,
 }: SidebarProps) {
   return (
-    <div className="flex flex-col h-full w-48 border-r bg-surface/50">
+    <div className="flex flex-col h-full border-r bg-surface/50" style={width ? { width } : { width: 192 }}>
       <div className="flex items-center gap-1.5 px-3 py-2.5 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60 border-b">
         <Folder className="h-3 w-3" />
         Repositories

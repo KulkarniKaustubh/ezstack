@@ -1,6 +1,7 @@
 import { Plus, Layers } from "lucide-react";
 import { Button } from "../ui/button";
 import { StackColumn } from "./StackColumn";
+import type { StackNodeActions } from "./StackNode";
 import type { StatusStack } from "../../types/ezstack";
 
 interface StacksBoardProps {
@@ -9,7 +10,9 @@ interface StacksBoardProps {
   onSelectBranch: (stackHash: string, branchName: string) => void;
   onRenameStack: (stackHash: string) => void;
   onAddBranchToStack: (stackHash: string) => void;
+  onSyncStack?: (stackHash: string) => void;
   onNewBranch: () => void;
+  actions?: StackNodeActions;
 }
 
 export function StacksBoard({
@@ -18,7 +21,9 @@ export function StacksBoard({
   onSelectBranch,
   onRenameStack,
   onAddBranchToStack,
+  onSyncStack,
   onNewBranch,
+  actions,
 }: StacksBoardProps) {
   if (stacks.length === 0) {
     return (
@@ -61,6 +66,8 @@ export function StacksBoard({
               onSelectBranch={onSelectBranch}
               onRename={onRenameStack}
               onAddBranch={onAddBranchToStack}
+              onSyncStack={onSyncStack}
+              actions={actions}
             />
           ))}
         </div>
