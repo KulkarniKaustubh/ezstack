@@ -74,7 +74,7 @@ echo 'eval "$(ezs --shell-init)"' >> ~/.bashrc
 echo 'eval "$(ezs --shell-init)"' >> ~/.zshrc
 ```
 
-This enables automatic directory changes for `goto`, `new`, `delete`, `sync` (and aliases `rebase`, `rb`), `up`, and `down` commands.
+This enables automatic directory changes for `goto`, `new`, `delete`, `sync`, `up`, and `down` commands.
 
 Without shell integration, commands that would change your directory will instead print a helpful message with the path to `cd` to manually.
 
@@ -352,7 +352,7 @@ Options:
 
 ### `ezs sync`
 
-Sync stack with remote. Handles rebasing onto updated parents, cleaning up merged branches, and force pushing after rebase. Aliases: `rebase`, `rb`
+Sync stack with remote. Handles rebasing onto updated parents, cleaning up merged branches, and force pushing after rebase.
 
 ```
 ezs sync [options]
