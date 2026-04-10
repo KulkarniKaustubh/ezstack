@@ -429,32 +429,6 @@ export default function App() {
             }}
           />
 
-          <ConnectRemoteDialog
-            open={dialog.type === "connect-remote"}
-            onOpenChange={(o) => {
-              if (!o) {
-                setDialog({ type: "none" });
-                setConnectError(null);
-              }
-            }}
-            isLoading={operationLoading}
-            error={connectError}
-            onConnect={async (host, user, port, keyPath) => {
-              return ezs.connectRemote(host, user, port, keyPath);
-            }}
-            onSelectRepo={async (host, user, port, keyPath, repoPath) => {
-              setConnectError(null);
-              try {
-                await ezs.selectRemoteRepo(host, user, port, keyPath, repoPath);
-                setIsConnected(true);
-                setDialog({ type: "none" });
-              } catch (e) {
-                setConnectError(e instanceof Error ? e.message : String(e));
-                throw e;
-              }
-            }}
-          />
-
           {dialog.type === "rename-stack" && (
             <RenameStackDialog
               open
@@ -470,6 +444,32 @@ export default function App() {
           )}
         </>
       )}
+
+      <ConnectRemoteDialog
+        open={dialog.type === "connect-remote"}
+        onOpenChange={(o) => {
+          if (!o) {
+            setDialog({ type: "none" });
+            setConnectError(null);
+          }
+        }}
+        isLoading={operationLoading}
+        error={connectError}
+        onConnect={async (host, user, port, keyPath) => {
+          return ezs.connectRemote(host, user, port, keyPath);
+        }}
+        onSelectRepo={async (host, user, port, keyPath, repoPath) => {
+          setConnectError(null);
+          try {
+            await ezs.selectRemoteRepo(host, user, port, keyPath, repoPath);
+            setIsConnected(true);
+            setDialog({ type: "none" });
+          } catch (e) {
+            setConnectError(e instanceof Error ? e.message : String(e));
+            throw e;
+          }
+        }}
+      />
 
       <SettingsDialog
         open={dialog.type === "settings"}

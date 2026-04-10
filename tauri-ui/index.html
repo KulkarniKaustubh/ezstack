@@ -5,8 +5,66 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ezstack</title>
+    <style>
+      /* Splash screen — visible immediately, hidden once React mounts */
+      #splash {
+        position: fixed;
+        inset: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        background: #09090b;
+        color: #a1a1aa;
+        font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+        z-index: 9999;
+        transition: opacity 0.2s ease-out;
+      }
+      #splash.hidden {
+        opacity: 0;
+        pointer-events: none;
+      }
+      #splash .spinner {
+        width: 20px;
+        height: 20px;
+        border: 2px solid #3b82f6;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+      }
+      #splash .label {
+        font-size: 14px;
+        font-weight: 600;
+        color: #fafafa;
+        letter-spacing: -0.01em;
+      }
+      #splash .sublabel {
+        font-size: 13px;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+      /* Match light theme if user prefers it */
+      @media (prefers-color-scheme: light) {
+        #splash {
+          background: #ffffff;
+          color: #71717a;
+        }
+        #splash .label {
+          color: #09090b;
+        }
+      }
+    </style>
   </head>
   <body>
+    <div id="splash">
+      <div class="label">ezstack</div>
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div class="spinner"></div>
+        <span class="sublabel">Loading...</span>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
