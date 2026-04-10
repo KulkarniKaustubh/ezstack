@@ -8,6 +8,16 @@ local M = {}
 ---@type table<string, fun(args: string[])>
 local subcommands = {}
 
+--- `:Ezs agent [options]` — launch AI agent with stack context
+--- `:Ezs agent feature "description"` — launch agent to build a feature
+subcommands["agent"] = function(args)
+  local cli_args = { "agent" }
+  for _, a in ipairs(args) do
+    table.insert(cli_args, a)
+  end
+  cli.run_in_terminal(cli_args)
+end
+
 --- `:Ezs` or `:Ezs list` — open the stack viewer.
 subcommands["list"] = function()
   ui.open(false)
@@ -671,7 +681,7 @@ function M.register()
     else
       vim.notify("Unknown ezstack command: " .. sub, vim.log.levels.ERROR)
       vim.notify(
-        "Available: list, status, new, sync, push, pr, delete, reparent, rename, goto, up, down, diff, commit, amend, stack, unstack",
+        "Available: agent, list, status, new, sync, push, pr, delete, reparent, rename, goto, up, down, diff, commit, amend, stack, unstack",
         vim.log.levels.INFO
       )
     end
@@ -691,13 +701,21 @@ function M.register()
       -- Complete subcommand (":Ezs <tab>" or ":Ezs li<tab>")
       if #parts <= 2 then
         local subs = {
-          "list", "status", "new", "sync", "push", "pr",
+          "agent", "list", "status", "new", "sync", "push", "pr",
           "delete", "reparent", "rename", "goto", "up", "down",
           "diff", "commit", "amend", "stack", "unstack",
         }
         return vim.tbl_filter(function(s)
           return s:find(arglead, 1, true) == 1
         end, subs)
+      end
+
+      -- Complete agent subcommands (":Ezs agent <tab>")
+      if parts[2] == "agent" and #parts <= 3 then
+        local agent_subs = { "feature" }
+        return vim.tbl_filter(function(s)
+          return s:find(arglead, 1, true) == 1
+        end, agent_subs)
       end
 
       -- Complete pr subcommands (":Ezs pr <tab>" or ":Ezs pr cr<tab>")
