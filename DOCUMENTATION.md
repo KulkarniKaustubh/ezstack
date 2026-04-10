@@ -116,37 +116,98 @@ These flags work with any command and can appear in any position:
 
 ## Commands
 
-### `ezs new`
+### `ezs commit` / `ezs amend`
 
-Create a new branch in the stack. Aliases: `n`
+Wrap `git commit` / `git commit --amend` and auto-sync child branches. Aliases: `ci`
 
 ```
-ezs new [branch-name] [options]
-
-Options:
-    -p, --parent <branch>     Parent branch (defaults to current branch)
-    -w, --worktree <path>     Worktree path (defaults to configured base dir + branch name)
-    -c, --cd                  Change to the new worktree after creation
-    -C, --no-cd               Don't change to the new worktree (overrides config)
-    -f, --from-worktree       Register an existing worktree as a stack root
-    -r, --from-remote         Create a stack from a remote branch
+ezs commit [git-commit-options] [--merge|--rebase]
+ezs amend [git-commit-options] [--merge|--rebase]
 ```
 
-When `use_worktrees` is disabled, creates a git branch without a worktree and optionally checks it out.
+All arguments are passed through to `git commit`. After committing, any child branches in the stack are automatically synced onto the updated branch.
+
+Uses the configured `sync_strategy` (default: rebase) for child syncing. Use `--merge` or `--rebase` to override.
 
 ---
 
-### `ezs status`
+### `ezs config`
 
-Show status of current stack with PR and CI info. Aliases: `st`
+Configure ezstack for the current repository. Aliases: `cfg`
 
 ```
-ezs status [options]
+ezs config [subcommand] [options]
+
+Subcommands:
+    set <key> <value>    Set a configuration value
+    show                 Show current configuration
+```
+
+**Available keys for `set`:**
+
+| Key | Description | Values |
+|-----|-------------|--------|
+| `worktree_base_dir` | Base directory for worktrees | Path (per-repo) |
+| `default_base_branch` | Default base branch | e.g. `main`, `master` |
+| `cd_after_new` | Auto-cd to new worktree | `true` / `false` (per-repo) |
+| `use_worktrees` | Use git worktrees for new branches | `true` / `false` (per-repo) |
+| `sync_strategy` | Sync method for rebase/merge | `rebase` / `merge` (per-repo) |
+| `github_token` | GitHub token for API access | Token string |
+
+---
+
+### `ezs delete`
+
+Delete a branch and its worktree. Aliases: `del`, `rm`
+
+```
+ezs delete [branch-name] [options]
+ezs delete [stack-hash] [options]
 
 Options:
-    -a, --all     Show all stacks
-    -d, --debug   Show debug output
+    -f, --force            Force delete even if branch has children
+    -s, --stack            Treat argument as a stack hash (delete entire stack)
 ```
+
+---
+
+### `ezs diff`
+
+Show diff against parent branch.
+
+```
+ezs diff [options] [-- git-diff-options]
+
+Options:
+    --stat         Show diffstat only
+```
+
+Shows the diff between the current branch and its parent in the stack. Any arguments after `--` are passed directly to `git diff`.
+
+---
+
+### `ezs down` / `ezs up`
+
+Navigate down (toward children/leaves) or up (toward parent/base) in the stack.
+
+```
+ezs down [n]    Navigate n levels toward children (default: 1)
+ezs up [n]      Navigate n levels toward parent (default: 1)
+```
+
+When navigating down with multiple children, shows an interactive selector.
+
+---
+
+### `ezs goto`
+
+Navigate to a branch worktree. Aliases: `go`
+
+```
+ezs goto [branch-name]
+```
+
+If branch-name is omitted, shows interactive selection. Falls back to `git checkout` when the branch has no worktree.
 
 ---
 
@@ -169,57 +230,23 @@ The list view also shows diff stats (+/-) for each branch relative to its parent
 
 ---
 
-### `ezs sync`
+### `ezs new`
 
-Sync stack with remote. Handles rebasing onto updated parents, cleaning up merged branches, and force pushing after rebase. Aliases: `rebase`, `rb`
+Create a new branch in the stack. Aliases: `n`
 
 ```
-ezs sync [options]
-ezs sync <hash-prefix>
+ezs new [branch-name] [options]
 
 Options:
-    -s, --stack            Sync current stack (auto-detect what needs syncing)
-    -a, --all              Sync ALL stacks
-    -c, --current          Sync current branch only (auto-detect what it needs)
-    -p, --parent           Rebase current branch onto its parent
-    -C, --children         Rebase child branches onto current branch
-    --merge                Use git merge instead of git rebase
-    --rebase               Use git rebase (overrides sync_strategy config)
-    --no-delete-local      Don't delete local branches after their PRs are merged
-    --dry-run              Preview what would be synced without making changes
-    --continue             Continue after resolving conflicts
-    --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
-    --json                 Output dry-run results as JSON (requires --dry-run)
+    -p, --parent <branch>     Parent branch (defaults to current branch)
+    -w, --worktree <path>     Worktree path (defaults to configured base dir + branch name)
+    -c, --cd                  Change to the new worktree after creation
+    -C, --no-cd               Don't change to the new worktree (overrides config)
+    -f, --from-worktree       Register an existing worktree as a stack root
+    -r, --from-remote         Create a stack from a remote branch
 ```
 
-By default, sync uses git rebase. Use `--merge` to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with `ezs config set sync_strategy merge`. Use `--rebase` or `--merge` to override the configured strategy for a single run.
-
-You can sync a specific stack by passing its hash prefix (minimum 3 characters).
-
----
-
-### `ezs goto`
-
-Navigate to a branch worktree. Aliases: `go`
-
-```
-ezs goto [branch-name]
-```
-
-If branch-name is omitted, shows interactive selection. Falls back to `git checkout` when the branch has no worktree.
-
----
-
-### `ezs up` / `ezs down`
-
-Navigate up (toward parent/base) or down (toward children/leaves) in the stack.
-
-```
-ezs up [n]      Navigate n levels toward parent (default: 1)
-ezs down [n]    Navigate n levels toward children (default: 1)
-```
-
-When navigating down with multiple children, shows an interactive selector.
+When `use_worktrees` is disabled, creates a git branch without a worktree and optionally checks it out.
 
 ---
 
@@ -232,10 +259,10 @@ ezs pr <subcommand> [options]
 
 Subcommands:
     create    Create a new pull request
-    update    Push changes and update PR metadata (base branch, descriptions)
-    merge     Merge a pull request
     draft     Toggle PR between draft and ready
+    merge     Merge a pull request
     stack     Update all PR descriptions with stack info
+    update    Push changes and update PR metadata (base branch, descriptions)
 ```
 
 #### `ezs pr create`
@@ -247,6 +274,10 @@ Options:
     -d, --draft            Create as draft PR
 ```
 
+#### `ezs pr draft`
+
+Toggles the current branch's PR between draft and ready-for-review state.
+
 #### `ezs pr merge`
 
 ```
@@ -254,25 +285,6 @@ Options:
     -m, --method <method>      Merge method: merge, squash, rebase (default: interactive)
     --no-delete-branch         Don't delete the remote branch after merge
 ```
-
-#### `ezs pr draft`
-
-Toggles the current branch's PR between draft and ready-for-review state.
-
----
-
-### `ezs commit` / `ezs amend`
-
-Wrap `git commit` / `git commit --amend` and auto-sync child branches. Aliases: `ci`
-
-```
-ezs commit [git-commit-options] [--merge|--rebase]
-ezs amend [git-commit-options] [--merge|--rebase]
-```
-
-All arguments are passed through to `git commit`. After committing, any child branches in the stack are automatically synced onto the updated branch.
-
-Uses the configured `sync_strategy` (default: rebase) for child syncing. Use `--merge` or `--rebase` to override.
 
 ---
 
@@ -286,36 +298,6 @@ ezs push [options]
 Options:
     -s, --stack    Push all branches in the current stack
     -f, --force    Force push
-```
-
----
-
-### `ezs diff`
-
-Show diff against parent branch.
-
-```
-ezs diff [options] [-- git-diff-options]
-
-Options:
-    --stat         Show diffstat only
-```
-
-Shows the diff between the current branch and its parent in the stack. Any arguments after `--` are passed directly to `git diff`.
-
----
-
-### `ezs delete`
-
-Delete a branch and its worktree. Aliases: `del`, `rm`
-
-```
-ezs delete [branch-name] [options]
-ezs delete [stack-hash] [options]
-
-Options:
-    -f, --force            Force delete even if branch has children
-    -s, --stack            Treat argument as a stack hash (delete entire stack)
 ```
 
 ---
@@ -354,6 +336,49 @@ Options:
 
 ---
 
+### `ezs status`
+
+Show status of current stack with PR and CI info. Aliases: `st`
+
+```
+ezs status [options]
+
+Options:
+    -a, --all     Show all stacks
+    -d, --debug   Show debug output
+```
+
+---
+
+### `ezs sync`
+
+Sync stack with remote. Handles rebasing onto updated parents, cleaning up merged branches, and force pushing after rebase. Aliases: `rebase`, `rb`
+
+```
+ezs sync [options]
+ezs sync <hash-prefix>
+
+Options:
+    -s, --stack            Sync current stack (auto-detect what needs syncing)
+    -a, --all              Sync ALL stacks
+    -c, --current          Sync current branch only (auto-detect what it needs)
+    -p, --parent           Rebase current branch onto its parent
+    -C, --children         Rebase child branches onto current branch
+    --merge                Use git merge instead of git rebase
+    --rebase               Use git rebase (overrides sync_strategy config)
+    --no-delete-local      Don't delete local branches after their PRs are merged
+    --dry-run              Preview what would be synced without making changes
+    --continue             Continue after resolving conflicts
+    --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
+    --json                 Output dry-run results as JSON (requires --dry-run)
+```
+
+By default, sync uses git rebase. Use `--merge` to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with `ezs config set sync_strategy merge`. Use `--rebase` or `--merge` to override the configured strategy for a single run.
+
+You can sync a specific stack by passing its hash prefix (minimum 3 characters).
+
+---
+
 ### `ezs unstack`
 
 Remove a branch from stack tracking without deleting the git branch or worktree.
@@ -364,31 +389,6 @@ ezs unstack [branch] [options]
 Options:
     -b, --branch <name>     Branch to untrack
 ```
-
----
-
-### `ezs config`
-
-Configure ezstack for the current repository. Aliases: `cfg`
-
-```
-ezs config [subcommand] [options]
-
-Subcommands:
-    set <key> <value>    Set a configuration value
-    show                 Show current configuration
-```
-
-**Available keys for `set`:**
-
-| Key | Description | Values |
-|-----|-------------|--------|
-| `worktree_base_dir` | Base directory for worktrees | Path (per-repo) |
-| `default_base_branch` | Default base branch | e.g. `main`, `master` |
-| `cd_after_new` | Auto-cd to new worktree | `true` / `false` (per-repo) |
-| `use_worktrees` | Use git worktrees for new branches | `true` / `false` (per-repo) |
-| `sync_strategy` | Sync method for rebase/merge | `rebase` / `merge` (per-repo) |
-| `github_token` | GitHub token for API access | Token string |
 
 ---
 
