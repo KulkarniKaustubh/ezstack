@@ -439,14 +439,18 @@ export default function App() {
             }}
             isLoading={operationLoading}
             error={connectError}
-            onSubmit={async (host, user, port, keyPath, repoPath) => {
+            onConnect={async (host, user, port, keyPath) => {
+              return ezs.connectRemote(host, user, port, keyPath);
+            }}
+            onSelectRepo={async (host, user, port, keyPath, repoPath) => {
               setConnectError(null);
               try {
-                await ezs.connectRemote(host, user, port, keyPath, repoPath);
+                await ezs.selectRemoteRepo(host, user, port, keyPath, repoPath);
                 setIsConnected(true);
                 setDialog({ type: "none" });
               } catch (e) {
                 setConnectError(e instanceof Error ? e.message : String(e));
+                throw e;
               }
             }}
           />

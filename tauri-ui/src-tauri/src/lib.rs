@@ -37,6 +37,7 @@ pub fn run() {
             config::set_config,
             // Connection
             connection::connect_remote,
+            connection::select_remote_repo,
             connection::disconnect_remote,
             connection::get_connection,
             connection::test_ssh_connection,
