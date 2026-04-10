@@ -109,9 +109,23 @@ export async function connectRemote(
   user: string,
   port: number,
   keyPath: string,
+): Promise<string[]> {
+  return invoke<string[]>("connect_remote", {
+    host,
+    user,
+    port,
+    keyPath,
+  });
+}
+
+export async function selectRemoteRepo(
+  host: string,
+  user: string,
+  port: number,
+  keyPath: string,
   remoteRepoPath: string,
 ): Promise<string> {
-  return invoke<string>("connect_remote", {
+  return invoke<string>("select_remote_repo", {
     host,
     user,
     port,
