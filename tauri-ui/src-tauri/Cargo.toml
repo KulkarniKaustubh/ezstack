@@ -1,6 +1,6 @@
 [package]
 name = "ezstack-desktop"
-version = "2.0.0-beta.5"
+version = "2.0.0-beta.6"
 description = "Desktop UI for ezstack - stacked PR management"
 authors = ["you"]
 edition = "2021"
@@ -18,4 +18,5 @@ tauri-plugin-shell = "2"
 tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+dirs = "5"
 tokio = { version = "1", features = ["process", "io-util"] }
