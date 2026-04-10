@@ -919,6 +919,12 @@ pre code {
   border: 1px solid rgba(234, 179, 8, 0.25);
 }
 
+.eco-badge-new {
+  color: var(--green);
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
 .eco-badge-soon {
   color: var(--text-dim);
   background: rgba(113, 113, 122, 0.1);
