@@ -663,7 +663,7 @@ pre code {
 }
 
 .accordion-item.open .accordion-body {
-  max-height: 500px;
+  max-height: 800px;
 }
 
 .cmd-table {
@@ -700,6 +700,41 @@ pre code {
   color: var(--text-dim);
   font-size: 0.75rem;
   margin-left: 0.375rem;
+}
+
+.cmd-detail {
+  padding: 1rem 1.25rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.cmd-detail h4 {
+  color: var(--text);
+  font-size: 0.875rem;
+  margin-bottom: 0.5rem;
+}
+
+.cmd-detail p {
+  margin-bottom: 0.5rem;
+  line-height: 1.5;
+}
+
+.cmd-detail ul {
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
+
+.cmd-detail li {
+  margin-bottom: 0.25rem;
+}
+
+.cmd-detail code {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+  padding: 0.125rem 0.375rem;
+  border-radius: 3px;
+  font-size: 0.8125rem;
 }
 
 /* ========================================

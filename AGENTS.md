@@ -105,6 +105,50 @@ The agent will:
 3. Create each branch with `ezs -y new`, implement changes, commit, and push
 4. Each branch is one small, reviewable unit of work
 
+### Customizing Agent Prompts
+
+The prompts sent to the AI agent are fully customizable. They are stored as Markdown files in `~/.ezstack/`:
+
+- `agent-work-prompt.md` — Work session prompt (used by `ezs agent`)
+- `agent-feature-prompt.md` — Feature builder prompt (used by `ezs agent feature`)
+
+#### Template Variables
+
+Prompts support the following template variables, replaced at runtime:
+
+| Variable | Description |
+|----------|-------------|
+| `{{STACK_JSON}}` | Current stack structure as JSON |
+| `{{BRANCH_NAME}}` | Current branch name |
+| `{{PARENT_NAME}}` | Parent branch name |
+| `{{WORKTREE_PATH}}` | Path to the current worktree |
+| `{{EZS_COMMANDS}}` | Available ezs commands reference |
+| `{{EZS_DOCS}}` | Full ezstack documentation for AI agents |
+| `{{FEATURE_DESCRIPTION}}` | Feature description (feature mode only) |
+
+#### Managing Prompts
+
+```bash
+# View both prompts with their template variables
+ezs agent prompt
+
+# Edit the work session prompt in your $EDITOR
+ezs agent prompt --edit --work
+
+# Edit the feature builder prompt
+ezs agent prompt --edit --feature
+
+# Reset a prompt to the built-in default
+ezs agent prompt --reset --work
+
+# Reset both prompts
+ezs agent prompt --reset
+```
+
+The recommended way to edit prompts is through `ezs agent prompt --edit`.
+
+In the VS Code extension, right-click a stack and select **Edit Agent Prompt** to open the prompt file directly in the editor.
+
 ### Configuration
 
 ```bash
