@@ -8,7 +8,7 @@ interface PRCreateDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   branchName: string;
-  onSubmit: (title: string, body: string | undefined, draft: boolean) => void;
+  onSubmit: (title: string, body: string, draft: boolean) => void;
   isLoading: boolean;
 }
 
@@ -24,7 +24,7 @@ export function PRCreateDialog({ open, onOpenChange, branchName, onSubmit, isLoa
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
-    onSubmit(title.trim(), body.trim() || undefined, draft);
+    onSubmit(title.trim(), body.trim(), draft);
     setTitle("");
     setBody("");
     setDraft(false);

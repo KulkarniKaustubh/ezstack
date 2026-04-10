@@ -57,25 +57,15 @@ export default function App() {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [connectLoading, setConnectLoading] = useState(false);
   const [initializing, setInitializing] = useState(true);
-  const [loadingMessage, setLoadingMessage] = useState("Starting up...");
 
   // Auto-detect repo path on mount (only when local)
   useEffect(() => {
     if (!repoPath && !remoteConnection) {
-      setLoadingMessage("Detecting repository...");
       ezs
         .getRepoPath(".")
-        .then((path) => {
-          setLoadingMessage("Loading stacks...");
-          setRepoPath(path);
-        })
-        .catch(() => {
-          setLoadingMessage("");
-        })
+        .then(setRepoPath)
+        .catch(() => {})
         .finally(() => setInitializing(false));
-    } else if (repoPath) {
-      setLoadingMessage("Loading stacks...");
-      setInitializing(false);
     } else {
       setInitializing(false);
     }
@@ -113,19 +103,12 @@ export default function App() {
     }
   }, [setRepoPath]);
 
-  const handleConnect = useCallback(
-    async (host: string, user: string, port: number, keyPath: string): Promise<string[]> => {
-      return ezs.connectRemote(host, user, port, keyPath);
-    },
-    [],
-  );
-
-  const handleSelectRemoteRepo = useCallback(
+  const handleConnectRemote = useCallback(
     async (host: string, user: string, port: number, keyPath: string, remotePath: string) => {
       setConnectError(null);
       setConnectLoading(true);
       try {
-        const resolvedPath = await ezs.selectRemoteRepo(host, user, port, keyPath, remotePath);
+        const resolvedPath = await ezs.connectRemote(host, user, port, keyPath, remotePath);
         setRemoteConnection({ host, user, port, key_path: keyPath, remote_repo_path: resolvedPath });
         setRepoPath(resolvedPath);
         setDialog({ type: "none" });
@@ -195,7 +178,7 @@ export default function App() {
       <div className="flex flex-1 min-h-0">
         {showLoadingScreen ? (
           <div className="flex flex-col items-center justify-center h-full w-full text-center p-8">
-            <svg width="48" height="48" viewBox="0 0 24 24" fill="none" className="text-primary mb-6 animate-pulse">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className="text-primary mb-4 animate-pulse">
               <path
                 d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6l-8-4z"
                 stroke="currentColor"
@@ -204,10 +187,7 @@ export default function App() {
               />
               <path d="M8 12h8M12 8v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
-            <div className="space-y-2">
-              <p className="text-sm font-medium text-foreground">Setting up ezstack</p>
-              <p className="text-xs text-muted-foreground">{loadingMessage}</p>
-            </div>
+            <p className="text-sm text-muted-foreground">Loading...</p>
           </div>
         ) : !repoPath ? (
           <EmptyState
@@ -363,8 +343,7 @@ export default function App() {
             setConnectError(null);
           }
         }}
-        onConnect={handleConnect}
-        onSelectRepo={handleSelectRemoteRepo}
+        onSubmit={handleConnectRemote}
         isLoading={connectLoading}
         error={connectError}
       />
