@@ -241,11 +241,37 @@ export class FileTreeProvider implements vscode.TreeDataProvider<FileNode> {
     if (!isDirectory) {
       return this.gitStatus.files.get(relativePath);
     }
+    // Aggregate: pick the most prominent state among children
     const prefix = relativePath + path.sep;
-    for (const [filePath] of this.gitStatus.files) {
-      if (filePath.startsWith(prefix)) {
-        return "modified";
+    let hasModified = false;
+    let hasStaged = false;
+    let hasUntracked = false;
+    let hasConflict = false;
+    for (const [filePath, state] of this.gitStatus.files) {
+      if (!filePath.startsWith(prefix)) {
+        continue;
       }
+      if (state === "conflict") {
+        hasConflict = true;
+      } else if (state === "modified" || state === "both") {
+        hasModified = true;
+      } else if (state === "staged") {
+        hasStaged = true;
+      } else if (state === "untracked") {
+        hasUntracked = true;
+      }
+    }
+    if (hasConflict) {
+      return "conflict";
+    }
+    if (hasModified) {
+      return "modified";
+    }
+    if (hasStaged) {
+      return "staged";
+    }
+    if (hasUntracked) {
+      return "untracked";
     }
     return undefined;
   }

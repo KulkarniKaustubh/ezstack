@@ -2,8 +2,8 @@ import * as vscode from "vscode";
 import * as path from "path";
 import { EzsCli } from "../ezsCli";
 import { StackJSON, BranchJSON } from "../types";
+import { extractTicket, shortBranchName } from "../branchUtils";
 
-const TICKET_RE = /nos-(\d+)/i;
 const PALETTE_SIZE = 8;
 
 interface BranchContext {
@@ -11,14 +11,14 @@ interface BranchContext {
   branch: BranchJSON;
   position: number;
   stackSize: number;
-  ticketNumber: string | undefined;
+  ticket: string | undefined;
   colorIndex: number;
 }
 
-function colorIndexForTicket(ticketNumber: string): number {
+function colorIndexForHash(value: string): number {
   let hash = 0;
-  for (let i = 0; i < ticketNumber.length; i++) {
-    hash = ((hash << 5) - hash + ticketNumber.charCodeAt(i)) | 0;
+  for (let i = 0; i < value.length; i++) {
+    hash = ((hash << 5) - hash + value.charCodeAt(i)) | 0;
   }
   return ((hash % PALETTE_SIZE) + PALETTE_SIZE) % PALETTE_SIZE;
 }
@@ -70,15 +70,14 @@ export class FolderDecorationProvider
           continue;
         }
         const normalized = path.normalize(branch.worktree_path);
-        const match = branch.name.match(TICKET_RE);
-        const ticketNumber = match ? match[1] : undefined;
+        const ticket = extractTicket(branch.name);
         this.worktreeMap.set(normalized, {
           stack,
           branch,
           position: i,
           stackSize: stack.branches.length,
-          ticketNumber,
-          colorIndex: ticketNumber ? colorIndexForTicket(ticketNumber) : 0,
+          ticket,
+          colorIndex: ticket ? colorIndexForHash(ticket) : 0,
         });
       }
     }
@@ -97,10 +96,9 @@ export class FolderDecorationProvider
       ctx.position < 9
         ? String(ctx.position + 1)
         : String.fromCharCode(65 + ctx.position - 9);
-    const parts = ctx.branch.name.split(".");
-    const desc = parts.length > 1 ? parts[parts.length - 1] : ctx.branch.name;
-    const ticket = ctx.ticketNumber ? `NOS-${ctx.ticketNumber}` : "Stack";
-    const tooltip = `${ticket} [${ctx.position + 1}/${ctx.stackSize}] ${desc}`;
+    const desc = shortBranchName(ctx.branch.name);
+    const label = ctx.ticket ?? "Stack";
+    const tooltip = `${label} [${ctx.position + 1}/${ctx.stackSize}] ${desc}`;
 
     return {
       badge,

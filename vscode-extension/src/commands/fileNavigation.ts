@@ -2,6 +2,7 @@ import * as vscode from "vscode";
 import * as path from "path";
 import * as fs from "fs";
 import { FolderDecorationProvider } from "../views/folderDecorations";
+import { shortBranchName } from "../branchUtils";
 
 interface FileArg {
   absolutePath?: string;
@@ -76,10 +77,8 @@ async function navigateFile(
   }
 
   if (!target.worktree_path) {
-    const parts = target.name.split(".");
-    const name = parts.length > 1 ? parts[parts.length - 1] : target.name;
     vscode.window.showWarningMessage(
-      `Worktree for "${name}" does not exist locally.`,
+      `Worktree for "${shortBranchName(target.name)}" does not exist locally.`,
     );
     return;
   }
@@ -97,10 +96,8 @@ async function navigateFile(
     );
     await vscode.window.showTextDocument(doc);
   } catch {
-    const parts = target.name.split(".");
-    const name = parts.length > 1 ? parts[parts.length - 1] : target.name;
     vscode.window.showWarningMessage(
-      `File does not exist in "${name}": ${relativePath}`,
+      `File does not exist in "${shortBranchName(target.name)}": ${relativePath}`,
     );
   }
 }
@@ -133,10 +130,8 @@ async function compareWithPrevious(
   }
 
   if (!prev.worktree_path) {
-    const parts = prev.name.split(".");
-    const name = parts.length > 1 ? parts[parts.length - 1] : prev.name;
     vscode.window.showWarningMessage(
-      `Worktree for "${name}" does not exist locally.`,
+      `Worktree for "${shortBranchName(prev.name)}" does not exist locally.`,
     );
     return;
   }
@@ -148,20 +143,14 @@ async function compareWithPrevious(
   try {
     await fs.promises.access(prevPath);
   } catch {
-    const parts = prev.name.split(".");
-    const name = parts.length > 1 ? parts[parts.length - 1] : prev.name;
     vscode.window.showWarningMessage(
-      `File does not exist in "${name}": ${relativePath}`,
+      `File does not exist in "${shortBranchName(prev.name)}": ${relativePath}`,
     );
     return;
   }
 
-  const prevParts = prev.name.split(".");
-  const prevLabel =
-    prevParts.length > 1 ? prevParts[prevParts.length - 1] : prev.name;
-  const curParts = ctx.branch.name.split(".");
-  const curLabel =
-    curParts.length > 1 ? curParts[curParts.length - 1] : ctx.branch.name;
+  const prevLabel = shortBranchName(prev.name);
+  const curLabel = shortBranchName(ctx.branch.name);
   const fileName = path.basename(filePath);
   const title = `${fileName}: ${prevLabel} ↔ ${curLabel}`;
 
