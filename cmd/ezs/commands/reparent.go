@@ -267,11 +267,16 @@ func IsDescendantOf(mgr *stack.Manager, branchName, ancestorName string) bool {
 		return false
 	}
 
+	visited := make(map[string]bool)
 	current := branch.Parent
 	for {
 		if current == ancestorName {
 			return true
 		}
+		if visited[current] {
+			return false
+		}
+		visited[current] = true
 		parentBranch := mgr.GetBranch(current)
 		if parentBranch == nil {
 			return false

@@ -77,6 +77,9 @@ func (g *Git) IsMergeInProgress() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(g.RepoDir, gitDir)
+	}
 	mergeHead := filepath.Join(gitDir, "MERGE_HEAD")
 	_, err = os.Stat(mergeHead)
 	return err == nil, nil
