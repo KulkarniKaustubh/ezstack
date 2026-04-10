@@ -465,12 +465,12 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 			if b.IsMerged {
 				return
 			}
-			// Always use origin/root for the stack root parent
+			// Use origin/ refs when available for both parent and branch
+			// to get accurate stats matching what PRs show
 			parentRef := b.Parent
-			if b.Parent == s.Root && g.RemoteBranchExists(b.Parent) {
+			if g.RemoteBranchExists(b.Parent) {
 				parentRef = "origin/" + b.Parent
 			}
-			// Use origin/<branch> if it exists, fallback to local branch
 			branchRef := b.Name
 			if g.RemoteBranchExists(b.Name) {
 				branchRef = "origin/" + b.Name
