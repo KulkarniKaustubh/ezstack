@@ -23,6 +23,8 @@ pub fn run() {
             operations::delete_branch,
             operations::reparent_branch,
             operations::rename_stack,
+            operations::open_agent,
+            operations::open_agent_feature,
             // PR operations
             pr::pr_create,
             pr::pr_update,

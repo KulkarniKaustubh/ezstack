@@ -1,4 +1,4 @@
-import { Plus, Layers } from "lucide-react";
+import { Plus, Layers, Bot } from "lucide-react";
 import { Button } from "../ui/button";
 import { StackColumn } from "./StackColumn";
 import type { StackNodeActions } from "./StackNode";
@@ -12,6 +12,8 @@ interface StacksBoardProps {
   onAddBranchToStack: (stackHash: string) => void;
   onSyncStack?: (stackHash: string) => void;
   onNewBranch: () => void;
+  onOpenAgent?: (stackHash: string) => void;
+  onBuildFeature?: () => void;
   actions?: StackNodeActions;
 }
 
@@ -23,6 +25,8 @@ export function StacksBoard({
   onAddBranchToStack,
   onSyncStack,
   onNewBranch,
+  onOpenAgent,
+  onBuildFeature,
   actions,
 }: StacksBoardProps) {
   if (stacks.length === 0) {
@@ -49,10 +53,18 @@ export function StacksBoard({
           <Layers className="h-3.5 w-3.5" />
           <span>{stacks.length} stack{stacks.length !== 1 ? "s" : ""}</span>
         </div>
-        <Button variant="outline" size="sm" onClick={onNewBranch} className="gap-1.5 text-xs">
-          <Plus className="h-3.5 w-3.5" />
-          New Branch
-        </Button>
+        <div className="flex items-center gap-2">
+          {onBuildFeature && (
+            <Button variant="outline" size="sm" onClick={onBuildFeature} className="gap-1.5 text-xs">
+              <Bot className="h-3.5 w-3.5" />
+              Build Feature
+            </Button>
+          )}
+          <Button variant="outline" size="sm" onClick={onNewBranch} className="gap-1.5 text-xs">
+            <Plus className="h-3.5 w-3.5" />
+            New Branch
+          </Button>
+        </div>
       </div>
 
       {/* Horizontal scrolling board */}
@@ -67,6 +79,7 @@ export function StacksBoard({
               onRename={onRenameStack}
               onAddBranch={onAddBranchToStack}
               onSyncStack={onSyncStack}
+              onOpenAgent={onOpenAgent}
               actions={actions}
             />
           ))}

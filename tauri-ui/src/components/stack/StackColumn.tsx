@@ -1,4 +1,4 @@
-import { Plus, Pencil, RefreshCcw } from "lucide-react";
+import { Plus, Pencil, RefreshCcw, Bot } from "lucide-react";
 import { Button } from "../ui/button";
 import { Tooltip } from "../ui/tooltip";
 import { StackNode, type StackNodeActions } from "./StackNode";
@@ -14,6 +14,7 @@ interface StackColumnProps {
   onRename: (stackHash: string) => void;
   onAddBranch: (stackHash: string) => void;
   onSyncStack?: (stackHash: string) => void;
+  onOpenAgent?: (stackHash: string) => void;
   actions?: StackNodeActions;
 }
 
@@ -84,13 +85,14 @@ function TreeNodeView({
   );
 }
 
-export function StackColumn({ stack, selectedBranch, onSelectBranch, onRename, onAddBranch, onSyncStack, actions }: StackColumnProps) {
+export function StackColumn({ stack, selectedBranch, onSelectBranch, onRename, onAddBranch, onSyncStack, onOpenAgent, actions }: StackColumnProps) {
   const tree = buildTree(stack);
   const displayName = stack.name || stack.hash.slice(0, 7);
   const { position, onContextMenu, onClose } = useContextMenu();
 
   const headerMenuItems = [
     ...(onSyncStack ? [{ label: "Sync All in Stack", icon: <RefreshCcw />, onClick: () => onSyncStack(stack.hash) }] : []),
+    ...(onOpenAgent ? [{ label: "Open Agent", icon: <Bot />, onClick: () => onOpenAgent(stack.hash) }] : []),
     { label: "Rename Stack", icon: <Pencil />, onClick: () => onRename(stack.hash) },
     { label: "Add Branch", icon: <Plus />, onClick: () => onAddBranch(stack.hash) },
   ];
