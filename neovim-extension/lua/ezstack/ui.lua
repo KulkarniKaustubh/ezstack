@@ -586,6 +586,36 @@ function M._setup_keymaps(bufnr)
     end
     cli.run_in_terminal({ "diff" })
   end, "Diff against parent")
+
+  -- a — open agent
+  map("a", function()
+    local entry = M.get_cursor_data(bufnr)
+    if not entry then
+      return
+    end
+    if entry.type == "branch" and entry.branch_name then
+      cli.run_in_terminal({ "agent", "-b", entry.branch_name })
+    elseif entry.stack_hash then
+      cli.run_in_terminal({ "agent", "-s", entry.stack_hash })
+    else
+      cli.run_in_terminal({ "agent" })
+    end
+  end, "Open agent")
+
+  -- A — open agent feature
+  map("A", function()
+    local entry = M.get_cursor_data(bufnr)
+    if not entry or not entry.stack_hash then
+      vim.notify("Place cursor on a stack or branch to use agent feature mode", vim.log.levels.WARN)
+      return
+    end
+    vim.ui.input({ prompt = "Feature description: " }, function(description)
+      if not description or description == "" then
+        return
+      end
+      cli.run_in_terminal({ "agent", "-s", entry.stack_hash, "feature", description })
+    end)
+  end, "Build feature with agent")
 end
 
 --- Render a stack tree as plain text lines (for Telescope preview).
