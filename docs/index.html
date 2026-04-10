@@ -84,7 +84,7 @@
     <div class="hero-glow"></div>
     <div class="container">
       <div class="hero-content">
-        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v1.11.0 &mdash; Latest Release</a>
+        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v1.11.2 &mdash; Latest Release</a>
         <h1>Stacked PRs.<br>Zero friction.</h1>
         <p class="hero-sub">Manage stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs &mdash; all from one CLI.</p>
         <div class="hero-actions">
@@ -237,7 +237,14 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <h3>Smart Conflict Handling</h3>
-          <p>Rebase conflicts pause with clear recovery instructions. Autostash is on by default. <code>--dry-run</code> lets you preview before committing.</p>
+          <p>Rebase conflicts pause with clear recovery instructions. Run <code>ezs sync --continue</code> to resume, push, and re-sync children. Autostash and <code>--dry-run</code> included.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          </div>
+          <h3>Rich Stack Visualization</h3>
+          <p>Tree-style branch display shows parent-child relationships at a glance. <code>ezs ls</code> includes <code>+/-</code> diff stats per branch and strikes through merged PRs.</p>
         </div>
       </div>
     </div>
@@ -306,12 +313,12 @@
             <table class="cmd-table">
               <tbody>
                 <tr><td class="cmd-name"><code>new</code> <span class="cmd-alias">n</span></td><td>Create a new branch in the stack</td></tr>
-                <tr><td class="cmd-name"><code>list</code> <span class="cmd-alias">ls</span></td><td>List all stacks and branches</td></tr>
+                <tr><td class="cmd-name"><code>list</code> <span class="cmd-alias">ls</span></td><td>List all stacks with tree-style display and diff stats</td></tr>
                 <tr><td class="cmd-name"><code>status</code> <span class="cmd-alias">st</span></td><td>Show status with PR and CI info</td></tr>
                 <tr><td class="cmd-name"><code>stack</code></td><td>Add a branch to a stack or start a new stack</td></tr>
                 <tr><td class="cmd-name"><code>unstack</code></td><td>Remove a branch from tracking</td></tr>
                 <tr><td class="cmd-name"><code>delete</code> <span class="cmd-alias">del, rm</span></td><td>Delete a branch and its worktree</td></tr>
-                <tr><td class="cmd-name"><code>reparent</code> <span class="cmd-alias">rp</span></td><td>Change the parent of a branch</td></tr>
+                <tr><td class="cmd-name"><code>reparent</code> <span class="cmd-alias">rp</span></td><td>Change the parent of a branch. Use <code>--no-rebase</code> for metadata-only</td></tr>
               </tbody>
             </table>
           </div>
@@ -343,7 +350,7 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>sync</code> <span class="cmd-alias">rebase, rb</span></td><td>Sync stack with remote (rebase or merge)</td></tr>
+                <tr><td class="cmd-name"><code>sync</code> <span class="cmd-alias">rebase, rb</span></td><td>Sync stack with remote (rebase or merge). Use <code>--continue</code> after resolving conflicts</td></tr>
                 <tr><td class="cmd-name"><code>commit</code> <span class="cmd-alias">ci</span></td><td>Commit and auto-sync child branches</td></tr>
                 <tr><td class="cmd-name"><code>amend</code></td><td>Amend last commit and auto-sync children</td></tr>
                 <tr><td class="cmd-name"><code>push</code></td><td>Push current branch or entire stack</td></tr>
@@ -483,7 +490,7 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v1.11.0</span>
+          <span class="footer-meta">MIT License &middot; v1.11.2</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
