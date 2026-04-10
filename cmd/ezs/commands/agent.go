@@ -29,7 +29,7 @@ func Agent(args []string) error {
     feature     Feature builder — agent breaks a feature into incremental stacked branches
 
 %sOPTIONS%s
-    --agent <cmd>        Agent CLI command (default: configured or "claude")
+    --cmd <command>      Agent CLI to use (default: configured or "claude")
     -s, --stack <hash>   Stack to work on (hash prefix or "name")
     -b, --branch <name>  Branch to work in (implies --stack from branch's stack)
     -h, --help           Show this help message
@@ -60,7 +60,7 @@ func Agent(args []string) error {
 			ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset)
 	}
 
-	agentFlag := fs.String("agent", "", "Agent CLI command (overrides config)")
+	cmdFlag := fs.String("cmd", "", "Agent CLI to use (overrides config)")
 	stackFlag := fs.StringP("stack", "s", "", "Stack hash prefix or name")
 	branchFlag := fs.StringP("branch", "b", "", "Branch to work in")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
@@ -95,7 +95,7 @@ func Agent(args []string) error {
 	repoPath := getMainWorktreePath(g)
 
 	// Determine agent command
-	agentCmd := *agentFlag
+	agentCmd := *cmdFlag
 	if agentCmd == "" {
 		repoCfg := cfg.GetRepoConfig(repoPath)
 		agentCmd = repoCfg.GetAgentCommand()
