@@ -92,10 +92,9 @@ func configSet(key, value string) error {
 		return err
 	}
 
-	value = helpers.ExpandPath(value)
-
 	switch key {
 	case "worktree_base_dir":
+		value = helpers.ExpandPath(value)
 		repoPath, err := getCurrentRepoPath()
 		if err != nil {
 			return fmt.Errorf("worktree_base_dir is a per-repo setting: %w", err)
@@ -291,15 +290,12 @@ func configInteractive() error {
 		}
 	}
 
-	configChanged := false
-
 	if repoCfg == nil {
 		repoCfg = &config.RepoConfig{}
 	}
 
 	useWorktrees := ui.ConfirmTUIWithDefault("Use git worktrees for new branches (recommended)", currentUseWorktrees)
 	repoCfg.UseWorktrees = &useWorktrees
-	configChanged = true
 	ui.Success(fmt.Sprintf("Set use_worktrees = %v", useWorktrees))
 
 	if useWorktrees {
@@ -331,7 +327,6 @@ func configInteractive() error {
 				}
 
 				repoCfg.WorktreeBaseDir = worktreeBaseDir
-				configChanged = true
 				ui.Success(fmt.Sprintf("Set worktree_base_dir = %s", worktreeBaseDir))
 			}
 			break
@@ -340,28 +335,24 @@ func configInteractive() error {
 
 	cdAfterNew := ui.ConfirmTUIWithDefault("Auto-cd into new worktrees after creation", currentCdAfterNew)
 	repoCfg.CdAfterNew = &cdAfterNew
-	configChanged = true
 	ui.Success(fmt.Sprintf("Set cd_after_new = %v", cdAfterNew))
 
 	// Sync strategy: rebase or merge
 	options := []string{"merge", "rebase"}
 	defaultIdx := 0
 	syncStrategyIdx := ui.SelectTUI(options, "Select your sync strategy (merge is recommended since rebase will force push)", defaultIdx)
-	if syncStrategyIdx == 0 {
-		repoCfg.SyncStrategy = "merge"
-	} else {
-		repoCfg.SyncStrategy = "rebase"
-	}
-	configChanged = true
-	ui.Success(fmt.Sprintf("Set sync_strategy = %s", repoCfg.SyncStrategy))
-
-	if configChanged {
-		cfg.SetRepoConfig(repoPath, repoCfg)
-		if err := cfg.Save(); err != nil {
-			return err
+	if syncStrategyIdx >= 0 {
+		if syncStrategyIdx == 0 {
+			repoCfg.SyncStrategy = "merge"
+		} else {
+			repoCfg.SyncStrategy = "rebase"
 		}
-	} else {
-		ui.Info("No changes made to configuration")
+		ui.Success(fmt.Sprintf("Set sync_strategy = %s", repoCfg.SyncStrategy))
+	}
+
+	cfg.SetRepoConfig(repoPath, repoCfg)
+	if err := cfg.Save(); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "\n%sNote:%s For 'ezs goto' and 'ezs new --cd' to change directories, add this to your shell config (if not already done):\n", ui.Bold, ui.Reset)
