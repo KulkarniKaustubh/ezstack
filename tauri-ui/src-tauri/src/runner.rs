@@ -1,74 +1,5 @@
 use crate::types::{CommandResult, SshConnection};
-use std::path::PathBuf;
 use std::process::Command;
-use std::sync::OnceLock;
-
-/// Cached resolved path to the local `ezs` binary.
-static EZS_BINARY: OnceLock<String> = OnceLock::new();
-
-/// Resolve the local `ezs` binary path, matching the VS Code extension logic:
-///   1. Try `whereis ezs` (finds actual binary, unlike `which` which may show shell functions)
-///   2. Check common install locations
-///   3. Fallback to bare "ezs"
-fn find_ezs_binary() -> String {
-    // 1. Try `whereis ezs` — `which` may return a shell function instead of the binary
-    //    whereis output format: "ezs: /path/to/ezs [/other/path ...]"
-    if let Ok(output) = Command::new("whereis").arg("ezs").output() {
-        if output.status.success() {
-            let line = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            // Strip the "ezs: " prefix and take the first path
-            if let Some(paths) = line.strip_prefix("ezs:") {
-                let paths = paths.trim();
-                if let Some(first) = paths.split_whitespace().next() {
-                    if PathBuf::from(first).exists() {
-                        return first.to_string();
-                    }
-                }
-            }
-        }
-    }
-
-    // 2. Check common install locations
-    let home = dirs::home_dir().unwrap_or_default();
-    let mut common_paths: Vec<PathBuf> = vec![
-        // make install (XDG convention)
-        home.join(".local").join("bin").join("ezs"),
-    ];
-
-    // go install (GOBIN)
-    if let Ok(gobin) = std::env::var("GOBIN") {
-        if !gobin.is_empty() {
-            common_paths.push(PathBuf::from(&gobin).join("ezs"));
-        }
-    }
-
-    // go install (GOPATH/bin)
-    if let Ok(gopath) = std::env::var("GOPATH") {
-        if !gopath.is_empty() {
-            common_paths.push(PathBuf::from(&gopath).join("bin").join("ezs"));
-        }
-    }
-
-    // go install (default ~/go/bin)
-    common_paths.push(home.join("go").join("bin").join("ezs"));
-
-    // system-wide
-    common_paths.push(PathBuf::from("/usr/local/bin/ezs"));
-
-    for p in &common_paths {
-        if p.exists() {
-            return p.to_string_lossy().to_string();
-        }
-    }
-
-    // 3. Fallback — will fail with a clear error if not found
-    "ezs".to_string()
-}
-
-/// Get the resolved `ezs` binary path (cached after first call).
-fn ezs_binary() -> &'static str {
-    EZS_BINARY.get_or_init(find_ezs_binary)
-}
 
 /// Shell-escape a string by wrapping in single quotes.
 fn shell_escape(s: &str) -> String {
@@ -101,9 +32,8 @@ fn run_command(
 ) -> Result<CommandResult, String> {
     let output = match conn {
         None => {
-            // Local execution — use resolved path for ezs, bare name for others
-            let resolved = if binary == "ezs" { ezs_binary() } else { binary };
-            Command::new(resolved)
+            // Local execution
+            Command::new(binary)
                 .args(args)
                 .current_dir(repo_path)
                 .output()
@@ -111,7 +41,6 @@ fn run_command(
         }
         Some(ssh) => {
             // Build the remote command string with proper escaping
-            // Remote uses bare binary name — PATH is handled by the remote shell
             let escaped_args: Vec<String> = args.iter().map(|a| shell_escape(a)).collect();
             let remote_cmd = format!(
                 "cd {} && {} {}",
