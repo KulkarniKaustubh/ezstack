@@ -368,6 +368,20 @@ export class EzsCli {
     await this.exec(["stack", "rename", stackHash, name]);
   }
 
+  // ── Agent (terminal) ──
+
+  openAgent(stackHash: string): vscode.Terminal {
+    return this.runInTerminal(["agent", "-s", stackHash]);
+  }
+
+  openAgentOnBranch(branchName: string): vscode.Terminal {
+    return this.runInTerminal(["agent", "-b", branchName]);
+  }
+
+  openAgentFeature(stackHash: string, description: string): vscode.Terminal {
+    return this.runInTerminal(["agent", "-s", stackHash, "feature", description]);
+  }
+
   // ── Interactive (terminal) ──
 
   syncInteractive(mode: "current" | "stack" | "all" = "stack"): vscode.Terminal {
