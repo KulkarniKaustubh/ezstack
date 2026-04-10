@@ -2,7 +2,7 @@
   "name": "ezstack",
   "displayName": "ezstack",
   "description": "Manage stacked pull requests with git worktrees",
-  "version": "2.2.0-beta.2",
+  "version": "3.0.0",
   "icon": "resources/icon.png",
   "publisher": "kaustubh",
   "license": "MIT",
@@ -211,6 +211,12 @@
         "title": "Build Feature with Agent",
         "category": "ezstack",
         "icon": "$(wand)"
+      },
+      {
+        "command": "ezstack.editAgentPrompt",
+        "title": "Edit Agent Prompt",
+        "category": "ezstack",
+        "icon": "$(edit)"
       },
       {
         "command": "ezstack.openInNextPR",
@@ -457,6 +463,11 @@
           "command": "ezstack.openAgentFeature",
           "when": "view == ezstackStacks && viewItem == stack",
           "group": "2_agent@2"
+        },
+        {
+          "command": "ezstack.editAgentPrompt",
+          "when": "view == ezstackStacks && viewItem == stack",
+          "group": "2_agent@3"
         },
         {
           "command": "ezstack.openAgent",
