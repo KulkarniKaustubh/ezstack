@@ -170,7 +170,7 @@ func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) st
 
 		g := git.New(worktreePath)
 		needsPush, err := g.IsLocalAheadOfOrigin(branchName)
-		if err != nil || !needsPush {
+		if err == nil && !needsPush {
 			continue
 		}
 
@@ -246,7 +246,7 @@ func OfferPushMultiple(branches []string, getBranchWorktree func(string) string)
 
 		g := git.New(worktreePath)
 		needsPush, err := g.IsLocalAheadOfOrigin(branchName)
-		if err != nil || !needsPush {
+		if err == nil && !needsPush {
 			continue
 		}
 
@@ -433,19 +433,21 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 
 	if discoveredPRs {
 		mainWorktree := getMainWorktreePath(g)
-		cache, _ := config.LoadCacheConfig(mainWorktree)
-		for _, branch := range s.Branches {
-			if branch.PRNumber > 0 {
-				bc := cache.GetBranchCache(branch.Name)
-				if bc == nil {
-					bc = &config.BranchCache{}
+		cache, err := config.LoadCacheConfig(mainWorktree)
+		if err == nil {
+			for _, branch := range s.Branches {
+				if branch.PRNumber > 0 {
+					bc := cache.GetBranchCache(branch.Name)
+					if bc == nil {
+						bc = &config.BranchCache{}
+					}
+					bc.PRNumber = branch.PRNumber
+					bc.PRUrl = branch.PRUrl
+					cache.SetBranchCache(branch.Name, bc)
 				}
-				bc.PRNumber = branch.PRNumber
-				bc.PRUrl = branch.PRUrl
-				cache.SetBranchCache(branch.Name, bc)
 			}
+			cache.Save(mainWorktree)
 		}
-		cache.Save(mainWorktree)
 	}
 
 	return gh
@@ -462,7 +464,20 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 		wg.Add(1)
 		go func(b *config.Branch) {
 			defer wg.Done()
-			added, removed, err := g.GetDiffStat(b.Parent, b.Name)
+			if b.IsMerged {
+				return
+			}
+			// Use origin/ refs when available for both parent and branch
+			// to get accurate stats matching what PRs show
+			parentRef := b.Parent
+			if g.RemoteBranchExists(b.Parent) {
+				parentRef = "origin/" + b.Parent
+			}
+			branchRef := b.Name
+			if g.RemoteBranchExists(b.Name) {
+				branchRef = "origin/" + b.Name
+			}
+			added, removed, err := g.GetDiffStat(parentRef, branchRef)
 			if err != nil {
 				return
 			}

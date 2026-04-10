@@ -145,11 +145,11 @@
       '<span class="t-dim">Created branch \'auth-middleware\' with worktree at ~/worktrees/auth-middleware</span>'
     ]},
     { type: 'pause', duration: 600 },
-    { type: 'command', prompt: '$ ', text: 'ezs status' },
+    { type: 'command', prompt: '$ ', text: 'ezs ls' },
     { type: 'output', lines: [
       '  <span class="t-dim">main</span>',
-      '  <span class="t-dim">\u2514\u2500\u2500</span> <span class="t-branch">auth-service</span>        <span class="t-info">PR #42</span> <span class="t-success">\u2713 2 approved</span>',
-      '  <span class="t-dim">    \u2514\u2500\u2500</span> <span class="t-branch">auth-middleware</span>  <span class="t-info">PR #43</span> <span class="t-dim">\u25cf CI running</span>'
+      '  <span class="t-dim">\u2514\u2500\u2500</span> <span class="t-branch">auth-service</span>        <span class="t-info">PR #42</span> <span class="t-success">\u2713 2 approved</span>  <span class="t-success">+120</span> <span class="t-error">-14</span>',
+      '  <span class="t-dim">    \u2514\u2500\u2500</span> <span class="t-branch">auth-middleware</span>  <span class="t-info">PR #43</span> <span class="t-dim">\u25cf CI running</span>   <span class="t-success">+45</span> <span class="t-error">-3</span>'
     ]},
     { type: 'pause', duration: 800 },
     { type: 'command', prompt: '$ ', text: 'ezs commit -m "Add middleware validation"' },

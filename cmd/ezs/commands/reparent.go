@@ -25,6 +25,7 @@ func Reparent(args []string) error {
     -p, --parent <name>     New parent branch
     --merge                 Use git merge instead of git rebase
     --rebase                Use git rebase (overrides config)
+    --no-rebase             Update tracking only, skip sync
     -h, --help              Show this help message
 
 %sDESCRIPTION%s
@@ -50,6 +51,7 @@ func Reparent(args []string) error {
 	parentFlag := fs.StringP("parent", "p", "", "New parent branch")
 	mergeFlag := fs.Bool("merge", false, "Use git merge instead of git rebase")
 	rebaseFlag := fs.Bool("rebase", false, "Use git rebase (overrides config)")
+	noRebaseFlag := fs.Bool("no-rebase", false, "Update tracking only, skip sync")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -103,17 +105,26 @@ func Reparent(args []string) error {
 		useMerge = mgr.GetConfig().GetSyncStrategy(mgr.GetRepoDir()) == "merge"
 	}
 
+	// Helper to dispatch based on --no-rebase flag
+	doReparent := func(branch, parent string) error {
+		if *noRebaseFlag {
+			return doReparentNoRebase(mgr, branch, parent)
+		}
+		return doReparentWithMerge(mgr, branch, parent, useMerge)
+	}
+
 	// Interactive mode if branch or parent not specified
 	if branchName == "" || newParent == "" {
-		return reparentInteractive(mgr, g, branchName, newParent, useMerge)
+		return reparentInteractiveWith(mgr, g, branchName, newParent, doReparent)
 	}
 
 	// Non-interactive mode
-	return doReparentWithMerge(mgr, branchName, newParent, useMerge)
+	return doReparent(branchName, newParent)
 }
 
-// reparentInteractive handles interactive branch and parent selection
-func reparentInteractive(mgr *stack.Manager, g *git.Git, branchName, newParent string, useMerge bool) error {
+// reparentInteractiveWith handles interactive branch and parent selection,
+// then calls the provided doReparent function.
+func reparentInteractiveWith(mgr *stack.Manager, g *git.Git, branchName, newParent string, doReparent func(string, string) error) error {
 	cfg := mgr.GetConfig()
 	baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
 
@@ -135,7 +146,7 @@ func reparentInteractive(mgr *stack.Manager, g *git.Git, branchName, newParent s
 		}
 	}
 
-	return doReparentWithMerge(mgr, branchName, newParent, useMerge)
+	return doReparent(branchName, newParent)
 }
 
 // selectBranchToReparent shows a selection UI for choosing which branch to reparent
@@ -256,11 +267,16 @@ func IsDescendantOf(mgr *stack.Manager, branchName, ancestorName string) bool {
 		return false
 	}
 
+	visited := make(map[string]bool)
 	current := branch.Parent
 	for {
 		if current == ancestorName {
 			return true
 		}
+		if visited[current] {
+			return false
+		}
+		visited[current] = true
 		parentBranch := mgr.GetBranch(current)
 		if parentBranch == nil {
 			return false

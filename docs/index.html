@@ -6,17 +6,46 @@
   <title>ezstack - Stacked PRs. Zero friction.</title>
   <meta name="description" content="ezstack is a CLI tool for managing stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs — all from one CLI.">
   <meta name="theme-color" content="#09090b">
+  <meta name="keywords" content="ezstack, stacked pull requests, stacked PRs, git worktrees, git CLI tool, git workflow, pull request management, code review, developer tools, golang CLI">
+  <meta name="author" content="Kaustubh Kulkarni">
+  <link rel="canonical" href="https://kulkarnikaustubh.github.io/ezstack/">
 
   <!-- Open Graph -->
   <meta property="og:title" content="ezstack - Stacked PRs. Zero friction.">
-  <meta property="og:description" content="A CLI tool for managing stacked pull requests with git worktrees.">
+  <meta property="og:description" content="A CLI tool for managing stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs — all from one CLI.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://kulkarnikaustubh.github.io/ezstack/">
+  <meta property="og:site_name" content="ezstack">
 
   <!-- Twitter -->
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:title" content="ezstack - Stacked PRs. Zero friction.">
-  <meta name="twitter:description" content="A CLI tool for managing stacked pull requests with git worktrees.">
+  <meta name="twitter:description" content="A CLI tool for managing stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs — all from one CLI.">
+
+  <!-- JSON-LD Structured Data -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "ezstack",
+    "description": "CLI tool for managing stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs — all from one CLI.",
+    "url": "https://kulkarnikaustubh.github.io/ezstack/",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "macOS, Linux",
+    "programmingLanguage": "Go",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "codeRepository": "https://github.com/KulkarniKaustubh/ezstack",
+    "author": {
+      "@type": "Person",
+      "name": "Kaustubh Kulkarni",
+      "url": "https://github.com/KulkarniKaustubh"
+    }
+  }
+  </script>
 
   <!-- Favicon -->
   <link rel="icon" href="img/favicon.svg" type="image/svg+xml">
@@ -43,6 +72,7 @@
         <a href="#features">Features</a>
         <a href="#how-it-works">How It Works</a>
         <a href="#commands">Commands</a>
+        <a href="#ecosystem">Ecosystem</a>
         <a href="#install">Install</a>
         <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener" class="nav-github">GitHub</a>
       </div>
@@ -54,7 +84,7 @@
     <div class="hero-glow"></div>
     <div class="container">
       <div class="hero-content">
-        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v1.11.0 &mdash; Latest Release</a>
+        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v1.11.2 &mdash; Latest Release</a>
         <h1>Stacked PRs.<br>Zero friction.</h1>
         <p class="hero-sub">Manage stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs &mdash; all from one CLI.</p>
         <div class="hero-actions">
@@ -207,7 +237,14 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <h3>Smart Conflict Handling</h3>
-          <p>Rebase conflicts pause with clear recovery instructions. Autostash is on by default. <code>--dry-run</code> lets you preview before committing.</p>
+          <p>Rebase conflicts pause with clear recovery instructions. Run <code>ezs sync --continue</code> to resume, push, and re-sync children. Autostash and <code>--dry-run</code> included.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          </div>
+          <h3>Rich Stack Visualization</h3>
+          <p>Tree-style branch display shows parent-child relationships at a glance. <code>ezs ls</code> includes <code>+/-</code> diff stats per branch and strikes through merged PRs.</p>
         </div>
       </div>
     </div>
@@ -276,12 +313,12 @@
             <table class="cmd-table">
               <tbody>
                 <tr><td class="cmd-name"><code>new</code> <span class="cmd-alias">n</span></td><td>Create a new branch in the stack</td></tr>
-                <tr><td class="cmd-name"><code>list</code> <span class="cmd-alias">ls</span></td><td>List all stacks and branches</td></tr>
+                <tr><td class="cmd-name"><code>list</code> <span class="cmd-alias">ls</span></td><td>List all stacks with tree-style display and diff stats</td></tr>
                 <tr><td class="cmd-name"><code>status</code> <span class="cmd-alias">st</span></td><td>Show status with PR and CI info</td></tr>
                 <tr><td class="cmd-name"><code>stack</code></td><td>Add a branch to a stack or start a new stack</td></tr>
                 <tr><td class="cmd-name"><code>unstack</code></td><td>Remove a branch from tracking</td></tr>
                 <tr><td class="cmd-name"><code>delete</code> <span class="cmd-alias">del, rm</span></td><td>Delete a branch and its worktree</td></tr>
-                <tr><td class="cmd-name"><code>reparent</code> <span class="cmd-alias">rp</span></td><td>Change the parent of a branch</td></tr>
+                <tr><td class="cmd-name"><code>reparent</code> <span class="cmd-alias">rp</span></td><td>Change the parent of a branch. Use <code>--no-rebase</code> for metadata-only</td></tr>
               </tbody>
             </table>
           </div>
@@ -313,7 +350,7 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>sync</code> <span class="cmd-alias">rebase, rb</span></td><td>Sync stack with remote (rebase or merge)</td></tr>
+                <tr><td class="cmd-name"><code>sync</code> <span class="cmd-alias">rebase, rb</span></td><td>Sync stack with remote (rebase or merge). Use <code>--continue</code> after resolving conflicts</td></tr>
                 <tr><td class="cmd-name"><code>commit</code> <span class="cmd-alias">ci</span></td><td>Commit and auto-sync child branches</td></tr>
                 <tr><td class="cmd-name"><code>amend</code></td><td>Amend last commit and auto-sync children</td></tr>
                 <tr><td class="cmd-name"><code>push</code></td><td>Push current branch or entire stack</td></tr>
@@ -364,13 +401,96 @@
     </div>
   </section>
 
+  <!-- Ecosystem -->
+  <section class="ecosystem" id="ecosystem">
+    <div class="container">
+      <h2 class="section-title" data-animate>The ezstack ecosystem</h2>
+      <p class="section-sub" data-animate>Use ezstack wherever you work. CLI, editor, or desktop.</p>
+      <div class="eco-grid">
+
+        <!-- Desktop App -->
+        <div class="eco-card eco-card-featured" data-animate>
+          <div class="eco-header">
+            <div class="eco-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            </div>
+            <span class="eco-badge eco-badge-beta">Beta</span>
+          </div>
+          <h3>Desktop App</h3>
+          <p>Visual stacks board powered by Tauri. See all your stacks as columns, manage branches, sync, and create PRs &mdash; all from a native UI.</p>
+          <div class="eco-install">
+            <h4>Try the beta</h4>
+            <ol>
+              <li>Download the latest <code>.dmg</code> (macOS) or <code>.msi</code> (Windows) from the release page</li>
+              <li>Install and open &mdash; it auto-discovers your repos</li>
+              <li>Requires <code>ezs</code> CLI installed and on your PATH</li>
+            </ol>
+          </div>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/releases/tag/v2.0.0-tauri-beta.4" target="_blank" rel="noopener" class="btn btn-secondary eco-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download v2.0.0-tauri-beta.4
+          </a>
+        </div>
+
+        <!-- VS Code Extension -->
+        <div class="eco-card" data-animate>
+          <div class="eco-header">
+            <div class="eco-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            </div>
+            <span class="eco-badge eco-badge-beta">Beta</span>
+          </div>
+          <h3>VS Code Extension</h3>
+          <p>Stack viewer panel in your sidebar. Browse branches, see PR status, and run commands without leaving the editor.</p>
+          <div class="eco-install">
+            <h4>Try the beta</h4>
+            <ol>
+              <li>Download <code>ezstack-2.0.0-beta.9.vsix</code> from the release page</li>
+              <li>In VS Code: <code>Cmd+Shift+P</code> &rarr; "Install from VSIX" &rarr; select the file</li>
+              <li>Open a repo with ezstack configured &mdash; the panel appears in the sidebar</li>
+            </ol>
+          </div>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/releases/tag/v2.0.0-beta.9" target="_blank" rel="noopener" class="btn btn-secondary eco-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download v2.0.0-beta.9 VSIX
+          </a>
+        </div>
+
+        <!-- Neovim Plugin -->
+        <div class="eco-card" data-animate>
+          <div class="eco-header">
+            <div class="eco-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            </div>
+            <span class="eco-badge eco-badge-beta">Beta</span>
+          </div>
+          <h3>Neovim Plugin</h3>
+          <p>Native Lua plugin with Telescope integration, stack viewer, statusline component, and fugitive auto-refresh. Manage your entire stack without leaving Neovim.</p>
+          <div class="eco-install">
+            <h4>Try the beta</h4>
+            <ol>
+              <li>Install with lazy.nvim: <code>{ "KulkarniKaustubh/ezstack", subdir = "neovim-extension" }</code></li>
+              <li>Run <code>:Ezs</code> to open the stack viewer, or <code>:Telescope ezstack branches</code> for fuzzy picking</li>
+              <li>Requires <code>ezs</code> CLI installed, Neovim 0.10+, and optionally telescope.nvim</li>
+            </ol>
+          </div>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/tree/feat/neovim-extension/neovim-extension" target="_blank" rel="noopener" class="btn btn-secondary eco-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/></svg>
+            View on GitHub
+          </a>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
   <!-- Footer -->
   <footer class="footer">
     <div class="container">
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v1.11.0</span>
+          <span class="footer-meta">MIT License &middot; v1.11.2</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

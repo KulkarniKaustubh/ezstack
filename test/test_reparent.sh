@@ -29,8 +29,29 @@ error() {
 assert_parent() {
     local branch="$1"
     local expected_parent="$2"
-    # Check the parent by looking at ezs status output or config
-    local actual_parent=$(grep -A5 "\"name\": \"$branch\"" "$EZSTACK_HOME/stacks.json" | grep '"parent"' | head -1 | sed 's/.*: "\([^"]*\)".*/\1/')
+    # In v5 tree format, the parent is the key whose value object contains the branch as a key.
+    # Use ezs ls --json if available, otherwise parse the tree structure.
+    # Find the line with "branch": and check the line above for the parent key.
+    local actual_parent=$("$EZS" ls --json 2>/dev/null | grep -o "\"parent\":\"[^\"]*\"" | head -1 | sed 's/.*://;s/"//g' 2>/dev/null || true)
+    # Fallback: parse the tree by finding which key contains our branch as a direct child
+    if [ -z "$actual_parent" ]; then
+        # In the nested tree JSON, "parent": { "branch": { ... } } means parent is the parent of branch
+        # Use python/perl if available, otherwise use a simple grep approach
+        actual_parent=$(python3 -c "
+import json, sys
+with open('$EZSTACK_HOME/stacks.json') as f:
+    data = json.load(f)
+for repo in data.get('repos', {}).values():
+    for stack in repo.get('stacks', {}).values():
+        def find_parent(tree, target, parent=stack.get('root','')):
+            for key, children in tree.items():
+                if key == target:
+                    print(parent)
+                    sys.exit(0)
+                find_parent(children, target, key)
+        find_parent(stack.get('tree', {}), '$branch')
+" 2>/dev/null)
+    fi
     if [ "$actual_parent" != "$expected_parent" ]; then
         error "Branch $branch has parent '$actual_parent', expected '$expected_parent'"
     fi

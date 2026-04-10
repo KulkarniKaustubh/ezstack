@@ -4,8 +4,12 @@
 
 **Manage stacked PRs with git worktrees**
 
+A CLI tool for managing stacked pull requests using git worktrees. Create branches, sync rebases, manage PRs — all from one command line tool.
+
 [![Go Version](https://img.shields.io/badge/Go-1.25+-00ADD8?style=flat&logo=go)](https://go.dev/)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+[Website](https://kulkarnikaustubh.github.io/ezstack/) · [Documentation](DOCUMENTATION.md) · [Releases](https://github.com/KulkarniKaustubh/ezstack/releases)
 
 </div>
 
@@ -92,6 +96,8 @@ ezs sync -a
 | `delete` | `del`, `rm` | Delete a branch and its worktree |
 | `commit` | `ci` | Commit and auto-sync child branches |
 | `amend` | | Amend last commit and auto-sync children |
+| `push` | | Push current branch or entire stack |
+| `diff` | | Show diff against parent branch |
 | `pr` | | Manage pull requests (create, update, merge, draft, stack) |
 | `config` | `cfg` | Configure ezstack |
 | `menu` | | Interactive command menu |
