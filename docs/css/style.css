@@ -150,12 +150,20 @@ pre code {
   height: 64px;
 }
 
+.nav-logo {
+  vertical-align: middle;
+  margin-right: 0.5rem;
+  border-radius: 4px;
+}
+
 .nav-brand {
   font-family: var(--font-mono);
   font-size: 1.25rem;
   font-weight: 600;
   color: var(--text);
   letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
 }
 
 .nav-brand:hover {
@@ -917,6 +925,12 @@ pre code {
   color: var(--yellow);
   background: rgba(234, 179, 8, 0.1);
   border: 1px solid rgba(234, 179, 8, 0.25);
+}
+
+.eco-badge-new {
+  color: var(--green);
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.25);
 }
 
 .eco-badge-soon {
