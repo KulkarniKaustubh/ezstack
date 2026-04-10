@@ -38,6 +38,14 @@ export interface CommandResult {
   exit_code: number;
 }
 
+export interface SshConnection {
+  host: string;
+  user: string;
+  port: number;
+  key_path: string;
+  remote_repo_path: string;
+}
+
 export interface TreeNode {
   branch: StatusBranch;
   children: TreeNode[];

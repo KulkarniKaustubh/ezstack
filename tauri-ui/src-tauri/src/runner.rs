@@ -1,4 +1,4 @@
-use crate::types::CommandResult;
+use crate::types::{CommandResult, SshConnection};
 use std::process::Command;
 
 /// Run an ezs CLI command in the given repo directory.
@@ -58,6 +58,43 @@ pub fn run_git(repo_path: &str, args: &[&str]) -> Result<CommandResult, String> 
         .current_dir(repo_path)
         .output()
         .map_err(|e| format!("Failed to run git: {e}"))?;
+
+    Ok(CommandResult {
+        stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+        stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+        exit_code: output.status.code().unwrap_or(-1),
+    })
+}
+
+/// Shell-escape a string by wrapping in single quotes.
+#[allow(dead_code)]
+fn shell_escape(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Build an SSH command prefix from the connection config.
+fn ssh_base(conn: &SshConnection) -> Command {
+    let mut cmd = Command::new("ssh");
+    cmd.args(["-o", "StrictHostKeyChecking=accept-new"]);
+    cmd.args(["-o", "ConnectTimeout=10"]);
+    cmd.args(["-o", "BatchMode=yes"]);
+    if !conn.key_path.is_empty() {
+        cmd.args(["-i", &conn.key_path]);
+    }
+    if conn.port != 22 {
+        cmd.args(["-p", &conn.port.to_string()]);
+    }
+    cmd.arg(format!("{}@{}", conn.user, conn.host));
+    cmd
+}
+
+/// Run a raw SSH command (for connection testing).
+pub fn run_ssh_command(conn: &SshConnection, remote_cmd: &str) -> Result<CommandResult, String> {
+    let mut cmd = ssh_base(conn);
+    cmd.arg(remote_cmd);
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to run SSH: {e}"))?;
 
     Ok(CommandResult {
         stdout: String::from_utf8_lossy(&output.stdout).to_string(),

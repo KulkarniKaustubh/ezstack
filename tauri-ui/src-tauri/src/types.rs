@@ -79,3 +79,15 @@ pub struct RepoConfig {
     #[serde(default)]
     pub sync_strategy: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SshConnection {
+    pub host: String,
+    pub user: String,
+    pub port: u16,
+    /// Path to SSH private key file. If empty, uses default SSH keys.
+    #[serde(default)]
+    pub key_path: String,
+    /// Repository path on the remote machine.
+    pub remote_repo_path: String,
+}

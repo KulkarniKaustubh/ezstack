@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { StatusStack, CommandResult, RepoConfig } from "../types/ezstack";
+import type { StatusStack, CommandResult, RepoConfig, SshConnection } from "../types/ezstack";
 
-export type { CommandResult };
+export type { CommandResult, SshConnection };
 
 export async function getEzstackRepos(): Promise<RepoConfig[]> {
   return invoke<RepoConfig[]>("get_ezstack_repos");
@@ -128,4 +128,39 @@ export async function openAgentFeature(
   description: string,
 ): Promise<void> {
   return invoke<void>("open_agent_feature", { repoPath, stackHash, description });
+}
+
+// Remote connection commands
+
+export async function connectRemote(
+  host: string,
+  user: string,
+  port: number,
+  keyPath: string,
+  remoteRepoPath: string,
+): Promise<string> {
+  return invoke<string>("connect_remote", {
+    host,
+    user,
+    port,
+    keyPath,
+    remoteRepoPath,
+  });
+}
+
+export async function disconnectRemote(): Promise<void> {
+  return invoke<void>("disconnect_remote");
+}
+
+export async function getConnection(): Promise<SshConnection | null> {
+  return invoke<SshConnection | null>("get_connection");
+}
+
+export async function testSshConnection(
+  host: string,
+  user: string,
+  port: number,
+  keyPath: string,
+): Promise<string> {
+  return invoke<string>("test_ssh_connection", { host, user, port, keyPath });
 }

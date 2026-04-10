@@ -20,6 +20,7 @@ import { ReparentDialog } from "./components/operations/ReparentDialog";
 import { RenameStackDialog } from "./components/operations/RenameStackDialog";
 import { SettingsDialog } from "./components/operations/SettingsDialog";
 import { AgentFeatureDialog } from "./components/operations/AgentFeatureDialog";
+import { ConnectRemoteDialog } from "./components/operations/ConnectRemoteDialog";
 import type { StackNodeActions } from "./components/stack/StackNode";
 import * as ezs from "./commands/ezs";
 
@@ -33,7 +34,8 @@ type DialogState =
   | { type: "reparent"; branch: string }
   | { type: "rename-stack"; stackHash: string }
   | { type: "settings" }
-  | { type: "agent-feature" };
+  | { type: "agent-feature" }
+  | { type: "connect-remote" };
 
 export default function App() {
   const {
@@ -61,6 +63,8 @@ export default function App() {
   const { refresh } = useStacks();
   const { run } = useOperation();
   const [dialog, setDialog] = useState<DialogState>({ type: "none" });
+  const [isConnected, setIsConnected] = useState(false);
+  const [connectError, setConnectError] = useState<string | null>(null);
 
   // Resizable sidebar
   const sidebar = useResizable({
@@ -259,6 +263,12 @@ export default function App() {
         onSync={() => setDialog({ type: "sync" })}
         onSettings={() => setDialog({ type: "settings" })}
         isLoading={isLoading}
+        isConnected={isConnected}
+        onConnectRemote={() => setDialog({ type: "connect-remote" })}
+        onDisconnectRemote={async () => {
+          await ezs.disconnectRemote();
+          setIsConnected(false);
+        }}
       />
 
       <div className="flex flex-1 min-h-0">
@@ -416,6 +426,28 @@ export default function App() {
             onSubmit={async (stackHash, description) => {
               await ezs.openAgentFeature(selectedRepoPath, stackHash, description);
               setDialog({ type: "none" });
+            }}
+          />
+
+          <ConnectRemoteDialog
+            open={dialog.type === "connect-remote"}
+            onOpenChange={(o) => {
+              if (!o) {
+                setDialog({ type: "none" });
+                setConnectError(null);
+              }
+            }}
+            isLoading={operationLoading}
+            error={connectError}
+            onSubmit={async (host, user, port, keyPath, repoPath) => {
+              setConnectError(null);
+              try {
+                await ezs.connectRemote(host, user, port, keyPath, repoPath);
+                setIsConnected(true);
+                setDialog({ type: "none" });
+              } catch (e) {
+                setConnectError(e instanceof Error ? e.message : String(e));
+              }
             }}
           />
 

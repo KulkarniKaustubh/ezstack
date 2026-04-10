@@ -2,12 +2,15 @@ mod commands;
 mod runner;
 mod types;
 
-use commands::{config, list, operations, pr};
+use commands::{config, connection, list, operations, pr};
+use connection::ConnectionState;
+use std::sync::Mutex;
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .manage(ConnectionState(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             // Query commands
             list::get_stacks_status,
@@ -32,6 +35,11 @@ pub fn run() {
             config::get_ezstack_repos,
             config::get_config,
             config::set_config,
+            // Connection
+            connection::connect_remote,
+            connection::disconnect_remote,
+            connection::get_connection,
+            connection::test_ssh_connection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

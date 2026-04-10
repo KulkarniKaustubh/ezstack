@@ -1,4 +1,4 @@
-import { Moon, Sun, RefreshCw, Settings, RefreshCcw } from "lucide-react";
+import { Moon, Sun, RefreshCw, Settings, RefreshCcw, Monitor, Unplug } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../ui/button";
 import { useTheme } from "../../hooks/use-theme";
@@ -9,9 +9,12 @@ interface TitleBarProps {
   onSync: () => void;
   onSettings: () => void;
   isLoading: boolean;
+  isConnected?: boolean;
+  onConnectRemote?: () => void;
+  onDisconnectRemote?: () => void;
 }
 
-export function TitleBar({ onRefresh, onSync, onSettings, isLoading }: TitleBarProps) {
+export function TitleBar({ onRefresh, onSync, onSettings, isLoading, isConnected, onConnectRemote, onDisconnectRemote }: TitleBarProps) {
   const { theme, toggle } = useTheme();
   const [refreshFlash, setRefreshFlash] = useState(false);
 
@@ -32,6 +35,18 @@ export function TitleBar({ onRefresh, onSync, onSettings, isLoading }: TitleBarP
       </div>
 
       <div className="flex items-center gap-1">
+        {onConnectRemote && !isConnected && (
+          <Button variant="ghost" size="sm" onClick={onConnectRemote} className="gap-1.5 text-xs">
+            <Monitor className="h-3.5 w-3.5" />
+            Connect
+          </Button>
+        )}
+        {onDisconnectRemote && isConnected && (
+          <Button variant="ghost" size="sm" onClick={onDisconnectRemote} className="gap-1.5 text-xs text-success">
+            <Unplug className="h-3.5 w-3.5" />
+            Remote
+          </Button>
+        )}
         <Button variant="ghost" size="sm" onClick={onSync} disabled={isLoading} className="gap-1.5 text-xs">
           <RefreshCcw className="h-3.5 w-3.5" />
           Sync
