@@ -1,7 +1,8 @@
-import { Plus, Pencil } from "lucide-react";
+import { Plus, Pencil, RefreshCcw } from "lucide-react";
 import { Button } from "../ui/button";
 import { Tooltip } from "../ui/tooltip";
-import { StackNode } from "./StackNode";
+import { StackNode, type StackNodeActions } from "./StackNode";
+import { ContextMenu, useContextMenu } from "../ui/context-menu";
 import { cn } from "../../lib/utils";
 import type { StatusStack, TreeNode } from "../../types/ezstack";
 import { buildTree } from "../../types/ezstack";
@@ -12,6 +13,8 @@ interface StackColumnProps {
   onSelectBranch: (stackHash: string, branchName: string) => void;
   onRename: (stackHash: string) => void;
   onAddBranch: (stackHash: string) => void;
+  onSyncStack?: (stackHash: string) => void;
+  actions?: StackNodeActions;
 }
 
 function getStackHealthColor(stack: StatusStack): string {
@@ -32,6 +35,7 @@ function TreeNodeView({
   stackHash,
   isLast,
   depth,
+  actions,
 }: {
   node: TreeNode;
   selectedBranch: string | null;
@@ -39,6 +43,7 @@ function TreeNodeView({
   stackHash: string;
   isLast: boolean;
   depth: number;
+  actions?: StackNodeActions;
 }) {
   return (
     <div className="relative">
@@ -55,6 +60,7 @@ function TreeNodeView({
             branch={node.branch}
             isSelected={node.branch.name === selectedBranch}
             onClick={() => onSelectBranch(stackHash, node.branch.name)}
+            actions={actions}
           />
         </div>
       </div>
@@ -69,6 +75,7 @@ function TreeNodeView({
               stackHash={stackHash}
               isLast={i === node.children.length - 1}
               depth={depth + 1}
+              actions={actions}
             />
           ))}
         </div>
@@ -77,14 +84,21 @@ function TreeNodeView({
   );
 }
 
-export function StackColumn({ stack, selectedBranch, onSelectBranch, onRename, onAddBranch }: StackColumnProps) {
+export function StackColumn({ stack, selectedBranch, onSelectBranch, onRename, onAddBranch, onSyncStack, actions }: StackColumnProps) {
   const tree = buildTree(stack);
   const displayName = stack.name || stack.hash.slice(0, 7);
+  const { position, onContextMenu, onClose } = useContextMenu();
+
+  const headerMenuItems = [
+    ...(onSyncStack ? [{ label: "Sync All in Stack", icon: <RefreshCcw />, onClick: () => onSyncStack(stack.hash) }] : []),
+    { label: "Rename Stack", icon: <Pencil />, onClick: () => onRename(stack.hash) },
+    { label: "Add Branch", icon: <Plus />, onClick: () => onAddBranch(stack.hash) },
+  ];
 
   return (
     <div className="flex flex-col w-72 shrink-0 rounded-lg border bg-card">
       {/* Stack header */}
-      <div className="flex items-center gap-2 px-3 py-2.5 border-b">
+      <div className="flex items-center gap-2 px-3 py-2.5 border-b" onContextMenu={onContextMenu}>
         <div className={cn("h-2 w-2 rounded-full shrink-0", getStackHealthColor(stack))} />
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold truncate">{displayName}</div>
@@ -126,11 +140,14 @@ export function StackColumn({ stack, selectedBranch, onSelectBranch, onRename, o
                 stackHash={stack.hash}
                 isLast={i === tree.length - 1}
                 depth={1}
+                actions={actions}
               />
             ))}
           </div>
         )}
       </div>
+
+      <ContextMenu items={headerMenuItems} position={position} onClose={onClose} />
     </div>
   );
 }
