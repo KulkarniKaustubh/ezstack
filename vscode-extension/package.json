@@ -17,8 +17,7 @@
     "Other"
   ],
   "activationEvents": [
-    "workspaceContains:.git",
-    "onStartupFinished"
+    "workspaceContains:.git"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -137,9 +136,9 @@
       },
       {
         "command": "ezstack.openWorktree",
-        "title": "Open Worktree Folder",
+        "title": "Open in New Window",
         "category": "ezstack",
-        "icon": "$(folder-opened)"
+        "icon": "$(multiple-windows)"
       },
       {
         "command": "ezstack.renameStack",
@@ -437,42 +436,66 @@
       {
         "id": "ezstack.stack0",
         "description": "Color for stack group 0",
-        "defaults": { "dark": "#4FC1FF", "light": "#0066CC" }
+        "defaults": {
+          "dark": "#4FC1FF",
+          "light": "#0066CC"
+        }
       },
       {
         "id": "ezstack.stack1",
         "description": "Color for stack group 1",
-        "defaults": { "dark": "#C586C0", "light": "#AF00AF" }
+        "defaults": {
+          "dark": "#C586C0",
+          "light": "#AF00AF"
+        }
       },
       {
         "id": "ezstack.stack2",
         "description": "Color for stack group 2",
-        "defaults": { "dark": "#4EC9B0", "light": "#008060" }
+        "defaults": {
+          "dark": "#4EC9B0",
+          "light": "#008060"
+        }
       },
       {
         "id": "ezstack.stack3",
         "description": "Color for stack group 3",
-        "defaults": { "dark": "#DCDCAA", "light": "#795E26" }
+        "defaults": {
+          "dark": "#DCDCAA",
+          "light": "#795E26"
+        }
       },
       {
         "id": "ezstack.stack4",
         "description": "Color for stack group 4",
-        "defaults": { "dark": "#CE9178", "light": "#A31515" }
+        "defaults": {
+          "dark": "#CE9178",
+          "light": "#A31515"
+        }
       },
       {
         "id": "ezstack.stack5",
         "description": "Color for stack group 5",
-        "defaults": { "dark": "#D7BA7D", "light": "#B5651D" }
+        "defaults": {
+          "dark": "#D7BA7D",
+          "light": "#B5651D"
+        }
       },
       {
         "id": "ezstack.stack6",
         "description": "Color for stack group 6",
-        "defaults": { "dark": "#9CDCFE", "light": "#001080" }
+        "defaults": {
+          "dark": "#9CDCFE",
+          "light": "#001080"
+        }
       },
       {
         "id": "ezstack.stack7",
         "description": "Color for stack group 7",
-        "defaults": { "dark": "#F48771", "light": "#CD3131" }
+        "defaults": {
+          "dark": "#F48771",
+          "light": "#CD3131"
+        }
       }
     ],
     "configuration": {
@@ -487,6 +510,11 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically refresh stack view when config changes"
+        },
+        "ezstack.ticketPattern": {
+          "type": "string",
+          "default": "",
+          "description": "Regex pattern to extract ticket IDs from branch names (e.g. \"PROJ-\\d+\"). The first match is shown in the status bar and folder badges. Leave empty to disable."
         }
       }
     }
@@ -506,6 +534,6 @@
     "@vscode/vsce": "^2.22.0",
     "esbuild": "^0.19.0",
     "eslint": "^8.50.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.9.3"
   }
 }

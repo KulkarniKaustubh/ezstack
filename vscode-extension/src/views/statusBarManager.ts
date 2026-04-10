@@ -1,8 +1,7 @@
 import * as vscode from "vscode";
 import { EzsCli } from "../ezsCli";
 import { StatusStackJSON } from "../types";
-
-const TICKET_RE = /nos-(\d+)/i;
+import { extractTicket, shortBranchName } from "../branchUtils";
 
 export class StatusBarManager {
   private item: vscode.StatusBarItem;
@@ -23,17 +22,15 @@ export class StatusBarManager {
 
   async update(): Promise<void> {
     try {
-      const stacks = await this.cli.listStacks(true);
+      const stacks = await this.cli.listStacks();
       const current = this.findCurrentBranch(stacks);
       if (!current) {
         this.item.hide();
         return;
       }
       const { branchName, stack, position, stackSize } = current;
-      const match = branchName.match(TICKET_RE);
-      const ticket = match ? `NOS-${match[1]}` : "";
-      const parts = branchName.split(".");
-      const desc = parts.length > 1 ? parts[parts.length - 1] : branchName;
+      const ticket = extractTicket(branchName) ?? "";
+      const desc = shortBranchName(branchName);
       const posLabel = `[${position + 1}/${stackSize}]`;
       const prefix = ticket ? `${ticket} ${posLabel}` : posLabel;
       this.item.text = `$(layers) ${prefix} ${desc}`;
