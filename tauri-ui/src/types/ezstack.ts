@@ -10,7 +10,7 @@ export interface Branch {
 
 export interface StatusBranch extends Branch {
   pr_state?: "OPEN" | "DRAFT" | "MERGED" | "CLOSED";
-  ci_state?: "success" | "failure" | "pending";
+  ci_state?: "success" | "failure" | "pending" | "error" | "none" | "unknown";
   ci_summary?: string;
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   review_state?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";

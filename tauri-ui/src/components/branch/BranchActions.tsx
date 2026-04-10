@@ -16,6 +16,7 @@ interface BranchActionsProps {
   branch: StatusBranch;
   onSync: () => void;
   onPush: () => void;
+  onPushStack: () => void;
   onCreatePR: () => void;
   onUpdatePR: () => void;
   onMergePR: () => void;
@@ -30,6 +31,7 @@ export function BranchActions({
   branch,
   onSync,
   onPush,
+  onPushStack,
   onCreatePR,
   onUpdatePR,
   onMergePR,
@@ -57,6 +59,13 @@ export function BranchActions({
           <Button variant="outline" size="sm" onClick={onPush} disabled={isLoading} className="w-full justify-start">
             <Upload className="h-3.5 w-3.5" />
             Push
+          </Button>
+        </Tooltip>
+
+        <Tooltip content="Push all branches in stack">
+          <Button variant="outline" size="sm" onClick={onPushStack} disabled={isLoading} className="w-full justify-start">
+            <Upload className="h-3.5 w-3.5" />
+            Push Stack
           </Button>
         </Tooltip>
 

@@ -21,6 +21,7 @@ interface AppState {
   lastRefresh: Date | null;
   operationOutput: string | null;
   operationLoading: boolean;
+  operationSuccess: boolean;
 
   setRepos: (repos: RepoConfig[]) => void;
   setRepoData: (repoPath: string, data: RepoData) => void;
@@ -36,6 +37,7 @@ interface AppState {
   setLastRefresh: (date: Date) => void;
   setOperationOutput: (output: string | null) => void;
   setOperationLoading: (loading: boolean) => void;
+  setOperationSuccess: (success: boolean) => void;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -53,6 +55,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastRefresh: null,
   operationOutput: null,
   operationLoading: false,
+  operationSuccess: false,
 
   setRepos: (repos) => set({ repos }),
   setRepoData: (repoPath, data) => {
@@ -88,4 +91,5 @@ export const useAppStore = create<AppState>((set, get) => ({
   setLastRefresh: (date) => set({ lastRefresh: date }),
   setOperationOutput: (output) => set({ operationOutput: output }),
   setOperationLoading: (loading) => set({ operationLoading: loading }),
+  setOperationSuccess: (success) => set({ operationSuccess: success }),
 }));

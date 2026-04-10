@@ -49,6 +49,7 @@ export default function App() {
     lastRefresh,
     operationOutput,
     operationLoading,
+    operationSuccess,
     selectStack,
     selectBranch,
     setFocusedBranchIndex,
@@ -170,6 +171,7 @@ export default function App() {
     ? {
         onSync: () => setDialog({ type: "sync", branch: selectedBranch_.name }),
         onPush: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath)),
+        onPushStack: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath, true)),
         onCreatePR: () => setDialog({ type: "pr-create", branch: selectedBranch_.name }),
         onUpdatePR: () => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, selectedBranch_.name)),
         onMergePR: () =>
@@ -277,6 +279,7 @@ export default function App() {
                   <OperationOutput
                     output={operationOutput}
                     isLoading={operationLoading}
+                    isSuccess={operationSuccess}
                     onClose={() => setOperationOutput(null)}
                   />
                 )}

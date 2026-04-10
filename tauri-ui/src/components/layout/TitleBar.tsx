@@ -2,6 +2,7 @@ import { Moon, Sun, RefreshCw, Settings, RefreshCcw } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../ui/button";
 import { useTheme } from "../../hooks/use-theme";
+import { APP_VERSION } from "../../version";
 
 interface TitleBarProps {
   onRefresh: () => void;
@@ -27,7 +28,7 @@ export function TitleBar({ onRefresh, onSync, onSettings, isLoading }: TitleBarP
     >
       <div className="flex items-center gap-2" data-tauri-drag-region>
         <span className="text-sm font-semibold tracking-tight">ezstack</span>
-        <span className="text-[10px] text-muted-foreground font-mono">v2.0.0-beta.6</span>
+        <span className="text-[10px] text-muted-foreground font-mono">v{APP_VERSION}</span>
       </div>
 
       <div className="flex items-center gap-1">
