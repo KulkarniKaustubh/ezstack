@@ -2,7 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { EzsCli } from "../ezsCli";
-import { StackTreeProvider, StackNode, BranchNode, StackTreeItem } from "../views/stackTreeProvider";
+import { StackTreeProvider, StackNode, BranchNode, RootRepoNode, StackTreeItem } from "../views/stackTreeProvider";
 import { StatusBarManager } from "../views/statusBarManager";
 
 const PR_TEMPLATE_PATHS = [
@@ -79,7 +79,6 @@ export function registerCommands(
     vscode.commands.registerCommand("ezstack.expandAll", async () => {
       const roots = await treeProvider.getChildren();
       for (const root of roots) {
-        // expand: number sets depth — 10 is more than enough for any stack
         await treeView.reveal(root, { expand: 10 });
       }
     }),
@@ -98,7 +97,6 @@ export function registerCommands(
           return;
         }
 
-        // Pick a parent — scope to the stack if invoked from a stack node
         let parent: string | undefined;
         try {
           if (node instanceof StackNode) {
@@ -145,7 +143,6 @@ export function registerCommands(
       "ezstack.sync",
       async (node?: StackNode) => {
         if (node instanceof StackNode) {
-          // Invoked from a stack context — sync that stack directly
           cli.syncInteractive("stack");
           return;
         }
@@ -160,7 +157,6 @@ export function registerCommands(
         if (!mode) {
           return;
         }
-        // Sync is interactive (may have conflicts), so run in terminal
         cli.syncInteractive(mode.value);
       },
     ),
@@ -191,12 +187,10 @@ export function registerCommands(
     vscode.commands.registerCommand(
       "ezstack.prCreate",
       async (node?: BranchNode) => {
-        // Determine which branch to create the PR for
         let branchName: string | undefined;
         if (node) {
           branchName = node.branch.name;
         } else {
-          // Pick from list
           const stacks = await cli.listStacks(true);
           const branches = stacks
             .flatMap((s) => s.branches)
@@ -240,7 +234,6 @@ export function registerCommands(
           return;
         }
 
-        // Open an editor for the PR description
         const workspaceRoot =
           vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ?? "";
         const template = findPRTemplate(workspaceRoot);
@@ -262,7 +255,6 @@ export function registerCommands(
           return;
         }
 
-        // Read body from the editor that's still open
         const body = doc.getText().trim();
         await vscode.commands.executeCommand(
           "workbench.action.closeActiveEditor",
@@ -375,9 +367,7 @@ export function registerCommands(
         }
 
         const uri = vscode.Uri.file(pick.worktreePath);
-        await vscode.commands.executeCommand("vscode.openFolder", uri, {
-          forceNewWindow: false,
-        });
+        await vscode.commands.executeCommand("revealInExplorer", uri);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         vscode.window.showErrorMessage(`Failed to list branches: ${msg}`);
@@ -405,7 +395,6 @@ export function registerCommands(
           .flatMap((s) => s.branches)
           .find((b) => b.name === current.parent);
         if (!parent) {
-          // Parent is the stack root (e.g., main) — not in branches list
           vscode.window.showInformationMessage(
             `Parent "${current.parent}" is the stack root.`,
           );
@@ -418,9 +407,7 @@ export function registerCommands(
           return;
         }
         const uri = vscode.Uri.file(parent.worktree_path);
-        await vscode.commands.executeCommand("vscode.openFolder", uri, {
-          forceNewWindow: false,
-        });
+        await vscode.commands.executeCommand("revealInExplorer", uri);
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         vscode.window.showErrorMessage(`Failed to navigate up: ${msg}`);
@@ -463,9 +450,7 @@ export function registerCommands(
         }
         if (target.worktree_path) {
           const uri = vscode.Uri.file(target.worktree_path);
-          await vscode.commands.executeCommand("vscode.openFolder", uri, {
-            forceNewWindow: false,
-          });
+          await vscode.commands.executeCommand("revealInExplorer", uri);
         }
       } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -569,7 +554,6 @@ export function registerCommands(
         if (node?.branch.pr_url) {
           prUrl = node.branch.pr_url;
         } else {
-          // No node context — pick from branches with PRs
           try {
             const stacks = await cli.listStacks(true);
             const withPRs = stacks
@@ -603,7 +587,7 @@ export function registerCommands(
     ),
   );
 
-  // ── Open Worktree Folder ──
+  // ── Open Worktree Folder (new window) ──
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "ezstack.openWorktree",
@@ -619,7 +603,7 @@ export function registerCommands(
         }
         const uri = vscode.Uri.file(worktreePath);
         await vscode.commands.executeCommand("vscode.openFolder", uri, {
-          forceNewWindow: false,
+          forceNewWindow: true,
         });
       },
     ),
@@ -637,7 +621,6 @@ export function registerCommands(
           stackHash = node.stack.hash;
           currentName = node.stack.name;
         } else {
-          // No node context — pick a stack from the list
           const stacks = await cli.listStacks(true);
           if (stacks.length === 0) {
             vscode.window.showInformationMessage("No stacks found.");
@@ -665,7 +648,6 @@ export function registerCommands(
           placeHolder: "my-feature",
           value: currentName ?? "",
         });
-        // undefined means the user pressed Escape
         if (newName === undefined) {
           return;
         }
@@ -677,6 +659,41 @@ export function registerCommands(
             : `Cleared name for stack ${stackHash}.`,
           () => cli.renameStack(stackHash!, newName),
         );
+      },
+    ),
+  );
+
+  // ── Open Branch in Terminal ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.openBranchTerminal",
+      (node?: BranchNode | RootRepoNode) => {
+        let cwd: string | undefined;
+        if (node instanceof BranchNode) {
+          cwd = node.branch.worktree_path;
+        } else if (node instanceof RootRepoNode) {
+          cwd = node.repoPath;
+        }
+        if (cwd) {
+          const terminal = vscode.window.createTerminal({ cwd });
+          terminal.show();
+        }
+      },
+    ),
+  );
+
+  // ── Fetch & Pull ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.gitPull",
+      (node?: RootRepoNode) => {
+        const cwd = node instanceof RootRepoNode ? node.repoPath : cli.getWorkspaceRoot();
+        const terminal = vscode.window.createTerminal({
+          name: "ezstack: fetch & pull",
+          cwd,
+        });
+        terminal.show();
+        terminal.sendText("git fetch && git pull");
       },
     ),
   );

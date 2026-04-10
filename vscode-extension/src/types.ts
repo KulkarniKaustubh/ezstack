@@ -36,6 +36,20 @@ export interface StatusBranchJSON extends BranchJSON {
   deletions?: number;
 }
 
+/** Per-file git status indicator. */
+export type FileGitState = "modified" | "staged" | "untracked" | "both" | "conflict";
+
+/** Git working tree status for a worktree. */
+export interface WorktreeGitStatus {
+  modified: number;
+  staged: number;
+  untracked: number;
+  ahead: number;
+  behind: number;
+  /** Map of relative file path → git state. */
+  files: Map<string, FileGitState>;
+}
+
 /** Mirrors the Go syncInfoJSON struct from cmd/ezs/commands/sync.go */
 export interface SyncInfoJSON {
   branch: string;
