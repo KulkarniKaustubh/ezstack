@@ -1,12 +1,16 @@
-use crate::runner::run_ezs;
+use crate::runner::{run_ezs_auto, get_home_dir};
 use crate::types::{CommandResult, EzstackConfig, RepoConfig};
+use super::connection::ConnectionState;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use tauri::State;
 
 fn config_path() -> PathBuf {
     if let Ok(home) = env::var("EZSTACK_HOME") {
         PathBuf::from(home).join("config.json")
+    } else if let Some(home) = get_home_dir() {
+        home.join(".ezstack").join("config.json")
     } else if let Ok(home) = env::var("HOME") {
         PathBuf::from(home).join(".ezstack").join("config.json")
     } else {
@@ -28,11 +32,13 @@ pub fn get_ezstack_repos() -> Result<Vec<RepoConfig>, String> {
 }
 
 #[tauri::command]
-pub fn get_config(repo_path: String) -> Result<CommandResult, String> {
-    run_ezs(&repo_path, &["config", "show"])
+pub fn get_config(state: State<'_, ConnectionState>, repo_path: String) -> Result<CommandResult, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?.clone();
+    run_ezs_auto(conn.as_ref(), &repo_path, &["config", "show"])
 }
 
 #[tauri::command]
-pub fn set_config(repo_path: String, key: String, value: String) -> Result<CommandResult, String> {
-    run_ezs(&repo_path, &["config", "set", &key, &value])
+pub fn set_config(state: State<'_, ConnectionState>, repo_path: String, key: String, value: String) -> Result<CommandResult, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?.clone();
+    run_ezs_auto(conn.as_ref(), &repo_path, &["config", "set", &key, &value])
 }

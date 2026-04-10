@@ -9,7 +9,7 @@ static EZS_BINARY: OnceLock<String> = OnceLock::new();
 /// Get the user's home directory reliably.
 /// Tries multiple approaches since Tauri apps launched from Finder/dock
 /// may not inherit the shell's environment variables.
-fn get_home_dir() -> Option<PathBuf> {
+pub fn get_home_dir() -> Option<PathBuf> {
     // 1. Try dirs crate (uses platform-specific APIs, not just env vars)
     if let Some(home) = dirs::home_dir() {
         if home.is_absolute() && home.exists() {
@@ -88,6 +88,24 @@ fn find_ezs_binary() -> String {
     for p in &common_paths {
         if p.exists() {
             return p.to_string_lossy().to_string();
+        }
+    }
+
+    // Fallback: resolve via login shell (handles custom PATH setups)
+    for shell in &["bash", "zsh"] {
+        if let Ok(output) = Command::new(shell)
+            .args(["-lc", "command -v ezs 2>/dev/null"])
+            .output()
+        {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !path.is_empty() {
+                    let p = PathBuf::from(&path);
+                    if p.is_absolute() && p.exists() {
+                        return path;
+                    }
+                }
+            }
         }
     }
 
@@ -204,4 +222,36 @@ pub fn run_ssh_command(conn: &SshConnection, remote_cmd: &str) -> Result<Command
         stderr: String::from_utf8_lossy(&output.stderr).to_string(),
         exit_code: output.status.code().unwrap_or(-1),
     })
+}
+
+/// Run an ezs command on a remote machine via SSH.
+pub fn run_remote_ezs(conn: &SshConnection, repo_path: &str, args: &[&str]) -> Result<CommandResult, String> {
+    let escaped_path = shell_escape(repo_path);
+    let escaped_args: Vec<String> = args.iter().map(|a| shell_escape(a)).collect();
+    let cmd = format!("cd {} && ezs {}", escaped_path, escaped_args.join(" "));
+    run_ssh_command(conn, &cmd)
+}
+
+/// Run a git command on a remote machine via SSH.
+pub fn run_remote_git(conn: &SshConnection, repo_path: &str, args: &[&str]) -> Result<CommandResult, String> {
+    let escaped_path = shell_escape(repo_path);
+    let escaped_args: Vec<String> = args.iter().map(|a| shell_escape(a)).collect();
+    let cmd = format!("cd {} && git {}", escaped_path, escaped_args.join(" "));
+    run_ssh_command(conn, &cmd)
+}
+
+/// Run an ezs command, routing through SSH if a connection is active.
+pub fn run_ezs_auto(conn: Option<&SshConnection>, repo_path: &str, args: &[&str]) -> Result<CommandResult, String> {
+    match conn {
+        Some(c) => run_remote_ezs(c, repo_path, args),
+        None => run_ezs(repo_path, args),
+    }
+}
+
+/// Run a git command, routing through SSH if a connection is active.
+pub fn run_git_auto(conn: Option<&SshConnection>, repo_path: &str, args: &[&str]) -> Result<CommandResult, String> {
+    match conn {
+        Some(c) => run_remote_git(c, repo_path, args),
+        None => run_git(repo_path, args),
+    }
 }

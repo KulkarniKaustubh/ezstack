@@ -11,10 +11,9 @@ interface TitleBarProps {
   isLoading: boolean;
   isConnected?: boolean;
   onConnectRemote?: () => void;
-  onDisconnectRemote?: () => void;
 }
 
-export function TitleBar({ onRefresh, onSync, onSettings, isLoading, isConnected, onConnectRemote, onDisconnectRemote }: TitleBarProps) {
+export function TitleBar({ onRefresh, onSync, onSettings, isLoading, isConnected, onConnectRemote }: TitleBarProps) {
   const { theme, toggle } = useTheme();
   const [refreshFlash, setRefreshFlash] = useState(false);
 
@@ -36,16 +35,19 @@ export function TitleBar({ onRefresh, onSync, onSettings, isLoading, isConnected
       </div>
 
       <div className="flex items-center gap-1">
-        {onConnectRemote && !isConnected && (
-          <Button variant="ghost" size="sm" onClick={onConnectRemote} className="gap-1.5 text-xs">
-            <Monitor className="h-3.5 w-3.5" />
-            Connect
-          </Button>
-        )}
-        {onDisconnectRemote && isConnected && (
-          <Button variant="ghost" size="sm" onClick={onDisconnectRemote} className="gap-1.5 text-xs text-success">
-            <Unplug className="h-3.5 w-3.5" />
-            Remote
+        {onConnectRemote && (
+          <Button variant="ghost" size="sm" onClick={onConnectRemote} className={`gap-1.5 text-xs ${isConnected ? "text-green-600 dark:text-green-400" : ""}`}>
+            {isConnected ? (
+              <>
+                <Unplug className="h-3.5 w-3.5" />
+                Remote
+              </>
+            ) : (
+              <>
+                <Monitor className="h-3.5 w-3.5" />
+                Connect
+              </>
+            )}
           </Button>
         )}
         <Button variant="ghost" size="sm" onClick={onSync} disabled={isLoading} className="gap-1.5 text-xs">

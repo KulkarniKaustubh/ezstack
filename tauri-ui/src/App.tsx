@@ -22,6 +22,7 @@ import { SettingsDialog } from "./components/operations/SettingsDialog";
 import { AgentFeatureDialog } from "./components/operations/AgentFeatureDialog";
 import { ConnectRemoteDialog } from "./components/operations/ConnectRemoteDialog";
 import type { StackNodeActions } from "./components/stack/StackNode";
+import type { SshConnection, RepoConfig } from "./types/ezstack";
 import * as ezs from "./commands/ezs";
 
 type DialogState =
@@ -65,6 +66,17 @@ export default function App() {
   const [dialog, setDialog] = useState<DialogState>({ type: "none" });
   const [isConnected, setIsConnected] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [currentConnection, setCurrentConnection] = useState<SshConnection | null>(null);
+
+  // Restore connection state on mount
+  useEffect(() => {
+    ezs.getConnection().then((conn) => {
+      if (conn) {
+        setIsConnected(true);
+        setCurrentConnection(conn);
+      }
+    }).catch(() => {});
+  }, []);
 
   // Resizable sidebar
   const sidebar = useResizable({
@@ -265,10 +277,6 @@ export default function App() {
         isLoading={isLoading}
         isConnected={isConnected}
         onConnectRemote={() => setDialog({ type: "connect-remote" })}
-        onDisconnectRemote={async () => {
-          await ezs.disconnectRemote();
-          setIsConnected(false);
-        }}
       />
 
       <div className="flex flex-1 min-h-0">
@@ -455,19 +463,39 @@ export default function App() {
         }}
         isLoading={operationLoading}
         error={connectError}
+        currentConnection={currentConnection}
         onConnect={async (host, user, port, keyPath) => {
           return ezs.connectRemote(host, user, port, keyPath);
         }}
         onSelectRepo={async (host, user, port, keyPath, repoPath) => {
           setConnectError(null);
           try {
-            await ezs.selectRemoteRepo(host, user, port, keyPath, repoPath);
+            const resolvedPath = await ezs.selectRemoteRepo(host, user, port, keyPath, repoPath);
             setIsConnected(true);
+            const conn = await ezs.getConnection();
+            setCurrentConnection(conn);
+
+            // Add remote repo to store and select it
+            const currentRepos = useAppStore.getState().repos;
+            if (!currentRepos.some((r) => r.repo_path === resolvedPath)) {
+              const remoteRepo: RepoConfig = {
+                repo_path: resolvedPath,
+                worktree_base_dir: "",
+              };
+              useAppStore.getState().setRepos([remoteRepo, ...currentRepos]);
+            }
+            selectRepo(resolvedPath);
             setDialog({ type: "none" });
+            refresh();
           } catch (e) {
             setConnectError(e instanceof Error ? e.message : String(e));
             throw e;
           }
+        }}
+        onDisconnect={async () => {
+          await ezs.disconnectRemote();
+          setIsConnected(false);
+          setCurrentConnection(null);
         }}
       />
 

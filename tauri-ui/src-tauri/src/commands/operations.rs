@@ -1,8 +1,11 @@
-use crate::runner::run_ezs;
+use crate::runner::run_ezs_auto;
 use crate::types::CommandResult;
+use super::connection::ConnectionState;
+use tauri::State;
 
 #[tauri::command]
-pub fn create_branch(repo_path: String, name: String, parent: Option<String>) -> Result<CommandResult, String> {
+pub fn create_branch(state: State<'_, ConnectionState>, repo_path: String, name: String, parent: Option<String>) -> Result<CommandResult, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?.clone();
     let mut args = vec!["-y", "new", &name];
     let parent_val;
     if let Some(ref p) = parent {
@@ -10,11 +13,12 @@ pub fn create_branch(repo_path: String, name: String, parent: Option<String>) ->
         args.push("-p");
         args.push(&parent_val);
     }
-    run_ezs(&repo_path, &args)
+    run_ezs_auto(conn.as_ref(), &repo_path, &args)
 }
 
 #[tauri::command]
-pub fn sync_branch(repo_path: String, scope: String) -> Result<CommandResult, String> {
+pub fn sync_branch(state: State<'_, ConnectionState>, repo_path: String, scope: String) -> Result<CommandResult, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?.clone();
     let mut args = vec!["-y", "sync"];
     match scope.as_str() {
         "all" => args.push("-a"),
@@ -23,11 +27,12 @@ pub fn sync_branch(repo_path: String, scope: String) -> Result<CommandResult, St
             args.push("-c");
         }
     }
-    run_ezs(&repo_path, &args)
+    run_ezs_auto(conn.as_ref(), &repo_path, &args)
 }
 
 #[tauri::command]
-pub fn push_branch(repo_path: String, stack: bool, force: bool) -> Result<CommandResult, String> {
+pub fn push_branch(state: State<'_, ConnectionState>, repo_path: String, stack: bool, force: bool) -> Result<CommandResult, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?.clone();
     let mut args = vec!["-y", "push"];
     if stack {
         args.push("-s");
@@ -35,31 +40,38 @@ pub fn push_branch(repo_path: String, stack: bool, force: bool) -> Result<Comman
     if force {
         args.push("-f");
     }
-    run_ezs(&repo_path, &args)
+    run_ezs_auto(conn.as_ref(), &repo_path, &args)
 }
 
 #[tauri::command]
-pub fn delete_branch(repo_path: String, branch: String, force: bool) -> Result<CommandResult, String> {
+pub fn delete_branch(state: State<'_, ConnectionState>, repo_path: String, branch: String, force: bool) -> Result<CommandResult, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?.clone();
     let mut args = vec!["-y", "delete"];
     if force {
         args.push("-f");
     }
     args.push(&branch);
-    run_ezs(&repo_path, &args)
+    run_ezs_auto(conn.as_ref(), &repo_path, &args)
 }
 
 #[tauri::command]
-pub fn reparent_branch(repo_path: String, branch: String, new_parent: String) -> Result<CommandResult, String> {
-    run_ezs(&repo_path, &["-y", "reparent", &branch, &new_parent])
+pub fn reparent_branch(state: State<'_, ConnectionState>, repo_path: String, branch: String, new_parent: String) -> Result<CommandResult, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?.clone();
+    run_ezs_auto(conn.as_ref(), &repo_path, &["-y", "reparent", &branch, &new_parent])
 }
 
 #[tauri::command]
-pub fn rename_stack(repo_path: String, stack_hash: String, name: String) -> Result<CommandResult, String> {
-    run_ezs(&repo_path, &["-y", "stack", "rename", &stack_hash, &name])
+pub fn rename_stack(state: State<'_, ConnectionState>, repo_path: String, stack_hash: String, name: String) -> Result<CommandResult, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?.clone();
+    run_ezs_auto(conn.as_ref(), &repo_path, &["-y", "stack", "rename", &stack_hash, &name])
 }
 
 #[tauri::command]
-pub fn open_agent(repo_path: String, stack_hash: Option<String>, branch: Option<String>) -> Result<(), String> {
+pub fn open_agent(state: State<'_, ConnectionState>, repo_path: String, stack_hash: Option<String>, branch: Option<String>) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?.clone();
+    if conn.is_some() {
+        return Err("Agent commands are not supported for remote connections".to_string());
+    }
     let mut args = vec!["agent".to_string()];
     if let Some(ref b) = branch {
         args.push("-b".to_string());
@@ -72,7 +84,11 @@ pub fn open_agent(repo_path: String, stack_hash: Option<String>, branch: Option<
 }
 
 #[tauri::command]
-pub fn open_agent_feature(repo_path: String, stack_hash: String, description: String) -> Result<(), String> {
+pub fn open_agent_feature(state: State<'_, ConnectionState>, repo_path: String, stack_hash: String, description: String) -> Result<(), String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?.clone();
+    if conn.is_some() {
+        return Err("Agent commands are not supported for remote connections".to_string());
+    }
     let args = vec![
         "agent".to_string(),
         "-s".to_string(),
