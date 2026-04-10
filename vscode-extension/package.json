@@ -35,6 +35,10 @@
         {
           "id": "ezstackStacks",
           "name": "Stacks"
+        },
+        {
+          "id": "ezstackFiles",
+          "name": "Files"
         }
       ]
     },
@@ -132,19 +136,109 @@
       },
       {
         "command": "ezstack.openWorktree",
-        "title": "Open Worktree Folder",
+        "title": "Open in New Window",
         "category": "ezstack",
-        "icon": "$(folder-opened)"
+        "icon": "$(multiple-windows)"
       },
       {
         "command": "ezstack.renameStack",
         "title": "Rename Stack",
         "category": "ezstack",
         "icon": "$(edit)"
+      },
+      {
+        "command": "ezstack.toggleFavorite",
+        "title": "Toggle Favorite",
+        "category": "ezstack",
+        "icon": "$(star)"
+      },
+      {
+        "command": "ezstack.filterFavorites",
+        "title": "Filter by Favorites",
+        "category": "ezstack",
+        "icon": "$(star-empty)"
+      },
+      {
+        "command": "ezstack.showAll",
+        "title": "Show All Files",
+        "category": "ezstack",
+        "icon": "$(star-full)"
+      },
+      {
+        "command": "ezstack.copyPath",
+        "title": "Copy Path",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.copyRelativePath",
+        "title": "Copy Relative Path",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.revealInFinder",
+        "title": "Reveal in Finder",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.openInTerminal",
+        "title": "Open in Integrated Terminal",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.revealInExplorer",
+        "title": "Reveal in Explorer",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.openBranchTerminal",
+        "title": "Open in Terminal",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.gitPull",
+        "title": "Fetch & Pull",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.openInNextPR",
+        "title": "Open File in Next PR",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.openInPreviousPR",
+        "title": "Open File in Previous PR",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.compareWithPreviousPR",
+        "title": "Compare File with Previous PR",
+        "category": "ezstack"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "ezstack.openInNextPR",
+        "key": "cmd+alt+down",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "ezstack.openInPreviousPR",
+        "key": "cmd+alt+up",
+        "when": "editorTextFocus"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "ezstack.filterFavorites",
+          "when": "view == ezstackFiles && !ezstack.filterByFavorites",
+          "group": "navigation"
+        },
+        {
+          "command": "ezstack.showAll",
+          "when": "view == ezstackFiles && ezstack.filterByFavorites",
+          "group": "navigation"
+        },
         {
           "command": "ezstack.refresh",
           "when": "view == ezstackStacks",
@@ -166,7 +260,91 @@
           "group": "navigation"
         }
       ],
+      "editor/title/context": [
+        {
+          "command": "ezstack.openInNextPR",
+          "when": "ezstack.hasNextPR",
+          "group": "ezstack@1"
+        },
+        {
+          "command": "ezstack.openInPreviousPR",
+          "when": "ezstack.hasPreviousPR",
+          "group": "ezstack@2"
+        },
+        {
+          "command": "ezstack.compareWithPreviousPR",
+          "when": "ezstack.hasPreviousPR",
+          "group": "ezstack@3"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "ezstack.openInNextPR",
+          "when": "ezstack.hasNextPR",
+          "group": "ezstack@1"
+        },
+        {
+          "command": "ezstack.openInPreviousPR",
+          "when": "ezstack.hasPreviousPR",
+          "group": "ezstack@2"
+        },
+        {
+          "command": "ezstack.compareWithPreviousPR",
+          "when": "ezstack.hasPreviousPR",
+          "group": "ezstack@3"
+        }
+      ],
       "view/item/context": [
+        {
+          "command": "ezstack.toggleFavorite",
+          "when": "view == ezstackFiles && viewItem =~ /^(folder|file|favoriteFolder|favoriteFile)$/",
+          "group": "inline"
+        },
+        {
+          "command": "ezstack.copyPath",
+          "when": "view == ezstackFiles && viewItem =~ /^(folder|file|favoriteFolder|favoriteFile)$/",
+          "group": "1_path@1"
+        },
+        {
+          "command": "ezstack.copyRelativePath",
+          "when": "view == ezstackFiles && viewItem =~ /^(folder|file|favoriteFolder|favoriteFile)$/",
+          "group": "1_path@2"
+        },
+        {
+          "command": "ezstack.revealInFinder",
+          "when": "view == ezstackFiles && viewItem =~ /^(folder|file|favoriteFolder|favoriteFile)$/",
+          "group": "2_system@1"
+        },
+        {
+          "command": "ezstack.openInTerminal",
+          "when": "view == ezstackFiles && viewItem =~ /^(folder|file|favoriteFolder|favoriteFile)$/",
+          "group": "2_system@2"
+        },
+        {
+          "command": "ezstack.revealInExplorer",
+          "when": "view == ezstackFiles && viewItem =~ /^(folder|file|favoriteFolder|favoriteFile)$/",
+          "group": "2_system@3"
+        },
+        {
+          "command": "ezstack.openInNextPR",
+          "when": "view == ezstackFiles && viewItem =~ /^(file|favoriteFile)$/ && ezstack.hasNextPR",
+          "group": "3_stack@1"
+        },
+        {
+          "command": "ezstack.openInPreviousPR",
+          "when": "view == ezstackFiles && viewItem =~ /^(file|favoriteFile)$/ && ezstack.hasPreviousPR",
+          "group": "3_stack@2"
+        },
+        {
+          "command": "ezstack.compareWithPreviousPR",
+          "when": "view == ezstackFiles && viewItem =~ /^(file|favoriteFile)$/ && ezstack.hasPreviousPR",
+          "group": "3_stack@3"
+        },
+        {
+          "command": "ezstack.toggleFavorite",
+          "when": "view == ezstackFiles && viewItem =~ /^(folder|file|favoriteFolder|favoriteFile)$/",
+          "group": "4_favorite@1"
+        },
         {
           "command": "ezstack.renameStack",
           "when": "view == ezstackStacks && viewItem == stack",
@@ -181,6 +359,26 @@
           "command": "ezstack.openPR",
           "when": "view == ezstackStacks && viewItem == branchWithPR",
           "group": "inline"
+        },
+        {
+          "command": "ezstack.openBranchTerminal",
+          "when": "view == ezstackStacks && viewItem =~ /^(branch|rootRepo)/",
+          "group": "0_terminal@1"
+        },
+        {
+          "command": "ezstack.newBranch",
+          "when": "view == ezstackStacks && viewItem == rootRepo",
+          "group": "1_actions@1"
+        },
+        {
+          "command": "ezstack.gitPull",
+          "when": "view == ezstackStacks && viewItem == rootRepo",
+          "group": "1_actions@2"
+        },
+        {
+          "command": "ezstack.sync",
+          "when": "view == ezstackStacks && viewItem == rootRepo",
+          "group": "1_actions@3"
         },
         {
           "command": "ezstack.push",
@@ -234,6 +432,72 @@
         }
       ]
     },
+    "colors": [
+      {
+        "id": "ezstack.stack0",
+        "description": "Color for stack group 0",
+        "defaults": {
+          "dark": "#4FC1FF",
+          "light": "#0066CC"
+        }
+      },
+      {
+        "id": "ezstack.stack1",
+        "description": "Color for stack group 1",
+        "defaults": {
+          "dark": "#C586C0",
+          "light": "#AF00AF"
+        }
+      },
+      {
+        "id": "ezstack.stack2",
+        "description": "Color for stack group 2",
+        "defaults": {
+          "dark": "#4EC9B0",
+          "light": "#008060"
+        }
+      },
+      {
+        "id": "ezstack.stack3",
+        "description": "Color for stack group 3",
+        "defaults": {
+          "dark": "#DCDCAA",
+          "light": "#795E26"
+        }
+      },
+      {
+        "id": "ezstack.stack4",
+        "description": "Color for stack group 4",
+        "defaults": {
+          "dark": "#CE9178",
+          "light": "#A31515"
+        }
+      },
+      {
+        "id": "ezstack.stack5",
+        "description": "Color for stack group 5",
+        "defaults": {
+          "dark": "#D7BA7D",
+          "light": "#B5651D"
+        }
+      },
+      {
+        "id": "ezstack.stack6",
+        "description": "Color for stack group 6",
+        "defaults": {
+          "dark": "#9CDCFE",
+          "light": "#001080"
+        }
+      },
+      {
+        "id": "ezstack.stack7",
+        "description": "Color for stack group 7",
+        "defaults": {
+          "dark": "#F48771",
+          "light": "#CD3131"
+        }
+      }
+    ],
     "configuration": {
       "title": "ezstack",
       "properties": {
@@ -246,6 +510,11 @@
           "type": "boolean",
           "default": true,
           "description": "Automatically refresh stack view when config changes"
+        },
+        "ezstack.ticketPattern": {
+          "type": "string",
+          "default": "",
+          "description": "Regex pattern to extract ticket IDs from branch names (e.g. \"PROJ-\\d+\"). The first match is shown in the status bar and folder badges. Leave empty to disable."
         }
       }
     }
@@ -265,6 +534,6 @@
     "@vscode/vsce": "^2.22.0",
     "esbuild": "^0.19.0",
     "eslint": "^8.50.0",
-    "typescript": "^5.3.0"
+    "typescript": "^5.9.3"
   }
 }
