@@ -699,6 +699,34 @@ export function registerCommands(
     ),
   );
 
+  // ── Edit Agent Prompt ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.editAgentPrompt",
+      async () => {
+        const promptType = await vscode.window.showQuickPick(
+          [
+            { label: "Work Session Prompt", description: "Used when running 'ezs agent' on an existing stack", value: "work" as const },
+            { label: "Feature Builder Prompt", description: "Used when running 'ezs agent feature'", value: "feature" as const },
+          ],
+          { placeHolder: "Select which agent prompt to edit" },
+        );
+        if (!promptType) {
+          return;
+        }
+
+        try {
+          const promptPath = await cli.ensureAgentPromptFile(promptType.value);
+          const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(promptPath));
+          await vscode.window.showTextDocument(doc, { preview: false });
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          vscode.window.showErrorMessage(`Failed to open agent prompt: ${msg}`);
+        }
+      },
+    ),
+  );
+
   // ── Build Feature with Agent ──
   context.subscriptions.push(
     vscode.commands.registerCommand(

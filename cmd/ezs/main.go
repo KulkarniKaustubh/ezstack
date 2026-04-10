@@ -11,7 +11,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
-const version = "2.2.0-beta.2"
+const version = "3.0.0"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
@@ -340,5 +340,6 @@ func printCompletions(args []string) {
 		}
 	case "agent":
 		fmt.Println("feature")
+		fmt.Println("prompt")
 	}
 }

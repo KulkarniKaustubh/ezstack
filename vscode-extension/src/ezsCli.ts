@@ -382,6 +382,28 @@ export class EzsCli {
     return this.runInTerminal(["agent", "-s", stackHash, "feature", description]);
   }
 
+  // ── Agent prompts ──
+
+  /** Get the path to an agent prompt file. */
+  getAgentPromptPath(type: "work" | "feature"): string {
+    const filename = type === "work"
+      ? "agent-work-prompt.md"
+      : "agent-feature-prompt.md";
+    const ezstackHome = process.env.EZSTACK_HOME || path.join(os.homedir(), ".ezstack");
+    return path.join(ezstackHome, filename);
+  }
+
+  /** Ensure the agent prompt file exists (creates from default if missing). */
+  async ensureAgentPromptFile(type: "work" | "feature"): Promise<string> {
+    const promptPath = this.getAgentPromptPath(type);
+    if (!fs.existsSync(promptPath)) {
+      // Run `ezs agent prompt --reset` to create the default
+      const flag = type === "work" ? "--work" : "--feature";
+      await this.exec(["agent", "prompt", "--reset", flag]);
+    }
+    return promptPath;
+  }
+
   // ── Interactive (terminal) ──
 
   syncInteractive(mode: "current" | "stack" | "all" = "stack"): vscode.Terminal {
