@@ -491,10 +491,98 @@ subcommands["goto"] = function(args)
   end, { force = true })
 end
 
+--- `:Ezs diff [-- git-diff-options]` — show diff against parent
+subcommands["diff"] = function(args)
+  local cli_args = { "diff" }
+  for _, a in ipairs(args) do
+    table.insert(cli_args, a)
+  end
+  cli.run_in_terminal(cli_args)
+end
+
+--- `:Ezs commit [args]` — commit and auto-sync children
+subcommands["commit"] = function(args)
+  local cli_args = { "commit" }
+  for _, a in ipairs(args) do
+    table.insert(cli_args, a)
+  end
+  cli.run_in_terminal(cli_args)
+end
+
+--- `:Ezs amend [args]` — amend last commit and auto-sync children
+subcommands["amend"] = function(args)
+  local cli_args = { "amend" }
+  for _, a in ipairs(args) do
+    table.insert(cli_args, a)
+  end
+  cli.run_in_terminal(cli_args)
+end
+
+--- `:Ezs stack [branch] [parent]` — add branch to stack
+subcommands["stack"] = function(args)
+  -- "stack rename" is handled separately by "rename" subcommand
+  if args[1] == "rename" then
+    table.remove(args, 1)
+    subcommands["rename"](args)
+    return
+  end
+  local cli_args = { "stack" }
+  for _, a in ipairs(args) do
+    table.insert(cli_args, a)
+  end
+  cli.run_in_terminal(cli_args)
+end
+
+--- `:Ezs unstack [branch]` — remove branch from tracking
+subcommands["unstack"] = function(args)
+  local branch = args[1]
+  if not branch then
+    cli.list_stacks(function(err, stacks)
+      if err then
+        vim.notify("Failed to list stacks: " .. err, vim.log.levels.ERROR)
+        return
+      end
+      local candidates = {}
+      for _, s in ipairs(stacks) do
+        for _, b in ipairs(s.branches or {}) do
+          table.insert(candidates, b.name)
+        end
+      end
+      if #candidates == 0 then
+        vim.notify("No branches to unstack", vim.log.levels.INFO)
+        return
+      end
+      vim.ui.select(candidates, { prompt = "Branch to unstack:" }, function(choice)
+        if not choice then
+          return
+        end
+        cli.exec_yes({ "unstack", choice }, function(unstack_err)
+          if unstack_err then
+            vim.notify("Unstack failed: " .. unstack_err, vim.log.levels.ERROR)
+          else
+            vim.notify('Unstacked "' .. choice .. '"', vim.log.levels.INFO)
+            cli.invalidate_cache()
+          end
+        end)
+      end)
+    end, { force = true })
+    return
+  end
+  cli.exec_yes({ "unstack", branch }, function(err)
+    if err then
+      vim.notify("Unstack failed: " .. err, vim.log.levels.ERROR)
+    else
+      vim.notify('Unstacked "' .. branch .. '"', vim.log.levels.INFO)
+      cli.invalidate_cache()
+    end
+  end)
+end
+
 --- `:Ezs up` — navigate to parent branch
 subcommands["up"] = function()
   cli.list_stacks(function(err, stacks)
     if err then
+      vim.notify("ezstack: " .. err, vim.log.levels.ERROR)
       return
     end
     for _, s in ipairs(stacks) do
@@ -523,6 +611,7 @@ end
 subcommands["down"] = function()
   cli.list_stacks(function(err, stacks)
     if err then
+      vim.notify("ezstack: " .. err, vim.log.levels.ERROR)
       return
     end
     for _, s in ipairs(stacks) do
@@ -582,7 +671,7 @@ function M.register()
     else
       vim.notify("Unknown ezstack command: " .. sub, vim.log.levels.ERROR)
       vim.notify(
-        "Available: list, status, new, sync, push, pr, delete, reparent, rename, goto, up, down",
+        "Available: list, status, new, sync, push, pr, delete, reparent, rename, goto, up, down, diff, commit, amend, stack, unstack",
         vim.log.levels.INFO
       )
     end
@@ -604,6 +693,7 @@ function M.register()
         local subs = {
           "list", "status", "new", "sync", "push", "pr",
           "delete", "reparent", "rename", "goto", "up", "down",
+          "diff", "commit", "amend", "stack", "unstack",
         }
         return vim.tbl_filter(function(s)
           return s:find(arglead, 1, true) == 1

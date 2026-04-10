@@ -67,9 +67,14 @@ All commands are under `:Ezs`:
 | `:Ezs pr merge` | Merge PR (prompts for method) |
 | `:Ezs pr draft` | Toggle PR draft status |
 | `:Ezs pr stack` | Update stack info in all PRs |
+| `:Ezs diff [-- opts]` | Show diff against parent branch (terminal) |
+| `:Ezs commit [opts]` | Commit and auto-sync child branches (terminal) |
+| `:Ezs amend [opts]` | Amend last commit and auto-sync children (terminal) |
 | `:Ezs delete [branch]` | Delete a branch and worktree |
 | `:Ezs reparent [branch] [parent]` | Change branch parent |
 | `:Ezs rename [hash] [name]` | Name or rename a stack |
+| `:Ezs stack [branch] [parent]` | Add a branch to a stack |
+| `:Ezs unstack [branch]` | Remove a branch from tracking |
 | `:Ezs goto [branch]` | Switch to a branch worktree |
 | `:Ezs up` | Navigate to parent branch |
 | `:Ezs down` | Navigate to child branch |
@@ -99,6 +104,7 @@ The stack viewer (`:Ezs`) shows all stacks in a styled buffer:
 | `p` | Push branch |
 | `P` | Push stack |
 | `s` | Sync (terminal) |
+| `D` | Diff against parent (terminal) |
 | `q` | Close viewer |
 
 ## Telescope Integration

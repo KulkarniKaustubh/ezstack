@@ -84,7 +84,9 @@ function M.branches()
         title = "Stack Preview",
         define_preview = function(self, entry)
           local lines = ui.render_preview(entry.value.stack, entry.value.branch.name)
-          vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
+          if vim.api.nvim_buf_is_valid(self.state.bufnr) then
+            vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
+          end
         end,
       }),
       attach_mappings = function(prompt_bufnr, map)
@@ -208,7 +210,9 @@ function M.stacks()
         title = "Stack Preview",
         define_preview = function(self, entry)
           local lines = ui.render_preview(entry.value)
-          vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
+          if vim.api.nvim_buf_is_valid(self.state.bufnr) then
+            vim.api.nvim_buf_set_lines(self.state.bufnr, 0, -1, false, lines)
+          end
         end,
       }),
       attach_mappings = function(prompt_bufnr, map)

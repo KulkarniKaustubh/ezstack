@@ -303,6 +303,17 @@ function M.open(use_status)
   end)
 end
 
+--- Get the use_status flag for a viewer buffer.
+---@param bufnr number
+---@return boolean|nil
+function M.get_viewer_use_status(bufnr)
+  local data = _buf_data[bufnr]
+  if not data then
+    return nil
+  end
+  return data.use_status
+end
+
 --- Get the line data at the cursor in a viewer buffer.
 ---@param bufnr number
 ---@return table|nil line_data
@@ -566,6 +577,15 @@ function M._setup_keymaps(bufnr)
   map("s", function()
     cli.run_in_terminal({ "sync", "-s" })
   end, "Sync stack")
+
+  -- D — diff against parent
+  map("D", function()
+    local entry = M.get_cursor_data(bufnr)
+    if not entry or entry.type ~= "branch" then
+      return
+    end
+    cli.run_in_terminal({ "diff" })
+  end, "Diff against parent")
 end
 
 --- Render a stack tree as plain text lines (for Telescope preview).

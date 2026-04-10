@@ -13,12 +13,13 @@ function M.setup()
     pattern = "FugitiveChanged",
     callback = function()
       cli.invalidate_cache()
-      -- Refresh any open viewer buffers
+      -- Refresh any open viewer buffers, preserving status mode
       vim.defer_fn(function()
         local ui = require("ezstack.ui")
         local bufnr = ui._find_viewer_buf()
         if bufnr then
-          ui.open()
+          local use_status = ui.get_viewer_use_status(bufnr)
+          ui.open(use_status)
         end
       end, 500)
     end,
@@ -33,7 +34,8 @@ function M.setup()
       local ui = require("ezstack.ui")
       local bufnr = ui._find_viewer_buf()
       if bufnr then
-        ui.open()
+        local use_status = ui.get_viewer_use_status(bufnr)
+        ui.open(use_status)
       end
     end,
     desc = "ezstack: refresh viewer on ezstack changes",
