@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
@@ -389,11 +390,17 @@ func (m *Manager) GetCurrentStack() (*config.Stack, *config.Branch, error) {
 	return nil, nil, fmt.Errorf("current branch %s is not part of any stack", currentBranch)
 }
 
-// ListStacks returns all stacks
+// ListStacks returns all stacks sorted by name for deterministic ordering
 func (m *Manager) ListStacks() []*config.Stack {
-	var stacks []*config.Stack
-	for _, stack := range m.stackConfig.Stacks {
-		stacks = append(stacks, stack)
+	names := make([]string, 0, len(m.stackConfig.Stacks))
+	for name := range m.stackConfig.Stacks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	stacks := make([]*config.Stack, 0, len(names))
+	for _, name := range names {
+		stacks = append(stacks, m.stackConfig.Stacks[name])
 	}
 	return stacks
 }
@@ -935,7 +942,7 @@ func (m *Manager) HasStackWithRoot(rootName string) bool {
 // GetStacksWithRoot returns all stacks that use rootName as their root
 func (m *Manager) GetStacksWithRoot(rootName string) []*config.Stack {
 	var result []*config.Stack
-	for _, s := range m.stackConfig.Stacks {
+	for _, s := range m.ListStacks() {
 		if s.Root == rootName {
 			result = append(result, s)
 		}
@@ -971,7 +978,7 @@ func (m *Manager) findUniqueStackByRoot(rootName string) string {
 // GetAllBranchesInAllStacks returns all branches across all stacks
 func (m *Manager) GetAllBranchesInAllStacks() []*config.Branch {
 	var allBranches []*config.Branch
-	for _, stack := range m.stackConfig.Stacks {
+	for _, stack := range m.ListStacks() {
 		allBranches = append(allBranches, stack.Branches...)
 	}
 	return allBranches
