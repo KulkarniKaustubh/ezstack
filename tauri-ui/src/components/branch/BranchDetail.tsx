@@ -15,6 +15,7 @@ interface BranchDetailProps {
   onClose: () => void;
   onSync: () => void;
   onPush: () => void;
+  onPushStack: () => void;
   onCreatePR: () => void;
   onUpdatePR: () => void;
   onMergePR: () => void;
@@ -31,6 +32,7 @@ export function BranchDetail({
   onClose,
   onSync,
   onPush,
+  onPushStack,
   onCreatePR,
   onUpdatePR,
   onMergePR,
@@ -139,6 +141,7 @@ export function BranchDetail({
           branch={branch}
           onSync={onSync}
           onPush={onPush}
+          onPushStack={onPushStack}
           onCreatePR={onCreatePR}
           onUpdatePR={onUpdatePR}
           onMergePR={onMergePR}
