@@ -170,7 +170,7 @@ func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) st
 
 		g := git.New(worktreePath)
 		needsPush, err := g.IsLocalAheadOfOrigin(branchName)
-		if err != nil || !needsPush {
+		if err == nil && !needsPush {
 			continue
 		}
 
@@ -246,7 +246,7 @@ func OfferPushMultiple(branches []string, getBranchWorktree func(string) string)
 
 		g := git.New(worktreePath)
 		needsPush, err := g.IsLocalAheadOfOrigin(branchName)
-		if err != nil || !needsPush {
+		if err == nil && !needsPush {
 			continue
 		}
 
@@ -433,19 +433,21 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 
 	if discoveredPRs {
 		mainWorktree := getMainWorktreePath(g)
-		cache, _ := config.LoadCacheConfig(mainWorktree)
-		for _, branch := range s.Branches {
-			if branch.PRNumber > 0 {
-				bc := cache.GetBranchCache(branch.Name)
-				if bc == nil {
-					bc = &config.BranchCache{}
+		cache, err := config.LoadCacheConfig(mainWorktree)
+		if err == nil {
+			for _, branch := range s.Branches {
+				if branch.PRNumber > 0 {
+					bc := cache.GetBranchCache(branch.Name)
+					if bc == nil {
+						bc = &config.BranchCache{}
+					}
+					bc.PRNumber = branch.PRNumber
+					bc.PRUrl = branch.PRUrl
+					cache.SetBranchCache(branch.Name, bc)
 				}
-				bc.PRNumber = branch.PRNumber
-				bc.PRUrl = branch.PRUrl
-				cache.SetBranchCache(branch.Name, bc)
 			}
+			cache.Save(mainWorktree)
 		}
-		cache.Save(mainWorktree)
 	}
 
 	return gh

@@ -555,9 +555,9 @@ func prUpdate(args []string) error {
 	}
 
 	// Check if remote branch exists and detect divergence
-	hasDiverged, localAhead, remoteAhead, err := g.HasDivergedFromOrigin(branch.Name)
-	if err != nil {
-		ui.Warn(fmt.Sprintf("Could not check remote status: %v", err))
+	hasDiverged, localAhead, remoteAhead, divergeErr := g.HasDivergedFromOrigin(branch.Name)
+	if divergeErr != nil {
+		ui.Warn(fmt.Sprintf("Could not check remote status: %v", divergeErr))
 	}
 
 	remoteBranchExists := g.RemoteBranchExists(branch.Name)
@@ -582,6 +582,10 @@ func prUpdate(args []string) error {
 	} else if localAhead > 0 {
 		// Simple case - local is ahead, regular push works
 		commits, _ = g.GetCommitsBetween("origin/"+branch.Name, branch.Name)
+	} else if divergeErr != nil {
+		// Status check failed — attempt force push rather than silently skipping
+		needsForcePush = true
+		commits, _ = g.GetCommitsBetween(branch.Parent, branch.Name)
 	} else {
 		ui.Success("Already up to date. Nothing to push.")
 		return nil
