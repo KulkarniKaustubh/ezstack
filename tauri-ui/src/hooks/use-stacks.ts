@@ -53,10 +53,13 @@ export function useStacks() {
           }),
         );
 
-        // Auto-select first repo
+        // Auto-select first repo (prefer one that loaded successfully, fall back to first repo)
         const firstSuccess = results.find((r) => r.status === "fulfilled");
         if (firstSuccess && firstSuccess.status === "fulfilled") {
           selectRepo(firstSuccess.value.path);
+        } else {
+          // Even if stacks failed to load, select the first repo so the UI isn't empty
+          selectRepo(allRepos[0].repo_path);
         }
 
         setLastRefresh(new Date());
