@@ -1055,7 +1055,9 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 	result, err := mgr.SyncBranch(branch.Name, gh, useMerge)
 	if err != nil {
 		if didStash {
-			g.StashPop()
+			if popErr := g.StashPop(); popErr != nil {
+				ui.Warn(fmt.Sprintf("Failed to pop stash: %v (your changes are still in 'git stash list')", popErr))
+			}
 		}
 		return err
 	}

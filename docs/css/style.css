@@ -421,7 +421,8 @@ pre code {
 
 .terminal-body {
   padding: 1.25rem 1.5rem;
-  min-height: 280px;
+  height: 280px;
+  overflow-y: auto;
   font-family: var(--font-mono);
   font-size: 0.875rem;
   line-height: 1.7;
@@ -848,6 +849,149 @@ pre code {
 }
 
 /* ========================================
+   Ecosystem
+   ======================================== */
+
+.ecosystem {
+  padding: 6rem 0;
+  background: linear-gradient(180deg, var(--bg) 0%, rgba(24, 24, 27, 0.3) 50%, var(--bg) 100%);
+}
+
+.eco-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+
+.eco-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  transition: border-color 0.3s;
+}
+
+.eco-card:hover {
+  border-color: var(--border-light);
+}
+
+.eco-card-featured {
+  border-color: rgba(59, 130, 246, 0.3);
+}
+
+.eco-card-featured:hover {
+  border-color: rgba(59, 130, 246, 0.5);
+}
+
+.eco-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.25rem;
+}
+
+.eco-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+
+.eco-badge {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  padding: 0.25rem 0.625rem;
+  border-radius: 100px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.eco-badge-beta {
+  color: var(--yellow);
+  background: rgba(234, 179, 8, 0.1);
+  border: 1px solid rgba(234, 179, 8, 0.25);
+}
+
+.eco-badge-soon {
+  color: var(--text-dim);
+  background: rgba(113, 113, 122, 0.1);
+  border: 1px solid rgba(113, 113, 122, 0.25);
+}
+
+.eco-card h3 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  margin-bottom: 0.5rem;
+}
+
+.eco-card > p {
+  color: var(--text-secondary);
+  font-size: 0.9375rem;
+  line-height: 1.65;
+  margin-bottom: 1.5rem;
+}
+
+.eco-install {
+  margin-bottom: 1.5rem;
+}
+
+.eco-install h4 {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 0.625rem;
+}
+
+.eco-install ol {
+  list-style: none;
+  counter-reset: eco-step;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.eco-install li {
+  counter-increment: eco-step;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.55;
+  padding-left: 1.5rem;
+  position: relative;
+}
+
+.eco-install li::before {
+  content: counter(eco-step) ".";
+  position: absolute;
+  left: 0;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+
+.eco-btn {
+  margin-top: auto;
+  text-align: center;
+  justify-content: center;
+  font-size: 0.8125rem;
+  width: 100%;
+}
+
+.eco-btn-disabled {
+  opacity: 0.5;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ========================================
    Footer
    ======================================== */
 
@@ -918,6 +1062,12 @@ pre code {
 @media (max-width: 1024px) {
   .features-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .eco-grid {
+    grid-template-columns: 1fr;
+    max-width: 560px;
+    margin: 0 auto;
   }
 }
 
@@ -1009,7 +1159,7 @@ pre code {
   .terminal-body {
     font-size: 0.75rem;
     padding: 1rem;
-    min-height: 240px;
+    height: 240px;
   }
 
   .step {
