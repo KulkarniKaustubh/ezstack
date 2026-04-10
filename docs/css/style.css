@@ -150,12 +150,20 @@ pre code {
   height: 64px;
 }
 
+.nav-logo {
+  vertical-align: middle;
+  margin-right: 0.5rem;
+  border-radius: 4px;
+}
+
 .nav-brand {
   font-family: var(--font-mono);
   font-size: 1.25rem;
   font-weight: 600;
   color: var(--text);
   letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
 }
 
 .nav-brand:hover {

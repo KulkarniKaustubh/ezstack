@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.png" alt="ezstack logo" width="120">
+
 # ezstack
 
 **Manage stacked PRs with git worktrees**
