@@ -1,13 +1,25 @@
+import { useEffect } from "react";
 import { X } from "lucide-react";
 import { Button } from "../ui/button";
 
 interface OperationOutputProps {
   output: string;
   isLoading: boolean;
+  isSuccess: boolean;
   onClose: () => void;
 }
 
-export function OperationOutput({ output, isLoading, onClose }: OperationOutputProps) {
+const AUTO_DISMISS_MS = 5_000;
+
+export function OperationOutput({ output, isLoading, isSuccess, onClose }: OperationOutputProps) {
+  // Auto-dismiss after a few seconds on success
+  useEffect(() => {
+    if (!isLoading && isSuccess) {
+      const timer = setTimeout(onClose, AUTO_DISMISS_MS);
+      return () => clearTimeout(timer);
+    }
+  }, [isLoading, isSuccess, onClose]);
+
   return (
     <div className="border-t bg-surface">
       <div className="flex items-center justify-between px-3 py-1.5 border-b">

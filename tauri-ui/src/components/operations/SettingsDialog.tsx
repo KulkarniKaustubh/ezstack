@@ -1,6 +1,7 @@
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "../ui/dialog";
 import { Button } from "../ui/button";
 import type { RepoConfig } from "../../types/ezstack";
+import { APP_VERSION } from "../../version";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -66,7 +67,7 @@ export function SettingsDialog({ open, onOpenChange, repos, selectedRepoPath }: 
             <div className="rounded-lg border p-3 space-y-2 text-sm">
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Version</span>
-                <span className="font-mono">v2.0.0-tauri-beta.3</span>
+                <span className="font-mono">v{APP_VERSION}</span>
               </div>
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Framework</span>
