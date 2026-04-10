@@ -94,14 +94,14 @@ func List(args []string) error {
 		stacksToShow = []*config.Stack{currentStack}
 	}
 
-	if *jsonFlag {
-		return printStacksJSON(stacksToShow, currentBranch)
-	}
-
 	// Fetch diff stats in parallel (local git ops, fast)
 	diffMaps := make([]map[string]*ui.BranchStatus, len(stacksToShow))
 	for i, s := range stacksToShow {
 		diffMaps[i] = fetchDiffStats(g, s)
+	}
+
+	if *jsonFlag {
+		return printStacksJSON(stacksToShow, currentBranch, diffMaps)
 	}
 
 	for i, s := range stacksToShow {
@@ -127,6 +127,8 @@ type branchJSON struct {
 	PRNumber     int    `json:"pr_number,omitempty"`
 	PRUrl        string `json:"pr_url,omitempty"`
 	WorktreePath string `json:"worktree_path,omitempty"`
+	Additions    int    `json:"additions"`
+	Deletions    int    `json:"deletions"`
 }
 
 // statusStackJSON represents a stack in JSON status output (with PR/CI info)
@@ -150,17 +152,21 @@ type statusBranchJSON struct {
 }
 
 // printStacksJSON outputs stacks as JSON to stdout
-func printStacksJSON(stacks []*config.Stack, currentBranch string) error {
+func printStacksJSON(stacks []*config.Stack, currentBranch string, diffMaps []map[string]*ui.BranchStatus) error {
 	result := make([]stackJSON, 0, len(stacks))
-	for _, s := range stacks {
+	for i, s := range stacks {
 		sj := stackJSON{
 			Hash:     s.Hash,
 			Name:     s.Name,
 			Root:     s.Root,
 			Branches: make([]branchJSON, 0, len(s.Branches)),
 		}
+		var dm map[string]*ui.BranchStatus
+		if i < len(diffMaps) {
+			dm = diffMaps[i]
+		}
 		for _, b := range s.Branches {
-			sj.Branches = append(sj.Branches, branchJSON{
+			bj := branchJSON{
 				Name:         b.Name,
 				Parent:       b.Parent,
 				IsMerged:     b.IsMerged,
@@ -168,7 +174,14 @@ func printStacksJSON(stacks []*config.Stack, currentBranch string) error {
 				PRNumber:     b.PRNumber,
 				PRUrl:        b.PRUrl,
 				WorktreePath: b.WorktreePath,
-			})
+			}
+			if dm != nil {
+				if bs, ok := dm[b.Name]; ok {
+					bj.Additions = bs.Additions
+					bj.Deletions = bs.Deletions
+				}
+			}
+			sj.Branches = append(sj.Branches, bj)
 		}
 		result = append(result, sj)
 	}
