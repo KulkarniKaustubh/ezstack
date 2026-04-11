@@ -131,7 +131,7 @@
           <h3>Context is injected automatically</h3>
           <p>The agent receives your stack structure as JSON, the current branch and parent names, worktree path, available ezs commands (with <code>-y</code> flags for non-interactive use), and the full ezstack documentation.</p>
           <div class="step-code">
-            <pre><code><span class="c-comment"># What the agent sees (injected as system prompt):</span>
+            <pre><code><span class="c-comment"># What the agent sees (injected as the first message):</span>
 <span class="c-dim">Stack:       auth-feature [a1b2c]</span>
 <span class="c-dim">Branch:      auth-middleware</span>
 <span class="c-dim">Parent:      auth-service</span>
@@ -341,7 +341,7 @@
       <div class="workflow-steps">
         <div class="workflow-step" data-animate>
           <h3>Set the agent CLI</h3>
-          <p>By default, ezstack uses <code>claude</code> (Claude Code). You can change this to any CLI tool that accepts <code>--append-system-prompt</code> and a positional prompt argument.</p>
+          <p>By default, ezstack uses <code>claude</code> (Claude Code). You can change this to any CLI tool that accepts a positional prompt argument.</p>
           <div class="step-code">
             <pre><code><span class="c-comment"># Default: claude</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs config set</span> agent_command claude
@@ -370,7 +370,7 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v3.2.1</span>
+          <span class="footer-meta">MIT License &middot; v3.2.2</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

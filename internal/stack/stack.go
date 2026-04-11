@@ -185,10 +185,11 @@ func (m *Manager) RegisterExistingBranch(branchName, worktreePath, baseBranch st
 // RegisterRemoteBranch creates a new stack with a remote branch as its root/base.
 // The remote branch is NOT added to the tree — it is the stack root.
 // PR info is stored on the Stack struct for display in stack descriptions.
-func (m *Manager) RegisterRemoteBranch(branchName string, prNumber int, prURL string) error {
+func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber int, prURL string) error {
 	// If a stack with this root already exists, just update its PR info
 	if key := m.findStackByRoot(branchName); key != "" {
 		existing := m.stackConfig.Stacks[key]
+		existing.RootBase = baseBranch
 		existing.RootPRNumber = prNumber
 		existing.RootPRUrl = prURL
 		if err := m.stackConfig.Save(m.repoDir); err != nil {
@@ -201,6 +202,7 @@ func (m *Manager) RegisterRemoteBranch(branchName string, prNumber int, prURL st
 	stack := &config.Stack{
 		Hash:         hash,
 		Root:         branchName,
+		RootBase:     baseBranch,
 		RootPRNumber: prNumber,
 		RootPRUrl:    prURL,
 		Tree:         config.BranchTree{},

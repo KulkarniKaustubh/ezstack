@@ -521,9 +521,9 @@ func selectUntrackedBranch(mgr *stack.Manager, excludeBranches ...string) (strin
 // selectRemotePR shows a selection UI for choosing a remote PR as the base of a new stack.
 // It registers the remote branch as the stack root and returns the remote branch name as the parent.
 func selectRemotePR(g *git.Git, mgr *stack.Manager) (string, error) {
-	selectedPR, err := selectAndRegisterRemotePR(g, mgr, "")
+	result, err := selectAndRegisterRemoteBranch(g, mgr, "")
 	if err != nil {
 		return "", err
 	}
-	return selectedPR.Branch, nil
+	return result.Branch, nil
 }

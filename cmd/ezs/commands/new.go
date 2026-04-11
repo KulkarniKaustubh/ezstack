@@ -181,7 +181,7 @@ func New(args []string) error {
 			prIdentifier = fs.Arg(0)
 		}
 
-		selectedPR, err := selectAndRegisterRemotePR(g, mgr, prIdentifier)
+		remote, err := selectAndRegisterRemoteBranch(g, mgr, prIdentifier)
 		if err != nil {
 			return err
 		}
@@ -191,7 +191,7 @@ func New(args []string) error {
 		if fs.NArg() >= 2 {
 			newBranchName = fs.Arg(1)
 		} else {
-			newBranchName = ui.PromptRequired("Enter name for your new branch (stacked on " + selectedPR.Branch + ")")
+			newBranchName = ui.PromptRequired("Enter name for your new branch (stacked on " + remote.Branch + ")")
 		}
 
 		cfg := mgr.GetConfig()
@@ -212,14 +212,14 @@ func New(args []string) error {
 		}
 
 		// Create the user's branch based on the remote branch
-		ui.Info(fmt.Sprintf("Creating branch '%s' based on remote '%s'", newBranchName, selectedPR.Branch))
+		ui.Info(fmt.Sprintf("Creating branch '%s' based on remote '%s'", newBranchName, remote.Branch))
 		ui.Info(fmt.Sprintf("Worktree path: %s", worktreePath))
 
-		if err := g.CreateWorktree(newBranchName, worktreePath, "origin/"+selectedPR.Branch); err != nil {
+		if err := g.CreateWorktree(newBranchName, worktreePath, "origin/"+remote.Branch); err != nil {
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
 
-		userBranch, err := mgr.AddBranchToStack(newBranchName, selectedPR.Branch, worktreePath)
+		userBranch, err := mgr.AddBranchToStack(newBranchName, remote.Branch, worktreePath)
 		if err != nil {
 			return fmt.Errorf("failed to add branch to stack: %w", err)
 		}
@@ -227,8 +227,12 @@ func New(args []string) error {
 		// Prompt for stack name (new stack was just created)
 		promptStackName(mgr, userBranch.Name)
 
-		ui.Success(fmt.Sprintf("Created stack from PR #%d (%s)", selectedPR.Number, selectedPR.Branch))
-		ui.Success(fmt.Sprintf("Created your branch '%s' at %s", userBranch.Name, worktreePath))
+		if remote.PRNumber > 0 {
+			ui.Success(fmt.Sprintf("Created stack from PR #%d (%s)", remote.PRNumber, remote.Branch))
+		} else {
+			ui.Success(fmt.Sprintf("Created stack from remote branch '%s'", remote.Branch))
+		}
+		ui.Success(fmt.Sprintf("Created your branch '%s' at %s", newBranchName, worktreePath))
 		if getCdAfterNew(cfg, mgr.GetRepoDir(), *cdFlag, *noCdFlag) {
 			EmitCd(worktreePath)
 		}

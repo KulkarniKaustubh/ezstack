@@ -162,6 +162,7 @@ type Stack struct {
 	Hash            string       `json:"-"`                           // Populated from map key at load time
 	Name            string       `json:"name,omitempty"`              // Optional user-given name for the stack
 	Root            string       `json:"root"`                       // The base branch (e.g. "main", or a remote branch name)
+	RootBase        string       `json:"root_base,omitempty"`        // The branch the root's PR targets (for computing root diff)
 	RootPRNumber    int          `json:"-"`                           // Runtime-only: derived from RootPRUrl
 	RootPRUrl       string       `json:"root_pr_url,omitempty"`      // PR URL of the root branch (for remote base branches)
 	DeleteDeclined  bool         `json:"delete_declined,omitempty"`   // User declined cleanup prompt; don't re-ask
