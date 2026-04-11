@@ -78,6 +78,15 @@ All commands are under `:Ezs`:
 | `:Ezs goto [branch]` | Switch to a branch worktree |
 | `:Ezs up` | Navigate to parent branch |
 | `:Ezs down` | Navigate to child branch |
+| `:Ezs agent` | Launch AI agent with stack context (terminal) |
+| `:Ezs agent feature "desc"` | Launch agent to build a feature (terminal) |
+| `:Ezs agent prompt` | View shipped work + feature prompts |
+| `:Ezs agent prompt custom work` | View custom work instructions |
+| `:Ezs agent prompt repo feature` | View repo-specific feature instructions |
+| `:Ezs agent prompt edit [work\|feature]` | Edit custom instructions in Neovim |
+| `:Ezs agent prompt edit repo [work\|feature]` | Edit repo-specific instructions |
+| `:Ezs agent prompt reset [work\|feature]` | Reset custom instructions to defaults |
+| `:Ezs agent prompt reset repo [work\|feature]` | Reset repo-specific instructions |
 
 ## Stack Viewer
 
@@ -105,6 +114,8 @@ The stack viewer (`:Ezs`) shows all stacks in a styled buffer:
 | `P` | Push stack |
 | `s` | Sync (terminal) |
 | `D` | Diff against parent (terminal) |
+| `a` | Open agent (branch-scoped or stack-scoped) |
+| `A` | Build feature with agent (prompts for description) |
 | `q` | Close viewer |
 
 ## Telescope Integration
