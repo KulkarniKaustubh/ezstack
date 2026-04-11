@@ -135,6 +135,31 @@ func (g *Git) CreateWorktree(branchName, worktreePath, baseBranch string) error 
 	return err
 }
 
+// CreateWorktreeFromRemoteBranch creates a worktree for a remote branch with tracking.
+// If the local branch already exists (and has no worktree), it is force-updated to match the remote.
+// The resulting local branch tracks origin/<localBranch>.
+func (g *Git) CreateWorktreeFromRemoteBranch(localBranch, worktreePath string) error {
+	remoteBranch := "origin/" + localBranch
+
+	if g.BranchExists(localBranch) {
+		// Force-update existing local branch to match remote
+		if _, err := g.run("branch", "-f", localBranch, remoteBranch); err != nil {
+			return fmt.Errorf("failed to update local branch '%s' to match remote: %w", localBranch, err)
+		}
+		// Ensure tracking is set up
+		g.run("branch", "--set-upstream-to="+remoteBranch, localBranch)
+	} else {
+		// Create new branch tracking remote
+		if _, err := g.run("branch", "--track", localBranch, remoteBranch); err != nil {
+			return fmt.Errorf("failed to create tracking branch '%s': %w", localBranch, err)
+		}
+	}
+
+	// Create the worktree
+	_, err := g.runWithSpinner(fmt.Sprintf("Creating worktree for %s...", localBranch), "worktree", "add", worktreePath, localBranch)
+	return err
+}
+
 // ListWorktrees lists all worktrees
 func (g *Git) ListWorktrees() ([]Worktree, error) {
 	output, err := g.run("worktree", "list", "--porcelain")
@@ -624,9 +649,15 @@ func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName 
 		}
 	}
 
-	// Optionally delete the branch
+	// Optionally delete the branch.
+	// Use the main worktree for this command since g.RepoDir may point to
+	// the worktree we just deleted (causing chdir errors).
 	if deleteBranch && branchName != "" {
-		_, err := g.run("branch", "-D", branchName)
+		branchGit := g
+		if mainWT, err := g.GetMainWorktree(); err == nil && mainWT != "" && mainWT != g.RepoDir {
+			branchGit = New(mainWT)
+		}
+		_, err := branchGit.run("branch", "-D", branchName)
 		if err != nil {
 			// Branch might already be deleted or not exist
 			if !strings.Contains(err.Error(), "not found") {

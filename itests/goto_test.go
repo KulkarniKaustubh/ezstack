@@ -76,7 +76,7 @@ func TestGotoRemoteBranch(t *testing.T) {
 
 	mgr, _ := stack.NewManager(env.RepoDir)
 
-	err := mgr.RegisterRemoteBranch("remote-feature", 100, "https://github.com/org/repo/pull/100")
+	_, err := mgr.RegisterRemoteBranch("remote-feature", "main", 100, "https://github.com/org/repo/pull/100")
 	if err != nil {
 		t.Fatalf("RegisterRemoteBranch failed: %v", err)
 	}
