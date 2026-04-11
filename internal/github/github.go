@@ -95,7 +95,9 @@ func (c *Client) GetPRByBranch(branch string) (*PR, error) {
 	output, err := c.runGH("pr", "view", branch,
 		"--json", "number,url,title,body,state,baseRefName,headRefName,mergedAt,mergeable,isDraft,reviewDecision")
 	if err != nil {
-		return nil, err
+		// gh pr view <branch> doesn't find PRs from forks.
+		// Fall back to gh pr list --head <branch> which does.
+		return c.getPRByHeadBranch(branch)
 	}
 
 	var pr PR
@@ -104,6 +106,26 @@ func (c *Client) GetPRByBranch(branch string) (*PR, error) {
 	}
 	pr.Merged = pr.MergedAt != ""
 	return &pr, nil
+}
+
+// getPRByHeadBranch finds a PR by head branch name using gh pr list.
+// This works for fork PRs where gh pr view <branch> fails.
+func (c *Client) getPRByHeadBranch(branch string) (*PR, error) {
+	output, err := c.runGH("pr", "list", "--head", branch, "--state", "all", "--limit", "1",
+		"--json", "number,url,title,body,state,baseRefName,headRefName,mergedAt,mergeable,isDraft,reviewDecision")
+	if err != nil {
+		return nil, err
+	}
+
+	var prs []PR
+	if err := json.Unmarshal([]byte(output), &prs); err != nil {
+		return nil, err
+	}
+	if len(prs) == 0 {
+		return nil, fmt.Errorf("no pull requests found for branch %q", branch)
+	}
+	prs[0].Merged = prs[0].MergedAt != ""
+	return &prs[0], nil
 }
 
 // GetPR gets a PR by number
