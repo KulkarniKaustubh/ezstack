@@ -99,45 +99,86 @@ pub fn open_agent_feature(state: State<'_, ConnectionState>, repo_path: String, 
     crate::runner::open_in_terminal(&repo_path, &args)
 }
 
-/// Get agent prompt templates by running `ezs agent prompt`.
+/// Get shipped agent prompts for both work and feature modes.
 /// Returns stdout with ANSI codes stripped.
 #[tauri::command]
 pub fn get_agent_prompts(repo_path: String) -> Result<String, String> {
-    let result = run_ezs(&repo_path, &["agent", "prompt"])?;
+    let mut output = String::new();
+    for prompt_type in &["work", "feature"] {
+        let result = run_ezs(&repo_path, &["agent", "prompt", "--shipped", prompt_type])?;
+        if result.exit_code != 0 {
+            return Err(result.stderr);
+        }
+        if !output.is_empty() {
+            output.push_str("\n\n");
+        }
+        output.push_str(&format!("═══ Shipped {} prompt ═══\n\n", prompt_type));
+        output.push_str(&strip_ansi(&result.stdout));
+    }
+    Ok(output)
+}
+
+/// Get a specific agent prompt layer.
+/// `layer` is "shipped", "custom", or "repo".
+/// `prompt_type` is "work" or "feature".
+#[tauri::command]
+pub fn get_agent_prompt_layer(repo_path: String, layer: String, prompt_type: String) -> Result<String, String> {
+    let flag = match layer.as_str() {
+        "shipped" => "--shipped",
+        "custom" => "--custom",
+        "repo" => "--repo",
+        _ => return Err(format!("Invalid layer: {}", layer)),
+    };
+    let result = run_ezs(&repo_path, &["agent", "prompt", flag, &prompt_type])?;
     if result.exit_code != 0 {
         return Err(result.stderr);
     }
-    // Strip ANSI escape codes for clean display in UI
     Ok(strip_ansi(&result.stdout))
 }
 
 /// Reset agent prompt(s) to built-in defaults.
 /// `which` can be "work", "feature", or "both".
+/// `repo` indicates whether to reset repo-specific instructions.
 #[tauri::command]
-pub fn reset_agent_prompts(repo_path: String, which: String) -> Result<String, String> {
-    let mut args = vec!["agent", "prompt", "--reset"];
-    match which.as_str() {
-        "work" => args.push("--work"),
-        "feature" => args.push("--feature"),
-        _ => {} // both — no extra flag needed
+pub fn reset_agent_prompts(repo_path: String, which: String, repo: bool) -> Result<String, String> {
+    let types: Vec<&str> = match which.as_str() {
+        "work" => vec!["work"],
+        "feature" => vec!["feature"],
+        _ => vec!["work", "feature"], // "both"
+    };
+    let mut output = String::new();
+    for pt in types {
+        let mut args = vec!["agent", "prompt", "--reset"];
+        if repo {
+            args.push("--repo");
+        }
+        args.push(pt);
+        let result = run_ezs(&repo_path, &args)?;
+        if result.exit_code != 0 {
+            return Err(result.stderr);
+        }
+        if !output.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&strip_ansi(&result.stdout));
     }
-    let result = run_ezs(&repo_path, &args)?;
-    if result.exit_code != 0 {
-        return Err(result.stderr);
-    }
-    Ok(strip_ansi(&result.stdout))
+    Ok(output)
 }
 
 /// Open agent prompt editor in an external terminal.
-/// `which` can be "work", "feature", or "both".
+/// `which` is "work" or "feature".
+/// `repo` indicates whether to edit repo-specific instructions.
 #[tauri::command]
-pub fn edit_agent_prompts(repo_path: String, which: String) -> Result<(), String> {
+pub fn edit_agent_prompts(repo_path: String, which: String, repo: bool) -> Result<(), String> {
+    let prompt_type = match which.as_str() {
+        "work" | "feature" => which.clone(),
+        _ => "work".to_string(),
+    };
     let mut args = vec!["agent".to_string(), "prompt".to_string(), "--edit".to_string()];
-    match which.as_str() {
-        "work" => args.push("--work".to_string()),
-        "feature" => args.push("--feature".to_string()),
-        _ => {} // both
+    if repo {
+        args.push("--repo".to_string());
     }
+    args.push(prompt_type);
     crate::runner::open_in_terminal(&repo_path, &args)
 }
 

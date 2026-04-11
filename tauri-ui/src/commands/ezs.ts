@@ -134,18 +134,28 @@ export async function getAgentPrompts(repoPath: string): Promise<string> {
   return invoke<string>("get_agent_prompts", { repoPath });
 }
 
+export async function getAgentPromptLayer(
+  repoPath: string,
+  layer: "shipped" | "custom" | "repo",
+  promptType: "work" | "feature",
+): Promise<string> {
+  return invoke<string>("get_agent_prompt_layer", { repoPath, layer, prompt_type: promptType });
+}
+
 export async function resetAgentPrompts(
   repoPath: string,
   which: "work" | "feature" | "both",
+  repo: boolean = false,
 ): Promise<string> {
-  return invoke<string>("reset_agent_prompts", { repoPath, which });
+  return invoke<string>("reset_agent_prompts", { repoPath, which, repo });
 }
 
 export async function editAgentPrompts(
   repoPath: string,
-  which: "work" | "feature" | "both",
+  which: "work" | "feature",
+  repo: boolean = false,
 ): Promise<void> {
-  return invoke<void>("edit_agent_prompts", { repoPath, which });
+  return invoke<void>("edit_agent_prompts", { repoPath, which, repo });
 }
 
 // Remote connection commands
