@@ -18,14 +18,15 @@ export function SettingsDialog({ open, onOpenChange, repos, selectedRepoPath }: 
   const [promptLoading, setPromptLoading] = useState(false);
   const [promptError, setPromptError] = useState<string | null>(null);
   const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [promptLayer, setPromptLayer] = useState<"shipped" | "custom" | "repo">("shipped");
 
-  const handleViewPrompts = async () => {
+  const handleViewPrompt = async (promptType: "work" | "feature") => {
     if (!selectedRepoPath) return;
     setPromptLoading(true);
     setPromptError(null);
     setResetMessage(null);
     try {
-      const content = await ezs.getAgentPrompts(selectedRepoPath);
+      const content = await ezs.getAgentPromptLayer(selectedRepoPath, promptLayer, promptType);
       setPromptContent(content);
     } catch (e) {
       setPromptError(e instanceof Error ? e.message : String(e));
@@ -34,27 +35,24 @@ export function SettingsDialog({ open, onOpenChange, repos, selectedRepoPath }: 
     }
   };
 
-  const handleEditPrompts = async (which: "work" | "feature" | "both") => {
+  const handleEditPrompts = async (which: "work" | "feature") => {
     if (!selectedRepoPath) return;
+    const isRepo = promptLayer === "repo";
     try {
-      await ezs.editAgentPrompts(selectedRepoPath, which);
+      await ezs.editAgentPrompts(selectedRepoPath, which, isRepo);
     } catch (e) {
       setPromptError(e instanceof Error ? e.message : String(e));
     }
   };
 
-  const handleResetPrompts = async (which: "work" | "feature" | "both") => {
+  const handleResetPrompts = async (which: "work" | "feature") => {
     if (!selectedRepoPath) return;
     setPromptError(null);
+    const isRepo = promptLayer === "repo";
     try {
-      await ezs.resetAgentPrompts(selectedRepoPath, which);
-      const label = which === "both" ? "all prompts" : `${which} prompt`;
-      setResetMessage(`Reset ${label} to default`);
-      // Refresh view if prompts are shown
-      if (promptContent !== null) {
-        const content = await ezs.getAgentPrompts(selectedRepoPath);
-        setPromptContent(content);
-      }
+      await ezs.resetAgentPrompts(selectedRepoPath, which, isRepo);
+      const layerLabel = isRepo ? "repo" : "custom";
+      setResetMessage(`Reset ${layerLabel} ${which} prompt`);
       setTimeout(() => setResetMessage(null), 3000);
     } catch (e) {
       setPromptError(e instanceof Error ? e.message : String(e));
@@ -67,6 +65,7 @@ export function SettingsDialog({ open, onOpenChange, repos, selectedRepoPath }: 
         setPromptContent(null);
         setPromptError(null);
         setResetMessage(null);
+        setPromptLayer("shipped");
       }
       onOpenChange(o);
     }}>
@@ -123,26 +122,44 @@ export function SettingsDialog({ open, onOpenChange, repos, selectedRepoPath }: 
               </div>
               <div className="rounded-lg border p-3 space-y-3 text-sm">
                 <p className="text-muted-foreground text-xs">
-                  Customize the prompts sent to AI agents when using work session or feature builder mode.
+                  Prompts are composed from 3 layers: shipped (built-in), custom (~/.ezstack), and repo (per-repo, committable).
                 </p>
+                <div className="flex gap-1 mb-1">
+                  {(["shipped", "custom", "repo"] as const).map((layer) => (
+                    <Button
+                      key={layer}
+                      variant={promptLayer === layer ? "default" : "outline"}
+                      size="sm"
+                      className="text-xs capitalize"
+                      onClick={() => { setPromptLayer(layer); setPromptContent(null); }}
+                    >
+                      {layer}
+                    </Button>
+                  ))}
+                </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleViewPrompts}
-                    disabled={promptLoading}
-                  >
-                    {promptLoading ? "Loading..." : promptContent !== null ? "Refresh" : "View Prompts"}
+                  <Button variant="outline" size="sm" onClick={() => handleViewPrompt("work")} disabled={promptLoading}>
+                    {promptLoading ? "Loading..." : "View Work"}
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => handleEditPrompts("work")}>
-                    Edit Work Prompt
+                  <Button variant="outline" size="sm" onClick={() => handleViewPrompt("feature")} disabled={promptLoading}>
+                    View Feature
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => handleEditPrompts("feature")}>
-                    Edit Feature Prompt
-                  </Button>
-                  <Button variant="outline" size="sm" onClick={() => handleResetPrompts("both")}>
-                    Reset to Defaults
-                  </Button>
+                  {promptLayer !== "shipped" && (
+                    <>
+                      <Button variant="outline" size="sm" onClick={() => handleEditPrompts("work")}>
+                        Edit Work
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => handleEditPrompts("feature")}>
+                        Edit Feature
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => handleResetPrompts("work")}>
+                        Reset Work
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => handleResetPrompts("feature")}>
+                        Reset Feature
+                      </Button>
+                    </>
+                  )}
                 </div>
                 {promptError && (
                   <p className="text-destructive text-xs">{promptError}</p>
