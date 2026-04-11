@@ -274,8 +274,10 @@ func (g *Git) GetCommitsAhead(branch, target string) (int, error) {
 }
 
 // GetDiffStat returns the total lines added and removed between base and head.
+// Uses three-dot diff (merge-base) to show only changes introduced by head,
+// not changes on base that head doesn't have.
 func (g *Git) GetDiffStat(base, head string) (added int, removed int, err error) {
-	output, err := g.run("diff", "--shortstat", base, head)
+	output, err := g.run("diff", "--shortstat", base+"..."+head)
 	if err != nil {
 		return 0, 0, err
 	}

@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -170,7 +171,7 @@ func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) st
 
 		g := git.New(worktreePath)
 		needsPush, err := g.IsLocalAheadOfOrigin(branchName)
-		if err != nil || !needsPush {
+		if err == nil && !needsPush {
 			continue
 		}
 
@@ -246,7 +247,7 @@ func OfferPushMultiple(branches []string, getBranchWorktree func(string) string)
 
 		g := git.New(worktreePath)
 		needsPush, err := g.IsLocalAheadOfOrigin(branchName)
-		if err != nil || !needsPush {
+		if err == nil && !needsPush {
 			continue
 		}
 
@@ -293,33 +294,58 @@ func newGitHubClient(g *git.Git) (*github.Client, error) {
 
 // selectAndRegisterRemotePR fetches open PRs, shows a selection UI,
 // prints the remote branch warning, fetches the remote, and registers it as a stack root.
+// If identifier is non-empty, it is used to look up the PR directly (by number or branch name)
+// instead of showing the interactive selection menu.
 // Returns the selected PR info.
-func selectAndRegisterRemotePR(g *git.Git, mgr *stack.Manager) (github.OpenPR, error) {
+func selectAndRegisterRemotePR(g *git.Git, mgr *stack.Manager, identifier string) (github.OpenPR, error) {
 	gh, err := newGitHubClient(g)
 	if err != nil {
 		return github.OpenPR{}, err
 	}
 
-	ui.Info("Fetching open PRs...")
-	openPRs, err := gh.ListOpenPRs()
-	if err != nil {
-		return github.OpenPR{}, fmt.Errorf("failed to list open PRs: %w", err)
-	}
+	var selectedPR github.OpenPR
 
-	if len(openPRs) == 0 {
-		return github.OpenPR{}, fmt.Errorf("no open PRs found in this repository")
-	}
+	if identifier != "" {
+		// Try to resolve identifier as a PR number first, then as a branch name
+		var pr *github.PR
+		if num, parseErr := strconv.Atoi(identifier); parseErr == nil {
+			ui.Info(fmt.Sprintf("Looking up PR #%d...", num))
+			pr, err = gh.GetPR(num)
+		} else {
+			ui.Info(fmt.Sprintf("Looking up PR for branch '%s'...", identifier))
+			pr, err = gh.GetPRByBranch(identifier)
+		}
+		if err != nil {
+			return github.OpenPR{}, fmt.Errorf("failed to find PR for '%s': %w", identifier, err)
+		}
+		selectedPR = github.OpenPR{
+			Number: pr.Number,
+			Title:  pr.Title,
+			Branch: pr.Head,
+			URL:    pr.URL,
+		}
+	} else {
+		ui.Info("Fetching open PRs...")
+		openPRs, err := gh.ListOpenPRs()
+		if err != nil {
+			return github.OpenPR{}, fmt.Errorf("failed to list open PRs: %w", err)
+		}
 
-	prOptions := make([]string, len(openPRs))
-	for i, pr := range openPRs {
-		prOptions[i] = fmt.Sprintf("#%d %s - %s (%s)", pr.Number, pr.Branch, pr.Title, pr.Author)
-	}
+		if len(openPRs) == 0 {
+			return github.OpenPR{}, fmt.Errorf("no open PRs found in this repository")
+		}
 
-	selectedIdx, err := ui.SelectOption(prOptions, "Select PR to use as stack base")
-	if err != nil {
-		return github.OpenPR{}, err
+		prOptions := make([]string, len(openPRs))
+		for i, pr := range openPRs {
+			prOptions[i] = fmt.Sprintf("#%d %s - %s (%s)", pr.Number, pr.Branch, pr.Title, pr.Author)
+		}
+
+		selectedIdx, err := ui.SelectOption(prOptions, "Select PR to use as stack base")
+		if err != nil {
+			return github.OpenPR{}, err
+		}
+		selectedPR = openPRs[selectedIdx]
 	}
-	selectedPR := openPRs[selectedIdx]
 
 	printRemoteBranchWarning()
 
@@ -433,19 +459,21 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 
 	if discoveredPRs {
 		mainWorktree := getMainWorktreePath(g)
-		cache, _ := config.LoadCacheConfig(mainWorktree)
-		for _, branch := range s.Branches {
-			if branch.PRNumber > 0 {
-				bc := cache.GetBranchCache(branch.Name)
-				if bc == nil {
-					bc = &config.BranchCache{}
+		cache, err := config.LoadCacheConfig(mainWorktree)
+		if err == nil {
+			for _, branch := range s.Branches {
+				if branch.PRNumber > 0 {
+					bc := cache.GetBranchCache(branch.Name)
+					if bc == nil {
+						bc = &config.BranchCache{}
+					}
+					bc.PRNumber = branch.PRNumber
+					bc.PRUrl = branch.PRUrl
+					cache.SetBranchCache(branch.Name, bc)
 				}
-				bc.PRNumber = branch.PRNumber
-				bc.PRUrl = branch.PRUrl
-				cache.SetBranchCache(branch.Name, bc)
 			}
+			cache.Save(mainWorktree)
 		}
-		cache.Save(mainWorktree)
 	}
 
 	return gh
@@ -465,12 +493,12 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 			if b.IsMerged {
 				return
 			}
-			// Always use origin/root for the stack root parent
+			// Use origin/ refs when available for both parent and branch
+			// to get accurate stats matching what PRs show
 			parentRef := b.Parent
-			if b.Parent == s.Root && g.RemoteBranchExists(b.Parent) {
+			if g.RemoteBranchExists(b.Parent) {
 				parentRef = "origin/" + b.Parent
 			}
-			// Use origin/<branch> if it exists, fallback to local branch
 			branchRef := b.Name
 			if g.RemoteBranchExists(b.Name) {
 				branchRef = "origin/" + b.Name

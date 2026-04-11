@@ -52,16 +52,14 @@ func Diff(args []string) error {
 		return err
 	}
 
-	currentStack, branch, err := mgr.GetCurrentStack()
+	_, branch, err := mgr.GetCurrentStack()
 	if err != nil {
 		return err
 	}
 
-	// Use origin/ only for the stack root (e.g. main), not for stacked parents.
-	// Stacked parents may have been rebased locally but not yet pushed, so the
-	// local ref is the correct base for the diff.
+	// Use origin/ for the parent when available to get consistent diffs
 	parentRef := branch.Parent
-	if branch.Parent == currentStack.Root && g.RemoteBranchExists(branch.Parent) {
+	if g.RemoteBranchExists(branch.Parent) {
 		parentRef = "origin/" + branch.Parent
 	}
 

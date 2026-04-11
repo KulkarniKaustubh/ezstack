@@ -57,7 +57,16 @@ type RepoConfig struct {
 	CdAfterNew          *bool  `json:"cd_after_new,omitempty"`
 	UseWorktrees        *bool  `json:"use_worktrees,omitempty"`
 	AutoDraftWipCommits *bool  `json:"auto_draft_wip_commits,omitempty"`
-	SyncStrategy        string `json:"sync_strategy,omitempty"` // "rebase" (default) or "merge"
+	SyncStrategy        string `json:"sync_strategy,omitempty"`    // "rebase" (default) or "merge"
+	AgentCommand        string `json:"agent_command,omitempty"`    // AI agent CLI command (default: "claude")
+}
+
+// GetAgentCommand returns the configured agent command, defaulting to "claude".
+func (rc *RepoConfig) GetAgentCommand() string {
+	if rc != nil && rc.AgentCommand != "" {
+		return rc.AgentCommand
+	}
+	return "claude"
 }
 
 // GetRepoConfig returns the configuration for a specific repo path
@@ -276,7 +285,11 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		os.Remove(tmpPath)
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 // migrateStackConfig migrates stacks.json data from srcVersion to dstVersion.

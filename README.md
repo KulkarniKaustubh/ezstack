@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.png" alt="ezstack logo" width="120">
+
 # ezstack
 
 **Manage stacked PRs with git worktrees**
@@ -83,28 +85,48 @@ ezs sync -a
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `new` | `n` | Create a new branch in the stack |
-| `list` | `ls` | List all stacks and branches |
-| `status` | `st` | Show status with PR and CI info |
-| `sync` | `rebase`, `rb` | Sync stack with remote (rebase or merge) |
-| `goto` | `go` | Navigate to a branch worktree |
-| `up` | | Navigate up the stack (toward parent) |
+| `agent` | | Launch AI agent with stack context (work session or feature builder) |
+| `agent prompt` | | View or edit agent prompt templates |
+| `amend` | | Amend last commit and auto-sync children |
+| `commit` | `ci` | Commit and auto-sync child branches |
+| `config` | `cfg` | Configure ezstack |
+| `delete` | `del`, `rm` | Delete a branch and its worktree |
+| `diff` | | Show diff against parent branch |
 | `down` | | Navigate down the stack (toward children) |
+| `goto` | `go` | Navigate to a branch worktree |
+| `list` | `ls` | List all stacks and branches |
+| `menu` | | Interactive command menu |
+| `new` | `n` | Create a new branch in the stack |
+| `pr` | | Manage pull requests (create, update, merge, draft, stack) |
+| `push` | | Push current branch or entire stack |
 | `reparent` | `rp` | Change the parent of a branch |
 | `stack` | | Add a branch to a stack |
+| `status` | `st` | Show status with PR and CI info |
+| `sync` | | Sync stack with remote (rebase or merge) |
 | `unstack` | | Remove a branch from tracking |
-| `delete` | `del`, `rm` | Delete a branch and its worktree |
-| `commit` | `ci` | Commit and auto-sync child branches |
-| `amend` | | Amend last commit and auto-sync children |
-| `push` | | Push current branch or entire stack |
-| `diff` | | Show diff against parent branch |
-| `pr` | | Manage pull requests (create, update, merge, draft, stack) |
-| `config` | `cfg` | Configure ezstack |
-| `menu` | | Interactive command menu |
+| `up` | | Navigate up the stack (toward parent) |
 
 **Global flags:** `-y, --yes` auto-confirm prompts · `-h, --help` · `-v, --version`
 
 Run `ezs <command> --help` for command-specific help.
+
+## AI Agent
+
+ezstack can launch an AI coding agent (Claude, Cursor, etc.) with full stack context injected automatically. The agent is scoped to a single stack and knows about all branches, worktree paths, and available commands.
+
+```bash
+# Launch agent on current stack
+ezs agent
+
+# Build a feature as stacked branches
+ezs agent feature "Add user authentication with JWT tokens"
+
+# View or edit the agent's prompt templates
+ezs agent prompt --shipped work
+ezs agent prompt --edit work
+```
+
+Agent prompts are composed from three layers: a shipped prompt (updated with releases), custom instructions (`~/.ezstack/`), and repo-specific instructions (`<repo>/.ezstack/`). See [AGENTS.md](AGENTS.md) for full details.
 
 ## Configuration
 
