@@ -29,7 +29,7 @@ func Agent(args []string) error {
 %sUSAGE%s
     ezs agent [options]              Launch agent scoped to a stack
     ezs agent feature "description"  Launch agent to build a feature as stacked branches
-    ezs agent prompt [options]       View or edit agent prompt templates
+    ezs agent prompt <flag> <work|feature>  View or edit agent prompt templates
 
 %sMODES%s
     (default)   Work session — agent is scoped to a stack with full context
@@ -65,14 +65,14 @@ func Agent(args []string) error {
     %s# Build a feature as stacked branches%s
     ezs agent feature "Add user authentication with JWT tokens"
 
-    %s# View both prompt templates%s
-    ezs agent prompt
+    %s# View the shipped work prompt%s
+    ezs agent prompt --shipped work
 
-    %s# Edit the work session prompt%s
-    ezs agent prompt --edit --work
+    %s# Edit custom work instructions%s
+    ezs agent prompt --edit work
 
-    %s# Edit the feature builder prompt%s
-    ezs agent prompt --edit --feature
+    %s# Edit repo-specific work instructions%s
+    ezs agent prompt --edit --repo work
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset,
 			ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset,
 			ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset)
@@ -163,20 +163,28 @@ func agentPrompt(args []string) error {
 		fmt.Fprintf(os.Stderr, `%sView or edit agent prompt templates%s
 
 %sUSAGE%s
-    ezs agent prompt [options]
+    ezs agent prompt <flag> <work|feature>
 
-%sOPTIONS%s
-    --edit               Open the prompt file in your editor ($EDITOR)
-    --work               Target the work session prompt only
-    --feature            Target the feature builder prompt only
-    --reset              Reset prompt(s) to the built-in default
+%sFLAGS%s
+    --shipped            View the shipped (built-in) prompt template
+    --custom             View your custom instructions (~/.ezstack/)
+    --repo               View or target repo-specific instructions (<repo>/.ezstack/)
+    --edit               Edit custom instructions (combine with --repo for repo-specific)
+    --reset              Delete custom instructions (combine with --repo for repo-specific)
     -h, --help           Show this help message
 
-    Without --work or --feature, both prompts are shown (or both are edited/reset).
+    The positional argument "work" or "feature" is required.
 
-%sTEMPLATE VARIABLES%s
-    The following variables are replaced at runtime when the agent launches:
+%sPROMPT COMPOSITION%s
+    The final agent prompt is composed from three layers:
+    1. Shipped prompt   — built into ezstack, updated with releases
+    2. Custom instructions — ~/.ezstack/agent-{work,feature}-prompt.md (personal)
+    3. Repo instructions — <repo>/.ezstack/agent-{work,feature}-prompt.md (per-repo)
 
+    To fully override the shipped prompt, add "override: full" as the first
+    line of your custom instructions file. Repo instructions are still injected.
+
+%sTEMPLATE VARIABLES%s (for "override: full" mode)
     {{STACK_JSON}}             Current stack structure as JSON
     {{BRANCH_NAME}}            Current branch name
     {{PARENT_NAME}}            Parent branch name
@@ -184,42 +192,43 @@ func agentPrompt(args []string) error {
     {{EZS_COMMANDS}}           Available ezs commands reference
     {{EZS_DOCS}}               Full ezstack documentation for AI agents
     {{FEATURE_DESCRIPTION}}    Feature description (feature mode only)
-
-%sFILES%s
-    Work session prompt:    ~/.ezstack/%s
-    Feature builder prompt: ~/.ezstack/%s
-
-    The recommended way to edit these prompts is through 'ezs agent prompt --edit'.
+    {{CUSTOM_INSTRUCTIONS}}    Custom instructions slot
+    {{REPO_INSTRUCTIONS}}      Repository instructions slot
 
 %sEXAMPLES%s
-    %s# View both prompts with variable placeholders%s
-    ezs agent prompt
+    %s# View the shipped work prompt%s
+    ezs agent prompt --shipped work
 
-    %s# Edit the work session prompt in your editor%s
-    ezs agent prompt --edit --work
+    %s# View your custom work instructions%s
+    ezs agent prompt --custom work
 
-    %s# Edit the feature builder prompt%s
-    ezs agent prompt --edit --feature
+    %s# View repo-specific feature instructions%s
+    ezs agent prompt --repo feature
 
-    %s# Edit both prompts (opens editor twice)%s
-    ezs agent prompt --edit
+    %s# Edit custom work instructions%s
+    ezs agent prompt --edit work
 
-    %s# Reset the work prompt to the built-in default%s
-    ezs agent prompt --reset --work
+    %s# Edit repo-specific work instructions%s
+    ezs agent prompt --edit --repo work
 
-    %s# Reset both prompts to defaults%s
-    ezs agent prompt --reset
-`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset,
-			workPromptFilename, featurePromptFilename,
+    %s# Reset (delete) custom work instructions%s
+    ezs agent prompt --reset work
+
+    %s# Reset (delete) repo-specific feature instructions%s
+    ezs agent prompt --reset --repo feature
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset,
+			ui.Cyan, ui.Reset, ui.Cyan, ui.Reset,
 			ui.Cyan, ui.Reset,
 			ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset,
-			ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset)
+			ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset,
+			ui.Yellow, ui.Reset)
 	}
 
-	editFlag := fs.Bool("edit", false, "Open prompt in editor")
-	workFlag := fs.Bool("work", false, "Target work session prompt only")
-	featureFlag := fs.Bool("feature", false, "Target feature builder prompt only")
-	resetFlag := fs.Bool("reset", false, "Reset prompt(s) to built-in default")
+	shippedFlag := fs.Bool("shipped", false, "View the shipped prompt template")
+	customFlag := fs.Bool("custom", false, "View custom instructions")
+	repoFlag := fs.Bool("repo", false, "Target repo-specific instructions")
+	editFlag := fs.Bool("edit", false, "Edit instructions in your editor")
+	resetFlag := fs.Bool("reset", false, "Delete instructions file")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -233,47 +242,106 @@ func agentPrompt(args []string) error {
 		return nil
 	}
 
-	// If neither --work nor --feature, target both
-	showWork := *workFlag || (!*workFlag && !*featureFlag)
-	showFeature := *featureFlag || (!*workFlag && !*featureFlag)
-
-	if *resetFlag {
-		return resetPrompts(showWork, showFeature)
+	// Require positional arg: "work" or "feature"
+	if fs.NArg() < 1 {
+		return fmt.Errorf("missing prompt type. Usage: ezs agent prompt <flag> <work|feature>")
+	}
+	promptType := fs.Arg(0)
+	if promptType != "work" && promptType != "feature" {
+		return fmt.Errorf("invalid prompt type %q. Must be \"work\" or \"feature\"", promptType)
 	}
 
+	// Resolve repo path for --repo flag
+	var repoPath string
+	if *repoFlag || *editFlag || *resetFlag {
+		// We need repo path for --repo, and also for --edit/--reset (to know if we're in a repo)
+		cwd, err := os.Getwd()
+		if err != nil && *repoFlag {
+			return fmt.Errorf("cannot determine current directory: %w", err)
+		}
+		if err == nil {
+			g := git.New(cwd)
+			repoPath = getMainWorktreePath(g)
+		}
+	}
+	if *repoFlag && repoPath == "" {
+		return fmt.Errorf("--repo requires being inside a git repository")
+	}
+
+	// Dispatch
+	if *shippedFlag {
+		return showShippedPrompt(promptType)
+	}
+	if *customFlag {
+		return showCustomPrompt(promptType)
+	}
+	if *repoFlag && !*editFlag && !*resetFlag {
+		return showRepoPrompt(promptType, repoPath)
+	}
 	if *editFlag {
-		return editPrompts(showWork, showFeature)
+		if *repoFlag {
+			return editRepoPrompt(promptType, repoPath)
+		}
+		return editCustomPrompt(promptType)
+	}
+	if *resetFlag {
+		if *repoFlag {
+			return resetRepoPrompt(promptType, repoPath)
+		}
+		return resetCustomPrompt(promptType)
 	}
 
-	return showPrompts(showWork, showFeature)
-}
-
-func showPrompts(showWork, showFeature bool) error {
-	if showWork {
-		content, path, err := loadPromptTemplate(workPromptFilename, defaultWorkPromptTemplate)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("%s── Work Session Prompt (%s) ──%s\n\n", ui.Cyan, path, ui.Reset)
-		fmt.Println(content)
-		if showFeature {
-			fmt.Println()
-		}
-	}
-
-	if showFeature {
-		content, path, err := loadPromptTemplate(featurePromptFilename, defaultFeaturePromptTemplate)
-		if err != nil {
-			return err
-		}
-		fmt.Printf("%s── Feature Builder Prompt (%s) ──%s\n\n", ui.Cyan, path, ui.Reset)
-		fmt.Println(content)
-	}
-
+	// No flags: show usage
+	fs.Usage()
 	return nil
 }
 
-func editPrompts(editWork, editFeature bool) error {
+// ── View functions ────────────────────────────────────────────────────────────
+
+func showShippedPrompt(promptType string) error {
+	template := defaultWorkPromptTemplate
+	if promptType == "feature" {
+		template = defaultFeaturePromptTemplate
+	}
+	fmt.Printf("%s── Shipped %s Prompt ──%s\n\n", ui.Cyan, promptType, ui.Reset)
+	fmt.Println(template)
+	return nil
+}
+
+func showCustomPrompt(promptType string) error {
+	path, err := globalInstructionsPath(promptType)
+	if err != nil {
+		return err
+	}
+	content, isOverride := loadInstructionsFile(path)
+	if content == "" {
+		ui.Info(fmt.Sprintf("No custom %s instructions found at %s", promptType, path))
+		return nil
+	}
+	label := "Custom"
+	if isOverride {
+		label = "Custom (override: full)"
+	}
+	fmt.Printf("%s── %s %s Instructions (%s) ──%s\n\n", ui.Cyan, label, promptType, path, ui.Reset)
+	fmt.Println(content)
+	return nil
+}
+
+func showRepoPrompt(promptType, repoPath string) error {
+	path := repoInstructionsPath(repoPath, promptType)
+	content, _ := loadInstructionsFile(path)
+	if content == "" {
+		ui.Info(fmt.Sprintf("No repo %s instructions found at %s", promptType, path))
+		return nil
+	}
+	fmt.Printf("%s── Repo %s Instructions (%s) ──%s\n\n", ui.Cyan, promptType, path, ui.Reset)
+	fmt.Println(content)
+	return nil
+}
+
+// ── Edit functions ────────────────────────────────────────────────────────────
+
+func getEditor() string {
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = os.Getenv("VISUAL")
@@ -281,60 +349,68 @@ func editPrompts(editWork, editFeature bool) error {
 	if editor == "" {
 		editor = "vi"
 	}
-
-	if editWork {
-		path, err := ensurePromptFile(workPromptFilename, defaultWorkPromptTemplate)
-		if err != nil {
-			return err
-		}
-		ui.Info(fmt.Sprintf("Opening work session prompt: %s", path))
-		if err := openEditor(editor, path); err != nil {
-			return err
-		}
-	}
-
-	if editFeature {
-		path, err := ensurePromptFile(featurePromptFilename, defaultFeaturePromptTemplate)
-		if err != nil {
-			return err
-		}
-		ui.Info(fmt.Sprintf("Opening feature builder prompt: %s", path))
-		if err := openEditor(editor, path); err != nil {
-			return err
-		}
-	}
-
-	return nil
+	return editor
 }
 
-func resetPrompts(resetWork, resetFeature bool) error {
-	configDir, err := config.ConfigDir()
+func editCustomPrompt(promptType string) error {
+	path, err := globalInstructionsPath(promptType)
 	if err != nil {
 		return err
 	}
-
-	if resetWork {
-		path := filepath.Join(configDir, workPromptFilename)
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, []byte(defaultWorkPromptTemplate), 0644); err != nil {
-			return err
-		}
-		ui.Success(fmt.Sprintf("Reset work session prompt to default: %s", path))
+	path, err = ensureInstructionsFile(path, promptType, "Custom")
+	if err != nil {
+		return err
 	}
+	ui.Info(fmt.Sprintf("Opening custom %s instructions: %s", promptType, path))
+	return openEditor(getEditor(), path)
+}
 
-	if resetFeature {
-		path := filepath.Join(configDir, featurePromptFilename)
-		if err := os.MkdirAll(configDir, 0755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(path, []byte(defaultFeaturePromptTemplate), 0644); err != nil {
-			return err
-		}
-		ui.Success(fmt.Sprintf("Reset feature builder prompt to default: %s", path))
+func editRepoPrompt(promptType, repoPath string) error {
+	path := repoInstructionsPath(repoPath, promptType)
+	path, err := ensureInstructionsFile(path, promptType, "Repository")
+	if err != nil {
+		return err
 	}
+	ui.Info(fmt.Sprintf("Opening repo %s instructions: %s", promptType, path))
+	return openEditor(getEditor(), path)
+}
 
+// ── Reset functions ───────────────────────────────────────────────────────────
+
+func resetCustomPrompt(promptType string) error {
+	path, err := globalInstructionsPath(promptType)
+	if err != nil {
+		return err
+	}
+	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+		ui.Info(fmt.Sprintf("No custom %s instructions to reset (file does not exist)", promptType))
+		return nil
+	}
+	if !ui.ConfirmTUI(fmt.Sprintf("Delete custom %s instructions at %s?", promptType, path)) {
+		ui.Info("Cancelled")
+		return nil
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	ui.Success(fmt.Sprintf("Deleted custom %s instructions: %s", promptType, path))
+	return nil
+}
+
+func resetRepoPrompt(promptType, repoPath string) error {
+	path := repoInstructionsPath(repoPath, promptType)
+	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+		ui.Info(fmt.Sprintf("No repo %s instructions to reset (file does not exist)", promptType))
+		return nil
+	}
+	if !ui.ConfirmTUI(fmt.Sprintf("Delete repo %s instructions at %s?", promptType, path)) {
+		ui.Info("Cancelled")
+		return nil
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	ui.Success(fmt.Sprintf("Deleted repo %s instructions: %s", promptType, path))
 	return nil
 }
 
@@ -349,42 +425,69 @@ func openEditor(editor, filePath string) error {
 
 // ── Prompt file management ─────────────────────────────────────────────────────
 
-// loadPromptTemplate loads a prompt template from ~/.ezstack/<filename>.
-// If the file doesn't exist, it returns the built-in default.
-func loadPromptTemplate(filename, defaultContent string) (content string, path string, err error) {
-	configDir, err := config.ConfigDir()
+const overrideFullMarker = "override: full\n"
+
+// loadInstructionsFile reads an instructions file and returns its content.
+// If the file starts with "override: full\n", the marker is stripped and
+// isOverride is returned as true.  Returns ("", false) if the file doesn't exist.
+func loadInstructionsFile(path string) (content string, isOverride bool) {
+	data, err := os.ReadFile(path)
 	if err != nil {
-		return defaultContent, "", nil
+		return "", false
 	}
-
-	path = filepath.Join(configDir, filename)
-	data, readErr := os.ReadFile(path)
-	if readErr != nil {
-		// File doesn't exist — return default (don't create it until user explicitly edits/resets)
-		return defaultContent, path, nil
+	content = string(data)
+	if strings.HasPrefix(content, overrideFullMarker) {
+		return strings.TrimPrefix(content, overrideFullMarker), true
 	}
-
-	return string(data), path, nil
+	return content, false
 }
 
-// ensurePromptFile creates the prompt file from the default template if it doesn't exist.
-// Returns the file path.
-func ensurePromptFile(filename, defaultContent string) (string, error) {
+// promptFilename returns the filename for a given prompt type ("work" or "feature").
+func promptFilename(promptType string) string {
+	return "agent-" + promptType + "-prompt.md"
+}
+
+// globalInstructionsPath returns the path to the global custom instructions file
+// in ~/.ezstack/ for the given prompt type.
+func globalInstructionsPath(promptType string) (string, error) {
 	configDir, err := config.ConfigDir()
 	if err != nil {
 		return "", err
 	}
+	return filepath.Join(configDir, promptFilename(promptType)), nil
+}
 
-	path := filepath.Join(configDir, filename)
+// repoInstructionsPath returns the path to the repo-specific instructions file
+// in <repoPath>/.ezstack/ for the given prompt type.
+func repoInstructionsPath(repoPath, promptType string) string {
+	return filepath.Join(repoPath, ".ezstack", promptFilename(promptType))
+}
+
+// ensureInstructionsFile creates the instructions file with a starter comment
+// if it doesn't exist. Returns the file path.
+func ensureInstructionsFile(path, promptType, location string) (string, error) {
+	dir := filepath.Dir(path)
 	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-		if err := os.MkdirAll(configDir, 0755); err != nil {
+		if err := os.MkdirAll(dir, 0755); err != nil {
 			return "", err
 		}
-		if err := os.WriteFile(path, []byte(defaultContent), 0644); err != nil {
+		starter := fmt.Sprintf(`# %s instructions for ezs agent (%s session)
+# Lines here are injected into the shipped prompt.
+`, location, promptType)
+		if location == "Custom" {
+			starter += `# To fully override the shipped prompt, add "override: full" as the first line.
+`
+		}
+		starter += `#
+# Examples:
+#   - Always run tests before committing
+#   - Use conventional commits (feat:, fix:, etc.)
+#   - This repo uses pnpm, not npm
+`
+		if err := os.WriteFile(path, []byte(starter), 0644); err != nil {
 			return "", err
 		}
 	}
-
 	return path, nil
 }
 
@@ -629,25 +732,54 @@ func buildStackJSON(s *config.Stack) string {
 
 // ── Prompt rendering ───────────────────────────────────────────────────────────
 
-func buildRenderedWorkPrompt(ctx *agentContext) (string, error) {
-	template, _, err := loadPromptTemplate(workPromptFilename, defaultWorkPromptTemplate)
+// buildComposedPrompt implements the 3-layer composition logic for any prompt type.
+//
+// Resolution:
+//  1. Load custom instructions from ~/.ezstack/
+//  2. Load repo instructions from <repo>/.ezstack/
+//  3. If custom has "override: full" → use custom as base template, inject repo via {{REPO_INSTRUCTIONS}}
+//  4. Otherwise → use shipped template, inject both custom and repo into their slots
+func buildComposedPrompt(shippedTemplate string, vars map[string]string, repoPath, promptType string) (string, error) {
+	customPath, err := globalInstructionsPath(promptType)
 	if err != nil {
-		return "", err
+		customPath = "" // non-fatal: just skip custom instructions
+	}
+	customContent, customOverride := loadInstructionsFile(customPath)
+	repoContent, _ := loadInstructionsFile(repoInstructionsPath(repoPath, promptType))
+
+	if customOverride {
+		// override: full replaces shipped prompt, but repo instructions still injected
+		if repoContent != "" {
+			vars["REPO_INSTRUCTIONS"] = "## Repository Instructions\n" + repoContent
+		} else {
+			vars["REPO_INSTRUCTIONS"] = ""
+		}
+		return renderPrompt(customContent, vars), nil
 	}
 
+	// Normal composition: shipped + custom + repo injected into slots
+	if customContent != "" {
+		vars["CUSTOM_INSTRUCTIONS"] = "## Custom Instructions\n" + customContent
+	} else {
+		vars["CUSTOM_INSTRUCTIONS"] = ""
+	}
+	if repoContent != "" {
+		vars["REPO_INSTRUCTIONS"] = "## Repository Instructions\n" + repoContent
+	} else {
+		vars["REPO_INSTRUCTIONS"] = ""
+	}
+	return renderPrompt(shippedTemplate, vars), nil
+}
+
+func buildRenderedWorkPrompt(ctx *agentContext) (string, error) {
 	vars := buildTemplateVars(ctx)
-	return renderPrompt(template, vars), nil
+	return buildComposedPrompt(defaultWorkPromptTemplate, vars, ctx.repoPath, "work")
 }
 
 func buildRenderedFeaturePrompt(ctx *agentContext, description string) (string, error) {
-	template, _, err := loadPromptTemplate(featurePromptFilename, defaultFeaturePromptTemplate)
-	if err != nil {
-		return "", err
-	}
-
 	vars := buildTemplateVars(ctx)
 	vars["FEATURE_DESCRIPTION"] = description
-	return renderPrompt(template, vars), nil
+	return buildComposedPrompt(defaultFeaturePromptTemplate, vars, ctx.repoPath, "feature")
 }
 
 func buildTemplateVars(ctx *agentContext) map[string]string {
@@ -774,6 +906,8 @@ All your changes must be relevant to the branch you are working on.
 - Commit with "ezs -y commit", not "git commit" (ezs commit auto-syncs children).
 - Push with "ezs -y push", not "git push".
 - Always use the -y flag with ezs commands to skip confirmations.
+{{CUSTOM_INSTRUCTIONS}}
+{{REPO_INSTRUCTIONS}}
 `
 
 const defaultFeaturePromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
@@ -826,4 +960,6 @@ You are implementing the following feature as a series of small, stacked, review
 - Commit with "ezs -y commit", not "git commit" (ezs commit auto-syncs children).
 - Push with "ezs -y push", not "git push".
 - Always use the -y flag with ezs commands to skip confirmations.
+{{CUSTOM_INSTRUCTIONS}}
+{{REPO_INSTRUCTIONS}}
 `
