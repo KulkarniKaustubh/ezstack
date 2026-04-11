@@ -10,7 +10,14 @@ local subcommands = {}
 
 --- `:Ezs agent [options]` — launch AI agent with stack context
 --- `:Ezs agent feature "description"` — launch agent to build a feature
+--- `:Ezs agent prompt [edit|reset] [work|feature]` — manage agent prompts
 subcommands["agent"] = function(args)
+  -- Handle "prompt" subcommand natively for better Neovim integration
+  if args[1] == "prompt" then
+    M._agent_prompt(vim.list_slice(args, 2))
+    return
+  end
+
   local cli_args = { "agent" }
   for _, a in ipairs(args) do
     table.insert(cli_args, a)
@@ -588,6 +595,115 @@ subcommands["unstack"] = function(args)
   end)
 end
 
+--- Agent prompt management — native Neovim integration.
+--- Supports: view (default), edit, reset.
+---@param args string[] Remaining args after "prompt"
+function M._agent_prompt(args)
+  local action = args[1] -- nil (view), "edit", or "reset"
+  local which = args[2]  -- nil (both), "work", or "feature"
+
+  if action == "edit" then
+    -- Open prompt file(s) directly in Neovim
+    local home = vim.env.HOME or ""
+    local config_dir = home .. "/.ezstack"
+    local files = {}
+
+    if which == "feature" then
+      files = { config_dir .. "/agent-feature-prompt.md" }
+    elseif which == "work" then
+      files = { config_dir .. "/agent-work-prompt.md" }
+    else
+      files = {
+        config_dir .. "/agent-work-prompt.md",
+        config_dir .. "/agent-feature-prompt.md",
+      }
+    end
+
+    -- Ensure files exist by running reset for any missing ones
+    local missing = {}
+    for _, f in ipairs(files) do
+      if vim.fn.filereadable(f) ~= 1 then
+        table.insert(missing, f)
+      end
+    end
+
+    local function open_files()
+      for i, f in ipairs(files) do
+        if i == 1 then
+          vim.cmd("edit " .. vim.fn.fnameescape(f))
+        else
+          vim.cmd("vsplit " .. vim.fn.fnameescape(f))
+        end
+      end
+      vim.notify("Editing agent prompt" .. (#files > 1 and "s" or ""), vim.log.levels.INFO)
+    end
+
+    if #missing > 0 then
+      -- Create missing files by resetting them to defaults
+      local reset_args = { "agent", "prompt", "--reset" }
+      if which then
+        table.insert(reset_args, "--" .. which)
+      end
+      cli.exec(reset_args, function(err)
+        if err then
+          vim.notify("Failed to create prompt files: " .. err, vim.log.levels.ERROR)
+          return
+        end
+        open_files()
+      end)
+    else
+      open_files()
+    end
+    return
+  end
+
+  if action == "reset" then
+    -- Reset prompts via CLI
+    local reset_args = { "agent", "prompt", "--reset" }
+    if which == "work" then
+      table.insert(reset_args, "--work")
+    elseif which == "feature" then
+      table.insert(reset_args, "--feature")
+    end
+    cli.exec(reset_args, function(err)
+      if err then
+        vim.notify("Failed to reset prompts: " .. err, vim.log.levels.ERROR)
+      else
+        local target = which or "all"
+        vim.notify("Reset " .. target .. " agent prompt(s) to default", vim.log.levels.INFO)
+      end
+    end)
+    return
+  end
+
+  -- Default: view prompts in a scratch buffer
+  cli.exec({ "agent", "prompt" }, function(err, stdout)
+    if err then
+      vim.notify("Failed to get prompts: " .. err, vim.log.levels.ERROR)
+      return
+    end
+    -- Strip ANSI escape codes for clean display
+    local content = stdout:gsub("\027%[[0-9;]*m", "")
+    local lines = vim.split(content, "\n")
+
+    -- Create scratch buffer
+    local bufnr = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+    vim.bo[bufnr].modifiable = false
+    vim.bo[bufnr].buftype = "nofile"
+    vim.bo[bufnr].bufhidden = "wipe"
+    vim.bo[bufnr].filetype = "markdown"
+    vim.api.nvim_buf_set_name(bufnr, "ezstack://agent-prompts")
+
+    -- Open in a split
+    vim.cmd("botright split")
+    vim.api.nvim_win_set_buf(0, bufnr)
+
+    -- Close with q
+    vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = bufnr, silent = true })
+  end)
+end
+
 --- `:Ezs up` — navigate to parent branch
 subcommands["up"] = function()
   cli.list_stacks(function(err, stacks)
@@ -712,10 +828,26 @@ function M.register()
 
       -- Complete agent subcommands (":Ezs agent <tab>")
       if parts[2] == "agent" and #parts <= 3 then
-        local agent_subs = { "feature" }
+        local agent_subs = { "feature", "prompt" }
         return vim.tbl_filter(function(s)
           return s:find(arglead, 1, true) == 1
         end, agent_subs)
+      end
+
+      -- Complete agent prompt subcommands (":Ezs agent prompt <tab>")
+      if parts[2] == "agent" and parts[3] == "prompt" and #parts <= 4 then
+        local prompt_subs = { "edit", "reset" }
+        return vim.tbl_filter(function(s)
+          return s:find(arglead, 1, true) == 1
+        end, prompt_subs)
+      end
+
+      -- Complete agent prompt target (":Ezs agent prompt edit <tab>")
+      if parts[2] == "agent" and parts[3] == "prompt" and (parts[4] == "edit" or parts[4] == "reset") and #parts <= 5 then
+        local targets = { "work", "feature" }
+        return vim.tbl_filter(function(s)
+          return s:find(arglead, 1, true) == 1
+        end, targets)
       end
 
       -- Complete pr subcommands (":Ezs pr <tab>" or ":Ezs pr cr<tab>")
