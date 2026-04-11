@@ -73,7 +73,15 @@
         <a href="#features">Features</a>
         <a href="#how-it-works">How It Works</a>
         <a href="#commands">Commands</a>
-        <a href="#ecosystem">Ecosystem</a>
+        <div class="nav-dropdown">
+          <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
+          <div class="nav-dropdown-menu">
+            <a href="agent.html">AI Agent</a>
+            <a href="vscode.html">VS Code Extension</a>
+            <a href="#ecosystem">Desktop App</a>
+            <a href="#ecosystem">Neovim Plugin</a>
+          </div>
+        </div>
         <a href="#install">Install</a>
         <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener" class="nav-github">GitHub</a>
       </div>
@@ -85,7 +93,7 @@
     <div class="hero-glow"></div>
     <div class="container">
       <div class="hero-content">
-        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v3.0.0 &mdash; Latest Release</a>
+        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v3.1.0 &mdash; Latest Release</a>
         <h1>Stacked PRs.<br>Zero friction.</h1>
         <p class="hero-sub">Manage stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs &mdash; all from one CLI.</p>
         <div class="hero-actions">
@@ -198,6 +206,16 @@
       <h2 class="section-title" data-animate>Everything you need to ship faster</h2>
       <p class="section-sub" data-animate>Stop waiting on code reviews. Stack your PRs and develop in parallel.</p>
       <div class="features-grid">
+        <div class="feature-card feature-card-featured" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 014 4c0 1.95-1.4 3.57-3.25 3.92L12 10l-.75-.08A4.001 4.001 0 0112 2z"/><path d="M8 14h8"/><path d="M9 18h6"/><path d="M10 22h4"/><path d="M7 10.5C4.79 11.15 3 13.12 3 16h18c0-2.88-1.79-4.85-4-5.5"/></svg>
+          </div>
+          <h3>Built-in AI Agent</h3>
+          <p>Launch an AI coding agent scoped to your stack with full context injected &mdash; branches, worktrees, commands, docs. Describe a feature and the agent builds it as incremental stacked branches. Fully customizable prompt templates.</p>
+          <div class="feature-cta">
+            <a href="agent.html">Learn more &rarr;</a>
+          </div>
+        </div>
         <div class="feature-card" data-animate>
           <div class="feature-icon">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
@@ -247,13 +265,6 @@
           <h3>Rich Stack Visualization</h3>
           <p>Tree-style branch display shows parent-child relationships at a glance. <code>ezs ls</code> includes <code>+/-</code> diff stats per branch and strikes through merged PRs.</p>
         </div>
-        <div class="feature-card" data-animate>
-          <div class="feature-icon">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 014 4c0 1.95-1.4 3.57-3.25 3.92L12 10l-.75-.08A4.001 4.001 0 0112 2z"/><path d="M8 14h8"/><path d="M9 18h6"/><path d="M10 22h4"/><path d="M7 10.5C4.79 11.15 3 13.12 3 16h18c0-2.88-1.79-4.85-4-5.5"/></svg>
-          </div>
-          <h3>Built-in AI Agent</h3>
-          <p>Launch an AI coding agent scoped to your stack. Full context injected &mdash; branches, worktrees, commands. Customizable prompts with template variables.</p>
-        </div>
       </div>
     </div>
   </section>
@@ -299,6 +310,54 @@
 <span class="c-prompt">$</span> <span class="c-cmd">ezs pr stack</span>
 <span class="c-green">Updated 2 PR descriptions with stack info</span></code></pre>
           </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Agent Showcase -->
+  <section class="agent-showcase" id="agent">
+    <div class="container">
+      <div class="agent-showcase-inner">
+        <h2 class="section-title" data-animate>Let AI build your stack</h2>
+        <p class="section-sub" data-animate>Launch an AI agent with full stack context injected. Work on a branch or describe a feature and let the agent build it as stacked PRs.</p>
+
+        <div class="agent-modes" data-animate>
+          <div class="agent-mode-card">
+            <span class="mode-label mode-label-work">Work Session</span>
+            <h3>Agent scoped to your stack</h3>
+            <p>The agent sees your stack structure, worktree paths, and all ezstack commands. It works within a single branch.</p>
+            <div class="step-code">
+              <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span>
+<span class="c-dim">Launching claude in ~/worktrees/auth-service...</span>
+<span class="c-dim">Stack context injected (3 branches, 2 PRs)</span>
+
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--branch</span> auth-middleware
+<span class="c-dim">Launching claude in ~/worktrees/auth-middleware...</span></code></pre>
+            </div>
+          </div>
+          <div class="agent-mode-card">
+            <span class="mode-label mode-label-feature">Feature Builder</span>
+            <h3>Describe it, agent builds it</h3>
+            <p>The agent explores your codebase, plans a series of stacked branches, and implements each one with commits and PRs.</p>
+            <div class="step-code">
+              <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs agent feature</span> <span class="c-str">"Add JWT auth"</span>
+<span class="c-dim">Agent will plan and implement as stacked branches...</span>
+
+<span class="c-comment"># Agent creates:</span>
+<span class="c-dim">  main</span>
+<span class="c-dim">  └── jwt-types        </span><span class="c-green">PR #44</span>
+<span class="c-dim">      └── jwt-middleware</span> <span class="c-green">PR #45</span>
+<span class="c-dim">          └── jwt-routes </span><span class="c-green">PR #46</span></code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="agent-cta" data-animate>
+          <a href="agent.html" class="btn btn-primary">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 014 4c0 1.95-1.4 3.57-3.25 3.92L12 10l-.75-.08A4.001 4.001 0 0112 2z"/><path d="M8 14h8"/><path d="M9 18h6"/><path d="M10 22h4"/><path d="M7 10.5C4.79 11.15 3 13.12 3 16h18c0-2.88-1.79-4.85-4-5.5"/></svg>
+            See full agent workflow
+          </a>
         </div>
       </div>
     </div>
@@ -478,14 +537,14 @@
           <div class="eco-install">
             <h4>Install</h4>
             <ol>
-              <li>Download <code>ezstack-3.0.0.vsix</code> from the release page</li>
+              <li>Download <code>ezstack-3.1.0.vsix</code> from the release page</li>
               <li>In VS Code: <code>Cmd+Shift+P</code> &rarr; "Install from VSIX" &rarr; select the file</li>
               <li>Open a repo with ezstack configured &mdash; the panel appears in the sidebar</li>
             </ol>
           </div>
-          <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="btn btn-secondary eco-btn">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Download v3.0.0 VSIX
+          <a href="vscode.html" class="btn btn-secondary eco-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            Learn More &amp; Download
           </a>
         </div>
 
@@ -523,7 +582,7 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v3.0.0</span>
+          <span class="footer-meta">MIT License &middot; v3.1.0</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

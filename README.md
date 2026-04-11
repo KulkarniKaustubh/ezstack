@@ -122,11 +122,11 @@ ezs agent
 ezs agent feature "Add user authentication with JWT tokens"
 
 # View or edit the agent's prompt templates
-ezs agent prompt
-ezs agent prompt --edit --work
+ezs agent prompt --shipped work
+ezs agent prompt --edit work
 ```
 
-Agent prompts are stored as editable Markdown files in `~/.ezstack/` and use template variables (`{{STACK_JSON}}`, `{{BRANCH_NAME}}`, etc.) that are replaced at runtime. See [AGENTS.md](AGENTS.md) for full details.
+Agent prompts are composed from three layers: a shipped prompt (updated with releases), custom instructions (`~/.ezstack/`), and repo-specific instructions (`<repo>/.ezstack/`). See [AGENTS.md](AGENTS.md) for full details.
 
 ## Configuration
 

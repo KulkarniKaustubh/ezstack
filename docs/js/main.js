@@ -37,6 +37,23 @@
     });
   }
 
+  // Nav dropdown toggle
+  var dropdowns = document.querySelectorAll('.nav-dropdown');
+  dropdowns.forEach(function (dd) {
+    var toggle = dd.querySelector('.nav-dropdown-toggle');
+    toggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var wasOpen = dd.classList.contains('open');
+      // Close all dropdowns first
+      dropdowns.forEach(function (d) { d.classList.remove('open'); });
+      if (!wasOpen) dd.classList.add('open');
+    });
+  });
+  // Close dropdown on outside click
+  document.addEventListener('click', function () {
+    dropdowns.forEach(function (d) { d.classList.remove('open'); });
+  });
+
   // Smooth scroll for internal links
   document.addEventListener('click', function (e) {
     var target = e.target.closest('a[href^="#"]');
