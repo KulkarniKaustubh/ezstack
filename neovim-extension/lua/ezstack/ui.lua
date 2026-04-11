@@ -146,7 +146,7 @@ local function render_stack(stack, line_offset)
       local padded_diff = diff_text ~= "" and (diff_text .. string.rep(" ", math.max(1, 12 - #diff_text))) or ""
 
       -- Parent info
-      local parent_text = "(→ " .. branch.parent .. ")"
+      local parent_text = branch.parent and branch.parent ~= "" and ("(→ " .. branch.parent .. ")") or ""
 
       local line = pointer .. connector .. padded_name .. padded_pr .. padded_ci .. padded_diff .. parent_text
       table.insert(lines, line)
@@ -208,8 +208,10 @@ local function render_stack(stack, line_offset)
       end
 
       -- Parent highlight
-      local parent_start = #line - #parent_text
-      table.insert(highlights, { ln, parent_start, #line, "EzstackParent" })
+      if parent_text ~= "" then
+        local parent_start = #line - #parent_text
+        table.insert(highlights, { ln, parent_start, #line, "EzstackParent" })
+      end
 
       table.insert(line_map, {
         type = "branch",
@@ -662,7 +664,7 @@ function M.render_preview(stack, highlight_branch)
       diff_text = string.format("  +%d -%d", adds, dels)
     end
 
-    local parent_text = "  (→ " .. branch.parent .. ")"
+    local parent_text = branch.parent and branch.parent ~= "" and ("  (→ " .. branch.parent .. ")") or ""
     table.insert(lines, marker .. connector .. branch.name .. pr_text .. diff_text .. parent_text)
   end
 
