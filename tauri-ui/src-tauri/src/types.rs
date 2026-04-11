@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Branch {
@@ -28,6 +29,10 @@ pub struct StatusBranch {
     pub mergeable: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additions: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletions: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,16 +60,24 @@ pub struct CommandResult {
     pub exit_code: i32,
 }
 
+// Mirrors ~/.ezstack/config.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SshConnection {
-    pub host: String,
-    pub user: String,
-    pub port: u16,
-    /// Path to SSH private key file. If empty, uses default SSH keys.
+pub struct EzstackConfig {
     #[serde(default)]
-    pub key_path: String,
-    /// Repository path on the remote machine.
-    pub remote_repo_path: String,
+    pub default_base_branch: String,
+    #[serde(default)]
+    pub repos: HashMap<String, RepoConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoConfig {
+    pub repo_path: String,
+    #[serde(default)]
+    pub worktree_base_dir: String,
+    #[serde(default)]
+    pub default_base_branch: Option<String>,
+    #[serde(default)]
+    pub sync_strategy: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

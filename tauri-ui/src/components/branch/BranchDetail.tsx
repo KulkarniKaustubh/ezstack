@@ -100,6 +100,18 @@ export function BranchDetail({
               </div>
             )}
 
+            {(branch.additions !== undefined || branch.deletions !== undefined) && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Code Changes</span>
+                <span className="text-xs font-mono">
+                  {branch.additions ? <span className="text-success">+{branch.additions}</span> : null}
+                  {branch.additions && branch.deletions ? " " : null}
+                  {branch.deletions ? <span className="text-destructive">-{branch.deletions}</span> : null}
+                  {!branch.additions && !branch.deletions && <span className="text-muted-foreground">no changes</span>}
+                </span>
+              </div>
+            )}
+
             {branch.mergeable && (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">Merge</span>

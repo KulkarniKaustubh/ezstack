@@ -14,6 +14,8 @@ export interface StatusBranch extends Branch {
   ci_summary?: string;
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   review_state?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
+  additions?: number;
+  deletions?: number;
 }
 
 export interface StatusStack {

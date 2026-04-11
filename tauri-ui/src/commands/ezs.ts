@@ -1,7 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { StatusStack, CommandResult, SshConnection } from "../types/ezstack";
+import type { StatusStack, CommandResult, RepoConfig, SshConnection } from "../types/ezstack";
 
 export type { CommandResult, SshConnection };
+
+export async function getEzstackRepos(): Promise<RepoConfig[]> {
+  return invoke<RepoConfig[]>("get_ezstack_repos");
+}
 
 export async function getStacksStatus(repoPath: string): Promise<StatusStack[]> {
   return invoke<StatusStack[]>("get_stacks_status", { repoPath });
@@ -108,6 +112,50 @@ export async function setConfig(
   value: string,
 ): Promise<CommandResult> {
   return invoke<CommandResult>("set_config", { repoPath, key, value });
+}
+
+export async function openAgent(
+  repoPath: string,
+  stackHash?: string,
+  branch?: string,
+): Promise<void> {
+  return invoke<void>("open_agent", { repoPath, stackHash, branch });
+}
+
+export async function openAgentFeature(
+  repoPath: string,
+  stackHash: string,
+  description: string,
+): Promise<void> {
+  return invoke<void>("open_agent_feature", { repoPath, stackHash, description });
+}
+
+export async function getAgentPrompts(repoPath: string): Promise<string> {
+  return invoke<string>("get_agent_prompts", { repoPath });
+}
+
+export async function getAgentPromptLayer(
+  repoPath: string,
+  layer: "shipped" | "custom" | "repo",
+  promptType: "work" | "feature",
+): Promise<string> {
+  return invoke<string>("get_agent_prompt_layer", { repoPath, layer, prompt_type: promptType });
+}
+
+export async function resetAgentPrompts(
+  repoPath: string,
+  which: "work" | "feature" | "both",
+  repo: boolean = false,
+): Promise<string> {
+  return invoke<string>("reset_agent_prompts", { repoPath, which, repo });
+}
+
+export async function editAgentPrompts(
+  repoPath: string,
+  which: "work" | "feature",
+  repo: boolean = false,
+): Promise<void> {
+  return invoke<void>("edit_agent_prompts", { repoPath, which, repo });
 }
 
 // Remote connection commands
