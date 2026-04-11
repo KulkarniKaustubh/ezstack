@@ -285,7 +285,11 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		os.Remove(tmpPath)
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	if err := os.Rename(tmpPath, path); err != nil {
+		os.Remove(tmpPath)
+		return err
+	}
+	return nil
 }
 
 // migrateStackConfig migrates stacks.json data from srcVersion to dstVersion.
