@@ -299,10 +299,11 @@ func newGitHubClient(g *git.Git) (*github.Client, error) {
 // Returns the selected PR info.
 // remoteBranchResult holds the resolved remote branch info after selection/lookup.
 type remoteBranchResult struct {
-	Branch   string // Remote branch name (head)
-	Base     string // PR base branch (empty if no PR)
-	PRNumber int    // 0 if no PR
-	PRURL    string // empty if no PR
+	Branch    string // Remote branch name (head)
+	Base      string // PR base branch (empty if no PR)
+	PRNumber  int    // 0 if no PR
+	PRURL     string // empty if no PR
+	StackHash string // Hash of the stack this branch was registered to
 }
 
 func selectAndRegisterRemoteBranch(g *git.Git, mgr *stack.Manager, identifier string) (remoteBranchResult, error) {
@@ -385,11 +386,23 @@ func selectAndRegisterRemoteBranch(g *git.Git, mgr *stack.Manager, identifier st
 		return remoteBranchResult{}, fmt.Errorf("remote branch '%s' not found after fetch", result.Branch)
 	}
 
+	// If no PR base was found, infer from common base branches
+	if result.Base == "" {
+		for _, candidate := range []string{"main", "master"} {
+			if g.RemoteBranchExists(candidate) {
+				result.Base = candidate
+				break
+			}
+		}
+	}
+
 	printRemoteBranchWarning()
 
-	if err := mgr.RegisterRemoteBranch(result.Branch, result.Base, result.PRNumber, result.PRURL); err != nil {
+	hash, err := mgr.RegisterRemoteBranch(result.Branch, result.Base, result.PRNumber, result.PRURL)
+	if err != nil {
 		return remoteBranchResult{}, fmt.Errorf("failed to register remote branch: %w", err)
 	}
+	result.StackHash = hash
 
 	return result, nil
 }
@@ -405,6 +418,7 @@ func printRemoteBranchWarning() {
 
 // discoverAndCachePRs discovers PRs from GitHub for branches that don't have PR numbers cached
 // and saves them to the config. Returns a GitHub client for further use (or nil if unavailable).
+// Also discovers root PR info if missing (for remote base branches).
 func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client {
 	remoteURL, err := g.GetRemote("origin")
 	if err != nil {
@@ -424,6 +438,37 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 			fmt.Fprintf(os.Stderr, "[DEBUG] discoverAndCachePRs: NewClient error: %v\n", err)
 		}
 		return nil
+	}
+
+	// Discover root PR if the root is a remote feature branch without PR info
+	needsRootDiscovery := s.RootPRNumber == 0 && s.Root != "main" && s.Root != "master"
+	if needsRootDiscovery {
+		if debug {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Discovering root PR for %s\n", s.Root)
+		}
+		pr, prErr := gh.GetPRByBranch(s.Root)
+		if prErr == nil && pr != nil {
+			if debug {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Found root PR #%d for %s\n", pr.Number, s.Root)
+			}
+			s.RootPRNumber = pr.Number
+			s.RootPRUrl = pr.URL
+			if s.RootBase == "" {
+				s.RootBase = pr.Base
+			}
+			// Save root PR info to config
+			mainWorktree := getMainWorktreePath(g)
+			sc, scErr := config.LoadStackConfig(mainWorktree)
+			if scErr == nil {
+				if existing, ok := sc.Stacks[s.Hash]; ok {
+					existing.RootPRUrl = pr.URL
+					if existing.RootBase == "" {
+						existing.RootBase = pr.Base
+					}
+					sc.Save(mainWorktree)
+				}
+			}
+		}
 	}
 
 	// Collect branches that need PR discovery
@@ -519,10 +564,11 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// Compute diff for the root branch if it has a PR.
-	// Use RootBase if stored, otherwise infer from common base branches.
+	// Compute diff for the root branch against its base.
+	// Use RootBase if stored, otherwise infer from common base branches
+	// when the root is a remote feature branch (not main/master itself).
 	rootBase := s.RootBase
-	if rootBase == "" && s.RootPRNumber > 0 {
+	if rootBase == "" && s.Root != "main" && s.Root != "master" {
 		for _, candidate := range []string{"main", "master"} {
 			if g.RemoteBranchExists(candidate) {
 				rootBase = candidate

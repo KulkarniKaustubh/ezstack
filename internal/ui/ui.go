@@ -612,6 +612,9 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 		} else {
 			rootLine += "  " + Yellow + prText + Reset
 		}
+	} else if stack.RootBase != "" {
+		// No PR but we know the base branch (e.g. inferred main/master)
+		rootLine += "  " + Gray + "[\u2192 " + stack.RootBase + "]" + Reset
 	}
 	if statusMap != nil {
 		if rootStatus, ok := statusMap[stack.Root]; ok && rootStatus != nil {

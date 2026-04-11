@@ -219,7 +219,7 @@ func New(args []string) error {
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
 
-		userBranch, err := mgr.AddBranchToStack(newBranchName, remote.Branch, worktreePath)
+		userBranch, err := mgr.AddBranchToStack(newBranchName, remote.Branch, worktreePath, remote.StackHash)
 		if err != nil {
 			return fmt.Errorf("failed to add branch to stack: %w", err)
 		}

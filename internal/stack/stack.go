@@ -185,19 +185,7 @@ func (m *Manager) RegisterExistingBranch(branchName, worktreePath, baseBranch st
 // RegisterRemoteBranch creates a new stack with a remote branch as its root/base.
 // The remote branch is NOT added to the tree — it is the stack root.
 // PR info is stored on the Stack struct for display in stack descriptions.
-func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber int, prURL string) error {
-	// If a stack with this root already exists, just update its PR info
-	if key := m.findStackByRoot(branchName); key != "" {
-		existing := m.stackConfig.Stacks[key]
-		existing.RootBase = baseBranch
-		existing.RootPRNumber = prNumber
-		existing.RootPRUrl = prURL
-		if err := m.stackConfig.Save(m.repoDir); err != nil {
-			return fmt.Errorf("failed to save stack config: %w", err)
-		}
-		return nil
-	}
-
+func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber int, prURL string) (string, error) {
 	hash := m.generateUniqueHash(branchName)
 	stack := &config.Stack{
 		Hash:         hash,
@@ -211,18 +199,24 @@ func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber i
 	stack.PopulateBranchesWithCache(m.stackConfig.Cache)
 
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
-		return fmt.Errorf("failed to save stack config: %w", err)
+		return "", fmt.Errorf("failed to save stack config: %w", err)
 	}
-	return nil
+	return hash, nil
 }
+
 
 // AddBranchToStack adds an existing branch to a stack (worktree should already exist)
 // This is used when the worktree was created externally (e.g., from a remote branch)
-func (m *Manager) AddBranchToStack(name, parentBranch, worktreeDir string) (*config.Branch, error) {
-	// Find the stack for the parent (check tree branches first, then roots)
-	stackKey := m.findStackForBranch(parentBranch)
+// If targetStackHash is non-empty, the branch is added to that specific stack.
+// Otherwise, the stack is found by looking up the parent branch.
+func (m *Manager) AddBranchToStack(name, parentBranch, worktreeDir, targetStackHash string) (*config.Branch, error) {
+	stackKey := targetStackHash
 	if stackKey == "" {
-		stackKey = m.findStackByRoot(parentBranch)
+		// Find the stack for the parent (check tree branches first, then roots)
+		stackKey = m.findStackForBranch(parentBranch)
+		if stackKey == "" {
+			stackKey = m.findStackByRoot(parentBranch)
+		}
 	}
 	if stackKey == "" {
 		return nil, fmt.Errorf("parent branch '%s' not found in any stack", parentBranch)
