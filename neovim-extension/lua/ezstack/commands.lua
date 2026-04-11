@@ -600,7 +600,7 @@ end
 --- Agent prompt management — native Neovim integration.
 --- Supports: view (default), edit, reset.
 --- v3.1.0: 3-layer prompt system (shipped, custom, repo).
---- `work` or `feature` is a required positional arg for CLI calls; no "both" option.
+--- CLI requires positional `work` or `feature` arg; omitting defaults to both.
 ---@param args string[] Remaining args after "prompt"
 function M._agent_prompt(args)
   -- Parse args: action may be a layer (shipped/custom/repo), an action (edit/reset),
