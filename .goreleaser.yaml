@@ -47,7 +47,7 @@ release:
   github:
     owner: KulkarniKaustubh
     name: ezstack
-  draft: false
+  draft: true
   prerelease: auto
   name_template: "v{{.Version}}"
 
