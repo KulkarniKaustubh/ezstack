@@ -335,12 +335,12 @@ Options:
     -r, --from-remote         Create a stack from a remote branch/PR
 ```
 
-With `origin/<branch>`, creates a local worktree that tracks the remote branch directly. This is useful for PR reviews or quickly inspecting someone else's work without creating a new branch on top:
+With `origin/<branch>`, creates a local worktree tracking the remote branch and registers it in a stack (root = PR base branch, or `main` by default). The branch is marked as `(remote)` in `ezs ls` output. All commands (sync, push, commit, etc.) work normally on it.
 ```bash
-ezs new origin/feature-branch       # Checkout remote branch into a worktree
+ezs new origin/feature-branch       # Checkout remote branch into a worktree + register stack
 ```
 
-This fetches the latest remote refs, creates a local tracking branch, and sets up a worktree. If the branch has an associated PR, it displays PR info (title, state, review status) and a line diff summary against the base branch.
+This fetches the latest remote refs, creates a local tracking branch, sets up a worktree, and registers the branch in ezstack's config. If the branch has an associated PR, it displays PR info (title, state, review status) and a line diff summary against the base branch.
 
 With `--from-remote`, positional args are `[pr-number-or-branch] [new-branch-name]`:
 ```bash
@@ -557,6 +557,7 @@ ezs goto feature-1   # jump to a specific branch
 
 ```bash
 # Checkout a teammate's branch into its own worktree
+# Registers a stack with the PR's base branch as root
 ezs new origin/feature-branch
 
 # ezstack fetches, creates a tracking worktree, and shows:
@@ -566,7 +567,10 @@ ezs new origin/feature-branch
 #   Review: REVIEW_REQUIRED
 #   Diff vs main: +320 / -45 lines
 
-# When you're done reviewing, clean up
+# The branch shows up in ezs ls with a (remote) tag
+# You can work on it, push changes, sync — all commands work
+
+# When you're done, clean up
 ezs delete feature-branch
 ```
 
