@@ -28,11 +28,17 @@ func New(args []string) error {
     -c, --cd                  Change to the new worktree after creation
     -C, --no-cd               Don't change to the new worktree (overrides config)
     -f, --from-worktree       Register an existing worktree as a stack root
-    -r, --from-remote         Create a stack from a remote branch
+    -r, --from-remote         Create a stack from a remote branch/PR
     -h, --help                Show this help message
 
 %sNOTES%s
     If no arguments are provided, interactive mode will prompt for options.
+
+    With --from-remote, positional args are: [pr-number-or-branch] [new-branch-name]
+      ezs new -r                          Interactive PR selection + branch name prompt
+      ezs new -r 42                       Use PR #42, prompt for branch name
+      ezs new -r feature-branch           Use PR for that branch, prompt for branch name
+      ezs new -r 42 my-feature            Use PR #42, create branch "my-feature" (no prompts)
 
     For cd to work, add this to your ~/.bashrc or ~/.zshrc:
         eval "$(ezs --shell-init)"
@@ -169,12 +175,24 @@ func New(args []string) error {
 			return err
 		}
 
-		selectedPR, err := selectAndRegisterRemotePR(g, mgr)
+		// First positional arg is the PR identifier (number or branch name)
+		prIdentifier := ""
+		if fs.NArg() >= 1 {
+			prIdentifier = fs.Arg(0)
+		}
+
+		selectedPR, err := selectAndRegisterRemotePR(g, mgr, prIdentifier)
 		if err != nil {
 			return err
 		}
 
-		newBranchName := ui.PromptRequired("Enter name for your new branch (stacked on " + selectedPR.Branch + ")")
+		// Second positional arg is the new branch name
+		var newBranchName string
+		if fs.NArg() >= 2 {
+			newBranchName = fs.Arg(1)
+		} else {
+			newBranchName = ui.PromptRequired("Enter name for your new branch (stacked on " + selectedPR.Branch + ")")
+		}
 
 		cfg := mgr.GetConfig()
 

@@ -332,7 +332,15 @@ Options:
     -c, --cd                  Change to the new worktree after creation
     -C, --no-cd               Don't change to the new worktree (overrides config)
     -f, --from-worktree       Register an existing worktree as a stack root
-    -r, --from-remote         Create a stack from a remote branch
+    -r, --from-remote         Create a stack from a remote branch/PR
+```
+
+With `--from-remote`, positional args are `[pr-number-or-branch] [new-branch-name]`:
+```bash
+ezs new -r                          # Interactive PR selection + branch name prompt
+ezs new -r 42                       # Use PR #42, prompt for branch name
+ezs new -r feature-branch           # Use PR for that branch, prompt for branch name
+ezs new -r 42 my-feature            # Use PR #42, create branch "my-feature" (no prompts)
 ```
 
 When `use_worktrees` is disabled, creates a git branch without a worktree and optionally checks it out.
