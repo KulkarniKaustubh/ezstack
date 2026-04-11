@@ -628,9 +628,17 @@ func (g *Git) DeleteBranch(branchName string, force bool) error {
 // RemoveWorktree removes a worktree and optionally deletes the branch
 func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName string) error {
 	// Check if the worktree directory exists
-	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+	_, statErr := os.Stat(worktreePath)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		// Non-ENOENT error (permission denied, broken symlink, etc.)
+		return fmt.Errorf("failed to access worktree path '%s': %w", worktreePath, statErr)
+	}
+
+	if os.IsNotExist(statErr) {
 		// Worktree directory doesn't exist - just prune stale worktrees and delete branch
-		g.run("worktree", "prune")
+		if _, err := g.run("worktree", "prune"); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to prune worktrees: %v\n", err)
+		}
 	} else {
 		// First remove the worktree
 		_, err := g.run("worktree", "remove", worktreePath)
@@ -641,7 +649,9 @@ func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName 
 				// Check if the error is because it's not a working tree (already removed)
 				if strings.Contains(err.Error(), "is not a working tree") {
 					// Worktree already removed, just prune
-					g.run("worktree", "prune")
+					if _, pruneErr := g.run("worktree", "prune"); pruneErr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to prune worktrees: %v\n", pruneErr)
+					}
 				} else {
 					return fmt.Errorf("failed to remove worktree: %w", err)
 				}

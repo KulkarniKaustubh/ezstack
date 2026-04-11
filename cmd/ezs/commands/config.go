@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
@@ -57,7 +58,7 @@ func Config(args []string) error {
 		if len(args) < 3 {
 			return fmt.Errorf("usage: ezs config set <key> <value>")
 		}
-		return configSet(args[1], args[2])
+		return configSet(args[1], strings.Join(args[2:], " "))
 	case "show":
 		return configShow()
 	default:
