@@ -270,9 +270,9 @@ func TestDefaultPromptTemplatesHaveAllVariables(t *testing.T) {
 		}
 	}
 
-	// Feature template — no branch-specific vars, has feature description
+	// Feature template — no branch-specific or stack vars, has feature description
 	featureVars := []string{
-		"{{STACK_JSON}}", "{{FEATURE_DESCRIPTION}}",
+		"{{FEATURE_DESCRIPTION}}",
 		"{{EZS_COMMANDS}}", "{{EZS_DOCS}}",
 		"{{CUSTOM_INSTRUCTIONS}}", "{{REPO_INSTRUCTIONS}}",
 	}
@@ -605,16 +605,7 @@ func TestBuildRenderedFeaturePrompt(t *testing.T) {
 	defer os.Setenv("EZSTACK_HOME", originalHome)
 	os.Setenv("EZSTACK_HOME", tmpDir)
 
-	ctx := &agentContext{
-		branchName:   "feature-auth",
-		parentName:   "main",
-		worktreePath: "/path/to/worktree",
-		stackJSON:    `{"hash":"abc1234","root":"main","branches":[]}`,
-		hasStack:     true,
-		repoPath:     "/path/to/repo",
-	}
-
-	prompt, err := buildRenderedFeaturePrompt(ctx, "Add JWT authentication")
+	prompt, err := buildRenderedFeaturePrompt("/path/to/repo", "Add JWT authentication")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -632,6 +623,10 @@ func TestBuildRenderedFeaturePrompt(t *testing.T) {
 	// Feature prompt should not have branch-scoped constraint
 	if strings.Contains(prompt, "THIS BRANCH ONLY") {
 		t.Error("feature prompt should not be branch-scoped")
+	}
+	// Feature prompt should not contain stack JSON
+	if strings.Contains(prompt, "STACK_JSON") {
+		t.Error("feature prompt should not reference stack JSON")
 	}
 }
 

@@ -132,7 +132,16 @@ func Agent(args []string) error {
 		return fmt.Errorf("agent CLI '%s' not found in PATH.\nInstall it or configure a different agent: ezs config set agent_command <command>", agentCmd)
 	}
 
-	// Resolve target stack
+	// Feature mode dispatches early — it doesn't need an existing stack
+	if fs.NArg() > 0 && fs.Arg(0) == "feature" {
+		description := strings.Join(fs.Args()[1:], " ")
+		if description == "" {
+			return fmt.Errorf("feature mode requires a description.\nUsage: ezs agent feature \"description of the feature\"")
+		}
+		return agentFeature(agentCmd, repoPath, description)
+	}
+
+	// Work mode requires an existing stack
 	targetStack, err := resolveAgentStack(mgr, *stackFlag, *branchFlag)
 	if err != nil {
 		return err
@@ -141,15 +150,6 @@ func Agent(args []string) error {
 	// Validate: stack must have at least one branch
 	if len(targetStack.Branches) == 0 {
 		return fmt.Errorf("stack '%s' has no branches. Create one with: ezs new <branch-name>", targetStack.DisplayName())
-	}
-
-	// Dispatch to mode
-	if fs.NArg() > 0 && fs.Arg(0) == "feature" {
-		description := strings.Join(fs.Args()[1:], " ")
-		if description == "" {
-			return fmt.Errorf("feature mode requires a description.\nUsage: ezs agent feature \"description of the feature\"")
-		}
-		return agentFeature(g, agentCmd, repoPath, targetStack, *branchFlag, description)
 	}
 
 	branchScoped := *branchFlag != ""
@@ -625,16 +625,12 @@ func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack,
 
 // agentFeature launches the agent in feature builder mode.
 // The agent creates the stack, branches, and everything from scratch.
-func agentFeature(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack, branchName, description string) error {
-	ctx := buildAgentContext(g, repoPath, targetStack, branchName)
-
-	prompt, err := buildRenderedFeaturePrompt(ctx, description)
+// No existing stack is required.
+func agentFeature(agentCmd, repoPath, description string) error {
+	prompt, err := buildRenderedFeaturePrompt(repoPath, description)
 	if err != nil {
 		return err
 	}
-
-	// Feature builder starts from the repo root or the stack root worktree
-	workDir := resolveWorkDir("", "", repoPath, targetStack)
 
 	initialPrompt := fmt.Sprintf(`Implement the following feature using stacked branches:
 
@@ -643,7 +639,7 @@ func agentFeature(g *git.Git, agentCmd, repoPath string, targetStack *config.Sta
 Start by exploring the codebase, then present a plan of stacked branches before implementing anything.`, description)
 
 	ui.Info(fmt.Sprintf("Launching %s in %s mode...", agentCmd, ui.Bold+"feature builder"+ui.Reset))
-	return spawnAgentProcess(agentCmd, workDir, prompt, initialPrompt)
+	return spawnAgentProcess(agentCmd, repoPath, prompt, initialPrompt)
 }
 
 // resolveWorkDir returns the best working directory for the agent.
@@ -811,10 +807,13 @@ func buildRenderedWorkPrompt(ctx *agentContext) (string, error) {
 	return buildComposedPrompt(template, vars, ctx.repoPath, "work")
 }
 
-func buildRenderedFeaturePrompt(ctx *agentContext, description string) (string, error) {
-	vars := buildTemplateVars(ctx)
-	vars["FEATURE_DESCRIPTION"] = description
-	return buildComposedPrompt(defaultFeaturePromptTemplate, vars, ctx.repoPath, "feature")
+func buildRenderedFeaturePrompt(repoPath, description string) (string, error) {
+	vars := map[string]string{
+		"FEATURE_DESCRIPTION": description,
+		"EZS_COMMANDS":        ezsCommandsReference,
+		"EZS_DOCS":            ezsDocsReference,
+	}
+	return buildComposedPrompt(defaultFeaturePromptTemplate, vars, repoPath, "feature")
 }
 
 func buildTemplateVars(ctx *agentContext) map[string]string {
@@ -977,10 +976,8 @@ Use "ezs goto <branch>" to navigate between branches, or cd directly to a branch
 `
 
 // defaultFeaturePromptTemplate is used when the agent builds a feature as stacked branches.
+// No existing stack context is provided — the agent creates everything from scratch.
 const defaultFeaturePromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
-
-## Existing Stack Context
-{{STACK_JSON}}
 
 ## Feature to Implement
 {{FEATURE_DESCRIPTION}}
