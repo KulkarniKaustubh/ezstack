@@ -548,10 +548,7 @@ func TestBuildRenderedWorkPromptBranchScoped(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	// Should contain rendered values, not template variables
-	if strings.Contains(prompt, "{{BRANCH_NAME}}") {
-		t.Error("expected BRANCH_NAME to be rendered")
-	}
+	// Should contain rendered branch name value
 	if !strings.Contains(prompt, "feature-auth") {
 		t.Error("expected prompt to contain branch name")
 	}
@@ -605,14 +602,12 @@ func TestBuildRenderedFeaturePrompt(t *testing.T) {
 	defer os.Setenv("EZSTACK_HOME", originalHome)
 	os.Setenv("EZSTACK_HOME", tmpDir)
 
-	prompt, err := buildRenderedFeaturePrompt("/path/to/repo", "Add JWT authentication")
+	prompt, err := buildRenderedFeaturePrompt("/path/to/repo", "Add JWT authentication", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if strings.Contains(prompt, "{{FEATURE_DESCRIPTION}}") {
-		t.Error("expected FEATURE_DESCRIPTION to be rendered")
-	}
+	// Should contain the actual feature description
 	if !strings.Contains(prompt, "Add JWT authentication") {
 		t.Error("expected prompt to contain feature description")
 	}
@@ -624,9 +619,89 @@ func TestBuildRenderedFeaturePrompt(t *testing.T) {
 	if strings.Contains(prompt, "THIS BRANCH ONLY") {
 		t.Error("feature prompt should not be branch-scoped")
 	}
-	// Feature prompt should not contain stack JSON
-	if strings.Contains(prompt, "STACK_JSON") {
-		t.Error("feature prompt should not reference stack JSON")
+	// Without an existing stack, the feature template should not contain "Existing Stack" section
+	if strings.Contains(prompt, "Existing Stack") {
+		t.Error("feature prompt without stack should not have existing stack section")
+	}
+	// Without an existing stack, should describe creating new branches
+	if !strings.Contains(prompt, "Create it: ezs -y new") {
+		t.Error("feature prompt without stack should describe creating branches")
+	}
+}
+
+func TestBuildRenderedFeaturePromptWithExistingStack(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalHome := os.Getenv("EZSTACK_HOME")
+	defer os.Setenv("EZSTACK_HOME", originalHome)
+	os.Setenv("EZSTACK_HOME", tmpDir)
+
+	existingStack := &config.Stack{
+		Hash: "abc1234",
+		Name: "my-feature",
+		Root: "main",
+		Branches: []*config.Branch{
+			{Name: "add-user-model", Parent: "main", WorktreePath: "/tmp/wt/add-user-model"},
+			{Name: "add-user-api", Parent: "add-user-model", WorktreePath: "/tmp/wt/add-user-api"},
+		},
+	}
+
+	prompt, err := buildRenderedFeaturePrompt("/path/to/repo", "Add user management", existingStack)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !strings.Contains(prompt, "Add user management") {
+		t.Error("expected prompt to contain feature description")
+	}
+	// Should include existing stack section
+	if !strings.Contains(prompt, "Existing Stack") {
+		t.Error("expected prompt to contain existing stack section")
+	}
+	if !strings.Contains(prompt, "add-user-model") {
+		t.Error("expected prompt to contain existing branch names")
+	}
+	if !strings.Contains(prompt, "add-user-api") {
+		t.Error("expected prompt to contain existing branch names")
+	}
+	// Should adapt process to use existing branches
+	if !strings.Contains(prompt, "Review the existing stack branches") {
+		t.Error("expected process to mention reviewing existing branches")
+	}
+	// Should also mention creating new branches if needed
+	if !strings.Contains(prompt, "additional branches are needed") {
+		t.Error("expected process to mention creating additional branches if needed")
+	}
+	// Should still have all standard sections
+	if !strings.Contains(prompt, "Plan and implement") {
+		t.Error("expected feature prompt to describe building process")
+	}
+}
+
+func TestBuildRenderedFeaturePromptWithEmptyStack(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalHome := os.Getenv("EZSTACK_HOME")
+	defer os.Setenv("EZSTACK_HOME", originalHome)
+	os.Setenv("EZSTACK_HOME", tmpDir)
+
+	// Stack with no branches — should behave like no stack
+	emptyStack := &config.Stack{
+		Hash: "abc1234",
+		Name: "empty-stack",
+		Root: "main",
+	}
+
+	prompt, err := buildRenderedFeaturePrompt("/path/to/repo", "Add feature", emptyStack)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should NOT include existing stack section
+	if strings.Contains(prompt, "Existing Stack") {
+		t.Error("empty stack should not produce an existing stack section")
+	}
+	// Should use the normal process (creating branches from scratch)
+	if !strings.Contains(prompt, "Create it: ezs -y new") {
+		t.Error("empty stack should use normal branch creation process")
 	}
 }
 

@@ -231,30 +231,36 @@
   <!-- Prompt Customization -->
   <section class="prompt-section" id="prompts">
     <div class="container">
-      <h2 class="section-title" data-animate>Fully customizable prompts</h2>
-      <p class="section-sub" data-animate>Agent prompts are editable Markdown files in <code>~/.ezstack/</code>. Customize what context the agent sees and how it behaves.</p>
+      <h2 class="section-title" data-animate>3-layer prompt composition</h2>
+      <p class="section-sub" data-animate>Agent prompts are composed from three layers: a shipped prompt (updated with releases), custom instructions (<code>~/.ezstack/</code>), and repo-specific instructions (<code>&lt;repo&gt;/.ezstack/</code>). You write only additions &mdash; never a full prompt copy.</p>
 
       <div class="prompt-grid" data-animate>
         <div class="prompt-card">
           <h3>Work session prompt</h3>
-          <p><code>agent-work-prompt.md</code> &mdash; Controls the system prompt for <code>ezs agent</code>. Customize the agent's role, rules, and available context.</p>
+          <p><code>agent-work-prompt.md</code> &mdash; Custom instructions injected into the shipped work prompt. Add rules, context, or conventions for <code>ezs agent</code>.</p>
           <div class="step-code">
-            <pre><code><span class="c-comment"># Edit in your $EDITOR</span>
-<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--edit</span> <span class="c-flag">--work</span>
+            <pre><code><span class="c-comment"># Edit custom instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--edit</span> <span class="c-str">work</span>
 
-<span class="c-comment"># Reset to built-in default</span>
-<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--reset</span> <span class="c-flag">--work</span></code></pre>
+<span class="c-comment"># Edit repo-specific instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--edit</span> <span class="c-flag">--repo</span> <span class="c-str">work</span>
+
+<span class="c-comment"># View the shipped prompt</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--shipped</span> <span class="c-str">work</span></code></pre>
           </div>
         </div>
         <div class="prompt-card">
           <h3>Feature builder prompt</h3>
-          <p><code>agent-feature-prompt.md</code> &mdash; Controls the system prompt for <code>ezs agent feature</code>. Includes the feature planning process and branch creation guidelines.</p>
+          <p><code>agent-feature-prompt.md</code> &mdash; Custom instructions for <code>ezs agent feature</code>. Includes planning process and branch creation guidelines.</p>
           <div class="step-code">
-            <pre><code><span class="c-comment"># Edit in your $EDITOR</span>
-<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--edit</span> <span class="c-flag">--feature</span>
+            <pre><code><span class="c-comment"># Edit custom instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--edit</span> <span class="c-str">feature</span>
 
-<span class="c-comment"># Reset to built-in default</span>
-<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--reset</span> <span class="c-flag">--feature</span></code></pre>
+<span class="c-comment"># Edit repo-specific instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--edit</span> <span class="c-flag">--repo</span> <span class="c-str">feature</span>
+
+<span class="c-comment"># View the shipped prompt</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--shipped</span> <span class="c-str">feature</span></code></pre>
           </div>
         </div>
       </div>
@@ -298,16 +304,24 @@
               <td>{{FEATURE_DESCRIPTION}}</td>
               <td>The feature description string (feature builder mode only)</td>
             </tr>
+            <tr>
+              <td>{{CUSTOM_INSTRUCTIONS}}</td>
+              <td>Custom instructions from <code>~/.ezstack/</code> (injected automatically)</td>
+            </tr>
+            <tr>
+              <td>{{REPO_INSTRUCTIONS}}</td>
+              <td>Repo-specific instructions from <code>&lt;repo&gt;/.ezstack/</code> (injected automatically)</td>
+            </tr>
           </tbody>
         </table>
       </div>
 
       <div style="text-align: center; margin-top: 2.5rem;" data-animate>
-        <p style="color: var(--text-secondary); font-size: 0.9375rem; margin-bottom: 1rem;">View both prompts at any time:</p>
+        <p style="color: var(--text-secondary); font-size: 0.9375rem; margin-bottom: 1rem;">Preview the composed prompt with dry-run:</p>
         <div class="install-cmd" style="display: inline-flex;">
           <span class="install-prompt">$</span>
-          <span class="install-text">ezs agent prompt</span>
-          <button class="copy-btn" data-copy="ezs agent prompt" aria-label="Copy to clipboard">
+          <span class="install-text">ezs agent --dry-run</span>
+          <button class="copy-btn" data-copy="ezs agent --dry-run" aria-label="Copy to clipboard">
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
             <span class="copy-label">Copy</span>
           </button>
@@ -356,7 +370,7 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v3.0.0</span>
+          <span class="footer-meta">MIT License &middot; v3.1.0</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
