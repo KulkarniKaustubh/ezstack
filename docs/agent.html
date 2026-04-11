@@ -72,6 +72,26 @@
     </div>
   </section>
 
+  <!-- Terminal Demo -->
+  <section class="terminal-section" id="demo">
+    <div class="container">
+      <div class="terminal" data-animate>
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+          </div>
+          <span class="terminal-title">Terminal</span>
+        </div>
+        <div class="terminal-body" id="terminal-body" style="height: 360px;">
+          <div class="terminal-content" id="terminal-content"></div>
+          <div class="terminal-cursor" id="terminal-cursor"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Work Session Workflow -->
   <section class="workflow-section" id="work-session">
     <div class="container">
@@ -419,6 +439,199 @@
         }, 2000);
       });
     });
+
+    // ── Terminal Typing Animation ──────────
+
+    var terminalContent = document.getElementById('terminal-content');
+    var terminalCursor = document.getElementById('terminal-cursor');
+
+    var demoScript = [
+      { type: 'command', prompt: '$ ', text: 'ezs agent feature "Add JWT authentication"' },
+      { type: 'output', lines: [
+        '<span class="t-dim">Launching claude with stack context...</span>',
+        '<span class="t-dim">Injecting 3 branches, 2 worktree paths, ezstack docs</span>'
+      ]},
+      { type: 'pause', duration: 800 },
+      { type: 'output', lines: [
+        '<span class="t-info">Agent:</span> I\'ll explore the codebase and plan the implementation.',
+        '<span class="t-dim">Reading src/... analyzing project structure...</span>'
+      ]},
+      { type: 'pause', duration: 1000 },
+      { type: 'output', lines: [
+        '',
+        '<span class="t-info">Agent:</span> Here\'s my plan for 3 stacked branches:',
+        '  <span class="t-branch">1. jwt-types</span>       <span class="t-dim">\u2014 Token types, config, utilities</span>',
+        '  <span class="t-branch">2. jwt-middleware</span>   <span class="t-dim">\u2014 Auth middleware + token validation</span>',
+        '  <span class="t-branch">3. jwt-routes</span>      <span class="t-dim">\u2014 Login/signup endpoints + protected routes</span>'
+      ]},
+      { type: 'pause', duration: 1200 },
+      { type: 'command', prompt: '$ ', text: 'ezs -y new jwt-types' },
+      { type: 'output', lines: [
+        '<span class="t-dim">Created branch \'jwt-types\' with worktree</span>'
+      ]},
+      { type: 'pause', duration: 400 },
+      { type: 'output', lines: [
+        '<span class="t-dim">Agent: implementing jwt-types...</span>'
+      ]},
+      { type: 'pause', duration: 600 },
+      { type: 'command', prompt: '$ ', text: 'ezs -y commit -m "Add JWT token types and utilities"' },
+      { type: 'output', lines: [
+        '<span class="t-dim">[jwt-types f1a2b3c] Add JWT token types and utilities</span>',
+        '<span class="t-success">Syncing children... done.</span>'
+      ]},
+      { type: 'pause', duration: 400 },
+      { type: 'command', prompt: '$ ', text: 'ezs -y new jwt-middleware --parent jwt-types' },
+      { type: 'output', lines: [
+        '<span class="t-dim">Created branch \'jwt-middleware\' with worktree</span>'
+      ]},
+      { type: 'pause', duration: 600 },
+      { type: 'command', prompt: '$ ', text: 'ezs -y commit -m "Add auth middleware"' },
+      { type: 'output', lines: [
+        '<span class="t-dim">[jwt-middleware d4e5f6a] Add auth middleware</span>',
+        '<span class="t-success">Syncing children... done.</span>'
+      ]},
+      { type: 'pause', duration: 400 },
+      { type: 'command', prompt: '$ ', text: 'ezs ls' },
+      { type: 'output', lines: [
+        '  <span class="t-dim">main</span>',
+        '  <span class="t-dim">\u2514\u2500\u2500</span> <span class="t-branch">jwt-types</span>          <span class="t-success">+48</span> <span class="t-dim">-0</span>',
+        '  <span class="t-dim">    \u2514\u2500\u2500</span> <span class="t-branch">jwt-middleware</span>  <span class="t-success">+72</span> <span class="t-dim">-3</span>',
+        '  <span class="t-dim">        \u2514\u2500\u2500</span> <span class="t-branch">jwt-routes</span>  <span class="t-success">+95</span> <span class="t-dim">-12</span>'
+      ]},
+      { type: 'pause', duration: 800 },
+      { type: 'output', lines: [
+        '',
+        '<span class="t-success">\u2713 Feature built as 3 stacked branches, ready for review.</span>'
+      ]},
+    ];
+
+    var scriptIndex = 0;
+    var charIndex = 0;
+    var isAnimating = false;
+
+    function clearTerminal() {
+      terminalContent.innerHTML = '';
+    }
+
+    function appendToTerminal(html) {
+      terminalContent.innerHTML += html;
+      var body = document.getElementById('terminal-body');
+      body.scrollTop = body.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      var div = document.createElement('div');
+      div.appendChild(document.createTextNode(text));
+      return div.innerHTML;
+    }
+
+    function typeCommand(step, callback) {
+      var fullText = step.text;
+      var promptHtml = '<span class="t-prompt">' + step.prompt + '</span>';
+      charIndex = 0;
+      appendToTerminal(promptHtml);
+
+      function typeNext() {
+        if (charIndex < fullText.length) {
+          var char = fullText[charIndex];
+          if (char === '-' && charIndex > 0 && fullText[charIndex - 1] === ' ') {
+            var flagEnd = fullText.indexOf(' ', charIndex);
+            if (flagEnd === -1) flagEnd = fullText.length;
+            var flag = fullText.substring(charIndex, flagEnd);
+            appendToTerminal('<span class="t-flag">' + escapeHtml(flag) + '</span>');
+            charIndex = flagEnd;
+          } else if (char === '"') {
+            var closeQuote = fullText.indexOf('"', charIndex + 1);
+            if (closeQuote !== -1) {
+              var str = fullText.substring(charIndex, closeQuote + 1);
+              appendToTerminal('<span class="t-str">' + escapeHtml(str) + '</span>');
+              charIndex = closeQuote + 1;
+            } else {
+              appendToTerminal(escapeHtml(char));
+              charIndex++;
+            }
+          } else {
+            if (charIndex === 0) {
+              var cmdEnd = fullText.indexOf(' ', 4);
+              if (cmdEnd === -1) cmdEnd = fullText.length;
+              var cmd = fullText.substring(0, cmdEnd);
+              appendToTerminal('<span class="t-cmd">' + escapeHtml(cmd) + '</span>');
+              charIndex = cmdEnd;
+            } else {
+              appendToTerminal(escapeHtml(char));
+              charIndex++;
+            }
+          }
+          setTimeout(typeNext, 25 + Math.random() * 15);
+        } else {
+          appendToTerminal('\n');
+          callback();
+        }
+      }
+      typeNext();
+    }
+
+    function showOutput(step, callback) {
+      var lines = step.lines;
+      var lineIndex = 0;
+      function showNext() {
+        if (lineIndex < lines.length) {
+          appendToTerminal(lines[lineIndex] + '\n');
+          lineIndex++;
+          setTimeout(showNext, 60);
+        } else {
+          callback();
+        }
+      }
+      showNext();
+    }
+
+    function runScript() {
+      if (scriptIndex >= demoScript.length) {
+        terminalCursor.style.display = 'inline-block';
+        setTimeout(function () {
+          clearTerminal();
+          scriptIndex = 0;
+          terminalCursor.style.display = 'none';
+          runScript();
+        }, 5000);
+        return;
+      }
+
+      var step = demoScript[scriptIndex];
+      scriptIndex++;
+      terminalCursor.style.display = 'none';
+
+      if (step.type === 'command') {
+        terminalCursor.style.display = 'inline-block';
+        setTimeout(function () {
+          terminalCursor.style.display = 'none';
+          typeCommand(step, function () { runScript(); });
+        }, 300);
+      } else if (step.type === 'output') {
+        showOutput(step, function () { runScript(); });
+      } else if (step.type === 'pause') {
+        setTimeout(runScript, step.duration);
+      }
+    }
+
+    // Start terminal animation when visible
+    var terminalEl = document.querySelector('.terminal');
+    var terminalObserver = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting && !isAnimating) {
+            isAnimating = true;
+            terminalCursor.style.display = 'inline-block';
+            setTimeout(runScript, 800);
+            terminalObserver.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.3 }
+    );
+    terminalObserver.observe(terminalEl);
+
   })();
   </script>
 </body>
