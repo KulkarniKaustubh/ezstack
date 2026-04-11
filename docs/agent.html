@@ -462,46 +462,54 @@
         '<span class="t-info">Agent:</span> Here\'s my plan for 3 stacked branches:',
         '  <span class="t-branch">1. jwt-types</span>       <span class="t-dim">\u2014 Token types, config, utilities</span>',
         '  <span class="t-branch">2. jwt-middleware</span>   <span class="t-dim">\u2014 Auth middleware + token validation</span>',
-        '  <span class="t-branch">3. jwt-routes</span>      <span class="t-dim">\u2014 Login/signup endpoints + protected routes</span>'
+        '  <span class="t-branch">3. jwt-routes</span>      <span class="t-dim">\u2014 Login/signup endpoints + protected routes</span>',
+        '',
+        '<span class="t-info">Agent:</span> Shall I proceed?'
       ]},
       { type: 'pause', duration: 1200 },
-      { type: 'command', prompt: '$ ', text: 'ezs -y new jwt-types' },
       { type: 'output', lines: [
-        '<span class="t-dim">Created branch \'jwt-types\' with worktree</span>'
-      ]},
-      { type: 'pause', duration: 400 },
-      { type: 'output', lines: [
-        '<span class="t-dim">Agent: implementing jwt-types...</span>'
+        '<span class="t-success">User:</span> yes'
       ]},
       { type: 'pause', duration: 600 },
-      { type: 'command', prompt: '$ ', text: 'ezs -y commit -m "Add JWT token types and utilities"' },
       { type: 'output', lines: [
-        '<span class="t-dim">[jwt-types f1a2b3c] Add JWT token types and utilities</span>',
-        '<span class="t-success">Syncing children... done.</span>'
-      ]},
-      { type: 'pause', duration: 400 },
-      { type: 'command', prompt: '$ ', text: 'ezs -y new jwt-middleware --parent jwt-types' },
-      { type: 'output', lines: [
-        '<span class="t-dim">Created branch \'jwt-middleware\' with worktree</span>'
-      ]},
-      { type: 'pause', duration: 600 },
-      { type: 'command', prompt: '$ ', text: 'ezs -y commit -m "Add auth middleware"' },
-      { type: 'output', lines: [
-        '<span class="t-dim">[jwt-middleware d4e5f6a] Add auth middleware</span>',
-        '<span class="t-success">Syncing children... done.</span>'
-      ]},
-      { type: 'pause', duration: 400 },
-      { type: 'command', prompt: '$ ', text: 'ezs ls' },
-      { type: 'output', lines: [
-        '  <span class="t-dim">main</span>',
-        '  <span class="t-dim">\u2514\u2500\u2500</span> <span class="t-branch">jwt-types</span>          <span class="t-success">+48</span> <span class="t-dim">-0</span>',
-        '  <span class="t-dim">    \u2514\u2500\u2500</span> <span class="t-branch">jwt-middleware</span>  <span class="t-success">+72</span> <span class="t-dim">-3</span>',
-        '  <span class="t-dim">        \u2514\u2500\u2500</span> <span class="t-branch">jwt-routes</span>  <span class="t-success">+95</span> <span class="t-dim">-12</span>'
+        '',
+        '<span class="t-info">Agent:</span> Creating branch <span class="t-branch">jwt-types</span>...',
+        '<span class="t-dim">  \u25b8 ezs -y new jwt-types</span>',
+        '<span class="t-dim">  \u25b8 Writing src/auth/types.go, src/auth/jwt.go</span>',
+        '<span class="t-dim">  \u25b8 ezs -y commit -m "Add JWT token types and utilities"</span>',
+        '<span class="t-success">  \u2713 jwt-types complete</span>'
       ]},
       { type: 'pause', duration: 800 },
       { type: 'output', lines: [
         '',
-        '<span class="t-success">\u2713 Feature built as 3 stacked branches, ready for review.</span>'
+        '<span class="t-info">Agent:</span> Creating branch <span class="t-branch">jwt-middleware</span>...',
+        '<span class="t-dim">  \u25b8 ezs -y new jwt-middleware --parent jwt-types</span>',
+        '<span class="t-dim">  \u25b8 Writing src/middleware/auth.go</span>',
+        '<span class="t-dim">  \u25b8 ezs -y commit -m "Add auth middleware"</span>',
+        '<span class="t-success">  \u2713 jwt-middleware complete</span>'
+      ]},
+      { type: 'pause', duration: 800 },
+      { type: 'output', lines: [
+        '',
+        '<span class="t-info">Agent:</span> Creating branch <span class="t-branch">jwt-routes</span>...',
+        '<span class="t-dim">  \u25b8 ezs -y new jwt-routes --parent jwt-middleware</span>',
+        '<span class="t-dim">  \u25b8 Writing src/routes/auth.go, src/routes/protected.go</span>',
+        '<span class="t-dim">  \u25b8 ezs -y commit -m "Add login/signup and protected routes"</span>',
+        '<span class="t-success">  \u2713 jwt-routes complete</span>'
+      ]},
+      { type: 'pause', duration: 600 },
+      { type: 'output', lines: [
+        '',
+        '<span class="t-info">Agent:</span> Done! Here\'s the stack:'
+      ]},
+      { type: 'pause', duration: 300 },
+      { type: 'output', lines: [
+        '  <span class="t-dim">main</span>',
+        '  <span class="t-dim">\u2514\u2500\u2500</span> <span class="t-branch">jwt-types</span>          <span class="t-success">+48</span> <span class="t-dim">-0</span>',
+        '  <span class="t-dim">    \u2514\u2500\u2500</span> <span class="t-branch">jwt-middleware</span>  <span class="t-success">+72</span> <span class="t-dim">-3</span>',
+        '  <span class="t-dim">        \u2514\u2500\u2500</span> <span class="t-branch">jwt-routes</span>  <span class="t-success">+95</span> <span class="t-dim">-12</span>',
+        '',
+        '<span class="t-success">\u2713 3 branches created, ready for review.</span>'
       ]},
     ];
 
