@@ -126,6 +126,9 @@ The app polls `ezs status` every 30 seconds (pauses when the window loses focus)
 - **PR Merge** — squash, merge, or rebase
 - **Toggle Draft** — switch between draft and ready
 - **Update Stack** — update all PR descriptions with stack info
+- **Agent** — launch AI agent (branch-scoped or stack-scoped)
+- **Agent Feature** — build a feature with AI agent (description prompt)
+- **Agent Prompts** — view/edit/reset prompts across 3 layers (shipped, custom, repo)
 
 ### UI/UX
 - Dark / light / system theme with toggle
