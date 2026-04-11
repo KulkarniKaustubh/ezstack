@@ -289,7 +289,7 @@ func TestManager_RegisterRemoteBranch(t *testing.T) {
 
 	mgr, _ := NewManager(repoDir)
 
-	err := mgr.RegisterRemoteBranch("remote-feature", 42, "https://github.com/org/repo/pull/42")
+	_, err := mgr.RegisterRemoteBranch("remote-feature", "main", 42, "https://github.com/org/repo/pull/42")
 	if err != nil {
 		t.Fatalf("RegisterRemoteBranch() error = %v", err)
 	}
@@ -331,13 +331,13 @@ func TestManager_RegisterRemoteBranch_AddChildBranch(t *testing.T) {
 	mgr, _ := NewManager(repoDir)
 
 	// Register remote branch as stack root
-	err := mgr.RegisterRemoteBranch("remote-feature", 42, "https://github.com/org/repo/pull/42")
+	hash, err := mgr.RegisterRemoteBranch("remote-feature", "main", 42, "https://github.com/org/repo/pull/42")
 	if err != nil {
 		t.Fatalf("RegisterRemoteBranch() error = %v", err)
 	}
 
 	// Add a child branch to the stack
-	child, err := mgr.AddBranchToStack("my-feature", "remote-feature", "/tmp/my-feature")
+	child, err := mgr.AddBranchToStack("my-feature", "remote-feature", "/tmp/my-feature", hash)
 	if err != nil {
 		t.Fatalf("AddBranchToStack() error = %v", err)
 	}
@@ -363,40 +363,45 @@ func TestManager_RegisterRemoteBranch_AddChildBranch(t *testing.T) {
 	}
 }
 
-func TestManager_RegisterRemoteBranch_DuplicateRoot(t *testing.T) {
+func TestManager_RegisterRemoteBranch_MultipleStacks(t *testing.T) {
 	repoDir, _, cleanup := setupTestEnv(t)
 	defer cleanup()
 
 	mgr, _ := NewManager(repoDir)
 
-	err := mgr.RegisterRemoteBranch("remote-feature", 42, "https://github.com/org/repo/pull/42")
+	hash1, err := mgr.RegisterRemoteBranch("remote-feature", "main", 42, "https://github.com/org/repo/pull/42")
 	if err != nil {
 		t.Fatalf("RegisterRemoteBranch() error = %v", err)
 	}
 
-	// Registering the same root again should succeed and update PR info
-	err = mgr.RegisterRemoteBranch("remote-feature", 99, "https://github.com/org/repo/pull/99")
+	// Registering the same root again creates a separate stack
+	hash2, err := mgr.RegisterRemoteBranch("remote-feature", "main", 42, "https://github.com/org/repo/pull/42")
 	if err != nil {
-		t.Fatalf("RegisterRemoteBranch() should succeed for duplicate root, got error = %v", err)
+		t.Fatalf("RegisterRemoteBranch() second call error = %v", err)
 	}
 
-	// Verify PR info was updated
-	mgr2, _ := NewManager(repoDir)
-	stacks := mgr2.ListStacks()
-	found := false
+	if hash1 == hash2 {
+		t.Error("expected different hashes for two stacks with the same root")
+	}
+
+	// Both stacks should exist with the same root
+	stacks := mgr.ListStacks()
+	count := 0
 	for _, s := range stacks {
 		if s.Root == "remote-feature" {
-			found = true
-			if s.RootPRNumber != 99 {
-				t.Errorf("expected RootPRNumber=99, got %d", s.RootPRNumber)
-			}
-			if s.RootPRUrl != "https://github.com/org/repo/pull/99" {
-				t.Errorf("expected updated RootPRUrl, got %s", s.RootPRUrl)
-			}
+			count++
 		}
 	}
-	if !found {
-		t.Error("stack with root 'remote-feature' not found")
+	if count != 2 {
+		t.Errorf("expected 2 stacks with root 'remote-feature', got %d", count)
+	}
+
+	// Verify reload preserves both stacks with their PR info
+	mgr2, _ := NewManager(repoDir)
+	for _, s := range mgr2.ListStacks() {
+		if s.Root == "remote-feature" && s.RootPRNumber != 42 {
+			t.Errorf("expected RootPRNumber=42, got %d", s.RootPRNumber)
+		}
 	}
 }
 

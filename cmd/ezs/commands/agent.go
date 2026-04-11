@@ -23,14 +23,14 @@ func Agent(args []string) error {
 		fmt.Fprintf(os.Stderr, `%sLaunch AI agent with stack context%s
 
 %sUSAGE%s
-    ezs agent [options]              Launch agent scoped to a stack
-    ezs agent feature "description"  Launch agent to build a feature as stacked branches
+    ezs agent [options]                     Launch agent scoped to a stack
+    ezs agent feature|feat "description"    Launch agent to build a feature as stacked branches
     ezs agent prompt <flag> <work|feature>  View or edit agent prompt templates
 
 %sMODES%s
-    (default)   Work session — agent is scoped to a stack with full context
-    feature     Feature builder — agent breaks a feature into incremental stacked branches
-    prompt      View or edit the prompt templates used by the agent
+    (default)       Work session — agent is scoped to a stack with full context
+    feature (feat)  Feature builder — agent breaks a feature into incremental stacked branches
+    prompt          View or edit the prompt templates used by the agent
 
 %sOPTIONS%s
     --cmd <command>      Agent CLI to use (default: configured or "claude")
@@ -131,24 +131,25 @@ func Agent(args []string) error {
 	}
 
 	// Feature mode — optionally uses an existing stack if one is available
-	if fs.NArg() > 0 && fs.Arg(0) == "feature" {
+	if fs.NArg() > 0 && (fs.Arg(0) == "feature" || fs.Arg(0) == "feat") {
 		description := strings.Join(fs.Args()[1:], " ")
 		if description == "" {
 			return fmt.Errorf("feature mode requires a description.\nUsage: ezs agent feature \"description of the feature\"")
 		}
-		// Try to find a stack, but don't fail if none exists
+		// Only look up a stack if explicitly requested via -s or -b
 		var featureStack *config.Stack
 		if *stackFlag != "" || *branchFlag != "" {
-			// Explicit stack/branch requested — error if not found
 			featureStack, err = resolveAgentStack(mgr, *stackFlag, *branchFlag)
 			if err != nil {
 				return err
 			}
-		} else {
-			// Try current branch's stack or interactive, but don't error
-			featureStack, _ = resolveAgentStack(mgr, "", "")
 		}
 		return agentFeature(agentCmd, repoPath, description, featureStack, *dryRunFlag)
+	}
+
+	// Reject unknown subcommands (e.g. "ezs agent new" or "ezs agent foo")
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unknown agent subcommand %q.\nValid subcommands: feature (or feat), prompt\nFor help: ezs agent --help", fs.Arg(0))
 	}
 
 	// Work mode requires an existing stack
@@ -258,6 +259,9 @@ func agentPrompt(args []string) error {
 		return fmt.Errorf("missing prompt type. Usage: ezs agent prompt <flag> <work|feature>")
 	}
 	promptType := fs.Arg(0)
+	if promptType == "feat" {
+		promptType = "feature"
+	}
 	if promptType != "work" && promptType != "feature" {
 		return fmt.Errorf("invalid prompt type %q. Must be \"work\" or \"feature\"", promptType)
 	}
@@ -648,15 +652,13 @@ func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack,
 
 	if branchScoped {
 		workDir := resolveWorkDir(ctx.branchName, ctx.worktreePath, repoPath, targetStack)
-		initialMsg := fmt.Sprintf("Work session on branch '%s' (parent: %s). Stack context and ezstack docs have been loaded into the system prompt. What would you like to work on?", ctx.branchName, ctx.parentName)
 		ui.Info(fmt.Sprintf("Launching %s in %s mode on branch '%s'...", agentCmd, ui.Bold+"branch"+ui.Reset, ctx.branchName))
-		return spawnAgentProcess(agentCmd, workDir, prompt, initialMsg)
+		return spawnAgentProcess(agentCmd, workDir, prompt)
 	}
 
 	workDir := resolveWorkDir("", "", repoPath, targetStack)
-	initialMsg := fmt.Sprintf("Work session on stack '%s' (%d branches). Stack context and ezstack docs have been loaded into the system prompt. What would you like to work on?", targetStack.DisplayName(), len(targetStack.Branches))
 	ui.Info(fmt.Sprintf("Launching %s in %s mode on stack '%s'...", agentCmd, ui.Bold+"stack"+ui.Reset, targetStack.DisplayName()))
-	return spawnAgentProcess(agentCmd, workDir, prompt, initialMsg)
+	return spawnAgentProcess(agentCmd, workDir, prompt)
 }
 
 // agentFeature launches the agent in feature builder mode.
@@ -673,14 +675,8 @@ func agentFeature(agentCmd, repoPath, description string, existingStack *config.
 		return nil
 	}
 
-	initialPrompt := fmt.Sprintf(`Implement the following feature using stacked branches:
-
-%s
-
-Start by exploring the codebase, then present a plan of stacked branches before implementing anything.`, description)
-
 	ui.Info(fmt.Sprintf("Launching %s in %s mode...", agentCmd, ui.Bold+"feature builder"+ui.Reset))
-	return spawnAgentProcess(agentCmd, repoPath, prompt, initialPrompt)
+	return spawnAgentProcess(agentCmd, repoPath, prompt)
 }
 
 // resolveWorkDir returns the best working directory for the agent.
@@ -919,15 +915,9 @@ func printDryRunPrompt(mode, prompt string) {
 }
 
 // spawnAgentProcess launches the agent CLI with the rendered prompt.
-// The systemPrompt is passed via --append-system-prompt (invisible model context).
-// The initialPrompt becomes the first visible user message in the agent's UI.
-func spawnAgentProcess(agentCmd, workDir, systemPrompt, initialPrompt string) error {
-	cmdArgs := []string{"--append-system-prompt", systemPrompt}
-	if initialPrompt != "" {
-		cmdArgs = append(cmdArgs, initialPrompt)
-	}
-
-	cmd := exec.Command(agentCmd, cmdArgs...)
+// The full prompt is passed as the first visible user message in the agent's UI.
+func spawnAgentProcess(agentCmd, workDir, prompt string) error {
+	cmd := exec.Command(agentCmd, prompt)
 	cmd.Dir = workDir
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -954,6 +944,12 @@ var (
 // defaultWorkBranchPromptTemplate is used when the agent is scoped to a single branch (--branch).
 const defaultWorkBranchPromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
 
+## ezs Commands (always use -y to skip confirmations)
+{{EZS_COMMANDS}}
+
+## ezstack Reference
+{{EZS_DOCS}}
+
 ## Current Stack
 {{STACK_JSON}}
 
@@ -974,12 +970,6 @@ Before doing any work, orient yourself on this branch:
 2. Explore the worktree structure (list key files and directories).
 3. If the diff or the branch's purpose is unclear, ask the user to clarify what this branch is for and what they want you to work on.
 
-## ezs Commands (always use -y to skip confirmations)
-{{EZS_COMMANDS}}
-
-## ezstack Reference
-{{EZS_DOCS}}
-
 ## Rules
 - Only make changes relevant to this branch's purpose.
 - Keep changes small and focused for easy review.
@@ -994,6 +984,12 @@ Before doing any work, orient yourself on this branch:
 // defaultWorkStackPromptTemplate is used when the agent works on an entire stack (no --branch).
 const defaultWorkStackPromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
 
+## ezs Commands (always use -y to skip confirmations)
+{{EZS_COMMANDS}}
+
+## ezstack Reference
+{{EZS_DOCS}}
+
 ## Current Stack
 {{STACK_JSON}}
 
@@ -1007,12 +1003,6 @@ Before doing any work, build a picture of the full stack:
 1. For each branch in the stack, cd to its worktree and run "ezs diff" to understand what it changes.
 2. Explore the codebase structure in the first branch's worktree (list key files and directories).
 3. If any branch's purpose or changes are unclear, ask the user to clarify before proceeding.
-
-## ezs Commands (always use -y to skip confirmations)
-{{EZS_COMMANDS}}
-
-## ezstack Reference
-{{EZS_DOCS}}
 
 ## Rules
 - Work across any branch in this stack as needed.
@@ -1030,6 +1020,12 @@ Before doing any work, build a picture of the full stack:
 // When an existing stack is available, {{EXISTING_STACK_SECTION}} provides its context
 // and {{PROCESS_INSTRUCTIONS}} adapts to use existing branches.
 const defaultFeaturePromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
+
+## ezs Commands (always use -y to skip confirmations)
+{{EZS_COMMANDS}}
+
+## ezstack Reference
+{{EZS_DOCS}}
 
 ## Feature to Implement
 {{FEATURE_DESCRIPTION}}
@@ -1052,12 +1048,6 @@ or similar before proceeding with implementation.
 - Use descriptive branch names: e.g., "add-user-model", "add-user-api", "add-user-tests".
 - Earlier branches must not depend on later ones — each builds on its parent.
 - Include tests in the same branch as the code they test, when practical.
-
-## ezs Commands (always use -y to skip confirmations)
-{{EZS_COMMANDS}}
-
-## ezstack Reference
-{{EZS_DOCS}}
 
 ## Rules
 - Commit with "ezs -y commit", not "git commit" (ezs commit auto-syncs children).

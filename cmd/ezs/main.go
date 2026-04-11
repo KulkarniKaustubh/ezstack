@@ -11,7 +11,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
-const version = "3.2.0-tauri-beta.1"
+const version = "3.2.6-tauri-beta.2"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
@@ -339,11 +339,13 @@ func printCompletions(args []string) {
 			fmt.Println(sub)
 		}
 	case "agent":
-		if len(args) >= 2 && args[1] == "prompt" {
+		if len(args) >= 2 && (args[1] == "prompt") {
 			fmt.Println("work")
 			fmt.Println("feature")
+			fmt.Println("feat")
 		} else {
 			fmt.Println("feature")
+			fmt.Println("feat")
 			fmt.Println("prompt")
 		}
 	}
