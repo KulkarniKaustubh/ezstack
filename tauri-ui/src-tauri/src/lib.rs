@@ -25,6 +25,9 @@ pub fn run() {
             operations::rename_stack,
             operations::open_agent,
             operations::open_agent_feature,
+            operations::get_agent_prompts,
+            operations::reset_agent_prompts,
+            operations::edit_agent_prompts,
             // PR operations
             pr::pr_create,
             pr::pr_update,
