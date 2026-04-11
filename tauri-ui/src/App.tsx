@@ -1,12 +1,13 @@
 import { useEffect, useState, useCallback } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
 import { useAppStore } from "./store/app-store";
 import { useStacks } from "./hooks/use-stacks";
 import { useOperation } from "./hooks/use-operation";
+import { useResizable } from "./hooks/use-resizable";
 import { TitleBar } from "./components/layout/TitleBar";
 import { Sidebar } from "./components/layout/Sidebar";
 import { StatusBar } from "./components/layout/StatusBar";
-import { StackGraph } from "./components/stack/StackGraph";
+import { ResizeHandle } from "./components/ui/resize-handle";
+import { StacksBoard } from "./components/stack/StacksBoard";
 import { BranchDetail } from "./components/branch/BranchDetail";
 import { EmptyState } from "./components/shared/EmptyState";
 import { OperationOutput } from "./components/shared/OperationOutput";
@@ -16,123 +17,150 @@ import { DeleteDialog } from "./components/operations/DeleteDialog";
 import { PRCreateDialog } from "./components/operations/PRCreateDialog";
 import { PRMergeDialog } from "./components/operations/PRMergeDialog";
 import { ReparentDialog } from "./components/operations/ReparentDialog";
+import { RenameStackDialog } from "./components/operations/RenameStackDialog";
+import { SettingsDialog } from "./components/operations/SettingsDialog";
+import { AgentFeatureDialog } from "./components/operations/AgentFeatureDialog";
 import { ConnectRemoteDialog } from "./components/operations/ConnectRemoteDialog";
+import type { StackNodeActions } from "./components/stack/StackNode";
+import type { SshConnection, RepoConfig } from "./types/ezstack";
 import * as ezs from "./commands/ezs";
 
 type DialogState =
   | { type: "none" }
-  | { type: "new-branch" }
+  | { type: "new-branch"; forStackHash?: string }
   | { type: "sync"; branch?: string }
   | { type: "delete"; branch: string }
   | { type: "pr-create"; branch: string }
   | { type: "pr-merge"; branch: string; prNumber: number }
   | { type: "reparent"; branch: string }
+  | { type: "rename-stack"; stackHash: string }
   | { type: "settings" }
+  | { type: "agent-feature" }
   | { type: "connect-remote" };
 
 export default function App() {
   const {
-    repoPath,
-    setRepoPath,
+    repos,
+    selectedRepoPath,
+    selectRepo,
     stacks,
     selectedStackHash,
     selectedBranchName,
+    focusedBranchIndex,
     currentBranch,
+    initialLoading,
     isLoading,
     error,
     lastRefresh,
     operationOutput,
     operationLoading,
-    remoteConnection,
+    operationSuccess,
     selectStack,
     selectBranch,
+    setFocusedBranchIndex,
     setOperationOutput,
-    setRemoteConnection,
-    clearRepoState,
   } = useAppStore();
 
   const { refresh } = useStacks();
   const { run } = useOperation();
   const [dialog, setDialog] = useState<DialogState>({ type: "none" });
+  const [isConnected, setIsConnected] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
-  const [connectLoading, setConnectLoading] = useState(false);
-  const [initializing, setInitializing] = useState(true);
+  const [currentConnection, setCurrentConnection] = useState<SshConnection | null>(null);
 
-  // Auto-detect repo path on mount (only when local)
+  // Restore connection state on mount
   useEffect(() => {
-    if (!repoPath && !remoteConnection) {
-      ezs
-        .getRepoPath(".")
-        .then(setRepoPath)
-        .catch(() => {})
-        .finally(() => setInitializing(false));
-    } else {
-      setInitializing(false);
-    }
-  }, [repoPath, remoteConnection, setRepoPath]);
+    ezs.getConnection().then((conn) => {
+      if (conn) {
+        setIsConnected(true);
+        setCurrentConnection(conn);
+      }
+    }).catch(() => {});
+  }, []);
+
+  // Resizable sidebar
+  const sidebar = useResizable({
+    initialWidth: 192,
+    minWidth: 120,
+    maxWidth: 360,
+    side: "left",
+    storageKey: "ezstack-sidebar-width",
+  });
+
+  // Resizable detail panel
+  const detail = useResizable({
+    initialWidth: 320,
+    minWidth: 240,
+    maxWidth: 500,
+    side: "right",
+    storageKey: "ezstack-detail-width",
+  });
+
+  const selectedStack = stacks.find((s) => s.hash === selectedStackHash);
+  const selectedBranch_ = selectedStack?.branches.find((b) => b.name === selectedBranchName);
 
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return;
+
       if (e.metaKey && e.key === "r") {
         e.preventDefault();
         refresh();
+        return;
       }
       if (e.metaKey && e.key === "n") {
         e.preventDefault();
         setDialog({ type: "new-branch" });
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        selectBranch(null);
+        return;
+      }
+
+      // Arrow key navigation within the selected stack's branches
+      if (selectedStack && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        const branches = selectedStack.branches;
+        if (branches.length === 0) return;
+        const newIndex = e.key === "ArrowDown"
+          ? Math.min(focusedBranchIndex + 1, branches.length - 1)
+          : Math.max(focusedBranchIndex - 1, 0);
+        setFocusedBranchIndex(newIndex);
+        selectBranch(branches[newIndex].name);
+        return;
+      }
+
+      // Left/Right or [/] to navigate between stacks
+      if (stacks.length > 0 && (e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "[" || e.key === "]")) {
+        e.preventDefault();
+        const currentIdx = stacks.findIndex((s) => s.hash === selectedStackHash);
+        let newIdx: number;
+        if (e.key === "ArrowRight" || e.key === "]") {
+          newIdx = currentIdx < stacks.length - 1 ? currentIdx + 1 : 0;
+        } else {
+          newIdx = currentIdx > 0 ? currentIdx - 1 : stacks.length - 1;
+        }
+        selectStack(stacks[newIdx].hash);
+        return;
+      }
+
+      // Enter to select the focused branch
+      if (e.key === "Enter" && selectedStack) {
+        e.preventDefault();
+        const branches = selectedStack.branches;
+        if (branches.length > 0 && focusedBranchIndex < branches.length) {
+          selectBranch(branches[focusedBranchIndex].name);
+        }
+        return;
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [refresh, setDialog]);
-
-  const handleSelectRepo = useCallback(async () => {
-    try {
-      const selected = await open({ directory: true, multiple: false, title: "Select Git Repository" });
-      if (selected) {
-        try {
-          const path = await ezs.getRepoPath(selected as string);
-          setRepoPath(path);
-        } catch {
-          setRepoPath(selected as string);
-        }
-      }
-    } catch (e) {
-      console.error("Failed to open directory picker:", e);
-    }
-  }, [setRepoPath]);
-
-  const handleConnectRemote = useCallback(
-    async (host: string, user: string, port: number, keyPath: string, remotePath: string) => {
-      setConnectError(null);
-      setConnectLoading(true);
-      try {
-        const resolvedPath = await ezs.connectRemote(host, user, port, keyPath, remotePath);
-        setRemoteConnection({ host, user, port, key_path: keyPath, remote_repo_path: resolvedPath });
-        setRepoPath(resolvedPath);
-        setDialog({ type: "none" });
-      } catch (e) {
-        setConnectError(String(e));
-      } finally {
-        setConnectLoading(false);
-      }
-    },
-    [setRemoteConnection, setRepoPath],
-  );
-
-  const handleDisconnectRemote = useCallback(async () => {
-    try {
-      await ezs.disconnectRemote();
-    } catch {
-      // Ignore errors during disconnect
-    }
-    setRemoteConnection(null);
-    clearRepoState();
-  }, [setRemoteConnection, clearRepoState]);
-
-  const selectedStack = stacks.find((s) => s.hash === selectedStackHash);
-  const selectedBranch = selectedStack?.branches.find((b) => b.name === selectedBranchName);
+  }, [refresh, stacks, selectedStack, selectedStackHash, focusedBranchIndex, selectStack, selectBranch, setFocusedBranchIndex]);
 
   const runAndRefresh = useCallback(
     async (op: () => Promise<ezs.CommandResult>) => {
@@ -142,210 +170,340 @@ export default function App() {
     [run, refresh],
   );
 
+  const handleSelectBranch = useCallback(
+    (stackHash: string, branchName: string) => {
+      selectStack(stackHash);
+      selectBranch(branchName);
+      // Sync focused index
+      const stack = stacks.find((s) => s.hash === stackHash);
+      if (stack) {
+        const idx = stack.branches.findIndex((b) => b.name === branchName);
+        if (idx >= 0) setFocusedBranchIndex(idx);
+      }
+    },
+    [selectStack, selectBranch, setFocusedBranchIndex, stacks],
+  );
+
   // Build action handlers for the selected branch
-  const branchActions = selectedBranch && repoPath
+  const branchActions = selectedBranch_ && selectedRepoPath
     ? {
-        onSync: () => setDialog({ type: "sync", branch: selectedBranch.name }),
-        onPush: () => runAndRefresh(() => ezs.pushBranch(repoPath!)),
-        onCreatePR: () => setDialog({ type: "pr-create", branch: selectedBranch.name }),
-        onUpdatePR: () => runAndRefresh(() => ezs.prUpdate(repoPath!, selectedBranch.name)),
+        onSync: () => setDialog({ type: "sync", branch: selectedBranch_.name }),
+        onPush: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath)),
+        onPushStack: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath, true)),
+        onCreatePR: () => setDialog({ type: "pr-create", branch: selectedBranch_.name }),
+        onUpdatePR: () => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, selectedBranch_.name)),
         onMergePR: () =>
-          selectedBranch.pr_number
-            ? setDialog({ type: "pr-merge", branch: selectedBranch.name, prNumber: selectedBranch.pr_number })
+          selectedBranch_.pr_number
+            ? setDialog({ type: "pr-merge", branch: selectedBranch_.name, prNumber: selectedBranch_.pr_number })
             : undefined,
-        onToggleDraft: () => runAndRefresh(() => ezs.prToggleDraft(repoPath!, selectedBranch.name)),
-        onDelete: () => setDialog({ type: "delete", branch: selectedBranch.name }),
-        onReparent: () => setDialog({ type: "reparent", branch: selectedBranch.name }),
-        onUpdateStack: () => runAndRefresh(() => ezs.prUpdateStack(repoPath!)),
+        onToggleDraft: () => runAndRefresh(() => ezs.prToggleDraft(selectedRepoPath, selectedBranch_.name)),
+        onDelete: () => setDialog({ type: "delete", branch: selectedBranch_.name }),
+        onReparent: () => setDialog({ type: "reparent", branch: selectedBranch_.name }),
+        onUpdateStack: () => runAndRefresh(() => ezs.prUpdateStack(selectedRepoPath)),
+        onOpenAgent: () => {
+          const stack = stacks.find((s) => s.branches.some((b) => b.name === selectedBranchName));
+          if (stack && selectedRepoPath) {
+            ezs.openAgent(selectedRepoPath, stack.hash, selectedBranchName ?? undefined);
+          }
+        },
       }
     : null;
 
-  // Show loading screen during initialization or initial data fetch
-  const showLoadingScreen = initializing || (repoPath && !lastRefresh && isLoading);
+  // Context menu actions for stack nodes (passed down to all branches)
+  const stackNodeActions: StackNodeActions | undefined = selectedRepoPath
+    ? {
+        onSync: (branchName) => setDialog({ type: "sync", branch: branchName }),
+        onPush: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath)),
+        onCreatePR: (branchName) => setDialog({ type: "pr-create", branch: branchName }),
+        onUpdatePR: (branchName) => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, branchName)),
+        onOpenAgent: (branchName) => {
+          const stack = stacks.find((s) => s.branches.some((b) => b.name === branchName));
+          if (stack) ezs.openAgent(selectedRepoPath, stack.hash, branchName);
+        },
+        onReparent: (branchName) => setDialog({ type: "reparent", branch: branchName }),
+        onDelete: (branchName) => setDialog({ type: "delete", branch: branchName }),
+      }
+    : undefined;
+
+  const handleOpenAgentOnStack = useCallback(
+    (stackHash: string) => {
+      if (!selectedRepoPath) return;
+      ezs.openAgent(selectedRepoPath, stackHash);
+    },
+    [selectedRepoPath],
+  );
+
+  const handleSyncStack = useCallback(
+    (_stackHash: string) => {
+      if (!selectedRepoPath) return;
+      runAndRefresh(() => ezs.syncBranch(selectedRepoPath, "stack"));
+    },
+    [selectedRepoPath, runAndRefresh],
+  );
+
+  const isAnyResizing = sidebar.isResizing || detail.isResizing;
+
+  // Splash screen while loading all repos
+  if (initialLoading) {
+    return (
+      <div className="flex flex-col h-screen bg-background">
+        <div
+          className="flex items-center h-12 px-4 border-b bg-background/80 backdrop-blur-sm select-none"
+          data-tauri-drag-region
+        >
+          <span className="text-sm font-semibold tracking-tight">ezstack</span>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center gap-4">
+          <div className="flex items-center gap-3">
+            <div className="h-5 w-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm text-muted-foreground">Loading repositories...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Resolve the stack for "add branch to stack" dialog
+  const forStack = dialog.type === "new-branch" && dialog.forStackHash
+    ? stacks.find((s) => s.hash === dialog.forStackHash)
+    : undefined;
 
   return (
-    <div className="flex flex-col h-screen">
+    <div className={`flex flex-col h-screen ${isAnyResizing ? "select-none" : ""}`}>
       <TitleBar
         onRefresh={refresh}
+        onSync={() => setDialog({ type: "sync" })}
         onSettings={() => setDialog({ type: "settings" })}
-        onSelectRepo={handleSelectRepo}
-        onConnectRemote={() => setDialog({ type: "connect-remote" })}
-        onDisconnectRemote={handleDisconnectRemote}
         isLoading={isLoading}
-        isRemote={remoteConnection !== null}
+        isConnected={isConnected}
+        onConnectRemote={() => setDialog({ type: "connect-remote" })}
       />
 
       <div className="flex flex-1 min-h-0">
-        {showLoadingScreen ? (
-          <div className="flex flex-col items-center justify-center h-full w-full text-center p-8">
-            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" className="text-primary mb-4 animate-pulse">
-              <path
-                d="M12 2L4 6v6c0 5.55 3.84 10.74 8 12 4.16-1.26 8-6.45 8-12V6l-8-4z"
-                stroke="currentColor"
-                strokeWidth="2"
-                fill="none"
-              />
-              <path d="M8 12h8M12 8v8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-            </svg>
-            <p className="text-sm text-muted-foreground">Loading...</p>
-          </div>
-        ) : !repoPath ? (
-          <EmptyState
-            type="no-repo"
-            onSelectRepo={handleSelectRepo}
-            onConnectRemote={() => setDialog({ type: "connect-remote" })}
-          />
+        {repos.length === 0 && !selectedRepoPath ? (
+          <EmptyState type="no-repo" />
         ) : (
           <>
             <Sidebar
-              stacks={stacks}
-              selectedStackHash={selectedStackHash}
-              onSelectStack={selectStack}
-              onNewBranch={() => setDialog({ type: "new-branch" })}
+              repos={repos}
+              selectedRepoPath={selectedRepoPath}
+              onSelectRepo={selectRepo}
+              width={sidebar.width}
             />
+            <ResizeHandle onMouseDown={sidebar.handleMouseDown} isResizing={sidebar.isResizing} />
 
             <div className="flex flex-1 min-w-0">
-              {/* Center: Stack Graph */}
+              {/* Center: All stacks as columns */}
               <div className="flex-1 min-w-0 flex flex-col">
                 {error && (
                   <div className="px-4 py-2 bg-destructive/10 text-destructive text-sm border-b">
                     {error}
                   </div>
                 )}
-                {selectedStack ? (
-                  <StackGraph
-                    stack={selectedStack}
-                    selectedBranch={selectedBranchName}
-                    onSelectBranch={selectBranch}
-                  />
-                ) : (
-                  <EmptyState
-                    type={stacks.length === 0 ? "no-stacks" : "no-selection"}
-                    onNewBranch={() => setDialog({ type: "new-branch" })}
-                  />
-                )}
+
+                <StacksBoard
+                  stacks={stacks}
+                  selectedBranch={selectedBranchName}
+                  onSelectBranch={handleSelectBranch}
+                  onRenameStack={(hash) => setDialog({ type: "rename-stack", stackHash: hash })}
+                  onAddBranchToStack={(hash) => setDialog({ type: "new-branch", forStackHash: hash })}
+                  onSyncStack={handleSyncStack}
+                  onNewBranch={() => setDialog({ type: "new-branch" })}
+                  onOpenAgent={handleOpenAgentOnStack}
+                  onBuildFeature={() => setDialog({ type: "agent-feature" })}
+                  actions={stackNodeActions}
+                />
 
                 {/* Operation output panel */}
                 {operationOutput && (
                   <OperationOutput
                     output={operationOutput}
                     isLoading={operationLoading}
+                    isSuccess={operationSuccess}
                     onClose={() => setOperationOutput(null)}
                   />
                 )}
               </div>
 
               {/* Right: Branch Detail */}
-              {selectedBranch && branchActions && (
-                <BranchDetail
-                  branch={selectedBranch}
-                  onClose={() => selectBranch(null)}
-                  isLoading={operationLoading}
-                  {...branchActions}
-                />
+              {selectedBranch_ && branchActions && (
+                <>
+                  <ResizeHandle onMouseDown={detail.handleMouseDown} isResizing={detail.isResizing} />
+                  <BranchDetail
+                    branch={selectedBranch_}
+                    onClose={() => selectBranch(null)}
+                    isLoading={operationLoading}
+                    width={detail.width}
+                    {...branchActions}
+                  />
+                </>
               )}
             </div>
           </>
         )}
       </div>
 
-      <StatusBar
-        repoPath={repoPath}
-        currentBranch={currentBranch}
-        lastRefresh={lastRefresh}
-        remoteConnection={remoteConnection}
-        onDisconnect={remoteConnection ? handleDisconnectRemote : undefined}
-      />
+      <StatusBar repoPath={selectedRepoPath} currentBranch={currentBranch} lastRefresh={lastRefresh} />
 
       {/* Dialogs */}
-      <NewBranchDialog
-        open={dialog.type === "new-branch"}
-        onOpenChange={(open) => !open && setDialog({ type: "none" })}
-        stacks={stacks}
-        isLoading={operationLoading}
-        onSubmit={async (name, parent) => {
-          await runAndRefresh(() => ezs.createBranch(repoPath!, name, parent));
-          setDialog({ type: "none" });
-        }}
-      />
+      {selectedRepoPath && (
+        <>
+          <NewBranchDialog
+            open={dialog.type === "new-branch"}
+            onOpenChange={(o) => !o && setDialog({ type: "none" })}
+            stacks={stacks}
+            forStack={forStack}
+            isLoading={operationLoading}
+            onSubmit={async (name, parent) => {
+              await runAndRefresh(() => ezs.createBranch(selectedRepoPath, name, parent));
+              setDialog({ type: "none" });
+            }}
+          />
 
-      <SyncDialog
-        open={dialog.type === "sync"}
-        onOpenChange={(open) => !open && setDialog({ type: "none" })}
-        branchName={dialog.type === "sync" ? dialog.branch : undefined}
-        isLoading={operationLoading}
-        onSubmit={async (scope) => {
-          await runAndRefresh(() => ezs.syncBranch(repoPath!, scope));
-          setDialog({ type: "none" });
-        }}
-      />
+          <SyncDialog
+            open={dialog.type === "sync"}
+            onOpenChange={(o) => !o && setDialog({ type: "none" })}
+            branchName={dialog.type === "sync" ? dialog.branch : undefined}
+            isLoading={operationLoading}
+            onSubmit={async (scope) => {
+              await runAndRefresh(() => ezs.syncBranch(selectedRepoPath, scope));
+              setDialog({ type: "none" });
+            }}
+          />
 
-      {dialog.type === "delete" && (
-        <DeleteDialog
-          open
-          onOpenChange={(open) => !open && setDialog({ type: "none" })}
-          branchName={dialog.branch}
-          isLoading={operationLoading}
-          onSubmit={async (force) => {
-            await runAndRefresh(() => ezs.deleteBranch(repoPath!, dialog.branch, force));
-            selectBranch(null);
-            setDialog({ type: "none" });
-          }}
-        />
-      )}
+          {dialog.type === "delete" && (
+            <DeleteDialog
+              open
+              onOpenChange={(o) => !o && setDialog({ type: "none" })}
+              branchName={dialog.branch}
+              isLoading={operationLoading}
+              onSubmit={async (force) => {
+                await runAndRefresh(() => ezs.deleteBranch(selectedRepoPath, dialog.branch, force));
+                selectBranch(null);
+                setDialog({ type: "none" });
+              }}
+            />
+          )}
 
-      {dialog.type === "pr-create" && (
-        <PRCreateDialog
-          open
-          onOpenChange={(open) => !open && setDialog({ type: "none" })}
-          branchName={dialog.branch}
-          isLoading={operationLoading}
-          onSubmit={async (title, body, draft) => {
-            await runAndRefresh(() => ezs.prCreate(repoPath!, title, body || undefined, draft, dialog.branch));
-            setDialog({ type: "none" });
-          }}
-        />
-      )}
+          {dialog.type === "pr-create" && (
+            <PRCreateDialog
+              open
+              onOpenChange={(o) => !o && setDialog({ type: "none" })}
+              branchName={dialog.branch}
+              isLoading={operationLoading}
+              onSubmit={async (title, body, draft) => {
+                await runAndRefresh(() => ezs.prCreate(selectedRepoPath, title, body || undefined, draft, dialog.branch));
+                setDialog({ type: "none" });
+              }}
+            />
+          )}
 
-      {dialog.type === "pr-merge" && (
-        <PRMergeDialog
-          open
-          onOpenChange={(open) => !open && setDialog({ type: "none" })}
-          branchName={dialog.branch}
-          prNumber={dialog.prNumber}
-          isLoading={operationLoading}
-          onSubmit={async (method) => {
-            await runAndRefresh(() => ezs.prMerge(repoPath!, method, dialog.branch));
-            setDialog({ type: "none" });
-          }}
-        />
-      )}
+          {dialog.type === "pr-merge" && (
+            <PRMergeDialog
+              open
+              onOpenChange={(o) => !o && setDialog({ type: "none" })}
+              branchName={dialog.branch}
+              prNumber={dialog.prNumber}
+              isLoading={operationLoading}
+              onSubmit={async (method) => {
+                await runAndRefresh(() => ezs.prMerge(selectedRepoPath, method, dialog.branch));
+                setDialog({ type: "none" });
+              }}
+            />
+          )}
 
-      {dialog.type === "reparent" && (
-        <ReparentDialog
-          open
-          onOpenChange={(open) => !open && setDialog({ type: "none" })}
-          branchName={dialog.branch}
-          stacks={stacks}
-          isLoading={operationLoading}
-          onSubmit={async (newParent) => {
-            await runAndRefresh(() => ezs.reparentBranch(repoPath!, dialog.branch, newParent));
-            setDialog({ type: "none" });
-          }}
-        />
+          {dialog.type === "reparent" && (
+            <ReparentDialog
+              open
+              onOpenChange={(o) => !o && setDialog({ type: "none" })}
+              branchName={dialog.branch}
+              stacks={stacks}
+              isLoading={operationLoading}
+              onSubmit={async (newParent) => {
+                await runAndRefresh(() => ezs.reparentBranch(selectedRepoPath, dialog.branch, newParent));
+                setDialog({ type: "none" });
+              }}
+            />
+          )}
+
+          <AgentFeatureDialog
+            open={dialog.type === "agent-feature"}
+            onOpenChange={(o) => !o && setDialog({ type: "none" })}
+            stacks={stacks}
+            selectedStackHash={selectedStackHash}
+            onSubmit={async (stackHash, description) => {
+              await ezs.openAgentFeature(selectedRepoPath, stackHash, description);
+              setDialog({ type: "none" });
+            }}
+          />
+
+          {dialog.type === "rename-stack" && (
+            <RenameStackDialog
+              open
+              onOpenChange={(o) => !o && setDialog({ type: "none" })}
+              stackHash={dialog.stackHash}
+              currentName={stacks.find((s) => s.hash === dialog.stackHash)?.name || ""}
+              isLoading={operationLoading}
+              onSubmit={async (name) => {
+                await runAndRefresh(() => ezs.renameStack(selectedRepoPath, dialog.stackHash, name));
+                setDialog({ type: "none" });
+              }}
+            />
+          )}
+        </>
       )}
 
       <ConnectRemoteDialog
         open={dialog.type === "connect-remote"}
-        onOpenChange={(open) => {
-          if (!open) {
+        onOpenChange={(o) => {
+          if (!o) {
             setDialog({ type: "none" });
             setConnectError(null);
           }
         }}
-        onSubmit={handleConnectRemote}
-        isLoading={connectLoading}
+        isLoading={operationLoading}
         error={connectError}
+        currentConnection={currentConnection}
+        onConnect={async (host, user, port, keyPath) => {
+          return ezs.connectRemote(host, user, port, keyPath);
+        }}
+        onSelectRepo={async (host, user, port, keyPath, repoPath) => {
+          setConnectError(null);
+          try {
+            const resolvedPath = await ezs.selectRemoteRepo(host, user, port, keyPath, repoPath);
+            setIsConnected(true);
+            const conn = await ezs.getConnection();
+            setCurrentConnection(conn);
+
+            // Add remote repo to store and select it
+            const currentRepos = useAppStore.getState().repos;
+            if (!currentRepos.some((r) => r.repo_path === resolvedPath)) {
+              const remoteRepo: RepoConfig = {
+                repo_path: resolvedPath,
+                worktree_base_dir: "",
+              };
+              useAppStore.getState().setRepos([remoteRepo, ...currentRepos]);
+            }
+            selectRepo(resolvedPath);
+            setDialog({ type: "none" });
+            refresh();
+          } catch (e) {
+            setConnectError(e instanceof Error ? e.message : String(e));
+            throw e;
+          }
+        }}
+        onDisconnect={async () => {
+          await ezs.disconnectRemote();
+          setIsConnected(false);
+          setCurrentConnection(null);
+        }}
+      />
+
+      <SettingsDialog
+        open={dialog.type === "settings"}
+        onOpenChange={(o) => !o && setDialog({ type: "none" })}
+        repos={repos}
+        selectedRepoPath={selectedRepoPath}
       />
     </div>
   );

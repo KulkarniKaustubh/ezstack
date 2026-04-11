@@ -39,7 +39,7 @@ pub fn run() {
             config::get_ezstack_repos,
             config::get_config,
             config::set_config,
-            // Remote connection
+            // Connection
             connection::connect_remote,
             connection::select_remote_repo,
             connection::disconnect_remote,
