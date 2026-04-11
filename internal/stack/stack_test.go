@@ -289,7 +289,7 @@ func TestManager_RegisterRemoteBranch(t *testing.T) {
 
 	mgr, _ := NewManager(repoDir)
 
-	err := mgr.RegisterRemoteBranch("remote-feature", 42, "https://github.com/org/repo/pull/42")
+	err := mgr.RegisterRemoteBranch("remote-feature", "main", 42, "https://github.com/org/repo/pull/42")
 	if err != nil {
 		t.Fatalf("RegisterRemoteBranch() error = %v", err)
 	}
@@ -331,7 +331,7 @@ func TestManager_RegisterRemoteBranch_AddChildBranch(t *testing.T) {
 	mgr, _ := NewManager(repoDir)
 
 	// Register remote branch as stack root
-	err := mgr.RegisterRemoteBranch("remote-feature", 42, "https://github.com/org/repo/pull/42")
+	err := mgr.RegisterRemoteBranch("remote-feature", "main", 42, "https://github.com/org/repo/pull/42")
 	if err != nil {
 		t.Fatalf("RegisterRemoteBranch() error = %v", err)
 	}
@@ -369,13 +369,13 @@ func TestManager_RegisterRemoteBranch_DuplicateRoot(t *testing.T) {
 
 	mgr, _ := NewManager(repoDir)
 
-	err := mgr.RegisterRemoteBranch("remote-feature", 42, "https://github.com/org/repo/pull/42")
+	err := mgr.RegisterRemoteBranch("remote-feature", "main", 42, "https://github.com/org/repo/pull/42")
 	if err != nil {
 		t.Fatalf("RegisterRemoteBranch() error = %v", err)
 	}
 
 	// Registering the same root again should succeed and update PR info
-	err = mgr.RegisterRemoteBranch("remote-feature", 99, "https://github.com/org/repo/pull/99")
+	err = mgr.RegisterRemoteBranch("remote-feature", "main", 99, "https://github.com/org/repo/pull/99")
 	if err != nil {
 		t.Fatalf("RegisterRemoteBranch() should succeed for duplicate root, got error = %v", err)
 	}
