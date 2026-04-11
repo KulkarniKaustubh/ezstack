@@ -90,6 +90,17 @@ export class EzsCli {
     return s.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
   }
 
+  /** Parse JSON output from the CLI, throwing a descriptive error on failure. */
+  private static parseJSON<T>(raw: string, command: string): T {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      throw new Error(
+        `ezs ${command} returned invalid JSON: ${raw.substring(0, 200)}`,
+      );
+    }
+  }
+
   /** Run an ezs command and return stdout. */
   private exec(args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -152,9 +163,10 @@ export class EzsCli {
         "git",
         args,
         { cwd: cwd ?? this.workspaceRoot, timeout: 10_000 },
-        (error, stdout) => {
+        (error, stdout, stderr) => {
           if (error) {
-            reject(new Error(error.message));
+            const detail = stderr?.trim() || error.message;
+            reject(new Error(detail));
           } else {
             resolve(stdout);
           }
@@ -258,7 +270,7 @@ export class EzsCli {
       args.push("--all");
     }
     const out = await this.exec(args);
-    return JSON.parse(out);
+    return EzsCli.parseJSON(out, "list --json");
   }
 
   async statusStacks(all = false): Promise<StatusStackJSON[]> {
@@ -267,7 +279,7 @@ export class EzsCli {
       args.push("--all");
     }
     const out = await this.exec(args);
-    return JSON.parse(out);
+    return EzsCli.parseJSON(out, "status --json");
   }
 
   async syncDryRun(all = false): Promise<SyncInfoJSON[]> {
@@ -276,7 +288,7 @@ export class EzsCli {
       args.push("--all");
     }
     const out = await this.exec(args);
-    return JSON.parse(out);
+    return EzsCli.parseJSON(out, "sync --dry-run --json");
   }
 
   // ── Mutations (headless with -y) ──

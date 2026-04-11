@@ -222,6 +222,7 @@ export class StackTreeProvider
   private gitStatusMap = new Map<string, WorktreeGitStatus>();
   private parentMap = new Map<string, StackTreeItem>();
   private nodeCache = new Map<string, StackTreeItem>();
+  private fetchSeq = 0;
 
   constructor(private cli: EzsCli) {}
 
@@ -252,6 +253,8 @@ export class StackTreeProvider
   }
 
   async fetchData(): Promise<void> {
+    const seq = ++this.fetchSeq;
+
     try {
       this.stacks = await this.cli.statusStacks(true);
     } catch {
@@ -261,6 +264,11 @@ export class StackTreeProvider
       } catch {
         this.stacks = [];
       }
+    }
+
+    // If a newer fetch was started while we were awaiting, abandon this one
+    if (seq !== this.fetchSeq) {
+      return;
     }
 
     this.childrenMap.clear();
@@ -277,13 +285,23 @@ export class StackTreeProvider
 
     this.gitStatusMap.clear();
     const allBranches = this.stacks.flatMap((s) => s.branches);
+    const newStatusMap = new Map<string, WorktreeGitStatus>();
     const statusPromises = allBranches
       .filter((b) => b.worktree_path && !b.is_merged)
       .map(async (b) => {
-        const status = await this.cli.getWorktreeGitStatus(b.worktree_path!);
-        this.gitStatusMap.set(b.worktree_path!, status);
+        try {
+          const status = await this.cli.getWorktreeGitStatus(b.worktree_path!);
+          newStatusMap.set(b.worktree_path!, status);
+        } catch {
+          // Individual git status failures are non-fatal
+        }
       });
     await Promise.all(statusPromises);
+
+    // Only apply results if this is still the latest fetch
+    if (seq === this.fetchSeq) {
+      this.gitStatusMap = newStatusMap;
+    }
   }
 
   getTreeItem(element: StackTreeItem): vscode.TreeItem {
