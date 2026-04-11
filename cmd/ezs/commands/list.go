@@ -112,10 +112,15 @@ func List(args []string) error {
 
 // stackJSON represents a stack in JSON output
 type stackJSON struct {
-	Hash     string       `json:"hash"`
-	Name     string       `json:"name,omitempty"`
-	Root     string       `json:"root"`
-	Branches []branchJSON `json:"branches"`
+	Hash         string       `json:"hash"`
+	Name         string       `json:"name,omitempty"`
+	Root         string       `json:"root"`
+	RootBase     string       `json:"root_base,omitempty"`
+	RootPRNumber int          `json:"root_pr_number,omitempty"`
+	RootPRUrl    string       `json:"root_pr_url,omitempty"`
+	RootAdds     int          `json:"root_additions,omitempty"`
+	RootDels     int          `json:"root_deletions,omitempty"`
+	Branches     []branchJSON `json:"branches"`
 }
 
 // branchJSON represents a branch in JSON output
@@ -133,10 +138,15 @@ type branchJSON struct {
 
 // statusStackJSON represents a stack in JSON status output (with PR/CI info)
 type statusStackJSON struct {
-	Hash     string             `json:"hash"`
-	Name     string             `json:"name,omitempty"`
-	Root     string             `json:"root"`
-	Branches []statusBranchJSON `json:"branches"`
+	Hash         string             `json:"hash"`
+	Name         string             `json:"name,omitempty"`
+	Root         string             `json:"root"`
+	RootBase     string             `json:"root_base,omitempty"`
+	RootPRNumber int                `json:"root_pr_number,omitempty"`
+	RootPRUrl    string             `json:"root_pr_url,omitempty"`
+	RootAdds     int                `json:"root_additions,omitempty"`
+	RootDels     int                `json:"root_deletions,omitempty"`
+	Branches     []statusBranchJSON `json:"branches"`
 }
 
 // statusBranchJSON extends branchJSON with PR and CI status fields
@@ -156,14 +166,23 @@ func printStacksJSON(stacks []*config.Stack, currentBranch string, diffMaps []ma
 	result := make([]stackJSON, 0, len(stacks))
 	for i, s := range stacks {
 		sj := stackJSON{
-			Hash:     s.Hash,
-			Name:     s.Name,
-			Root:     s.Root,
-			Branches: make([]branchJSON, 0, len(s.Branches)),
+			Hash:         s.Hash,
+			Name:         s.Name,
+			Root:         s.Root,
+			RootBase:     s.RootBase,
+			RootPRNumber: s.RootPRNumber,
+			RootPRUrl:    s.RootPRUrl,
+			Branches:     make([]branchJSON, 0, len(s.Branches)),
 		}
 		var dm map[string]*ui.BranchStatus
 		if i < len(diffMaps) {
 			dm = diffMaps[i]
+		}
+		if dm != nil {
+			if rs, ok := dm[s.Root]; ok {
+				sj.RootAdds = rs.Additions
+				sj.RootDels = rs.Deletions
+			}
 		}
 		for _, b := range s.Branches {
 			bj := branchJSON{
@@ -195,14 +214,23 @@ func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusM
 	result := make([]statusStackJSON, 0, len(stacks))
 	for i, s := range stacks {
 		sj := statusStackJSON{
-			Hash:     s.Hash,
-			Name:     s.Name,
-			Root:     s.Root,
-			Branches: make([]statusBranchJSON, 0, len(s.Branches)),
+			Hash:         s.Hash,
+			Name:         s.Name,
+			Root:         s.Root,
+			RootBase:     s.RootBase,
+			RootPRNumber: s.RootPRNumber,
+			RootPRUrl:    s.RootPRUrl,
+			Branches:     make([]statusBranchJSON, 0, len(s.Branches)),
 		}
 		var sm map[string]*ui.BranchStatus
 		if i < len(statusMaps) {
 			sm = statusMaps[i]
+		}
+		if sm != nil {
+			if rs, ok := sm[s.Root]; ok {
+				sj.RootAdds = rs.Additions
+				sj.RootDels = rs.Deletions
+			}
 		}
 		for _, b := range s.Branches {
 			sbj := statusBranchJSON{

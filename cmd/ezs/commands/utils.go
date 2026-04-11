@@ -297,42 +297,65 @@ func newGitHubClient(g *git.Git) (*github.Client, error) {
 // If identifier is non-empty, it is used to look up the PR directly (by number or branch name)
 // instead of showing the interactive selection menu.
 // Returns the selected PR info.
-func selectAndRegisterRemotePR(g *git.Git, mgr *stack.Manager, identifier string) (github.OpenPR, error) {
-	gh, err := newGitHubClient(g)
-	if err != nil {
-		return github.OpenPR{}, err
+// remoteBranchResult holds the resolved remote branch info after selection/lookup.
+type remoteBranchResult struct {
+	Branch   string // Remote branch name (head)
+	Base     string // PR base branch (empty if no PR)
+	PRNumber int    // 0 if no PR
+	PRURL    string // empty if no PR
+}
+
+func selectAndRegisterRemoteBranch(g *git.Git, mgr *stack.Manager, identifier string) (remoteBranchResult, error) {
+	ui.Info("Fetching remote branch...")
+	if err := g.Fetch(); err != nil {
+		return remoteBranchResult{}, fmt.Errorf("failed to fetch: %w", err)
 	}
 
-	var selectedPR github.OpenPR
+	var result remoteBranchResult
 
 	if identifier != "" {
-		// Try to resolve identifier as a PR number first, then as a branch name
-		var pr *github.PR
 		if num, parseErr := strconv.Atoi(identifier); parseErr == nil {
+			// Numeric identifier — must be a PR number
+			gh, err := newGitHubClient(g)
+			if err != nil {
+				return remoteBranchResult{}, err
+			}
 			ui.Info(fmt.Sprintf("Looking up PR #%d...", num))
-			pr, err = gh.GetPR(num)
+			pr, err := gh.GetPR(num)
+			if err != nil {
+				return remoteBranchResult{}, fmt.Errorf("failed to find PR #%d: %w", num, err)
+			}
+			result = remoteBranchResult{Branch: pr.Head, Base: pr.Base, PRNumber: pr.Number, PRURL: pr.URL}
 		} else {
-			ui.Info(fmt.Sprintf("Looking up PR for branch '%s'...", identifier))
-			pr, err = gh.GetPRByBranch(identifier)
-		}
-		if err != nil {
-			return github.OpenPR{}, fmt.Errorf("failed to find PR for '%s': %w", identifier, err)
-		}
-		selectedPR = github.OpenPR{
-			Number: pr.Number,
-			Title:  pr.Title,
-			Branch: pr.Head,
-			URL:    pr.URL,
+			// String identifier — could be a branch with or without a PR
+			if !g.RemoteBranchExists(identifier) {
+				return remoteBranchResult{}, fmt.Errorf("remote branch '%s' not found (no origin/%s)", identifier, identifier)
+			}
+			result = remoteBranchResult{Branch: identifier}
+			// Try to find a PR for this branch (non-fatal if it fails)
+			gh, ghErr := newGitHubClient(g)
+			if ghErr == nil {
+				pr, prErr := gh.GetPRByBranch(identifier)
+				if prErr == nil && pr != nil {
+					result.Base = pr.Base
+					result.PRNumber = pr.Number
+					result.PRURL = pr.URL
+				}
+			}
 		}
 	} else {
+		// Interactive: show open PRs picker
+		gh, err := newGitHubClient(g)
+		if err != nil {
+			return remoteBranchResult{}, err
+		}
 		ui.Info("Fetching open PRs...")
 		openPRs, err := gh.ListOpenPRs()
 		if err != nil {
-			return github.OpenPR{}, fmt.Errorf("failed to list open PRs: %w", err)
+			return remoteBranchResult{}, fmt.Errorf("failed to list open PRs: %w", err)
 		}
-
 		if len(openPRs) == 0 {
-			return github.OpenPR{}, fmt.Errorf("no open PRs found in this repository")
+			return remoteBranchResult{}, fmt.Errorf("no open PRs found in this repository")
 		}
 
 		prOptions := make([]string, len(openPRs))
@@ -342,23 +365,30 @@ func selectAndRegisterRemotePR(g *git.Git, mgr *stack.Manager, identifier string
 
 		selectedIdx, err := ui.SelectOption(prOptions, "Select PR to use as stack base")
 		if err != nil {
-			return github.OpenPR{}, err
+			return remoteBranchResult{}, err
 		}
-		selectedPR = openPRs[selectedIdx]
+		selected := openPRs[selectedIdx]
+		// Look up full PR to get base branch
+		pr, prErr := gh.GetPR(selected.Number)
+		if prErr == nil && pr != nil {
+			result = remoteBranchResult{Branch: pr.Head, Base: pr.Base, PRNumber: pr.Number, PRURL: pr.URL}
+		} else {
+			result = remoteBranchResult{Branch: selected.Branch, PRNumber: selected.Number, PRURL: selected.URL}
+		}
+	}
+
+	// Verify the remote branch actually exists
+	if !g.RemoteBranchExists(result.Branch) {
+		return remoteBranchResult{}, fmt.Errorf("remote branch '%s' not found after fetch", result.Branch)
 	}
 
 	printRemoteBranchWarning()
 
-	ui.Info("Fetching remote branch...")
-	if err := g.Fetch(); err != nil {
-		return github.OpenPR{}, fmt.Errorf("failed to fetch: %w", err)
+	if err := mgr.RegisterRemoteBranch(result.Branch, result.Base, result.PRNumber, result.PRURL); err != nil {
+		return remoteBranchResult{}, fmt.Errorf("failed to register remote branch: %w", err)
 	}
 
-	if err := mgr.RegisterRemoteBranch(selectedPR.Branch, selectedPR.Number, selectedPR.URL); err != nil {
-		return github.OpenPR{}, fmt.Errorf("failed to register remote branch: %w", err)
-	}
-
-	return selectedPR, nil
+	return result, nil
 }
 
 // printRemoteBranchWarning prints the warning about remote branches not being rebased.
@@ -485,6 +515,32 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 	statusMap := make(map[string]*ui.BranchStatus)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
+
+	// Compute diff for the root branch if it has a base (remote root with PR)
+	if s.RootBase != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			parentRef := s.RootBase
+			if g.RemoteBranchExists(s.RootBase) {
+				parentRef = "origin/" + s.RootBase
+			}
+			branchRef := s.Root
+			if g.RemoteBranchExists(s.Root) {
+				branchRef = "origin/" + s.Root
+			}
+			added, removed, err := g.GetDiffStat(parentRef, branchRef)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			statusMap[s.Root] = &ui.BranchStatus{
+				Additions: added,
+				Deletions: removed,
+			}
+			mu.Unlock()
+		}()
+	}
 
 	for _, branch := range s.Branches {
 		wg.Add(1)

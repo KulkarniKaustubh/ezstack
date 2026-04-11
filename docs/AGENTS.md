@@ -87,7 +87,7 @@ ezs agent
 ezs agent --branch feature-auth
 ```
 
-The agent is launched in the branch's worktree directory with a system prompt containing:
+The agent is launched in the branch's worktree directory with a prompt containing:
 - Current stack structure (branches, parents, worktree paths)
 - Current branch and parent info
 - Available ezs commands with `-y` flag for non-interactive use

@@ -599,8 +599,24 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 		}
 	}
 
-	// Print root branch name
-	fmt.Fprintf(os.Stderr, "  %s%s%s\n", Gray, stack.Root, Reset)
+	// Print root branch name with optional PR info and diff stats
+	rootLine := fmt.Sprintf("  %s%s%s", Gray, stack.Root, Reset)
+	if stack.RootPRNumber > 0 {
+		prText := fmt.Sprintf("[PR #%d]", stack.RootPRNumber)
+		if stack.RootPRUrl != "" {
+			rootLine += "  " + Yellow + Hyperlink(stack.RootPRUrl, prText) + Reset
+		} else {
+			rootLine += "  " + Yellow + prText + Reset
+		}
+	}
+	if statusMap != nil {
+		if rootStatus, ok := statusMap[stack.Root]; ok && rootStatus != nil {
+			if rootStatus.Additions > 0 || rootStatus.Deletions > 0 {
+				rootLine += fmt.Sprintf(" %s+%d%s %s-%d%s", Green, rootStatus.Additions, Reset, Red, rootStatus.Deletions, Reset)
+			}
+		}
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", rootLine)
 
 	// Recursive tree walker
 	var walkTree func(nodes []*config.Branch, prefix string)
