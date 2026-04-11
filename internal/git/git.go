@@ -624,9 +624,15 @@ func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName 
 		}
 	}
 
-	// Optionally delete the branch
+	// Optionally delete the branch.
+	// Use the main worktree for this command since g.RepoDir may point to
+	// the worktree we just deleted (causing chdir errors).
 	if deleteBranch && branchName != "" {
-		_, err := g.run("branch", "-D", branchName)
+		branchGit := g
+		if mainWT, err := g.GetMainWorktree(); err == nil && mainWT != "" && mainWT != g.RepoDir {
+			branchGit = New(mainWT)
+		}
+		_, err := branchGit.run("branch", "-D", branchName)
 		if err != nil {
 			// Branch might already be deleted or not exist
 			if !strings.Contains(err.Error(), "not found") {
