@@ -130,6 +130,24 @@ export async function openAgentFeature(
   return invoke<void>("open_agent_feature", { repoPath, stackHash, description });
 }
 
+export async function getAgentPrompts(repoPath: string): Promise<string> {
+  return invoke<string>("get_agent_prompts", { repoPath });
+}
+
+export async function resetAgentPrompts(
+  repoPath: string,
+  which: "work" | "feature" | "both",
+): Promise<string> {
+  return invoke<string>("reset_agent_prompts", { repoPath, which });
+}
+
+export async function editAgentPrompts(
+  repoPath: string,
+  which: "work" | "feature" | "both",
+): Promise<void> {
+  return invoke<void>("edit_agent_prompts", { repoPath, which });
+}
+
 // Remote connection commands
 
 export async function connectRemote(

@@ -1,4 +1,4 @@
-use crate::runner::run_ezs_auto;
+use crate::runner::{run_ezs, run_ezs_auto};
 use crate::types::CommandResult;
 use super::connection::ConnectionState;
 use tauri::State;
@@ -97,4 +97,71 @@ pub fn open_agent_feature(state: State<'_, ConnectionState>, repo_path: String, 
         description,
     ];
     crate::runner::open_in_terminal(&repo_path, &args)
+}
+
+/// Get agent prompt templates by running `ezs agent prompt`.
+/// Returns stdout with ANSI codes stripped.
+#[tauri::command]
+pub fn get_agent_prompts(repo_path: String) -> Result<String, String> {
+    let result = run_ezs(&repo_path, &["agent", "prompt"])?;
+    if result.exit_code != 0 {
+        return Err(result.stderr);
+    }
+    // Strip ANSI escape codes for clean display in UI
+    Ok(strip_ansi(&result.stdout))
+}
+
+/// Reset agent prompt(s) to built-in defaults.
+/// `which` can be "work", "feature", or "both".
+#[tauri::command]
+pub fn reset_agent_prompts(repo_path: String, which: String) -> Result<String, String> {
+    let mut args = vec!["agent", "prompt", "--reset"];
+    match which.as_str() {
+        "work" => args.push("--work"),
+        "feature" => args.push("--feature"),
+        _ => {} // both — no extra flag needed
+    }
+    let result = run_ezs(&repo_path, &args)?;
+    if result.exit_code != 0 {
+        return Err(result.stderr);
+    }
+    Ok(strip_ansi(&result.stdout))
+}
+
+/// Open agent prompt editor in an external terminal.
+/// `which` can be "work", "feature", or "both".
+#[tauri::command]
+pub fn edit_agent_prompts(repo_path: String, which: String) -> Result<(), String> {
+    let mut args = vec!["agent".to_string(), "prompt".to_string(), "--edit".to_string()];
+    match which.as_str() {
+        "work" => args.push("--work".to_string()),
+        "feature" => args.push("--feature".to_string()),
+        _ => {} // both
+    }
+    crate::runner::open_in_terminal(&repo_path, &args)
+}
+
+/// Strip ANSI escape codes from a string.
+fn strip_ansi(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut in_escape = false;
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            in_escape = true;
+            i += 2;
+            continue;
+        }
+        if in_escape {
+            if bytes[i].is_ascii_alphabetic() {
+                in_escape = false;
+            }
+            i += 1;
+            continue;
+        }
+        result.push(bytes[i] as char);
+        i += 1;
+    }
+    result
 }
