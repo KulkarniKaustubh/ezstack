@@ -11,7 +11,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
-const version = "3.2.0"
+const version = "3.2.1"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
@@ -189,29 +189,29 @@ func runInteractiveMenu() error {
 
 		var cmdErr error
 		switch selected {
-		case 0:
-			cmdErr = commands.New(nil)
-		case 1:
-			cmdErr = commands.Status(nil)
-		case 2:
-			cmdErr = commands.Sync(nil)
-		case 3:
-			cmdErr = commands.PR(nil)
-		case 4:
-			cmdErr = commands.Goto(nil)
-		case 5:
-			cmdErr = commands.Reparent(nil)
-		case 6:
-			cmdErr = commands.Stack(nil)
-		case 7:
-			cmdErr = commands.Unstack(nil)
-		case 8:
-			cmdErr = commands.Delete(nil)
-		case 9:
+		case 0: // config
 			cmdErr = commands.Config(nil)
-		case 10:
+		case 1: // delete
+			cmdErr = commands.Delete(nil)
+		case 2: // goto
+			cmdErr = commands.Goto(nil)
+		case 3: // help
 			printUsage()
 			return nil
+		case 4: // new
+			cmdErr = commands.New(nil)
+		case 5: // pr
+			cmdErr = commands.PR(nil)
+		case 6: // reparent
+			cmdErr = commands.Reparent(nil)
+		case 7: // stack
+			cmdErr = commands.Stack(nil)
+		case 8: // status
+			cmdErr = commands.Status(nil)
+		case 9: // sync
+			cmdErr = commands.Sync(nil)
+		case 10: // unstack
+			cmdErr = commands.Unstack(nil)
 		}
 
 		if cmdErr == ui.ErrBack {
