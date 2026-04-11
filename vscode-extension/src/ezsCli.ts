@@ -393,13 +393,26 @@ export class EzsCli {
     return path.join(ezstackHome, filename);
   }
 
-  /** Ensure the agent prompt file exists (creates from default if missing). */
+  /** Ensure the agent prompt file exists (creates starter comment if missing). */
   async ensureAgentPromptFile(type: "work" | "feature"): Promise<string> {
     const promptPath = this.getAgentPromptPath(type);
     if (!fs.existsSync(promptPath)) {
-      // Run `ezs agent prompt --reset` to create the default
-      const flag = type === "work" ? "--work" : "--feature";
-      await this.exec(["agent", "prompt", "--reset", flag]);
+      const dir = path.dirname(promptPath);
+      if (!fs.existsSync(dir)) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+      const starter = [
+        `# Custom instructions for ezs agent (${type} session)`,
+        "# Lines here are injected into the shipped prompt.",
+        '# To fully override the shipped prompt, add "override: full" as the first line.',
+        "#",
+        "# Examples:",
+        "#   - Always run tests before committing",
+        "#   - Use conventional commits (feat:, fix:, etc.)",
+        "#   - This repo uses pnpm, not npm",
+        "",
+      ].join("\n");
+      fs.writeFileSync(promptPath, starter);
     }
     return promptPath;
   }

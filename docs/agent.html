@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Agent - ezstack</title>
+  <meta name="description" content="Launch an AI coding agent with full stack context. Work on branches or describe a feature and let the agent build it as stacked PRs.">
+  <meta name="theme-color" content="#09090b">
+  <link rel="canonical" href="https://kulkarnikaustubh.github.io/ezstack/agent.html">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="AI Agent - ezstack">
+  <meta property="og:description" content="Launch an AI coding agent with full stack context. Describe a feature and let the agent build it as stacked PRs.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://kulkarnikaustubh.github.io/ezstack/agent.html">
+
+  <!-- Favicon -->
+  <link rel="icon" href="img/favicon.png" type="image/png">
+  <link rel="icon" href="img/favicon.svg" type="image/svg+xml">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-brand"><img src="img/logo.png" alt="ezstack" width="24" height="24" class="nav-logo">ezstack</a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="nav-links" id="nav-links">
+        <a href="index.html#features">Features</a>
+        <a href="#work-session">Work Session</a>
+        <a href="#feature-builder">Feature Builder</a>
+        <a href="#prompts">Prompts</a>
+        <div class="nav-dropdown">
+          <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
+          <div class="nav-dropdown-menu">
+            <a href="agent.html">AI Agent</a>
+            <a href="vscode.html">VS Code Extension</a>
+            <a href="index.html#ecosystem">Desktop App</a>
+            <a href="index.html#ecosystem">Neovim Plugin</a>
+          </div>
+        </div>
+        <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener" class="nav-github">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="agent-hero" id="hero">
+    <div class="hero-glow"></div>
+    <div class="container">
+      <div class="hero-content">
+        <a href="index.html" class="back-link">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+          Back to ezstack
+        </a>
+        <h1>AI Agent for<br>Stacked PRs</h1>
+        <p class="hero-sub">Launch an AI coding agent with your full stack context injected automatically. Work on a single branch or describe a feature and let the agent build it as incremental stacked PRs.</p>
+        <div class="hero-actions">
+          <div class="install-cmd" id="hero-install">
+            <span class="install-prompt">$</span>
+            <span class="install-text">ezs agent feature "Add user authentication with JWT tokens"</span>
+            <button class="copy-btn" data-copy="ezs agent feature &quot;Add user authentication with JWT tokens&quot;" aria-label="Copy to clipboard">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Terminal Demo -->
+  <section class="terminal-section" id="demo">
+    <div class="container">
+      <div class="terminal" data-animate>
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <span class="dot dot-red"></span>
+            <span class="dot dot-yellow"></span>
+            <span class="dot dot-green"></span>
+          </div>
+          <span class="terminal-title">Terminal</span>
+        </div>
+        <div class="terminal-body" id="terminal-body" style="height: 360px;">
+          <div class="terminal-content" id="terminal-content"></div>
+          <div class="terminal-cursor" id="terminal-cursor"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Work Session Workflow -->
+  <section class="workflow-section" id="work-session">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <span class="mode-label mode-label-work">Work Session</span>
+        <h2>Agent scoped to your stack</h2>
+        <p>The agent launches in your branch's worktree with the full stack structure, parent branch info, and ezstack documentation injected as context. It knows exactly where it is and what commands are available.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">1</div>
+          <h3>Launch the agent</h3>
+          <p>Run <code>ezs agent</code> from any branch in a stack. The agent opens in that branch's worktree directory with full context.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Launch on current branch</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span>
+
+<span class="c-comment"># Or target a specific branch</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--branch</span> auth-middleware
+
+<span class="c-comment"># Or a specific stack</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">-s</span> a1b2c</code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">2</div>
+          <h3>Context is injected automatically</h3>
+          <p>The agent receives your stack structure as JSON, the current branch and parent names, worktree path, available ezs commands (with <code>-y</code> flags for non-interactive use), and the full ezstack documentation.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># What the agent sees (injected as system prompt):</span>
+<span class="c-dim">Stack:       auth-feature [a1b2c]</span>
+<span class="c-dim">Branch:      auth-middleware</span>
+<span class="c-dim">Parent:      auth-service</span>
+<span class="c-dim">Worktree:    ~/worktrees/auth-middleware</span>
+<span class="c-dim">Commands:    ezs commit, ezs sync, ezs pr create...</span>
+<span class="c-dim">Docs:        full ezstack reference</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">3</div>
+          <h3>Work within the stack</h3>
+          <p>The agent can make changes, commit, sync, and create PRs &mdash; all scoped to the single stack it was launched on. It uses <code>ezs -y</code> commands for non-interactive operation.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Agent runs commands like:</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs -y commit</span> <span class="c-flag">-m</span> <span class="c-str">"Add middleware validation"</span>
+<span class="c-dim">[auth-middleware abc1234] Add middleware validation</span>
+<span class="c-green">Syncing children... done.</span>
+
+<span class="c-prompt">$</span> <span class="c-cmd">ezs -y pr create</span> <span class="c-flag">-t</span> <span class="c-str">"Add auth middleware"</span>
+<span class="c-dim">https://github.com/you/repo/pull/45</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Feature Builder Workflow -->
+  <section class="workflow-section" id="feature-builder">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <span class="mode-label mode-label-feature">Feature Builder</span>
+        <h2>Describe a feature, get stacked PRs</h2>
+        <p>Give the agent a feature description and it explores your codebase, plans a series of small incremental branches, and implements each one with commits and PRs.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">1</div>
+          <h3>Describe what you want</h3>
+          <p>Pass a feature description as a string. The agent receives it as a visible initial prompt so you can see exactly what it was told.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs agent feature</span> <span class="c-str">"Add user authentication with JWT tokens, including signup, login, and protected route middleware"</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">2</div>
+          <h3>Agent explores and plans</h3>
+          <p>The agent reads your codebase, understands the existing architecture, and presents a plan of stacked branches for your approval before writing any code.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Agent proposes a plan like:</span>
+<span class="c-dim">Branch 1: jwt-types</span>
+<span class="c-dim">  Add JWT token types, config, and utility functions</span>
+<span class="c-dim">Branch 2: jwt-middleware (parent: jwt-types)</span>
+<span class="c-dim">  Add authentication middleware</span>
+<span class="c-dim">Branch 3: jwt-routes (parent: jwt-middleware)</span>
+<span class="c-dim">  Add signup/login endpoints and protect routes</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">3</div>
+          <h3>Agent builds each branch</h3>
+          <p>After approval, the agent creates each branch with <code>ezs -y new</code>, implements the changes, commits, and pushes. Each branch is one small, reviewable unit of work.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Agent creates the stack:</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs -y new</span> jwt-types
+<span class="c-dim">Created branch 'jwt-types' with worktree</span>
+<span class="c-comment"># ... implements changes ...</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs -y commit</span> <span class="c-flag">-m</span> <span class="c-str">"Add JWT types and utilities"</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs push</span>
+
+<span class="c-prompt">$</span> <span class="c-cmd">ezs -y new</span> jwt-middleware <span class="c-flag">--parent</span> jwt-types
+<span class="c-comment"># ... implements changes ...</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs -y commit</span> <span class="c-flag">-m</span> <span class="c-str">"Add auth middleware"</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs push</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">4</div>
+          <h3>Review and merge</h3>
+          <p>You get a clean stack of small, focused PRs ready for review. Each PR builds on its parent, and stack descriptions are linked automatically.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs ls</span>
+<span class="c-dim">  main</span>
+<span class="c-dim">  └──</span> <span class="c-green">jwt-types</span>         <span class="c-dim">PR #44</span>  <span class="c-green">+48</span> <span class="c-dim">-0</span>
+<span class="c-dim">      └──</span> <span class="c-green">jwt-middleware</span>  <span class="c-dim">PR #45</span>  <span class="c-green">+72</span> <span class="c-dim">-3</span>
+<span class="c-dim">          └──</span> <span class="c-green">jwt-routes</span>  <span class="c-dim">PR #46</span>  <span class="c-green">+95</span> <span class="c-dim">-12</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Prompt Customization -->
+  <section class="prompt-section" id="prompts">
+    <div class="container">
+      <h2 class="section-title" data-animate>3-layer prompt composition</h2>
+      <p class="section-sub" data-animate>Agent prompts are composed from three layers: a shipped prompt (updated with releases), custom instructions (<code>~/.ezstack/</code>), and repo-specific instructions (<code>&lt;repo&gt;/.ezstack/</code>). You write only additions &mdash; never a full prompt copy.</p>
+
+      <div class="prompt-grid" data-animate>
+        <div class="prompt-card">
+          <h3>Work session prompt</h3>
+          <p><code>agent-work-prompt.md</code> &mdash; Custom instructions injected into the shipped work prompt. Add rules, context, or conventions for <code>ezs agent</code>.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Edit custom instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--edit</span> <span class="c-str">work</span>
+
+<span class="c-comment"># Edit repo-specific instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--edit</span> <span class="c-flag">--repo</span> <span class="c-str">work</span>
+
+<span class="c-comment"># View the shipped prompt</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--shipped</span> <span class="c-str">work</span></code></pre>
+          </div>
+        </div>
+        <div class="prompt-card">
+          <h3>Feature builder prompt</h3>
+          <p><code>agent-feature-prompt.md</code> &mdash; Custom instructions for <code>ezs agent feature</code>. Includes planning process and branch creation guidelines.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Edit custom instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--edit</span> <span class="c-str">feature</span>
+
+<span class="c-comment"># Edit repo-specific instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--edit</span> <span class="c-flag">--repo</span> <span class="c-str">feature</span>
+
+<span class="c-comment"># View the shipped prompt</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent prompt</span> <span class="c-flag">--shipped</span> <span class="c-str">feature</span></code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="template-vars" data-animate>
+        <h3>Template variables</h3>
+        <p style="text-align: center; color: var(--text-secondary); font-size: 0.9375rem; margin-bottom: 1.5rem;">These placeholders in your prompt files are replaced with live data at runtime.</p>
+        <table class="var-table">
+          <thead>
+            <tr>
+              <th>Variable</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>{{STACK_JSON}}</td>
+              <td>Full stack structure as JSON &mdash; branches, parents, worktree paths, PR URLs</td>
+            </tr>
+            <tr>
+              <td>{{BRANCH_NAME}}</td>
+              <td>Name of the current branch the agent is scoped to</td>
+            </tr>
+            <tr>
+              <td>{{PARENT_NAME}}</td>
+              <td>Name of the current branch's parent in the stack</td>
+            </tr>
+            <tr>
+              <td>{{WORKTREE_PATH}}</td>
+              <td>Absolute path to the current branch's worktree directory</td>
+            </tr>
+            <tr>
+              <td>{{EZS_COMMANDS}}</td>
+              <td>Quick reference of key ezs commands with <code>-y</code> flag for non-interactive use</td>
+            </tr>
+            <tr>
+              <td>{{EZS_DOCS}}</td>
+              <td>Full ezstack documentation &mdash; concepts, commands, exit codes, workflows</td>
+            </tr>
+            <tr>
+              <td>{{FEATURE_DESCRIPTION}}</td>
+              <td>The feature description string (feature builder mode only)</td>
+            </tr>
+            <tr>
+              <td>{{CUSTOM_INSTRUCTIONS}}</td>
+              <td>Custom instructions from <code>~/.ezstack/</code> (injected automatically)</td>
+            </tr>
+            <tr>
+              <td>{{REPO_INSTRUCTIONS}}</td>
+              <td>Repo-specific instructions from <code>&lt;repo&gt;/.ezstack/</code> (injected automatically)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="text-align: center; margin-top: 2.5rem;" data-animate>
+        <p style="color: var(--text-secondary); font-size: 0.9375rem; margin-bottom: 1rem;">Preview the composed prompt with dry-run:</p>
+        <div class="install-cmd" style="display: inline-flex;">
+          <span class="install-prompt">$</span>
+          <span class="install-text">ezs agent --dry-run</span>
+          <button class="copy-btn" data-copy="ezs agent --dry-run" aria-label="Copy to clipboard">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
+            <span class="copy-label">Copy</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Configuration -->
+  <section class="workflow-section" id="config">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <h2>Configuration</h2>
+        <p>The agent command works with any AI CLI tool. Configure which one to use and you're ready to go.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <h3>Set the agent CLI</h3>
+          <p>By default, ezstack uses <code>claude</code> (Claude Code). You can change this to any CLI tool that accepts <code>--append-system-prompt</code> and a positional prompt argument.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Default: claude</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs config set</span> agent_command claude
+
+<span class="c-comment"># Or use a different tool</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs config set</span> agent_command my-ai-cli
+
+<span class="c-comment"># Override per-invocation</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--cmd</span> my-ai-cli</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div style="text-align: center; margin-top: 3rem;" data-animate>
+        <a href="index.html#install" class="btn btn-secondary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Install ezstack
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <span class="footer-name">ezstack</span>
+          <span class="footer-meta">MIT License &middot; v3.1.0</span>
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/blob/main/DOCUMENTATION.md" target="_blank" rel="noopener">Docs</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/issues" target="_blank" rel="noopener">Issues</a>
+        </div>
+        <div class="footer-credit">
+          Made by <a href="https://github.com/KulkarniKaustubh" target="_blank" rel="noopener">Kaustubh Kulkarni</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+  (function () {
+    'use strict';
+
+    // Navigation scroll
+    var nav = document.getElementById('nav');
+    function onScroll() {
+      if (window.scrollY > 40) {
+        nav.classList.add('scrolled');
+      } else {
+        nav.classList.remove('scrolled');
+      }
+    }
+    window.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+
+    // Mobile hamburger
+    var navToggle = document.getElementById('nav-toggle');
+    var navLinks = document.getElementById('nav-links');
+    navToggle.addEventListener('click', function () {
+      navToggle.classList.toggle('active');
+      navLinks.classList.toggle('open');
+    });
+    var navAnchors = navLinks.querySelectorAll('a');
+    for (var i = 0; i < navAnchors.length; i++) {
+      navAnchors[i].addEventListener('click', function () {
+        navToggle.classList.remove('active');
+        navLinks.classList.remove('open');
+      });
+    }
+
+    // Nav dropdown toggle
+    var dropdowns = document.querySelectorAll('.nav-dropdown');
+    dropdowns.forEach(function (dd) {
+      var toggle = dd.querySelector('.nav-dropdown-toggle');
+      toggle.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var wasOpen = dd.classList.contains('open');
+        dropdowns.forEach(function (d) { d.classList.remove('open'); });
+        if (!wasOpen) dd.classList.add('open');
+      });
+    });
+    document.addEventListener('click', function () {
+      dropdowns.forEach(function (d) { d.classList.remove('open'); });
+    });
+
+    // Smooth scroll
+    document.addEventListener('click', function (e) {
+      var target = e.target.closest('a[href^="#"]');
+      if (!target) return;
+      var id = target.getAttribute('href');
+      if (id === '#') return;
+      var el = document.querySelector(id);
+      if (el) {
+        e.preventDefault();
+        el.scrollIntoView({ behavior: 'smooth' });
+      }
+    });
+
+    // Scroll animations
+    var animateEls = document.querySelectorAll('[data-animate]');
+    var observer = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.1, rootMargin: '0px 0px -40px 0px' }
+    );
+    animateEls.forEach(function (el) { observer.observe(el); });
+
+    // Copy to clipboard
+    document.addEventListener('click', function (e) {
+      var btn = e.target.closest('.copy-btn');
+      if (!btn) return;
+      var text = btn.getAttribute('data-copy');
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(function () {
+        var label = btn.querySelector('.copy-label');
+        var originalText = label.textContent;
+        btn.classList.add('copied');
+        label.textContent = 'Copied!';
+        setTimeout(function () {
+          btn.classList.remove('copied');
+          label.textContent = originalText;
+        }, 2000);
+      });
+    });
+
+    // ── Terminal Typing Animation ──────────
+
+    var terminalContent = document.getElementById('terminal-content');
+    var terminalCursor = document.getElementById('terminal-cursor');
+
+    var demoScript = [
+      { type: 'command', prompt: '$ ', text: 'ezs agent feature "Add JWT authentication"' },
+      { type: 'output', lines: [
+        '<span class="t-dim">Launching claude with stack context...</span>',
+        '<span class="t-dim">Injecting 3 branches, 2 worktree paths, ezstack docs</span>'
+      ]},
+      { type: 'pause', duration: 800 },
+      { type: 'output', lines: [
+        '<span class="t-info">Agent:</span> I\'ll explore the codebase and plan the implementation.',
+        '<span class="t-dim">Reading src/... analyzing project structure...</span>'
+      ]},
+      { type: 'pause', duration: 1000 },
+      { type: 'output', lines: [
+        '',
+        '<span class="t-info">Agent:</span> Here\'s my plan for 3 stacked branches:',
+        '  <span class="t-branch">1. jwt-types</span>       <span class="t-dim">\u2014 Token types, config, utilities</span>',
+        '  <span class="t-branch">2. jwt-middleware</span>   <span class="t-dim">\u2014 Auth middleware + token validation</span>',
+        '  <span class="t-branch">3. jwt-routes</span>      <span class="t-dim">\u2014 Login/signup endpoints + protected routes</span>',
+        '',
+        '<span class="t-info">Agent:</span> Shall I proceed?'
+      ]},
+      { type: 'pause', duration: 1200 },
+      { type: 'output', lines: [
+        '<span class="t-success">User:</span> yes'
+      ]},
+      { type: 'pause', duration: 600 },
+      { type: 'output', lines: [
+        '',
+        '<span class="t-info">Agent:</span> Creating branch <span class="t-branch">jwt-types</span>...',
+        '<span class="t-dim">  \u25b8 ezs -y new jwt-types</span>',
+        '<span class="t-dim">  \u25b8 Writing src/auth/types.go, src/auth/jwt.go</span>',
+        '<span class="t-dim">  \u25b8 ezs -y commit -m "Add JWT token types and utilities"</span>',
+        '<span class="t-success">  \u2713 jwt-types complete</span>'
+      ]},
+      { type: 'pause', duration: 800 },
+      { type: 'output', lines: [
+        '',
+        '<span class="t-info">Agent:</span> Creating branch <span class="t-branch">jwt-middleware</span>...',
+        '<span class="t-dim">  \u25b8 ezs -y new jwt-middleware --parent jwt-types</span>',
+        '<span class="t-dim">  \u25b8 Writing src/middleware/auth.go</span>',
+        '<span class="t-dim">  \u25b8 ezs -y commit -m "Add auth middleware"</span>',
+        '<span class="t-success">  \u2713 jwt-middleware complete</span>'
+      ]},
+      { type: 'pause', duration: 800 },
+      { type: 'output', lines: [
+        '',
+        '<span class="t-info">Agent:</span> Creating branch <span class="t-branch">jwt-routes</span>...',
+        '<span class="t-dim">  \u25b8 ezs -y new jwt-routes --parent jwt-middleware</span>',
+        '<span class="t-dim">  \u25b8 Writing src/routes/auth.go, src/routes/protected.go</span>',
+        '<span class="t-dim">  \u25b8 ezs -y commit -m "Add login/signup and protected routes"</span>',
+        '<span class="t-success">  \u2713 jwt-routes complete</span>'
+      ]},
+      { type: 'pause', duration: 600 },
+      { type: 'output', lines: [
+        '',
+        '<span class="t-info">Agent:</span> Done! Here\'s the stack:'
+      ]},
+      { type: 'pause', duration: 300 },
+      { type: 'output', lines: [
+        '  <span class="t-dim">main</span>',
+        '  <span class="t-dim">\u2514\u2500\u2500</span> <span class="t-branch">jwt-types</span>          <span class="t-success">+48</span> <span class="t-dim">-0</span>',
+        '  <span class="t-dim">    \u2514\u2500\u2500</span> <span class="t-branch">jwt-middleware</span>  <span class="t-success">+72</span> <span class="t-dim">-3</span>',
+        '  <span class="t-dim">        \u2514\u2500\u2500</span> <span class="t-branch">jwt-routes</span>  <span class="t-success">+95</span> <span class="t-dim">-12</span>',
+        '',
+        '<span class="t-success">\u2713 3 branches created, ready for review.</span>'
+      ]},
+    ];
+
+    var scriptIndex = 0;
+    var charIndex = 0;
+    var isAnimating = false;
+
+    function clearTerminal() {
+      terminalContent.innerHTML = '';
+    }
+
+    function appendToTerminal(html) {
+      terminalContent.innerHTML += html;
+      var body = document.getElementById('terminal-body');
+      body.scrollTop = body.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      var div = document.createElement('div');
+      div.appendChild(document.createTextNode(text));
+      return div.innerHTML;
+    }
+
+    function typeCommand(step, callback) {
+      var fullText = step.text;
+      var promptHtml = '<span class="t-prompt">' + step.prompt + '</span>';
+      charIndex = 0;
+      appendToTerminal(promptHtml);
+
+      function typeNext() {
+        if (charIndex < fullText.length) {
+          var char = fullText[charIndex];
+          if (char === '-' && charIndex > 0 && fullText[charIndex - 1] === ' ') {
+            var flagEnd = fullText.indexOf(' ', charIndex);
+            if (flagEnd === -1) flagEnd = fullText.length;
+            var flag = fullText.substring(charIndex, flagEnd);
+            appendToTerminal('<span class="t-flag">' + escapeHtml(flag) + '</span>');
+            charIndex = flagEnd;
+          } else if (char === '"') {
+            var closeQuote = fullText.indexOf('"', charIndex + 1);
+            if (closeQuote !== -1) {
+              var str = fullText.substring(charIndex, closeQuote + 1);
+              appendToTerminal('<span class="t-str">' + escapeHtml(str) + '</span>');
+              charIndex = closeQuote + 1;
+            } else {
+              appendToTerminal(escapeHtml(char));
+              charIndex++;
+            }
+          } else {
+            if (charIndex === 0) {
+              var cmdEnd = fullText.indexOf(' ', 4);
+              if (cmdEnd === -1) cmdEnd = fullText.length;
+              var cmd = fullText.substring(0, cmdEnd);
+              appendToTerminal('<span class="t-cmd">' + escapeHtml(cmd) + '</span>');
+              charIndex = cmdEnd;
+            } else {
+              appendToTerminal(escapeHtml(char));
+              charIndex++;
+            }
+          }
+          setTimeout(typeNext, 25 + Math.random() * 15);
+        } else {
+          appendToTerminal('\n');
+          callback();
+        }
+      }
+      typeNext();
+    }
+
+    function showOutput(step, callback) {
+      var lines = step.lines;
+      var lineIndex = 0;
+      function showNext() {
+        if (lineIndex < lines.length) {
+          appendToTerminal(lines[lineIndex] + '\n');
+          lineIndex++;
+          setTimeout(showNext, 60);
+        } else {
+          callback();
+        }
+      }
+      showNext();
+    }
+
+    function runScript() {
+      if (scriptIndex >= demoScript.length) {
+        terminalCursor.style.display = 'inline-block';
+        setTimeout(function () {
+          clearTerminal();
+          scriptIndex = 0;
+          terminalCursor.style.display = 'none';
+          runScript();
+        }, 5000);
+        return;
+      }
+
+      var step = demoScript[scriptIndex];
+      scriptIndex++;
+      terminalCursor.style.display = 'none';
+
+      if (step.type === 'command') {
+        terminalCursor.style.display = 'inline-block';
+        setTimeout(function () {
+          terminalCursor.style.display = 'none';
+          typeCommand(step, function () { runScript(); });
+        }, 300);
+      } else if (step.type === 'output') {
+        showOutput(step, function () { runScript(); });
+      } else if (step.type === 'pause') {
+        setTimeout(runScript, step.duration);
+      }
+    }
+
+    // Start terminal animation when visible
+    var terminalEl = document.querySelector('.terminal');
+    var terminalObserver = new IntersectionObserver(
+      function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting && !isAnimating) {
+            isAnimating = true;
+            terminalCursor.style.display = 'inline-block';
+            setTimeout(runScript, 800);
+            terminalObserver.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.3 }
+    );
+    terminalObserver.observe(terminalEl);
+
+  })();
+  </script>
+</body>
+</html>
