@@ -152,7 +152,8 @@ func Agent(args []string) error {
 		return agentFeature(g, agentCmd, repoPath, targetStack, *branchFlag, description)
 	}
 
-	return agentWork(g, agentCmd, repoPath, targetStack, *branchFlag)
+	branchScoped := *branchFlag != ""
+	return agentWork(g, agentCmd, repoPath, targetStack, *branchFlag, branchScoped)
 }
 
 // ── Prompt subcommand ──────────────────────────────────────────────────────────
@@ -299,12 +300,17 @@ func agentPrompt(args []string) error {
 // ── View functions ────────────────────────────────────────────────────────────
 
 func showShippedPrompt(promptType string) error {
-	template := defaultWorkPromptTemplate
 	if promptType == "feature" {
-		template = defaultFeaturePromptTemplate
+		fmt.Printf("%s── Shipped Feature Prompt ──%s\n\n", ui.Cyan, ui.Reset)
+		fmt.Print(defaultFeaturePromptTemplate)
+		return nil
 	}
-	fmt.Printf("%s── Shipped %s Prompt ──%s\n\n", ui.Cyan, promptType, ui.Reset)
-	fmt.Println(template)
+	// Work mode has two variants: branch-scoped and stack-scoped
+	fmt.Printf("%s── Shipped Work Prompt (branch-scoped, used with --branch) ──%s\n\n", ui.Cyan, ui.Reset)
+	fmt.Print(defaultWorkBranchPromptTemplate)
+	fmt.Println()
+	fmt.Printf("%s── Shipped Work Prompt (stack-scoped, default) ──%s\n\n", ui.Cyan, ui.Reset)
+	fmt.Print(defaultWorkStackPromptTemplate)
 	return nil
 }
 
@@ -594,21 +600,31 @@ func resolveStackByRef(mgr *stack.Manager, stacks []*config.Stack, ref string) (
 
 // ── Agent modes ────────────────────────────────────────────────────────────────
 
-// agentWork launches the agent in work session mode, scoped to a stack.
-func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack, branchName string) error {
+// agentWork launches the agent in work session mode.
+// If branchScoped is true (--branch was explicitly set), the agent is scoped to that single branch.
+// Otherwise, the agent works on the entire stack.
+func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack, branchName string, branchScoped bool) error {
 	ctx := buildAgentContext(g, repoPath, targetStack, branchName)
+	ctx.branchScoped = branchScoped
 
 	prompt, err := buildRenderedWorkPrompt(ctx)
 	if err != nil {
 		return err
 	}
-	workDir := resolveWorkDir(ctx.worktreePath, repoPath)
 
-	ui.Info(fmt.Sprintf("Launching %s in %s mode on branch '%s'...", agentCmd, ui.Bold+"work"+ui.Reset, ctx.branchName))
+	if branchScoped {
+		workDir := resolveWorkDir(ctx.branchName, ctx.worktreePath, repoPath, targetStack)
+		ui.Info(fmt.Sprintf("Launching %s in %s mode on branch '%s'...", agentCmd, ui.Bold+"branch"+ui.Reset, ctx.branchName))
+		return spawnAgentProcess(agentCmd, workDir, prompt, "")
+	}
+
+	workDir := resolveWorkDir("", "", repoPath, targetStack)
+	ui.Info(fmt.Sprintf("Launching %s in %s mode on stack '%s'...", agentCmd, ui.Bold+"stack"+ui.Reset, targetStack.DisplayName()))
 	return spawnAgentProcess(agentCmd, workDir, prompt, "")
 }
 
 // agentFeature launches the agent in feature builder mode.
+// The agent creates the stack, branches, and everything from scratch.
 func agentFeature(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack, branchName, description string) error {
 	ctx := buildAgentContext(g, repoPath, targetStack, branchName)
 
@@ -616,7 +632,9 @@ func agentFeature(g *git.Git, agentCmd, repoPath string, targetStack *config.Sta
 	if err != nil {
 		return err
 	}
-	workDir := resolveWorkDir(ctx.worktreePath, repoPath)
+
+	// Feature builder starts from the repo root or the stack root worktree
+	workDir := resolveWorkDir("", "", repoPath, targetStack)
 
 	initialPrompt := fmt.Sprintf(`Implement the following feature using stacked branches:
 
@@ -628,11 +646,23 @@ Start by exploring the codebase, then present a plan of stacked branches before 
 	return spawnAgentProcess(agentCmd, workDir, prompt, initialPrompt)
 }
 
-// resolveWorkDir returns the best working directory for the agent, validating it exists.
-func resolveWorkDir(worktreePath, repoPath string) string {
+// resolveWorkDir returns the best working directory for the agent.
+// For branch-scoped mode: use that branch's worktree.
+// For stack/feature mode: use the first branch's worktree (typically the stack root worktree), or repo root.
+func resolveWorkDir(branchName, worktreePath, repoPath string, targetStack *config.Stack) string {
+	// If a specific branch worktree is provided and exists, use it
 	if worktreePath != "" {
 		if info, err := os.Stat(worktreePath); err == nil && info.IsDir() {
 			return worktreePath
+		}
+	}
+	// For stack/feature mode, try the first branch's worktree
+	if branchName == "" && targetStack != nil && len(targetStack.Branches) > 0 {
+		firstWT := targetStack.Branches[0].WorktreePath
+		if firstWT != "" {
+			if info, err := os.Stat(firstWT); err == nil && info.IsDir() {
+				return firstWT
+			}
 		}
 	}
 	return repoPath
@@ -647,6 +677,7 @@ type agentContext struct {
 	worktreePath string
 	stackJSON    string
 	hasStack     bool
+	branchScoped bool // true when --branch was explicitly set
 	repoPath     string
 }
 
@@ -773,7 +804,11 @@ func buildComposedPrompt(shippedTemplate string, vars map[string]string, repoPat
 
 func buildRenderedWorkPrompt(ctx *agentContext) (string, error) {
 	vars := buildTemplateVars(ctx)
-	return buildComposedPrompt(defaultWorkPromptTemplate, vars, ctx.repoPath, "work")
+	template := defaultWorkStackPromptTemplate
+	if ctx.branchScoped {
+		template = defaultWorkBranchPromptTemplate
+	}
+	return buildComposedPrompt(template, vars, ctx.repoPath, "work")
 }
 
 func buildRenderedFeaturePrompt(ctx *agentContext, description string) (string, error) {
@@ -878,20 +913,22 @@ Exit Codes:
   8  Network error
   10 User cancelled`
 
-const defaultWorkPromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
+// defaultWorkBranchPromptTemplate is used when the agent is scoped to a single branch (--branch).
+const defaultWorkBranchPromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
 
 ## Current Stack
 {{STACK_JSON}}
 
 ## Your Branch
-Branch: {{BRANCH_NAME}}
-Parent: {{PARENT_NAME}}
-Worktree: {{WORKTREE_PATH}}
+You are scoped to a single branch in this stack:
+- Branch: {{BRANCH_NAME}}
+- Parent: {{PARENT_NAME}}
+- Worktree: {{WORKTREE_PATH}}
 
 ## IMPORTANT: Scope Constraint
-You are scoped to THIS stack only. Do not create branches outside this stack.
-Do not modify files in other worktrees or branches not in this stack.
-All your changes must be relevant to the branch you are working on.
+You are scoped to THIS BRANCH ONLY. Do not modify files outside this branch's worktree.
+Do not create new branches or modify other branches in the stack.
+All your changes must be relevant to this branch.
 
 ## ezs Commands (always use -y to skip confirmations)
 {{EZS_COMMANDS}}
@@ -910,20 +947,16 @@ All your changes must be relevant to the branch you are working on.
 {{REPO_INSTRUCTIONS}}
 `
 
-const defaultFeaturePromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
+// defaultWorkStackPromptTemplate is used when the agent works on an entire stack (no --branch).
+const defaultWorkStackPromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
 
 ## Current Stack
 {{STACK_JSON}}
 
-## Your Branch
-Branch: {{BRANCH_NAME}}
-Parent: {{PARENT_NAME}}
-Worktree: {{WORKTREE_PATH}}
-
-## IMPORTANT: Scope Constraint
-You are scoped to THIS stack only. Do not create branches outside this stack.
-Do not modify files in other worktrees or branches not in this stack.
-All your changes must be relevant to the branch you are working on.
+## Scope
+You are working on the ENTIRE STACK above. You may work across any branch in this stack.
+Each branch has its own worktree — cd to the appropriate worktree before making changes.
+Use "ezs goto <branch>" to navigate between branches, or cd directly to a branch's worktree path.
 
 ## ezs Commands (always use -y to skip confirmations)
 {{EZS_COMMANDS}}
@@ -931,10 +964,30 @@ All your changes must be relevant to the branch you are working on.
 ## ezstack Reference
 {{EZS_DOCS}}
 
-## Feature Builder Mode
-You are implementing the following feature as a series of small, stacked, reviewable branches:
+## Rules
+- Work across any branch in this stack as needed.
+- Keep each branch's changes focused and relevant to that branch's purpose.
+- When modifying a branch, cd to its worktree first.
+- Commit with "ezs -y commit", not "git commit" (ezs commit auto-syncs children).
+- Push with "ezs -y push", not "git push".
+- Always use the -y flag with ezs commands to skip confirmations.
+- Do not create branches outside this stack.
+{{CUSTOM_INSTRUCTIONS}}
+{{REPO_INSTRUCTIONS}}
+`
 
+// defaultFeaturePromptTemplate is used when the agent builds a feature as stacked branches.
+const defaultFeaturePromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
+
+## Existing Stack Context
+{{STACK_JSON}}
+
+## Feature to Implement
 {{FEATURE_DESCRIPTION}}
+
+## Your Job
+Plan and implement the feature above as a series of small, stacked, reviewable branches.
+You are responsible for creating the branches, naming them, implementing the code, and committing.
 
 ### Process
 1. Explore the codebase to understand the architecture.
@@ -953,10 +1006,13 @@ You are implementing the following feature as a series of small, stacked, review
 - Earlier branches must not depend on later ones — each builds on its parent.
 - Include tests in the same branch as the code they test, when practical.
 
+## ezs Commands (always use -y to skip confirmations)
+{{EZS_COMMANDS}}
+
+## ezstack Reference
+{{EZS_DOCS}}
+
 ## Rules
-- Only make changes relevant to this branch's purpose.
-- Keep changes small and focused for easy review.
-- Do not modify files outside this worktree.
 - Commit with "ezs -y commit", not "git commit" (ezs commit auto-syncs children).
 - Push with "ezs -y push", not "git push".
 - Always use the -y flag with ezs commands to skip confirmations.
