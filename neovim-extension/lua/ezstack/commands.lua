@@ -10,7 +10,9 @@ local subcommands = {}
 
 --- `:Ezs agent [options]` — launch AI agent with stack context
 --- `:Ezs agent feature "description"` — launch agent to build a feature
---- `:Ezs agent prompt [edit|reset] [work|feature]` — manage agent prompts
+--- `:Ezs agent prompt [shipped|custom|repo] [work|feature]` — view agent prompts (3 layers)
+--- `:Ezs agent prompt edit [repo] [work|feature]` — edit custom (or repo) instructions
+--- `:Ezs agent prompt reset [repo] [work|feature]` — reset custom (or repo) instructions
 subcommands["agent"] = function(args)
   -- Handle "prompt" subcommand natively for better Neovim integration
   if args[1] == "prompt" then
@@ -597,33 +599,61 @@ end
 
 --- Agent prompt management — native Neovim integration.
 --- Supports: view (default), edit, reset.
+--- v3.1.0: 3-layer prompt system (shipped, custom, repo).
+--- `work` or `feature` is a required positional arg for CLI calls; no "both" option.
 ---@param args string[] Remaining args after "prompt"
 function M._agent_prompt(args)
-  local action = args[1] -- nil (view), "edit", or "reset"
-  local which = args[2]  -- nil (both), "work", or "feature"
+  -- Parse args: action may be a layer (shipped/custom/repo), an action (edit/reset),
+  -- or a type (work/feature) for the default shipped view.
+  local action = args[1] -- nil, "edit", "reset", "shipped", "custom", "repo", "work", "feature"
+  local arg2 = args[2]   -- varies by action
+  local arg3 = args[3]   -- varies by action
 
   if action == "edit" then
-    -- Open prompt file(s) directly in Neovim
+    -- :Ezs agent prompt edit [repo] [work|feature]
+    local is_repo = arg2 == "repo"
+    local which = is_repo and arg3 or arg2  -- "work", "feature", or nil (both)
+
     local home = vim.env.HOME or ""
-    local config_dir = home .. "/.ezstack"
     local files = {}
 
-    if which == "feature" then
-      files = { config_dir .. "/agent-feature-prompt.md" }
-    elseif which == "work" then
-      files = { config_dir .. "/agent-work-prompt.md" }
+    if is_repo then
+      -- Repo-specific instructions live in <repo>/.ezstack/
+      local repo_dir = vim.fn.getcwd() .. "/.ezstack"
+      if which == "feature" then
+        files = { repo_dir .. "/agent-feature-prompt.md" }
+      elseif which == "work" then
+        files = { repo_dir .. "/agent-work-prompt.md" }
+      else
+        files = {
+          repo_dir .. "/agent-work-prompt.md",
+          repo_dir .. "/agent-feature-prompt.md",
+        }
+      end
     else
-      files = {
-        config_dir .. "/agent-work-prompt.md",
-        config_dir .. "/agent-feature-prompt.md",
-      }
+      -- Custom instructions live in ~/.ezstack/
+      local config_dir = home .. "/.ezstack"
+      if which == "feature" then
+        files = { config_dir .. "/agent-feature-prompt.md" }
+      elseif which == "work" then
+        files = { config_dir .. "/agent-work-prompt.md" }
+      else
+        files = {
+          config_dir .. "/agent-work-prompt.md",
+          config_dir .. "/agent-feature-prompt.md",
+        }
+      end
     end
 
     -- Ensure files exist by running reset for any missing ones
-    local missing = {}
+    local missing_types = {}
     for _, f in ipairs(files) do
       if vim.fn.filereadable(f) ~= 1 then
-        table.insert(missing, f)
+        if f:find("work") then
+          missing_types["work"] = true
+        elseif f:find("feature") then
+          missing_types["feature"] = true
+        end
       end
     end
 
@@ -635,22 +665,34 @@ function M._agent_prompt(args)
           vim.cmd("vsplit " .. vim.fn.fnameescape(f))
         end
       end
-      vim.notify("Editing agent prompt" .. (#files > 1 and "s" or ""), vim.log.levels.INFO)
+      local label = is_repo and "repo-specific " or "custom "
+      vim.notify("Editing " .. label .. "agent prompt" .. (#files > 1 and "s" or ""), vim.log.levels.INFO)
     end
 
-    if #missing > 0 then
-      -- Create missing files by resetting them to defaults
-      local reset_args = { "agent", "prompt", "--reset" }
-      if which then
-        table.insert(reset_args, "--" .. which)
-      end
-      cli.exec(reset_args, function(err)
-        if err then
-          vim.notify("Failed to create prompt files: " .. err, vim.log.levels.ERROR)
+    if next(missing_types) then
+      -- Create missing files by resetting them to defaults (one type at a time)
+      local types_to_reset = vim.tbl_keys(missing_types)
+      local idx = 0
+      local function reset_next()
+        idx = idx + 1
+        if idx > #types_to_reset then
+          open_files()
           return
         end
-        open_files()
-      end)
+        local reset_args = { "agent", "prompt", "--reset" }
+        if is_repo then
+          table.insert(reset_args, "--repo")
+        end
+        table.insert(reset_args, types_to_reset[idx])
+        cli.exec(reset_args, function(err)
+          if err then
+            vim.notify("Failed to create prompt files: " .. err, vim.log.levels.ERROR)
+            return
+          end
+          reset_next()
+        end)
+      end
+      reset_next()
     else
       open_files()
     end
@@ -658,50 +700,113 @@ function M._agent_prompt(args)
   end
 
   if action == "reset" then
-    -- Reset prompts via CLI
-    local reset_args = { "agent", "prompt", "--reset" }
-    if which == "work" then
-      table.insert(reset_args, "--work")
-    elseif which == "feature" then
-      table.insert(reset_args, "--feature")
-    end
-    cli.exec(reset_args, function(err)
-      if err then
-        vim.notify("Failed to reset prompts: " .. err, vim.log.levels.ERROR)
-      else
-        local target = which or "all"
-        vim.notify("Reset " .. target .. " agent prompt(s) to default", vim.log.levels.INFO)
+    -- :Ezs agent prompt reset [repo] [work|feature]
+    local is_repo = arg2 == "repo"
+    local which = is_repo and arg3 or arg2  -- "work", "feature", or nil (both)
+
+    local function do_reset(type_name, callback)
+      local reset_args = { "agent", "prompt", "--reset" }
+      if is_repo then
+        table.insert(reset_args, "--repo")
       end
-    end)
+      table.insert(reset_args, type_name)
+      cli.exec(reset_args, callback)
+    end
+
+    local label = is_repo and "repo-specific " or "custom "
+
+    if which then
+      -- Reset just the specified type
+      do_reset(which, function(err)
+        if err then
+          vim.notify("Failed to reset prompts: " .. err, vim.log.levels.ERROR)
+        else
+          vim.notify("Reset " .. label .. which .. " agent prompt to default", vim.log.levels.INFO)
+        end
+      end)
+    else
+      -- Reset both individually
+      do_reset("work", function(err1)
+        if err1 then
+          vim.notify("Failed to reset work prompt: " .. err1, vim.log.levels.ERROR)
+          return
+        end
+        do_reset("feature", function(err2)
+          if err2 then
+            vim.notify("Failed to reset feature prompt: " .. err2, vim.log.levels.ERROR)
+          else
+            vim.notify("Reset " .. label .. "work and feature agent prompts to default", vim.log.levels.INFO)
+          end
+        end)
+      end)
+    end
     return
   end
 
-  -- Default: view prompts in a scratch buffer
-  cli.exec({ "agent", "prompt" }, function(err, stdout)
-    if err then
-      vim.notify("Failed to get prompts: " .. err, vim.log.levels.ERROR)
-      return
-    end
-    -- Strip ANSI escape codes for clean display
-    local content = stdout:gsub("\027%[[0-9;]*m", "")
-    local lines = vim.split(content, "\n")
+  -- View prompts in a scratch buffer
+  -- Determine layer and type from args:
+  --   :Ezs agent prompt                     → shipped work + feature
+  --   :Ezs agent prompt work                → shipped work
+  --   :Ezs agent prompt feature             → shipped feature
+  --   :Ezs agent prompt shipped [work|feat] → shipped prompt(s)
+  --   :Ezs agent prompt custom [work|feat]  → custom instructions
+  --   :Ezs agent prompt repo [work|feat]    → repo-specific instructions
+  local layer = nil
+  local which = nil
 
-    -- Create scratch buffer
-    local bufnr = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-    vim.bo[bufnr].modifiable = false
-    vim.bo[bufnr].buftype = "nofile"
-    vim.bo[bufnr].bufhidden = "wipe"
-    vim.bo[bufnr].filetype = "markdown"
-    vim.api.nvim_buf_set_name(bufnr, "ezstack://agent-prompts")
+  if action == "shipped" or action == "custom" or action == "repo" then
+    layer = action
+    which = arg2  -- "work", "feature", or nil
+  elseif action == "work" or action == "feature" then
+    layer = "shipped"
+    which = action
+  else
+    -- bare `:Ezs agent prompt` → show shipped for both
+    layer = "shipped"
+  end
 
-    -- Open in a split
-    vim.cmd("botright split")
-    vim.api.nvim_win_set_buf(0, bufnr)
+  local cli_flag = "--" .. layer  -- --shipped, --custom, or --repo
+  local types_to_fetch = which and { which } or { "work", "feature" }
+  local results = {}
+  local remaining = #types_to_fetch
 
-    -- Close with q
-    vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = bufnr, silent = true })
-  end)
+  for _, type_name in ipairs(types_to_fetch) do
+    cli.exec({ "agent", "prompt", cli_flag, type_name }, function(err, stdout)
+      if err then
+        results[type_name] = "--- " .. type_name .. " ---\nError: " .. err
+      else
+        results[type_name] = "--- " .. layer .. " " .. type_name .. " prompt ---\n" .. stdout
+      end
+      remaining = remaining - 1
+      if remaining == 0 then
+        -- All fetched, assemble and display
+        local parts = {}
+        for _, tn in ipairs(types_to_fetch) do
+          table.insert(parts, results[tn])
+        end
+        local content = table.concat(parts, "\n\n")
+        -- Strip ANSI escape codes for clean display
+        content = content:gsub("\027%[[0-9;]*m", "")
+        local lines = vim.split(content, "\n")
+
+        -- Create scratch buffer
+        local bufnr = vim.api.nvim_create_buf(false, true)
+        vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+        vim.bo[bufnr].modifiable = false
+        vim.bo[bufnr].buftype = "nofile"
+        vim.bo[bufnr].bufhidden = "wipe"
+        vim.bo[bufnr].filetype = "markdown"
+        vim.api.nvim_buf_set_name(bufnr, "ezstack://agent-prompts")
+
+        -- Open in a split
+        vim.cmd("botright split")
+        vim.api.nvim_win_set_buf(0, bufnr)
+
+        -- Close with q
+        vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = bufnr, silent = true })
+      end
+    end)
+  end
 end
 
 --- `:Ezs up` — navigate to parent branch
@@ -836,14 +941,32 @@ function M.register()
 
       -- Complete agent prompt subcommands (":Ezs agent prompt <tab>")
       if parts[2] == "agent" and parts[3] == "prompt" and #parts <= 4 then
-        local prompt_subs = { "edit", "reset" }
+        local prompt_subs = { "edit", "reset", "shipped", "custom", "repo", "work", "feature" }
         return vim.tbl_filter(function(s)
           return s:find(arglead, 1, true) == 1
         end, prompt_subs)
       end
 
-      -- Complete agent prompt target (":Ezs agent prompt edit <tab>")
-      if parts[2] == "agent" and parts[3] == "prompt" and (parts[4] == "edit" or parts[4] == "reset") and #parts <= 5 then
+      -- Complete agent prompt action args (":Ezs agent prompt edit <tab>")
+      if parts[2] == "agent" and parts[3] == "prompt" and #parts <= 5 then
+        local p4 = parts[4]
+        if p4 == "edit" or p4 == "reset" then
+          local targets = { "repo", "work", "feature" }
+          return vim.tbl_filter(function(s)
+            return s:find(arglead, 1, true) == 1
+          end, targets)
+        elseif p4 == "shipped" or p4 == "custom" or p4 == "repo" then
+          local targets = { "work", "feature" }
+          return vim.tbl_filter(function(s)
+            return s:find(arglead, 1, true) == 1
+          end, targets)
+        end
+      end
+
+      -- Complete agent prompt edit/reset repo type (":Ezs agent prompt edit repo <tab>")
+      if parts[2] == "agent" and parts[3] == "prompt"
+        and (parts[4] == "edit" or parts[4] == "reset")
+        and parts[5] == "repo" and #parts <= 6 then
         local targets = { "work", "feature" }
         return vim.tbl_filter(function(s)
           return s:find(arglead, 1, true) == 1
