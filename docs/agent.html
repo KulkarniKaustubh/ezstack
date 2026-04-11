@@ -38,10 +38,18 @@
       </button>
       <div class="nav-links" id="nav-links">
         <a href="index.html#features">Features</a>
-        <a href="index.html#how-it-works">How It Works</a>
         <a href="#work-session">Work Session</a>
         <a href="#feature-builder">Feature Builder</a>
         <a href="#prompts">Prompts</a>
+        <div class="nav-dropdown">
+          <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
+          <div class="nav-dropdown-menu">
+            <a href="agent.html">AI Agent</a>
+            <a href="vscode.html">VS Code Extension</a>
+            <a href="index.html#ecosystem">Desktop App</a>
+            <a href="index.html#ecosystem">Neovim Plugin</a>
+          </div>
+        </div>
         <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener" class="nav-github">GitHub</a>
       </div>
     </div>
@@ -393,6 +401,21 @@
         navLinks.classList.remove('open');
       });
     }
+
+    // Nav dropdown toggle
+    var dropdowns = document.querySelectorAll('.nav-dropdown');
+    dropdowns.forEach(function (dd) {
+      var toggle = dd.querySelector('.nav-dropdown-toggle');
+      toggle.addEventListener('click', function (e) {
+        e.stopPropagation();
+        var wasOpen = dd.classList.contains('open');
+        dropdowns.forEach(function (d) { d.classList.remove('open'); });
+        if (!wasOpen) dd.classList.add('open');
+      });
+    });
+    document.addEventListener('click', function () {
+      dropdowns.forEach(function (d) { d.classList.remove('open'); });
+    });
 
     // Smooth scroll
     document.addEventListener('click', function (e) {
