@@ -335,6 +335,13 @@ Options:
     -r, --from-remote         Create a stack from a remote branch/PR
 ```
 
+With `origin/<branch>`, creates a local worktree that tracks the remote branch directly. This is useful for PR reviews or quickly inspecting someone else's work without creating a new branch on top:
+```bash
+ezs new origin/feature-branch       # Checkout remote branch into a worktree
+```
+
+This fetches the latest remote refs, creates a local tracking branch, and sets up a worktree. If the branch has an associated PR, it displays PR info (title, state, review status) and a line diff summary against the base branch.
+
 With `--from-remote`, positional args are `[pr-number-or-branch] [new-branch-name]`:
 ```bash
 ezs new -r                          # Interactive PR selection + branch name prompt
@@ -544,6 +551,23 @@ ezs up        # go to parent
 ezs down      # go to child
 ezs up 2      # go up two levels
 ezs goto feature-1   # jump to a specific branch
+```
+
+### Reviewing a Remote PR
+
+```bash
+# Checkout a teammate's branch into its own worktree
+ezs new origin/feature-branch
+
+# ezstack fetches, creates a tracking worktree, and shows:
+#   PR #42: Add user authentication
+#   URL: https://github.com/you/repo/pull/42
+#   State: OPEN  Base: main
+#   Review: REVIEW_REQUIRED
+#   Diff vs main: +320 / -45 lines
+
+# When you're done reviewing, clean up
+ezs delete feature-branch
 ```
 
 ### Stacking on a Remote PR
