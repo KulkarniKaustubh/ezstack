@@ -8,6 +8,7 @@ import (
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/github"
 	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
@@ -516,8 +517,7 @@ func promptWorktreeBaseDir(repoDir string, cfg *config.Config) (string, error) {
 }
 
 // newFromRemoteRef handles `ezs new origin/<branch>` — creates a local worktree
-// that tracks the remote branch directly. No stack is registered; this is meant
-// for quick PR reviews or inspecting someone else's work.
+// that tracks the remote branch directly and registers it in a stack.
 func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noCdFlag bool) error {
 	remoteBranch := strings.TrimPrefix(ref, "origin/")
 	if remoteBranch == "" {
@@ -579,8 +579,34 @@ func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noC
 
 	ui.Success(fmt.Sprintf("Created worktree for '%s' at %s", remoteBranch, worktreePath))
 
-	// Look up PR info and diff stats for the remote branch
-	showRemoteBranchInfo(g, remoteBranch)
+	// Look up PR info for registration and display
+	var pr *github.PR
+	gh, ghErr := newGitHubClient(g)
+	if ghErr == nil {
+		pr, _ = gh.GetPRByBranch(remoteBranch)
+	}
+
+	// Register the remote branch in a stack so it shows up in ezs ls
+	baseBranch := ""
+	var prURL string
+	if pr != nil {
+		baseBranch = pr.Base
+		prURL = pr.URL
+	}
+	if baseBranch == "" {
+		for _, candidate := range []string{"main", "master"} {
+			if g.BranchExists(candidate) || g.RemoteBranchExists(candidate) {
+				baseBranch = candidate
+				break
+			}
+		}
+	}
+	if _, regErr := mgr.RegisterExistingBranch(remoteBranch, worktreePath, baseBranch); regErr == nil {
+		mgr.MarkBranchRemote(remoteBranch, prURL)
+	}
+
+	// Show PR info and diff stats
+	showRemoteBranchInfoWithPR(g, remoteBranch, pr)
 
 	if getCdAfterNew(cfg, repoDir, cdFlag, noCdFlag) {
 		EmitCd(worktreePath)
@@ -590,24 +616,14 @@ func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noC
 	return nil
 }
 
-// showRemoteBranchInfo looks up PR info and diff stats for a remote branch and displays them.
-func showRemoteBranchInfo(g *git.Git, remoteBranch string) {
-	// Try to find a PR for this branch
-	gh, ghErr := newGitHubClient(g)
-	if ghErr != nil {
-		// No GitHub client available — still show diff stats against common base
+// showRemoteBranchInfoWithPR displays PR info and diff stats for a remote branch.
+// If pr is nil, only diff stats against an inferred base are shown.
+func showRemoteBranchInfoWithPR(g *git.Git, remoteBranch string, pr *github.PR) {
+	if pr == nil {
 		showDiffStatsAgainstBase(g, remoteBranch, "")
 		return
 	}
 
-	pr, prErr := gh.GetPRByBranch(remoteBranch)
-	if prErr != nil || pr == nil {
-		// No PR found — show diff stats against inferred base
-		showDiffStatsAgainstBase(g, remoteBranch, "")
-		return
-	}
-
-	// Display PR info
 	fmt.Fprintln(os.Stderr)
 	ui.Info(fmt.Sprintf("PR #%d: %s", pr.Number, pr.Title))
 	ui.Info(fmt.Sprintf("URL: %s", pr.URL))
@@ -625,7 +641,6 @@ func showRemoteBranchInfo(g *git.Git, remoteBranch string) {
 		ui.Info(fmt.Sprintf("Review: %s", pr.ReviewState))
 	}
 
-	// Show diff stats against the PR's base branch
 	showDiffStatsAgainstBase(g, remoteBranch, pr.Base)
 }
 

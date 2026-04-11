@@ -1400,3 +1400,28 @@ func (m *Manager) MarkBranchMerged(branchName string) error {
 
 	return nil
 }
+
+// MarkBranchRemote marks a branch as belonging to another contributor.
+// Remote branches are not rebased during sync. Optionally sets PR URL.
+func (m *Manager) MarkBranchRemote(branchName, prURL string) error {
+	cache := m.stackConfig.Cache
+	bc := cache.GetBranchCache(branchName)
+	if bc == nil {
+		bc = &config.BranchCache{}
+	}
+	bc.IsRemote = true
+	if prURL != "" {
+		bc.PRUrl = prURL
+	}
+	cache.SetBranchCache(branchName, bc)
+
+	// Update runtime branch objects
+	for _, stack := range m.stackConfig.Stacks {
+		if stack.HasBranch(branchName) {
+			stack.PopulateBranchesWithCache(cache)
+			break
+		}
+	}
+
+	return m.stackConfig.Save(m.repoDir)
+}
