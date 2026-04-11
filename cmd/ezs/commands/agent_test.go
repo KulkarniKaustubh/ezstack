@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
@@ -246,18 +247,35 @@ func TestBuildTemplateVars(t *testing.T) {
 }
 
 func TestDefaultPromptTemplatesHaveAllVariables(t *testing.T) {
-	workVars := []string{
+	// Work branch template — scoped to a specific branch
+	workBranchVars := []string{
 		"{{STACK_JSON}}", "{{BRANCH_NAME}}", "{{PARENT_NAME}}",
 		"{{WORKTREE_PATH}}", "{{EZS_COMMANDS}}", "{{EZS_DOCS}}",
 		"{{CUSTOM_INSTRUCTIONS}}", "{{REPO_INSTRUCTIONS}}",
 	}
-	for _, v := range workVars {
-		if !strings.Contains(defaultWorkPromptTemplate, v) {
-			t.Errorf("defaultWorkPromptTemplate missing variable %s", v)
+	for _, v := range workBranchVars {
+		if !strings.Contains(defaultWorkBranchPromptTemplate, v) {
+			t.Errorf("defaultWorkBranchPromptTemplate missing variable %s", v)
 		}
 	}
 
-	featureVars := append(workVars, "{{FEATURE_DESCRIPTION}}")
+	// Work stack template — works on entire stack, no branch-specific vars needed
+	workStackVars := []string{
+		"{{STACK_JSON}}", "{{EZS_COMMANDS}}", "{{EZS_DOCS}}",
+		"{{CUSTOM_INSTRUCTIONS}}", "{{REPO_INSTRUCTIONS}}",
+	}
+	for _, v := range workStackVars {
+		if !strings.Contains(defaultWorkStackPromptTemplate, v) {
+			t.Errorf("defaultWorkStackPromptTemplate missing variable %s", v)
+		}
+	}
+
+	// Feature template — no branch-specific vars, has feature description
+	featureVars := []string{
+		"{{STACK_JSON}}", "{{FEATURE_DESCRIPTION}}",
+		"{{EZS_COMMANDS}}", "{{EZS_DOCS}}",
+		"{{CUSTOM_INSTRUCTIONS}}", "{{REPO_INSTRUCTIONS}}",
+	}
 	for _, v := range featureVars {
 		if !strings.Contains(defaultFeaturePromptTemplate, v) {
 			t.Errorf("defaultFeaturePromptTemplate missing variable %s", v)
@@ -509,7 +527,7 @@ func TestBuildComposedPromptRepoOverrideMarkerIgnored(t *testing.T) {
 
 // ── Full prompt rendering tests ───────────────────────────────────────────────
 
-func TestBuildRenderedWorkPrompt(t *testing.T) {
+func TestBuildRenderedWorkPromptBranchScoped(t *testing.T) {
 	tmpDir := t.TempDir()
 	originalHome := os.Getenv("EZSTACK_HOME")
 	defer os.Setenv("EZSTACK_HOME", originalHome)
@@ -521,6 +539,7 @@ func TestBuildRenderedWorkPrompt(t *testing.T) {
 		worktreePath: "/path/to/worktree",
 		stackJSON:    `{"hash":"abc1234","root":"main","branches":[]}`,
 		hasStack:     true,
+		branchScoped: true,
 		repoPath:     "/path/to/repo",
 	}
 
@@ -539,13 +558,44 @@ func TestBuildRenderedWorkPrompt(t *testing.T) {
 	if !strings.Contains(prompt, "main") {
 		t.Error("expected prompt to contain parent name")
 	}
-	// Should not contain feature description variable (work mode)
-	if strings.Contains(prompt, "{{FEATURE_DESCRIPTION}}") {
-		t.Error("work prompt should not contain FEATURE_DESCRIPTION variable")
+	// Should contain branch-scoped constraint
+	if !strings.Contains(prompt, "THIS BRANCH ONLY") {
+		t.Error("expected branch-scoped constraint")
 	}
 	// Should not have instruction headings when no files exist
 	if strings.Contains(prompt, "## Custom Instructions") {
 		t.Error("should not contain Custom Instructions heading without file")
+	}
+}
+
+func TestBuildRenderedWorkPromptStackScoped(t *testing.T) {
+	tmpDir := t.TempDir()
+	originalHome := os.Getenv("EZSTACK_HOME")
+	defer os.Setenv("EZSTACK_HOME", originalHome)
+	os.Setenv("EZSTACK_HOME", tmpDir)
+
+	ctx := &agentContext{
+		branchName:   "feature-auth",
+		parentName:   "main",
+		worktreePath: "/path/to/worktree",
+		stackJSON:    `{"hash":"abc1234","root":"main","branches":[]}`,
+		hasStack:     true,
+		branchScoped: false,
+		repoPath:     "/path/to/repo",
+	}
+
+	prompt, err := buildRenderedWorkPrompt(ctx)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Should contain stack-scoped language
+	if !strings.Contains(prompt, "ENTIRE STACK") {
+		t.Error("expected stack-scoped prompt to mention ENTIRE STACK")
+	}
+	// Should NOT contain branch-scoped constraint
+	if strings.Contains(prompt, "THIS BRANCH ONLY") {
+		t.Error("stack-scoped prompt should not contain branch-only constraint")
 	}
 }
 
@@ -575,8 +625,13 @@ func TestBuildRenderedFeaturePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "Add JWT authentication") {
 		t.Error("expected prompt to contain feature description")
 	}
-	if !strings.Contains(prompt, "feature-auth") {
-		t.Error("expected prompt to contain branch name")
+	// Feature prompt should mention creating branches, not scoping to one
+	if !strings.Contains(prompt, "Plan and implement") {
+		t.Error("expected feature prompt to describe building process")
+	}
+	// Feature prompt should not have branch-scoped constraint
+	if strings.Contains(prompt, "THIS BRANCH ONLY") {
+		t.Error("feature prompt should not be branch-scoped")
 	}
 }
 
@@ -601,6 +656,7 @@ func TestBuildRenderedWorkPromptWithInstructions(t *testing.T) {
 		worktreePath: "/path/to/worktree",
 		stackJSON:    `{"hash":"abc1234","root":"main","branches":[]}`,
 		hasStack:     true,
+		branchScoped: true,
 		repoPath:     repoDir,
 	}
 
@@ -713,20 +769,42 @@ func TestFirstPositionalArg(t *testing.T) {
 func TestResolveWorkDir(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Valid worktree path should be returned
-	got := resolveWorkDir(tmpDir, "/fallback")
+	// Branch-scoped: valid worktree path should be returned
+	got := resolveWorkDir("my-branch", tmpDir, "/fallback", nil)
 	if got != tmpDir {
 		t.Errorf("expected %s, got %s", tmpDir, got)
 	}
 
-	// Non-existent worktree should fall back to repo path
-	got = resolveWorkDir("/nonexistent/path", "/fallback")
+	// Branch-scoped: non-existent worktree should fall back to repo path
+	got = resolveWorkDir("my-branch", "/nonexistent/path", "/fallback", nil)
 	if got != "/fallback" {
 		t.Errorf("expected /fallback, got %s", got)
 	}
 
-	// Empty worktree should fall back to repo path
-	got = resolveWorkDir("", "/fallback")
+	// Stack-scoped: empty branch should fall back to repo path
+	got = resolveWorkDir("", "", "/fallback", nil)
+	if got != "/fallback" {
+		t.Errorf("expected /fallback, got %s", got)
+	}
+
+	// Stack-scoped: with stack that has branches with worktrees
+	stackWithWT := &config.Stack{
+		Branches: []*config.Branch{
+			{Name: "b1", WorktreePath: tmpDir},
+		},
+	}
+	got = resolveWorkDir("", "", "/fallback", stackWithWT)
+	if got != tmpDir {
+		t.Errorf("expected first branch worktree %s, got %s", tmpDir, got)
+	}
+
+	// Stack-scoped: with stack whose worktree doesn't exist
+	stackBadWT := &config.Stack{
+		Branches: []*config.Branch{
+			{Name: "b1", WorktreePath: "/nonexistent"},
+		},
+	}
+	got = resolveWorkDir("", "", "/fallback", stackBadWT)
 	if got != "/fallback" {
 		t.Errorf("expected /fallback, got %s", got)
 	}
