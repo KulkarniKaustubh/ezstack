@@ -81,6 +81,19 @@ ezs commit -m "Add feature"
 ezs sync -a
 ```
 
+## PR Review
+
+Quickly check out a teammate's branch into its own worktree for review:
+
+```bash
+# Creates a local worktree tracking the remote branch
+ezs new origin/feature-branch
+
+# Shows PR info, review status, and line diff automatically
+# When done, clean up with:
+ezs delete feature-branch
+```
+
 ## Commands
 
 | Command | Aliases | Description |

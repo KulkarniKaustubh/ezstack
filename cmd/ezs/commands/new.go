@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
@@ -33,6 +34,9 @@ func New(args []string) error {
 
 %sNOTES%s
     If no arguments are provided, interactive mode will prompt for options.
+
+    With origin/<branch>, creates a local worktree tracking the remote branch:
+      ezs new origin/feature-branch       Checkout remote branch into a worktree (for PR reviews, etc.)
 
     With --from-remote, positional args are: [pr-number-or-branch] [new-branch-name]
       ezs new -r                          Interactive PR selection + branch name prompt
@@ -74,6 +78,13 @@ func New(args []string) error {
 	useFromWorktree := *fromWorktree
 	useFromRemote := *fromRemote
 	chooseParent := false
+
+	// Check if the first arg is a remote branch reference (origin/...)
+	// This creates a local worktree tracking the remote branch directly,
+	// without creating a new branch on top or registering a stack.
+	if fs.NArg() >= 1 && strings.HasPrefix(fs.Arg(0), "origin/") {
+		return newFromRemoteRef(g, cwd, fs.Arg(0), *worktree, *cdFlag, *noCdFlag)
+	}
 
 	if fs.NArg() == 0 && !useFromWorktree && !useFromRemote && *parent == "" {
 		choice, err := ui.SelectOptionWithBack([]string{
@@ -502,4 +513,149 @@ func promptWorktreeBaseDir(repoDir string, cfg *config.Config) (string, error) {
 
 		return worktreeBaseDir, nil
 	}
+}
+
+// newFromRemoteRef handles `ezs new origin/<branch>` — creates a local worktree
+// that tracks the remote branch directly. No stack is registered; this is meant
+// for quick PR reviews or inspecting someone else's work.
+func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noCdFlag bool) error {
+	remoteBranch := strings.TrimPrefix(ref, "origin/")
+	if remoteBranch == "" {
+		return fmt.Errorf("branch name cannot be empty (got %q)", ref)
+	}
+
+	mgr, err := stack.NewManager(cwd)
+	if err != nil {
+		return err
+	}
+	cfg := mgr.GetConfig()
+	repoDir := mgr.GetRepoDir()
+
+	// Fetch latest remote refs
+	if err := g.Fetch(); err != nil {
+		return fmt.Errorf("failed to fetch: %w", err)
+	}
+
+	// Verify the remote branch exists
+	if !g.RemoteBranchExists(remoteBranch) {
+		return fmt.Errorf("remote branch '%s' not found on origin", remoteBranch)
+	}
+
+	// Check if the branch already has a worktree — if so, just navigate there
+	if g.BranchExists(remoteBranch) {
+		worktrees, _ := g.ListWorktrees()
+		for _, wt := range worktrees {
+			if wt.Branch == remoteBranch {
+				ui.Info(fmt.Sprintf("Branch '%s' already has a worktree at %s", remoteBranch, wt.Path))
+				if getCdAfterNew(cfg, repoDir, cdFlag, noCdFlag) {
+					EmitCd(wt.Path)
+				}
+				return nil
+			}
+		}
+	}
+
+	// Determine worktree path
+	worktreePath := worktreeOverride
+	if worktreePath == "" {
+		worktreeBaseDir := cfg.GetWorktreeBaseDir(repoDir)
+		if worktreeBaseDir == "" {
+			var err error
+			worktreeBaseDir, err = promptWorktreeBaseDir(repoDir, cfg)
+			if err != nil {
+				return err
+			}
+		}
+		// Replace slashes in branch name for the directory name (e.g., "user/feature" → "user-feature")
+		dirName := strings.ReplaceAll(remoteBranch, "/", "-")
+		worktreePath = filepath.Join(worktreeBaseDir, dirName)
+	}
+
+	ui.Info(fmt.Sprintf("Creating worktree for remote branch '%s'...", remoteBranch))
+
+	if err := g.CreateWorktreeFromRemoteBranch(remoteBranch, worktreePath); err != nil {
+		return fmt.Errorf("failed to create worktree: %w", err)
+	}
+
+	ui.Success(fmt.Sprintf("Created worktree for '%s' at %s", remoteBranch, worktreePath))
+
+	// Look up PR info and diff stats for the remote branch
+	showRemoteBranchInfo(g, remoteBranch)
+
+	if getCdAfterNew(cfg, repoDir, cdFlag, noCdFlag) {
+		EmitCd(worktreePath)
+	} else {
+		ui.Info(fmt.Sprintf("To start working: cd %s", worktreePath))
+	}
+	return nil
+}
+
+// showRemoteBranchInfo looks up PR info and diff stats for a remote branch and displays them.
+func showRemoteBranchInfo(g *git.Git, remoteBranch string) {
+	// Try to find a PR for this branch
+	gh, ghErr := newGitHubClient(g)
+	if ghErr != nil {
+		// No GitHub client available — still show diff stats against common base
+		showDiffStatsAgainstBase(g, remoteBranch, "")
+		return
+	}
+
+	pr, prErr := gh.GetPRByBranch(remoteBranch)
+	if prErr != nil || pr == nil {
+		// No PR found — show diff stats against inferred base
+		showDiffStatsAgainstBase(g, remoteBranch, "")
+		return
+	}
+
+	// Display PR info
+	fmt.Fprintln(os.Stderr)
+	ui.Info(fmt.Sprintf("PR #%d: %s", pr.Number, pr.Title))
+	ui.Info(fmt.Sprintf("URL: %s", pr.URL))
+
+	state := pr.State
+	if pr.IsDraft {
+		state = "DRAFT"
+	}
+	if pr.Merged {
+		state = "MERGED"
+	}
+	ui.Info(fmt.Sprintf("State: %s  Base: %s", state, pr.Base))
+
+	if pr.ReviewState != "" {
+		ui.Info(fmt.Sprintf("Review: %s", pr.ReviewState))
+	}
+
+	// Show diff stats against the PR's base branch
+	showDiffStatsAgainstBase(g, remoteBranch, pr.Base)
+}
+
+// showDiffStatsAgainstBase displays line additions/deletions for a branch relative to a base.
+// If baseBranch is empty, it tries to infer one from common defaults (main, master).
+func showDiffStatsAgainstBase(g *git.Git, branch, baseBranch string) {
+	if baseBranch == "" {
+		for _, candidate := range []string{"main", "master"} {
+			if g.RemoteBranchExists(candidate) {
+				baseBranch = candidate
+				break
+			}
+		}
+	}
+	if baseBranch == "" {
+		return
+	}
+
+	// Use origin/ refs for accurate stats matching what PRs show
+	baseRef := baseBranch
+	if g.RemoteBranchExists(baseBranch) {
+		baseRef = "origin/" + baseBranch
+	}
+	branchRef := "origin/" + branch
+
+	added, removed, err := g.GetDiffStat(baseRef, branchRef)
+	if err != nil {
+		return
+	}
+
+	ui.Info(fmt.Sprintf("Diff vs %s: %s+%d%s / %s-%d%s lines",
+		baseBranch, ui.Green, added, ui.Reset, ui.Red, removed, ui.Reset))
 }
