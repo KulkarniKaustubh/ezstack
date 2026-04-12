@@ -20,12 +20,14 @@ func Push(args []string) error {
     ezs push [options]
 
 %sOPTIONS%s
-    -s, --stack    Push all branches in the current stack
-    -f, --force    Force push
-    -h, --help     Show this help message
+    -s, --stack          Push all branches in the current stack
+    -b, --branch <name>  Push a specific branch by name
+    -f, --force          Force push
+    -h, --help           Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	stackFlag := fs.BoolP("stack", "s", false, "Push all branches in the current stack")
+	branchFlag := fs.StringP("branch", "b", "", "Push a specific branch by name")
 	force := fs.BoolP("force", "f", false, "Force push")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
@@ -47,6 +49,10 @@ func Push(args []string) error {
 
 	g := git.New(cwd)
 
+	if *branchFlag != "" {
+		return pushSpecificBranch(g, *branchFlag, *force)
+	}
+
 	if !*stackFlag {
 		return pushBranch(g, *force)
 	}
@@ -62,6 +68,18 @@ func Push(args []string) error {
 	}
 
 	return pushStack(g, currentStack, *force)
+}
+
+func pushSpecificBranch(g *git.Git, branch string, force bool) error {
+	args := []string{"push", "-u", "origin", branch}
+	if force {
+		args = []string{"push", "-u", "--force-with-lease", "origin", branch}
+	}
+	if err := g.RunInteractive(args...); err != nil {
+		return fmt.Errorf("push failed for '%s': %w", branch, err)
+	}
+	ui.Success(fmt.Sprintf("Pushed '%s' to remote", branch))
+	return nil
 }
 
 func pushBranch(g *git.Git, force bool) error {

@@ -162,6 +162,24 @@ export function registerCommands(
     ),
   );
 
+  // ── Sync Branch (headless, specific branch) ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.syncBranch",
+      async (node?: BranchNode) => {
+        const branch = node instanceof BranchNode ? node.branch.name : undefined;
+        if (!branch) {
+          return;
+        }
+        await runWithFeedback(
+          `Syncing "${branch}"...`,
+          `Synced "${branch}".`,
+          () => cli.syncBranch(branch),
+        );
+      },
+    ),
+  );
+
   // ── Push ──
   context.subscriptions.push(
     vscode.commands.registerCommand("ezstack.push", (node?: BranchNode) => {
