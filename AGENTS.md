@@ -75,7 +75,9 @@ ezs -y sync -a
 
 ## Built-in Agent Command
 
-ezstack can launch an AI agent with full stack context injected automatically:
+ezstack can launch an AI agent with full stack context injected automatically.
+
+> **Requires worktree mode** (`use_worktrees: true`, which is the default). The agent needs separate working directories for each branch to work in isolation without disrupting your workspace. If worktrees are disabled, `ezs agent` will show an error with instructions to enable them.
 
 ### Work Session — Agent scoped to current branch
 
@@ -168,7 +170,7 @@ ezs config set agent_command claude
 
 - **Config location:** `~/.ezstack/config.json` (global), `~/.ezstack/stacks.json` (stack state + branch cache)
 - **PR data:** PR numbers are derived from PR URLs at runtime, not stored separately. The URL is the source of truth.
-- **Worktrees:** Optional, controlled by `use_worktrees` config. When disabled, branches use `git checkout`
+- **Worktrees:** Optional for core commands, controlled by `use_worktrees` config. When disabled, branches use `git checkout`. **Required for `ezs agent`** — the agent needs separate working directories per branch
 - **Shell integration:** `eval "$(ezs --shell-init)"` enables cd support. Without it, commands print paths instead
 - **GitHub integration:** Requires `gh` CLI authenticated via `gh auth login`
 - **Stack identity:** Each stack has a unique hash. Use 3+ character prefixes to reference stacks by hash

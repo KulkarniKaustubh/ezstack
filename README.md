@@ -130,7 +130,7 @@ Run `ezs <command> --help` for command-specific help.
 
 ## AI Agent
 
-ezstack can launch an AI coding agent (Claude, Cursor, etc.) with full stack context injected automatically. The agent is scoped to a single stack and knows about all branches, worktree paths, and available commands.
+ezstack can launch an AI coding agent (Claude, Cursor, etc.) with full stack context injected automatically. The agent is scoped to a single stack and knows about all branches, worktree paths, and available commands. **Requires worktree mode** (`use_worktrees: true`, which is the default) — the agent needs separate working directories for each branch to operate in isolation.
 
 ```bash
 # Launch agent on current stack
@@ -150,8 +150,8 @@ Agent prompts are composed from three layers: a shipped prompt (updated with rel
 
 ezstack supports both worktree-based and checkout-based workflows:
 
-- **Worktrees (default):** Each branch gets its own worktree directory for parallel work
-- **No worktrees:** Branches use `git checkout` for a simpler, single-directory workflow
+- **Worktrees (default, recommended):** Each branch gets its own worktree directory for parallel work. Required for `ezs agent`.
+- **No worktrees:** Branches use `git checkout` for a simpler, single-directory workflow. All core commands (`sync`, `commit`, `push`, `pr`, `reparent`) work fully. Note: `ezs agent` is not available in this mode.
 
 Configure with `ezs config set use_worktrees true/false`.
 

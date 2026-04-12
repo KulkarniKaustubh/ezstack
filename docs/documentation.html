@@ -698,7 +698,7 @@
 
         <!-- ezs agent -->
         <h3 id="ezs-agent"><code>ezs agent</code></h3>
-        <p>Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically.</p>
+        <p>Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically. <strong>Requires worktree mode</strong> (<code>use_worktrees: true</code>) &mdash; the agent needs separate working directories for each branch to work in isolation.</p>
         <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">agent</span> [options]
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">feature</span> <span class="c-str">"description"</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">prompt</span> &lt;flag&gt; &lt;work|feature&gt;
@@ -800,7 +800,7 @@
             <tr><td><code>worktree_base_dir</code></td><td>Base directory for worktrees</td><td>Path (per-repo)</td></tr>
             <tr><td><code>default_base_branch</code></td><td>Default base branch</td><td>e.g. <code>main</code>, <code>master</code></td></tr>
             <tr><td><code>cd_after_new</code></td><td>Auto-cd to new worktree</td><td><code>true</code> / <code>false</code> (per-repo)</td></tr>
-            <tr><td><code>use_worktrees</code></td><td>Use git worktrees for new branches</td><td><code>true</code> / <code>false</code> (per-repo)</td></tr>
+            <tr><td><code>use_worktrees</code></td><td>Use git worktrees for new branches (required for <code>ezs agent</code>)</td><td><code>true</code> / <code>false</code> (per-repo)</td></tr>
             <tr><td><code>sync_strategy</code></td><td>Sync method for rebase/merge</td><td><code>rebase</code> / <code>merge</code> (per-repo)</td></tr>
             <tr><td><code>github_token</code></td><td>GitHub token for API access</td><td>Token string</td></tr>
           </tbody>
@@ -897,7 +897,7 @@
 <span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span> <span class="c-str">42</span>                       <span class="c-comment"># Use PR #42, prompt for branch name</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span> <span class="c-str">feature-branch</span>           <span class="c-comment"># Use PR for that branch, prompt for branch name</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span> <span class="c-str">42</span> <span class="c-str">my-feature</span>            <span class="c-comment"># Use PR #42, create branch "my-feature" (no prompts)</span></code></pre>
-        <p>When <code>use_worktrees</code> is disabled, creates a git branch without a worktree and optionally checks it out.</p>
+        <p>When <code>use_worktrees</code> is disabled, creates a git branch without a worktree and optionally checks it out. All core commands (<code>sync</code>, <code>commit</code>, <code>reparent</code>, <code>push</code>, <code>pr</code>) work fully in this mode via checkout-based sync. Note: <code>ezs agent</code> requires worktree mode.</p>
 
         <hr>
 
