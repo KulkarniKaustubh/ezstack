@@ -234,9 +234,13 @@ end
 --- Open or refresh the stack viewer buffer.
 ---@param use_status? boolean If true, fetch status (PR/CI info) instead of basic list
 function M.open(use_status)
-  local fetch = use_status and cli.status_stacks or function(cb)
-    cli.list_stacks(cb, { force = true, all = true })
-  end
+  local fetch = use_status
+    and function(cb)
+      cli.status_stacks(cb, { all = true })
+    end
+    or function(cb)
+      cli.list_stacks(cb, { force = true, all = true })
+    end
 
   fetch(function(err, stacks)
     if err then
@@ -278,19 +282,44 @@ function M.open(use_status)
       end
     end
 
-    -- Write to buffer (guard against async race if buffer was wiped)
+    -- Write to buffer (guard against async race if buffer was wiped).
+    -- Preserve cursor row across refreshes so the user doesn't lose position.
     if not vim.api.nvim_buf_is_valid(bufnr) then
       bufnr = M._create_viewer_buf()
     end
+    local saved_cursor
+    for _, win in ipairs(vim.api.nvim_list_wins()) do
+      if vim.api.nvim_win_get_buf(win) == bufnr then
+        saved_cursor = vim.api.nvim_win_get_cursor(win)
+        break
+      end
+    end
+
     vim.bo[bufnr].modifiable = true
     vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, all_lines)
     vim.bo[bufnr].modifiable = false
 
-    -- Apply highlights
+    if saved_cursor then
+      for _, win in ipairs(vim.api.nvim_list_wins()) do
+        if vim.api.nvim_win_get_buf(win) == bufnr then
+          local row = math.min(saved_cursor[1], #all_lines)
+          pcall(vim.api.nvim_win_set_cursor, win, { math.max(1, row), saved_cursor[2] })
+          break
+        end
+      end
+    end
+
+    -- Apply highlights via extmarks (nvim_buf_add_highlight is deprecated
+    -- in nvim 0.11 and slated for removal).
     local ns = get_ns()
     vim.api.nvim_buf_clear_namespace(bufnr, ns, 0, -1)
     for _, h in ipairs(all_highlights) do
-      pcall(vim.api.nvim_buf_add_highlight, bufnr, ns, h[4], h[1], h[2], h[3])
+      local line, col_start, col_end, hl_group = h[1], h[2], h[3], h[4]
+      pcall(vim.api.nvim_buf_set_extmark, bufnr, ns, line, col_start, {
+        end_col = col_end,
+        hl_group = hl_group,
+        strict = false,
+      })
     end
 
     -- Store line map for keymaps
@@ -554,7 +583,7 @@ function M._setup_keymaps(bufnr)
       return
     end
     vim.notify("Pushing branch...", vim.log.levels.INFO)
-    cli.push(function(err)
+    cli.push({}, function(err)
       if err then
         vim.notify("Push failed: " .. err, vim.log.levels.ERROR)
       else
@@ -566,7 +595,7 @@ function M._setup_keymaps(bufnr)
   -- P — push stack
   map("P", function()
     vim.notify("Pushing stack...", vim.log.levels.INFO)
-    cli.push_stack(function(err)
+    cli.push_stack({}, function(err)
       if err then
         vim.notify("Push failed: " .. err, vim.log.levels.ERROR)
       else
@@ -575,10 +604,40 @@ function M._setup_keymaps(bufnr)
     end)
   end, "Push stack")
 
-  -- s — sync (interactive, opens terminal)
+  -- s — sync (interactive, opens terminal). The CLI's interactive menu
+  -- already handles "current stack" vs "all" vs "current branch", so we
+  -- launch it without `-s` and let the user choose.
   map("s", function()
-    cli.run_in_terminal({ "sync", "-s" })
+    cli.run_in_terminal({ "sync" })
   end, "Sync stack")
+
+  -- c — sync continue (after resolving conflicts in another window)
+  map("c", function()
+    vim.notify("Continuing sync...", vim.log.levels.INFO)
+    cli.sync_continue(function(err)
+      if err then
+        vim.notify("Sync continue failed: " .. err, vim.log.levels.ERROR)
+      else
+        vim.notify("Sync completed", vim.log.levels.INFO)
+      end
+    end)
+  end, "Sync continue")
+
+  -- u — update PR for branch under cursor
+  map("u", function()
+    local entry = M.get_cursor_data(bufnr)
+    if not entry or entry.type ~= "branch" then
+      return
+    end
+    vim.notify("Updating PR for " .. entry.branch_name .. "...", vim.log.levels.INFO)
+    cli.pr_update(entry.branch_name, function(err)
+      if err then
+        vim.notify("PR update failed: " .. err, vim.log.levels.ERROR)
+      else
+        vim.notify("PR updated", vim.log.levels.INFO)
+      end
+    end)
+  end, "Update PR for branch")
 
   -- D — diff against parent
   map("D", function()
@@ -604,6 +663,11 @@ function M._setup_keymaps(bufnr)
     end
   end, "Open agent")
 
+  -- ? — show help
+  map("?", function()
+    M._show_help()
+  end, "Show keymap help")
+
   -- A — open agent feature
   map("A", function()
     local entry = M.get_cursor_data(bufnr)
@@ -618,6 +682,55 @@ function M._setup_keymaps(bufnr)
       cli.run_in_terminal({ "agent", "-s", entry.stack_hash, "feature", description })
     end)
   end, "Build feature with agent")
+end
+
+--- Show a help popup with the viewer keymaps.
+function M._show_help()
+  local lines = {
+    " ezstack viewer keymaps",
+    " ──────────────────────",
+    "  <CR>  Go to worktree",
+    "  o     Open PR in browser",
+    "  r     Refresh",
+    "  R     Rename stack",
+    "  n     New branch",
+    "  d     Delete branch under cursor",
+    "  p     Push branch under cursor",
+    "  P     Push entire stack",
+    "  s     Sync stack (interactive terminal)",
+    "  c     Continue an in-progress sync",
+    "  u     Update PR for branch under cursor",
+    "  D     Diff against parent branch",
+    "  a     Open AI agent (branch- or stack-scoped)",
+    "  A     Build a feature with the AI agent",
+    "  ?     Show this help",
+    "  q     Close viewer",
+    "",
+    " Press q to close.",
+  }
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.bo[bufnr].modifiable = false
+  vim.bo[bufnr].buftype = "nofile"
+  vim.bo[bufnr].bufhidden = "wipe"
+
+  local width = 40
+  local height = #lines
+  local ui_w = vim.o.columns
+  local ui_h = vim.o.lines
+  vim.api.nvim_open_win(bufnr, true, {
+    relative = "editor",
+    row = math.floor((ui_h - height) / 2),
+    col = math.floor((ui_w - width) / 2),
+    width = width,
+    height = height,
+    style = "minimal",
+    border = "rounded",
+    title = " ezstack help ",
+    title_pos = "center",
+  })
+  vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = bufnr, silent = true })
+  vim.keymap.set("n", "<Esc>", "<cmd>close<cr>", { buffer = bufnr, silent = true })
 end
 
 --- Render a stack tree as plain text lines (for Telescope preview).

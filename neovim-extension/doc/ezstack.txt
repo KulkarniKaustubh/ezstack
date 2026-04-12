@@ -1,0 +1,233 @@
+*ezstack.txt*    Manage stacked PRs with git worktrees from Neovim
+
+==============================================================================
+CONTENTS                                                    *ezstack-contents*
+
+  1. Overview ............................. |ezstack-overview|
+  2. Requirements ......................... |ezstack-requirements|
+  3. Installation ......................... |ezstack-installation|
+  4. Setup ................................ |ezstack-setup|
+  5. Commands ............................. |ezstack-commands|
+  6. Stack Viewer ......................... |ezstack-viewer|
+  7. Telescope ............................ |ezstack-telescope|
+  8. Statusline ........................... |ezstack-statusline|
+  9. Highlight Groups ..................... |ezstack-highlights|
+  10. Autocommands ........................ |ezstack-autocommands|
+  11. Lua API ............................. |ezstack-api|
+
+==============================================================================
+1. OVERVIEW                                                 *ezstack-overview*
+
+ezstack.nvim is a Neovim front-end for the `ezs` CLI, which manages stacked
+pull requests using git worktrees. Each branch in a stack lives in its own
+worktree, and the plugin lets you view, navigate, and mutate stacks without
+leaving Neovim.
+
+==============================================================================
+2. REQUIREMENTS                                         *ezstack-requirements*
+
+  * Neovim >= 0.10 (uses |vim.system|, |vim.uv|, |vim.json|).
+  * The `ezs` CLI on $PATH (or set |ezstack-config-cli_path|).
+  * Optional: nvim-telescope/telescope.nvim for fuzzy pickers.
+  * Optional: tpope/vim-fugitive for auto-refresh on git operations.
+
+==============================================================================
+3. INSTALLATION                                         *ezstack-installation*
+
+lazy.nvim: >lua
+  {
+    "KulkarniKaustubh/ezstack",
+    subdir = "neovim-extension",
+    cmd = "Ezs",
+    config = function()
+      require("ezstack").setup()
+    end,
+  }
+<
+The `:Ezs` command is registered immediately by `plugin/ezstack.lua`, so
+the plugin works even without an explicit `setup()` call. Calling `setup()`
+is still recommended to override defaults.
+
+==============================================================================
+4. SETUP                                                       *ezstack-setup*
+
+>lua
+  require("ezstack").setup({
+    cli_path = "ezs",            -- path to ezs binary (auto-discovered)
+    auto_refresh = true,          -- refresh viewer on FugitiveChanged
+    viewer_position = "botright", -- split position for viewer
+    viewer_height = 15,           -- viewer window height
+    statusline_cache_ttl = 5000,  -- statusline cache TTL in ms
+    goto_strategy = "tcd",        -- "tcd" | "cd" | "lcd"
+    goto_close_buffers = false,
+    goto_open_explorer = true,
+  })
+<
+                                                       *ezstack-config-cli_path*
+cli_path~
+  Path to the `ezs` binary. Defaults to "ezs" (PATH lookup, then probes
+  ~/.local/bin, ~/go/bin, $GOBIN, $GOPATH/bin, /usr/local/bin,
+  /opt/homebrew/bin).
+
+                                                  *ezstack-config-auto_refresh*
+auto_refresh~
+  When true, the viewer refreshes on `User FugitiveChanged` and on the
+  plugin-emitted `User EzstackChanged` autocommands.
+
+==============================================================================
+5. COMMANDS                                                 *ezstack-commands*
+
+All commands are exposed under the |:Ezs| user command.
+
+                                                                       *:Ezs*
+:Ezs [list]              Open the stack viewer.
+:Ezs status              Open the viewer with PR/CI info.
+:Ezs new {name} [parent] Create a new branch (interactive if omitted).
+:Ezs sync                Open interactive sync menu in a terminal.
+:Ezs sync -s             Sync the current stack.
+:Ezs sync -c             Sync only the current branch.
+:Ezs sync --continue     Continue an in-progress sync (headless).
+:Ezs sync --dry-run      Show the sync plan as JSON in a scratch buffer.
+:Ezs push                Push the current branch.
+:Ezs push -s             Push the entire stack.
+:Ezs push -f             Force-push.
+:Ezs pr create [title]   Create a pull request.
+:Ezs pr update           Push changes to the existing PR.
+:Ezs pr merge            Merge the PR (prompts for method).
+:Ezs pr draft            Toggle draft status.
+:Ezs pr stack            Update stack info in all PR descriptions.
+:Ezs pr open             Open the current branch's PR in the browser.
+:Ezs delete [branch]     Delete a branch and its worktree.
+:Ezs reparent [b] [p]    Change a branch's parent (interactive if omitted).
+:Ezs rename [hash] [n]   Name or rename a stack.
+:Ezs goto [branch]       Switch to a branch worktree.
+:Ezs up                  Navigate to the parent branch.
+:Ezs down                Navigate to a child branch.
+:Ezs diff [-- gitopts]   Show diff against parent branch (terminal).
+:Ezs commit [opts]       Commit and auto-sync child branches.
+:Ezs amend [opts]        Amend last commit and auto-sync children.
+:Ezs stack [b] [p]       Add a branch to a stack.
+:Ezs unstack [branch]    Remove a branch from tracking.
+:Ezs log [branch]        Show commits in a branch since its parent.
+:Ezs config [show]       Show ezs configuration.
+:Ezs menu                Open the interactive ezs menu.
+:Ezs agent               Launch AI agent with stack context.
+:Ezs agent feature {desc}  Build a feature with the agent.
+:Ezs agent prompt        View shipped prompts.
+:Ezs agent prompt edit [repo] [work|feature]  Edit prompt files.
+:Ezs agent prompt reset [repo] [work|feature] Reset prompts to defaults.
+
+Tab completion is available for subcommands, common flags, and branch
+names where applicable.
+
+==============================================================================
+6. STACK VIEWER                                               *ezstack-viewer*
+
+The viewer is a non-modifiable scratch buffer in a bottom split. Cursor
+position is preserved across refreshes.
+
+Keymaps (buffer-local) ~
+
+  <CR>   Go to worktree under cursor
+  o      Open PR in browser
+  r      Refresh
+  R      Rename stack
+  n      New branch
+  d      Delete branch under cursor
+  p      Push branch under cursor
+  P      Push entire stack
+  s      Sync stack (interactive terminal)
+  c      Continue an in-progress sync
+  u      Update PR for branch under cursor
+  D      Diff against parent
+  a      Open AI agent (branch- or stack-scoped)
+  A      Build a feature with the AI agent
+  ?      Show this help
+  q      Close viewer
+
+==============================================================================
+7. TELESCOPE                                               *ezstack-telescope*
+
+Load the extension once: >lua
+  require("telescope").load_extension("ezstack")
+<
+Then: >
+  :Telescope ezstack branches    " Browse and switch branches
+  :Telescope ezstack stacks      " Browse and rename stacks
+<
+Branches picker maps `<C-o>` (open PR), `<C-d>` (delete), `<C-p>` (push).
+Stacks picker maps `<C-r>` (rename).
+
+When Telescope is not installed, `:Ezs goto` falls back to |vim.ui.select|.
+
+==============================================================================
+8. STATUSLINE                                             *ezstack-statusline*
+
+>lua
+  require("lualine").setup({
+    sections = {
+      lualine_b = {
+        "branch",
+        { function() return require("ezstack").statusline() end },
+      },
+    },
+  })
+<
+The statusline component returns a string like " branch | stack [hash]"
+or "" when the current buffer is not in a stacked worktree. Results are
+cached for `statusline_cache_ttl` milliseconds.
+
+==============================================================================
+9. HIGHLIGHT GROUPS                                       *ezstack-highlights*
+
+  EzstackStack            Stack header
+  EzstackStackHash        Stack hash
+  EzstackSeparator        Horizontal separator
+  EzstackBranch           Branch name (default)
+  EzstackBranchCurrent    Current branch
+  EzstackBranchMerged     Merged branch (dimmed)
+  EzstackPointer          " > " current pointer
+  EzstackConnector        Tree connector glyph
+  EzstackPR               PR number
+  EzstackPRDraft          Draft PR
+  EzstackPRMerged         Merged PR
+  EzstackPRClosed         Closed PR
+  EzstackCIPass           CI passing
+  EzstackCIFail           CI failing
+  EzstackCIPending        CI pending
+  EzstackParent           Parent reference text
+  EzstackRoot             Stack root label
+  EzstackNoPR             "[no PR]" placeholder
+  EzstackAdditions        +N additions
+  EzstackDeletions        -N deletions
+
+All groups link to colorscheme-defined groups with `default = true`, so
+you can override any of them in your colorscheme.
+
+==============================================================================
+10. AUTOCOMMANDS                                         *ezstack-autocommands*
+
+The plugin emits the following |User| autocommand events:
+
+  EzstackGoto       After switching worktrees via |:Ezs| goto.
+  EzstackChanged    After any mutation finishes (sync, push, delete, ...).
+
+Hook into them with: >lua
+  vim.api.nvim_create_autocmd("User", {
+    pattern = "EzstackChanged",
+    callback = function() ... end,
+  })
+<
+
+==============================================================================
+11. LUA API                                                       *ezstack-api*
+
+>lua
+  require("ezstack").setup(opts)
+  require("ezstack").statusline()        -- string for statusline
+  require("ezstack").goto_worktree(path) -- jump to a worktree
+  require("ezstack.cli").list_stacks(cb) -- async stack list
+  require("ezstack.ui").open(use_status) -- open viewer
+<
+
+vim:tw=78:ts=8:noet:ft=help:norl:
