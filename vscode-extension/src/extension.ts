@@ -194,10 +194,10 @@ export async function activate(
     .get<boolean>("autoRefresh", true);
 
   const pendingTimers: ReturnType<typeof setTimeout>[] = [];
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
 
   if (autoRefresh) {
     const watcher = new ConfigWatcher(workspaceRoot);
-    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
     watcher.onDidChange(() => {
       if (debounceTimer) {
         clearTimeout(debounceTimer);
@@ -245,6 +245,9 @@ export async function activate(
     dispose() {
       for (const t of pendingTimers) {
         clearTimeout(t);
+      }
+      if (debounceTimer) {
+        clearTimeout(debounceTimer);
       }
       if (saveTimer) {
         clearTimeout(saveTimer);
