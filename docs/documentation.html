@@ -698,7 +698,7 @@
 
         <!-- ezs agent -->
         <h3 id="ezs-agent"><code>ezs agent</code></h3>
-        <p>Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically.</p>
+        <p>Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically. <strong>Requires worktree mode</strong> (<code>use_worktrees: true</code>) &mdash; the agent needs separate working directories for each branch to work in isolation.</p>
         <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">agent</span> [options]
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">feature</span> <span class="c-str">"description"</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">prompt</span> &lt;flag&gt; &lt;work|feature&gt;
@@ -800,7 +800,7 @@
             <tr><td><code>worktree_base_dir</code></td><td>Base directory for worktrees</td><td>Path (per-repo)</td></tr>
             <tr><td><code>default_base_branch</code></td><td>Default base branch</td><td>e.g. <code>main</code>, <code>master</code></td></tr>
             <tr><td><code>cd_after_new</code></td><td>Auto-cd to new worktree</td><td><code>true</code> / <code>false</code> (per-repo)</td></tr>
-            <tr><td><code>use_worktrees</code></td><td>Use git worktrees for new branches</td><td><code>true</code> / <code>false</code> (per-repo)</td></tr>
+            <tr><td><code>use_worktrees</code></td><td>Use git worktrees for new branches (required for <code>ezs agent</code>)</td><td><code>true</code> / <code>false</code> (per-repo)</td></tr>
             <tr><td><code>sync_strategy</code></td><td>Sync method for rebase/merge</td><td><code>rebase</code> / <code>merge</code> (per-repo)</td></tr>
             <tr><td><code>github_token</code></td><td>GitHub token for API access</td><td>Token string</td></tr>
           </tbody>
@@ -891,12 +891,13 @@
         <p>With <code>origin/&lt;branch&gt;</code>, creates a local worktree tracking the remote branch and registers it in a stack (root = PR base branch, or <code>main</code> by default). The branch is marked as <code>(remote)</code> in <code>ezs ls</code> output. All commands (sync, push, commit, etc.) work normally on it.</p>
         <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">origin/feature-branch</span>       <span class="c-comment"># Checkout remote branch into a worktree + register stack</span></code></pre>
         <p>This fetches the latest remote refs, creates a local tracking branch, sets up a worktree, and registers the branch in ezstack's config. If the branch has an associated PR, it displays PR info (title, state, review status) and a line diff summary against the base branch.</p>
+        <p><strong>Fork PR handling:</strong> When the PR comes from a fork, ezstack automatically detects the fork repository, checks if "Allow edits from maintainers" is enabled and verifies you have push access, then adds a git remote for the fork. All subsequent push/sync operations target the fork remote instead of <code>origin</code>. If push access is unavailable, the branch is marked as read-only &mdash; sync still works locally but push is skipped.</p>
         <p>With <code>--from-remote</code>, positional args are <code>[pr-number-or-branch] [new-branch-name]</code>:</p>
         <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span>                          <span class="c-comment"># Interactive PR selection + branch name prompt</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span> <span class="c-str">42</span>                       <span class="c-comment"># Use PR #42, prompt for branch name</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span> <span class="c-str">feature-branch</span>           <span class="c-comment"># Use PR for that branch, prompt for branch name</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span> <span class="c-str">42</span> <span class="c-str">my-feature</span>            <span class="c-comment"># Use PR #42, create branch "my-feature" (no prompts)</span></code></pre>
-        <p>When <code>use_worktrees</code> is disabled, creates a git branch without a worktree and optionally checks it out.</p>
+        <p>When <code>use_worktrees</code> is disabled, creates a git branch without a worktree and optionally checks it out. All core commands (<code>sync</code>, <code>commit</code>, <code>reparent</code>, <code>push</code>, <code>pr</code>) work fully in this mode via checkout-based sync. Note: <code>ezs agent</code> requires worktree mode.</p>
 
         <hr>
 
@@ -937,6 +938,7 @@
     <span class="c-flag">-s, --stack</span>          <span class="c-dim">Push all branches in the current stack</span>
     <span class="c-flag">-b, --branch &lt;name&gt;</span>  <span class="c-dim">Push a specific branch by name</span>
     <span class="c-flag">-f, --force</span>          <span class="c-dim">Force push</span></code></pre>
+        <p>Each branch pushes to its configured remote &mdash; <code>origin</code> by default, or the fork remote for fork-based PR branches. Branches marked as read-only (fork PRs where you don't have push access) are skipped with a warning.</p>
 
         <hr>
 
@@ -1001,6 +1003,7 @@
     <span class="c-flag">--json</span>                 <span class="c-dim">Output dry-run results as JSON (requires --dry-run)</span></code></pre>
         <p>By default, sync uses git rebase. Use <code>--merge</code> to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with <code>ezs config set sync_strategy merge</code>. Use <code>--rebase</code> or <code>--merge</code> to override the configured strategy for a single run.</p>
         <p>You can sync a specific stack by passing its hash prefix (minimum 3 characters).</p>
+        <p><strong>Fork branches:</strong> After syncing, each branch is pushed to its configured remote. For fork-based PR branches, this is the fork's remote (not <code>origin</code>). If you don't have push access to the fork, the push step is skipped automatically &mdash; the local rebase/merge still happens so your working copy stays up to date.</p>
 
         <hr>
 
@@ -1074,6 +1077,10 @@
 
 <span class="c-comment"># The branch shows up in ezs ls with a (remote) tag</span>
 <span class="c-comment"># You can work on it, push changes, sync — all commands work</span>
+
+<span class="c-comment"># For fork PRs, ezstack auto-detects the fork remote:</span>
+<span class="c-comment">#   - If maintainer push is enabled AND you have access → adds fork remote, pushes there</span>
+<span class="c-comment">#   - Otherwise → marks branch read-only, skips push during sync</span>
 
 <span class="c-comment"># When you're done, clean up</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">delete</span> <span class="c-str">feature-branch</span></code></pre>

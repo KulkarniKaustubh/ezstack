@@ -120,8 +120,13 @@ func (g *Git) HasUnresolvedConflicts() (bool, error) {
 	return strings.TrimSpace(output) != "", nil
 }
 
-// Push pushes the current branch to remote
-func (g *Git) Push(force bool) error {
+// Push pushes the current branch to the specified remote.
+// If remote is empty, defaults to "origin".
+func (g *Git) Push(force bool, remote ...string) error {
+	r := "origin"
+	if len(remote) > 0 && remote[0] != "" {
+		r = remote[0]
+	}
 	branch, err := g.CurrentBranch()
 	if err != nil {
 		return fmt.Errorf("failed to get current branch: %w", err)
@@ -130,25 +135,35 @@ func (g *Git) Push(force bool) error {
 	if force {
 		args = append(args, "--force-with-lease")
 	}
-	args = append(args, "origin", branch)
+	args = append(args, r, branch)
 	return g.RunInteractive(args...)
 }
 
-// PushBranch pushes a specific branch to origin (not necessarily the current branch).
-func (g *Git) PushBranch(branch string, force bool) error {
+// PushBranch pushes a specific branch to a remote (not necessarily the current branch).
+// If remote is empty, defaults to "origin".
+func (g *Git) PushBranch(branch string, force bool, remote ...string) error {
+	r := "origin"
+	if len(remote) > 0 && remote[0] != "" {
+		r = remote[0]
+	}
 	args := []string{"push"}
 	if force {
 		args = append(args, "--force-with-lease")
 	}
-	args = append(args, "origin", branch)
+	args = append(args, r, branch)
 	return g.RunInteractive(args...)
 }
 
-// PushSetUpstream pushes and sets upstream
-func (g *Git) PushSetUpstream() error {
+// PushSetUpstream pushes and sets upstream.
+// If remote is empty, defaults to "origin".
+func (g *Git) PushSetUpstream(remote ...string) error {
+	r := "origin"
+	if len(remote) > 0 && remote[0] != "" {
+		r = remote[0]
+	}
 	branch, err := g.CurrentBranch()
 	if err != nil {
 		return err
 	}
-	return g.RunInteractive("push", "-u", "origin", branch)
+	return g.RunInteractive("push", "-u", r, branch)
 }
