@@ -54,6 +54,8 @@ func main() {
 		fatal("render markdown: %v", err)
 	}
 
+	htmlBody = defaultCodeLanguage(htmlBody, "bash")
+
 	wrapped, toc := wrapSectionsAndBuildTOC(htmlBody)
 
 	pageBytes, err := os.ReadFile(*htmlPath)
@@ -130,6 +132,17 @@ func preprocessMarkdown(md string) string {
 	// Drop standalone "---" separator lines.
 	out := regexp.MustCompile(`(?m)^\s*---\s*$`).ReplaceAllString(md, "")
 	return out
+}
+
+// defaultCodeLanguage adds class="language-<lang>" to any <code> directly
+// inside a <pre> that doesn't already declare a language. Goldmark emits a
+// bare <pre><code> for fenced blocks without an info string, but the help-text
+// blocks in DOCUMENTATION.md (command usage, flag listings) read like shell
+// output, so we want highlight.js to apply the bash grammar to them.
+var bareCodeRe = regexp.MustCompile(`<pre><code>`)
+
+func defaultCodeLanguage(body, lang string) string {
+	return bareCodeRe.ReplaceAllString(body, `<pre><code class="language-`+lang+`">`)
 }
 
 // section represents one h2 region of the rendered documentation: an id, a

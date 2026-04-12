@@ -289,6 +289,8 @@
       font-size: 0.8rem;
       line-height: 1.6;
       color: var(--text-secondary);
+      background: transparent;
+      padding: 0;
     }
     .c-prompt { color: var(--text-dim); }
     .c-cmd { color: var(--green); }
@@ -296,6 +298,55 @@
     .c-str { color: var(--cyan); }
     .c-dim { color: var(--text-dim); }
     .c-comment { color: var(--text-dim); font-style: italic; }
+
+    /* highlight.js theme — mapped to the ezstack terminal palette.
+       Loaded below from a CDN; we override colors here so the syntax
+       highlighting matches the rest of the site instead of using a
+       generic hljs theme. */
+    .docs-content pre code.hljs {
+      background: transparent;
+      padding: 0;
+      color: var(--text-secondary);
+    }
+    .hljs-comment,
+    .hljs-quote,
+    .hljs-meta {
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    .hljs-keyword,
+    .hljs-selector-tag,
+    .hljs-built_in,
+    .hljs-name,
+    .hljs-title,
+    .hljs-title.function_,
+    .hljs-section {
+      color: var(--green);
+    }
+    .hljs-string,
+    .hljs-attr,
+    .hljs-symbol,
+    .hljs-bullet,
+    .hljs-addition,
+    .hljs-template-tag,
+    .hljs-template-variable {
+      color: var(--cyan);
+    }
+    .hljs-params,
+    .hljs-variable,
+    .hljs-attribute,
+    .hljs-number,
+    .hljs-literal,
+    .hljs-type {
+      color: var(--yellow);
+    }
+    .hljs-operator,
+    .hljs-punctuation {
+      color: var(--text-secondary);
+    }
+    .hljs-deletion {
+      color: #ef4444;
+    }
 
     /* Tables */
     .docs-content table {
@@ -689,13 +740,13 @@ echo 'eval &quot;$(ezs --shell-init)&quot;' &gt;&gt; ~/.zshrc
       </ul>
       <p>Configuration is stored in <code>~/.ezstack/config.json</code>.</p>
       <p><strong>Subcommands</strong></p>
-      <pre><code>ezs config set &lt;key&gt; &lt;value&gt;    Set a configuration value
+      <pre><code class="language-bash">ezs config set &lt;key&gt; &lt;value&gt;    Set a configuration value
 ezs config show                 Show current configuration
 </code></pre>
       <p><strong>Available keys:</strong> <code>worktree_base_dir</code>, <code>default_base_branch</code>, <code>cd_after_new</code>, <code>use_worktrees</code>, <code>sync_strategy</code></p>
       <p><strong>Global flags</strong></p>
       <p>These flags work with any command and can appear in any position:</p>
-      <pre><code>-y, --yes        Auto-confirm all yes/no prompts (selection menus still show)
+      <pre><code class="language-bash">-y, --yes        Auto-confirm all yes/no prompts (selection menus still show)
 -h, --help       Show help
 -v, --version    Show version
 --shell-init     Output shell function for cd support
@@ -706,7 +757,7 @@ ezs config show                 Show current configuration
       <h2 id="commands">Commands</h2>
       <h3 id="ezs-agent"><code>ezs agent</code></h3>
       <p>Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically. <strong>Requires worktree mode</strong> (<code>use_worktrees: true</code>) — the agent needs separate working directories for each branch to work in isolation without disrupting your workspace.</p>
-      <pre><code>ezs agent [options]
+      <pre><code class="language-bash">ezs agent [options]
 ezs agent feature &quot;description&quot;
 ezs agent prompt &lt;flag&gt; &lt;work|feature&gt;
 
@@ -778,7 +829,7 @@ Options:
       </table>
       <h4 id="ezs-agent-prompt"><code>ezs agent prompt</code></h4>
       <p>View or edit the prompt templates. Requires a positional argument: <code>work</code> or <code>feature</code>.</p>
-      <pre><code>Flags:
+      <pre><code class="language-bash">Flags:
     --shipped            View the shipped (built-in) prompt template
     --custom             View your custom instructions (~/.ezstack/)
     --repo               View or target repo-specific instructions (&lt;repo&gt;/.ezstack/)
@@ -810,14 +861,14 @@ ezs config set agent_command claude
 </code></pre>
       <h3 id="ezs-commit--ezs-amend"><code>ezs commit</code> / <code>ezs amend</code></h3>
       <p>Wrap <code>git commit</code> / <code>git commit --amend</code> and auto-sync child branches. Aliases: <code>ci</code></p>
-      <pre><code>ezs commit [git-commit-options] [--merge|--rebase]
+      <pre><code class="language-bash">ezs commit [git-commit-options] [--merge|--rebase]
 ezs amend [git-commit-options] [--merge|--rebase]
 </code></pre>
       <p>All arguments are passed through to <code>git commit</code>. After committing, any child branches in the stack are automatically synced onto the updated branch.</p>
       <p>Uses the configured <code>sync_strategy</code> (default: rebase) for child syncing. Use <code>--merge</code> or <code>--rebase</code> to override.</p>
       <h3 id="ezs-config"><code>ezs config</code></h3>
       <p>Configure ezstack for the current repository. Aliases: <code>cfg</code></p>
-      <pre><code>ezs config [subcommand] [options]
+      <pre><code class="language-bash">ezs config [subcommand] [options]
 
 Subcommands:
     set &lt;key&gt; &lt;value&gt;    Set a configuration value
@@ -867,7 +918,7 @@ Subcommands:
       </table>
       <h3 id="ezs-delete"><code>ezs delete</code></h3>
       <p>Delete a branch and its worktree. Aliases: <code>del</code>, <code>rm</code></p>
-      <pre><code>ezs delete [branch-name] [options]
+      <pre><code class="language-bash">ezs delete [branch-name] [options]
 ezs delete [stack-hash] [options]
 
 Options:
@@ -876,7 +927,7 @@ Options:
 </code></pre>
       <h3 id="ezs-diff"><code>ezs diff</code></h3>
       <p>Show diff against parent branch.</p>
-      <pre><code>ezs diff [options] [-- git-diff-options]
+      <pre><code class="language-bash">ezs diff [options] [-- git-diff-options]
 
 Options:
     -b, --branch &lt;name&gt;  Show diff for a specific branch (default: current)
@@ -886,18 +937,18 @@ Options:
       <p>Shows the diff between a branch and its parent in the stack. Any arguments after <code>--</code> are passed directly to <code>git diff</code>. Use <code>--branch</code> to diff any branch without switching to it. Use <code>--json</code> for machine-readable output with per-file additions/deletions.</p>
       <h3 id="ezs-down--ezs-up"><code>ezs down</code> / <code>ezs up</code></h3>
       <p>Navigate down (toward children/leaves) or up (toward parent/base) in the stack.</p>
-      <pre><code>ezs down [n]    Navigate n levels toward children (default: 1)
+      <pre><code class="language-bash">ezs down [n]    Navigate n levels toward children (default: 1)
 ezs up [n]      Navigate n levels toward parent (default: 1)
 </code></pre>
       <p>When navigating down with multiple children, shows an interactive selector.</p>
       <h3 id="ezs-goto"><code>ezs goto</code></h3>
       <p>Navigate to a branch worktree. Aliases: <code>go</code></p>
-      <pre><code>ezs goto [branch-name]
+      <pre><code class="language-bash">ezs goto [branch-name]
 </code></pre>
       <p>If branch-name is omitted, shows interactive selection. Falls back to <code>git checkout</code> when the branch has no worktree.</p>
       <h3 id="ezs-list"><code>ezs list</code></h3>
       <p>List all stacks and branches. Aliases: <code>ls</code></p>
-      <pre><code>ezs list [options]
+      <pre><code class="language-bash">ezs list [options]
 
 Options:
     -a, --all     Show all stacks
@@ -908,7 +959,7 @@ Options:
       <p>The list view also shows diff stats (+/-) for each branch relative to its parent, giving a quick sense of change size across the stack.</p>
       <h3 id="ezs-log"><code>ezs log</code></h3>
       <p>Show commits in a branch since its parent.</p>
-      <pre><code>ezs log [options]
+      <pre><code class="language-bash">ezs log [options]
 
 Options:
     -b, --branch &lt;name&gt;  Show log for a specific branch (default: current)
@@ -917,7 +968,7 @@ Options:
       <p>Shows the commits that exist in a branch but not in its parent branch. Use <code>--branch</code> to view commits for any branch without switching to it. The <code>--json</code> flag outputs structured commit data (hash, message, author, date) for editor integrations.</p>
       <h3 id="ezs-new"><code>ezs new</code></h3>
       <p>Create a new branch in the stack. Aliases: <code>n</code></p>
-      <pre><code>ezs new [branch-name] [options]
+      <pre><code class="language-bash">ezs new [branch-name] [options]
 
 Options:
     -p, --parent &lt;branch&gt;     Parent branch (defaults to current branch)
@@ -949,7 +1000,7 @@ ezs new -r 42 my-feature            # Use PR #42, create branch &quot;my-feature
       <p>When <code>use_worktrees</code> is disabled, creates a git branch without a worktree and optionally checks it out. All core commands (<code>sync</code>, <code>commit</code>, <code>reparent</code>, <code>push</code>, <code>pr</code>) work fully in this mode via checkout-based sync. Note: <code>ezs agent</code> requires worktree mode.</p>
       <h3 id="ezs-pr"><code>ezs pr</code></h3>
       <p>Manage pull requests.</p>
-      <pre><code>ezs pr &lt;subcommand&gt; [options]
+      <pre><code class="language-bash">ezs pr &lt;subcommand&gt; [options]
 
 Subcommands:
     create    Create a new pull request
@@ -959,7 +1010,7 @@ Subcommands:
     update    Push changes and update PR metadata (base branch, descriptions)
 </code></pre>
       <h4 id="ezs-pr-create"><code>ezs pr create</code></h4>
-      <pre><code>Options:
+      <pre><code class="language-bash">Options:
     -t, --title &lt;title&gt;    PR title (defaults to branch name)
     -b, --body &lt;body&gt;      PR body/description
     -d, --draft            Create as draft PR
@@ -967,13 +1018,13 @@ Subcommands:
       <h4 id="ezs-pr-draft"><code>ezs pr draft</code></h4>
       <p>Toggles the current branch's PR between draft and ready-for-review state.</p>
       <h4 id="ezs-pr-merge"><code>ezs pr merge</code></h4>
-      <pre><code>Options:
+      <pre><code class="language-bash">Options:
     -m, --method &lt;method&gt;      Merge method: merge, squash, rebase (default: interactive)
     --no-delete-branch         Don't delete the remote branch after merge
 </code></pre>
       <h3 id="ezs-push"><code>ezs push</code></h3>
       <p>Push current branch or entire stack to remote.</p>
-      <pre><code>ezs push [options]
+      <pre><code class="language-bash">ezs push [options]
 
 Options:
     -s, --stack          Push all branches in the current stack
@@ -983,7 +1034,7 @@ Options:
       <p>Each branch pushes to its configured remote — <code>origin</code> by default, or the fork remote for fork-based PR branches. Branches marked as read-only (fork PRs where you don't have push access) are skipped with a warning.</p>
       <h3 id="ezs-reparent"><code>ezs reparent</code></h3>
       <p>Change the parent of a branch and sync commits onto the new parent. Aliases: <code>rp</code></p>
-      <pre><code>ezs reparent [branch] [new-parent] [options]
+      <pre><code class="language-bash">ezs reparent [branch] [new-parent] [options]
 
 Options:
     -b, --branch &lt;name&gt;     Branch to reparent
@@ -994,7 +1045,7 @@ Options:
       <p>Uses the configured <code>sync_strategy</code> (default: rebase). If the sync conflicts, the reparent metadata is still updated and you can resolve conflicts manually.</p>
       <h3 id="ezs-stack"><code>ezs stack</code></h3>
       <p>Add an untracked branch/worktree to an existing stack, start a new stack, or rename a stack.</p>
-      <pre><code>ezs stack [branch] [parent] [options]
+      <pre><code class="language-bash">ezs stack [branch] [parent] [options]
 ezs stack rename [stack-hash] [name]
 
 Options:
@@ -1004,7 +1055,7 @@ Options:
 </code></pre>
       <h3 id="ezs-status"><code>ezs status</code></h3>
       <p>Show status of current stack with PR and CI info. Aliases: <code>st</code></p>
-      <pre><code>ezs status [options]
+      <pre><code class="language-bash">ezs status [options]
 
 Options:
     -a, --all              Show all stacks
@@ -1013,7 +1064,7 @@ Options:
 </code></pre>
       <h3 id="ezs-sync"><code>ezs sync</code></h3>
       <p>Sync stack with remote. Handles rebasing onto updated parents, cleaning up merged branches, and force pushing after rebase.</p>
-      <pre><code>ezs sync [options]
+      <pre><code class="language-bash">ezs sync [options]
 ezs sync &lt;hash-prefix&gt;
 
 Options:
@@ -1036,7 +1087,7 @@ Options:
       <p><strong>Fork branches:</strong> After syncing, each branch is pushed to its configured remote. For fork-based PR branches, this is the fork's remote (not <code>origin</code>). If you don't have push access to the fork, the push step is skipped automatically — the local rebase/merge still happens so your working copy stays up to date.</p>
       <h3 id="ezs-unstack"><code>ezs unstack</code></h3>
       <p>Remove a branch from stack tracking without deleting the git branch or worktree.</p>
-      <pre><code>ezs unstack [branch] [options]
+      <pre><code class="language-bash">ezs unstack [branch] [options]
 
 Options:
     -b, --branch &lt;name&gt;     Branch to untrack
@@ -1935,6 +1986,19 @@ npm run tauri build
         });
       });
     })();
+  </script>
+
+  <!-- Syntax highlighting for code blocks (bash / lua / vim).
+       Loaded after the docs JS so highlighting runs once on initial render.
+       The visual theme lives in the inline <style> block above. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/lua.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/vim.min.js"></script>
+  <script>
+    if (window.hljs) {
+      hljs.highlightAll();
+    }
   </script>
 
 </body>
