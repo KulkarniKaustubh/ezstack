@@ -18,7 +18,7 @@ Neovim plugin for [ezstack](https://github.com/KulkarniKaustubh/ezstack) — man
 ```lua
 {
   "KulkarniKaustubh/ezstack",
-  subdir = "neovim-extension",
+  subdir = "neovim-plugin",
   cmd = { "Ezs" },                  -- lazy-load on first :Ezs
   keys = { { "<leader>ez", "<cmd>Ezs<cr>", desc = "Ezstack viewer" } },
   config = function()
@@ -38,7 +38,7 @@ require("telescope").load_extension("ezstack")
 ```lua
 use {
   "KulkarniKaustubh/ezstack",
-  rtp = "neovim-extension",
+  rtp = "neovim-plugin",
   config = function()
     require("ezstack").setup()
   end,
@@ -47,10 +47,10 @@ use {
 
 ### Manual
 
-Clone the repo and add `neovim-extension/` to your runtimepath:
+Clone the repo and add `neovim-plugin/` to your runtimepath:
 
 ```vim
-set runtimepath+=/path/to/ezstack/neovim-extension
+set runtimepath+=/path/to/ezstack/neovim-plugin
 ```
 
 ## Configuration
