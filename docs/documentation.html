@@ -192,6 +192,9 @@
     .docs-section.hidden {
       display: none;
     }
+    .docs-subsection.hidden {
+      display: none;
+    }
     .docs-section[id] {
       scroll-margin-top: 140px;
     }
@@ -329,52 +332,112 @@
       outline-offset: 1px;
     }
 
-    /* Search results bar */
-    .docs-search-results {
+    /* Search results dropdown */
+    .docs-search-dropdown {
       display: none;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.4rem 2rem;
-      font-size: 0.75rem;
-      font-family: var(--font-mono);
-      color: var(--text-dim);
-      max-width: var(--container);
-      margin: 0 auto;
-    }
-    .docs-search-results.visible {
-      display: flex;
-    }
-    .docs-search-results-text {
-      flex: 1;
-    }
-    .docs-search-nav {
-      display: flex;
-      align-items: center;
-      gap: 0.25rem;
-    }
-    .docs-search-nav button {
+      position: absolute;
+      top: calc(100% + 0.5rem);
+      left: 2rem;
+      right: 2rem;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-radius: 4px;
-      color: var(--text-secondary);
-      cursor: pointer;
-      padding: 0.2rem 0.5rem;
-      font-size: 0.7rem;
-      font-family: var(--font-mono);
-      transition: background 0.15s, color 0.15s;
+      border-radius: var(--radius);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+      max-height: 420px;
+      overflow-y: auto;
+      z-index: 100;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
     }
-    .docs-search-nav button:hover {
-      background: var(--border);
-      color: var(--text);
+    .docs-search-dropdown.visible {
+      display: block;
     }
-    .docs-search-nav button:disabled {
-      opacity: 0.3;
-      cursor: default;
-    }
-    .docs-search-nav-hint {
-      color: var(--text-dim);
+    .docs-search-dropdown-header {
+      padding: 0.5rem 0.75rem;
       font-size: 0.65rem;
-      margin-left: 0.25rem;
+      font-family: var(--font-mono);
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+    }
+    .docs-search-dropdown-item {
+      display: block;
+      padding: 0.6rem 0.75rem;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+      text-decoration: none;
+    }
+    .docs-search-dropdown-item:last-child {
+      border-bottom: none;
+    }
+    .docs-search-dropdown-item:hover,
+    .docs-search-dropdown-item.active {
+      background: rgba(59, 130, 246, 0.1);
+    }
+    .docs-search-dropdown-item.active {
+      outline: none;
+    }
+    .docs-search-dropdown-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .docs-search-dropdown-title .search-section-tag {
+      font-size: 0.6rem;
+      font-weight: 500;
+      color: var(--text-dim);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.05rem 0.35rem;
+      font-family: var(--font-mono);
+      flex-shrink: 0;
+    }
+    .docs-search-dropdown-snippet {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .docs-search-dropdown-snippet mark {
+      background: rgba(234, 179, 8, 0.3);
+      color: inherit;
+      border-radius: 2px;
+      padding: 0 1px;
+    }
+    .docs-search-dropdown-empty {
+      padding: 2rem 0.75rem;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.8rem;
+    }
+    .docs-search-dropdown-hint {
+      padding: 0.4rem 0.75rem;
+      font-size: 0.6rem;
+      font-family: var(--font-mono);
+      color: var(--text-dim);
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 1rem;
+    }
+    .docs-search-dropdown-hint kbd {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0 0.3rem;
+      font-size: 0.6rem;
+      margin-right: 0.2rem;
     }
 
     /* TOC filtering during search */
@@ -456,8 +519,10 @@
       .docs-search-inner {
         padding: 0 1rem;
       }
-      .docs-search-results {
-        padding: 0.4rem 1rem;
+      .docs-search-dropdown {
+        left: 1rem;
+        right: 1rem;
+        max-height: 60vh;
       }
     }
   </style>
@@ -512,14 +577,7 @@
       <input type="text" class="docs-search-input" id="docs-search-input" placeholder="Search documentation..." autocomplete="off">
       <button class="docs-search-clear" id="docs-search-clear" aria-label="Clear search">&times;</button>
       <span class="docs-search-shortcut" id="docs-search-shortcut">/</span>
-    </div>
-    <div class="docs-search-results" id="docs-search-results">
-      <span class="docs-search-results-text" id="docs-search-results-text"></span>
-      <div class="docs-search-nav">
-        <button id="docs-search-prev" aria-label="Previous match" disabled>&uarr;</button>
-        <button id="docs-search-next" aria-label="Next match" disabled>&darr;</button>
-        <span class="docs-search-nav-hint">Enter / Shift+Enter</span>
-      </div>
+      <div class="docs-search-dropdown" id="docs-search-dropdown"></div>
     </div>
   </div>
 
@@ -1049,71 +1107,87 @@
       const searchInput = document.getElementById('docs-search-input');
       const searchClear = document.getElementById('docs-search-clear');
       const searchShortcut = document.getElementById('docs-search-shortcut');
+      const dropdown = document.getElementById('docs-search-dropdown');
       const sections = document.querySelectorAll('.docs-section');
       const noResults = document.getElementById('docs-no-results');
       const tocLinks = document.querySelectorAll('.docs-toc a');
       const sidebar = document.getElementById('docs-sidebar');
       const sidebarToggle = document.getElementById('docs-sidebar-toggle');
       const sidebarOverlay = document.getElementById('docs-sidebar-overlay');
-      const searchResults = document.getElementById('docs-search-results');
-      const searchResultsText = document.getElementById('docs-search-results-text');
-      const searchPrev = document.getElementById('docs-search-prev');
-      const searchNext = document.getElementById('docs-search-next');
 
       // ── Build MiniSearch index ──
-      // Each document = one section (h2) or subsection (h3) block
+      // Wrap h3 subsections in divs for granular show/hide
       const docs = [];
-      const sectionMap = {}; // docId -> { sectionEl, headingEl }
+      const docElMap = {}; // docId -> element to show/hide
       let docId = 0;
+
+      // Map parent section names for display in results
+      const sectionNames = {};
+      sections.forEach(section => {
+        const h2 = section.querySelector('h2');
+        if (h2) sectionNames[section.id] = h2.textContent;
+      });
 
       sections.forEach(section => {
         const h2 = section.querySelector('h2');
-        const h3s = section.querySelectorAll('h3[id]');
+        const h3s = Array.from(section.querySelectorAll('h3[id]'));
 
         if (h3s.length === 0) {
-          // Section has no subsections — index as one document
           docs.push({
             id: docId,
             title: h2 ? h2.textContent : '',
             body: section.textContent,
-            sectionId: section.id
+            sectionId: section.id,
+            anchorId: section.id
           });
-          sectionMap[docId] = { sectionEl: section, headingEl: section };
+          docElMap[docId] = section;
           docId++;
         } else {
-          // Index the h2 intro (content before first h3)
-          let introText = '';
-          let node = h2 ? h2.nextSibling : section.firstChild;
+          // Wrap intro nodes
+          const introNodes = [];
+          let node = section.firstChild;
           while (node && !(node.nodeType === 1 && node.tagName === 'H3')) {
-            introText += node.textContent || '';
+            introNodes.push(node);
             node = node.nextSibling;
           }
-          if (introText.trim()) {
+          if (introNodes.length > 0) {
+            const introDiv = document.createElement('div');
+            introDiv.className = 'docs-subsection docs-subsection-intro';
+            introNodes.forEach(n => introDiv.appendChild(n));
+            section.insertBefore(introDiv, section.firstChild);
             docs.push({
               id: docId,
               title: h2 ? h2.textContent : '',
-              body: introText,
-              sectionId: section.id
+              body: introDiv.textContent,
+              sectionId: section.id,
+              anchorId: section.id,
+              isIntro: true
             });
-            sectionMap[docId] = { sectionEl: section, headingEl: section };
+            docElMap[docId] = introDiv;
             docId++;
           }
 
-          // Index each h3 subsection
+          // Wrap each h3 subsection
           h3s.forEach(h3 => {
-            let subText = '';
-            let sib = h3.nextSibling;
-            while (sib && !(sib.nodeType === 1 && (sib.tagName === 'H3' || sib.tagName === 'H2'))) {
-              subText += sib.textContent || '';
-              sib = sib.nextSibling;
+            const subDiv = document.createElement('div');
+            subDiv.className = 'docs-subsection';
+            if (h3.id) subDiv.setAttribute('data-subsection-id', h3.id);
+            h3.parentNode.insertBefore(subDiv, h3);
+            subDiv.appendChild(h3);
+            while (subDiv.nextSibling && !(subDiv.nextSibling.nodeType === 1 &&
+                   (subDiv.nextSibling.tagName === 'H3' ||
+                    subDiv.nextSibling.classList.contains('docs-subsection')))) {
+              subDiv.appendChild(subDiv.nextSibling);
             }
             docs.push({
               id: docId,
               title: h3.textContent,
-              body: h3.textContent + ' ' + subText,
-              sectionId: section.id
+              body: subDiv.textContent,
+              sectionId: section.id,
+              anchorId: h3.id || section.id,
+              subsectionId: h3.id || null
             });
-            sectionMap[docId] = { sectionEl: section, headingEl: h3 };
+            docElMap[docId] = subDiv;
             docId++;
           });
         }
@@ -1121,7 +1195,7 @@
 
       const miniSearch = new MiniSearch({
         fields: ['title', 'body'],
-        storeFields: ['title', 'sectionId'],
+        storeFields: ['title', 'sectionId', 'anchorId'],
         searchOptions: {
           boost: { title: 3 },
           fuzzy: 0.2,
@@ -1131,42 +1205,212 @@
       });
       miniSearch.addAll(docs);
 
-      // ── Highlight / navigation state ──
-      let allMarks = [];
-      let currentMarkIndex = -1;
+      // ── State ──
       let searchDebounceTimer = null;
+      let activeDropdownIndex = -1;
+      let currentResults = [];
+      let isFiltered = false; // true when page is filtered to a selection
 
+      // ── Snippet extraction ──
+      function extractSnippet(docObj, terms, maxLen) {
+        maxLen = maxLen || 120;
+        const body = docObj.body || '';
+        const lower = body.toLowerCase();
+
+        // Find the best position: earliest term match
+        let bestIdx = -1;
+        for (let i = 0; i < terms.length; i++) {
+          const idx = lower.indexOf(terms[i].toLowerCase());
+          if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) bestIdx = idx;
+        }
+
+        let start, end;
+        if (bestIdx === -1) {
+          start = 0;
+          end = maxLen;
+        } else {
+          start = Math.max(0, bestIdx - 30);
+          end = start + maxLen;
+        }
+
+        let snippet = body.slice(start, end).replace(/\s+/g, ' ').trim();
+        if (start > 0) snippet = '\u2026' + snippet;
+        if (end < body.length) snippet += '\u2026';
+
+        // Highlight terms in snippet
+        for (let i = 0; i < terms.length; i++) {
+          const re = new RegExp('(' + terms[i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+          snippet = snippet.replace(re, '<mark>$1</mark>');
+        }
+        return snippet;
+      }
+
+      function getMatchTerms(results) {
+        const terms = new Set();
+        results.forEach(r => {
+          Object.values(r.match).forEach(fieldTerms => {
+            fieldTerms.forEach(t => terms.add(t.toLowerCase()));
+          });
+        });
+        return Array.from(terms);
+      }
+
+      // ── Dropdown rendering ──
+      function renderDropdown(results, terms) {
+        currentResults = results;
+        activeDropdownIndex = -1;
+
+        if (results.length === 0) {
+          dropdown.innerHTML = '<div class="docs-search-dropdown-empty">No results found</div>';
+          dropdown.classList.add('visible');
+          return;
+        }
+
+        // Limit to top 10 results
+        const top = results.slice(0, 10);
+
+        let html = '<div class="docs-search-dropdown-header">' +
+          '<span>' + results.length + ' result' + (results.length !== 1 ? 's' : '') + '</span>' +
+          '</div>';
+
+        top.forEach((r, i) => {
+          const doc = docs[r.id];
+          const parentName = sectionNames[r.sectionId] || '';
+          const snippet = extractSnippet(doc, terms);
+          const showTag = doc.title !== parentName && parentName;
+
+          html += '<div class="docs-search-dropdown-item" data-index="' + i + '">' +
+            '<div class="docs-search-dropdown-title">' +
+              escapeHtml(doc.title) +
+              (showTag ? ' <span class="search-section-tag">' + escapeHtml(parentName) + '</span>' : '') +
+            '</div>' +
+            '<div class="docs-search-dropdown-snippet">' + snippet + '</div>' +
+          '</div>';
+        });
+
+        html += '<div class="docs-search-dropdown-hint">' +
+          '<span><kbd>&uarr;</kbd><kbd>&darr;</kbd> navigate</span>' +
+          '<span><kbd>Enter</kbd> jump to section</span>' +
+          '<span><kbd>Esc</kbd> close</span>' +
+        '</div>';
+
+        dropdown.innerHTML = html;
+        dropdown.classList.add('visible');
+
+        // Click handlers
+        dropdown.querySelectorAll('.docs-search-dropdown-item').forEach(item => {
+          item.addEventListener('click', function() {
+            const idx = parseInt(this.getAttribute('data-index'));
+            selectResult(idx);
+          });
+        });
+      }
+
+      function escapeHtml(str) {
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      function setActiveDropdownItem(index) {
+        const items = dropdown.querySelectorAll('.docs-search-dropdown-item');
+        items.forEach(item => item.classList.remove('active'));
+        if (index >= 0 && index < items.length) {
+          activeDropdownIndex = index;
+          items[index].classList.add('active');
+          items[index].scrollIntoView({ block: 'nearest' });
+        } else {
+          activeDropdownIndex = -1;
+        }
+      }
+
+      function hideDropdown() {
+        dropdown.classList.remove('visible');
+        dropdown.innerHTML = '';
+        currentResults = [];
+        activeDropdownIndex = -1;
+      }
+
+      // ── Select a result: filter page + scroll + highlight ──
+      function selectResult(index) {
+        if (index < 0 || index >= currentResults.length) return;
+
+        const result = currentResults[index];
+        const doc = docs[result.id];
+        const terms = getMatchTerms(currentResults);
+
+        hideDropdown();
+
+        // Filter page to show only matching sections/subsections
+        const matchedDocIds = new Set();
+        currentResults.forEach(r => matchedDocIds.add(r.id));
+
+        const matchedSectionIds = new Set();
+        currentResults.forEach(r => matchedSectionIds.add(r.sectionId));
+
+        const visibleTocIds = new Set();
+
+        sections.forEach(section => {
+          const subsections = section.querySelectorAll('.docs-subsection');
+
+          if (subsections.length === 0) {
+            const matched = matchedSectionIds.has(section.id);
+            section.classList.toggle('hidden', !matched);
+            if (matched && section.id) visibleTocIds.add(section.id);
+          } else {
+            let sectionHasMatch = false;
+            for (let did = 0; did < docs.length; did++) {
+              if (docs[did].sectionId !== section.id) continue;
+              const el = docElMap[did];
+              if (!el || !el.classList.contains('docs-subsection')) continue;
+              if (matchedDocIds.has(did)) {
+                el.classList.remove('hidden');
+                sectionHasMatch = true;
+                const subId = el.getAttribute('data-subsection-id');
+                if (subId) visibleTocIds.add(subId);
+                if (docs[did].isIntro && section.id) visibleTocIds.add(section.id);
+              } else {
+                el.classList.add('hidden');
+              }
+            }
+            section.classList.toggle('hidden', !sectionHasMatch);
+            if (sectionHasMatch && section.id) visibleTocIds.add(section.id);
+          }
+        });
+
+        updateTocHighlights(visibleTocIds);
+        isFiltered = true;
+
+        // Highlight terms in visible subsections
+        removeHighlights();
+        if (terms.length > 0) {
+          matchedDocIds.forEach(did => {
+            const el = docElMap[did];
+            if (el && !el.classList.contains('hidden')) {
+              highlightTermsInElement(el, terms);
+            }
+          });
+        }
+
+        // Scroll to the selected result's anchor
+        const anchor = document.getElementById(doc.anchorId);
+        if (anchor) {
+          setTimeout(function() {
+            anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 50);
+        }
+
+        searchInput.blur();
+      }
+
+      // ── Highlight helpers ──
       function removeHighlights() {
         document.querySelectorAll('mark.search-highlight').forEach(m => {
           const parent = m.parentNode;
           parent.replaceChild(document.createTextNode(m.textContent), m);
           parent.normalize();
         });
-        allMarks = [];
-        currentMarkIndex = -1;
       }
 
-      function setCurrentMark(index) {
-        if (allMarks.length === 0) return;
-        if (currentMarkIndex >= 0 && currentMarkIndex < allMarks.length) {
-          allMarks[currentMarkIndex].classList.remove('current');
-        }
-        currentMarkIndex = ((index % allMarks.length) + allMarks.length) % allMarks.length;
-        const mark = allMarks[currentMarkIndex];
-        mark.classList.add('current');
-        mark.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        searchResultsText.textContent = (currentMarkIndex + 1) + ' of ' + allMarks.length + ' matches';
-      }
-
-      function goToNextMatch() {
-        if (allMarks.length > 0) setCurrentMark(currentMarkIndex + 1);
-      }
-      function goToPrevMatch() {
-        if (allMarks.length > 0) setCurrentMark(currentMarkIndex - 1);
-      }
-
-      // Highlight all occurrences of terms in an element
-      function highlightTerms(element, terms) {
+      function highlightTermsInElement(element, terms) {
         const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
           acceptNode: function(node) {
             if (node.parentElement.closest('script, style, mark.search-highlight')) return NodeFilter.FILTER_REJECT;
@@ -1196,10 +1440,8 @@
               pos = idx + 1;
             }
           }
-
           if (ranges.length === 0) return;
 
-          // Merge overlapping ranges
           ranges.sort((a, b) => a.start - b.start || a.end - b.end);
           const merged = [ranges[0]];
           for (let i = 1; i < ranges.length; i++) {
@@ -1214,41 +1456,29 @@
           const frag = document.createDocumentFragment();
           let lastEnd = 0;
           for (let i = 0; i < merged.length; i++) {
-            if (merged[i].start > lastEnd) {
+            if (merged[i].start > lastEnd)
               frag.appendChild(document.createTextNode(text.slice(lastEnd, merged[i].start)));
-            }
             const mark = document.createElement('mark');
             mark.className = 'search-highlight';
             mark.textContent = text.slice(merged[i].start, merged[i].end);
             frag.appendChild(mark);
             lastEnd = merged[i].end;
           }
-          if (lastEnd < text.length) {
+          if (lastEnd < text.length)
             frag.appendChild(document.createTextNode(text.slice(lastEnd)));
-          }
           node.parentNode.replaceChild(frag, node);
         });
       }
 
-      // Extract highlight terms from MiniSearch results
-      function getMatchTerms(results) {
-        const terms = new Set();
-        results.forEach(r => {
-          Object.values(r.match).forEach(fieldTerms => {
-            fieldTerms.forEach(t => terms.add(t.toLowerCase()));
-          });
-        });
-        return Array.from(terms);
-      }
-
-      function updateTocHighlights(visibleSectionIds) {
+      // ── TOC highlights ──
+      function updateTocHighlights(visibleIds) {
         tocLinks.forEach(link => {
           const href = link.getAttribute('href');
           if (!href) return;
           const id = href.replace('#', '');
-          if (visibleSectionIds.size === 0) {
+          if (visibleIds.size === 0) {
             link.classList.remove('search-dimmed', 'search-match');
-          } else if (visibleSectionIds.has(id)) {
+          } else if (visibleIds.has(id)) {
             link.classList.remove('search-dimmed');
             link.classList.add('search-match');
           } else {
@@ -1258,113 +1488,132 @@
         });
       }
 
-      // ── Main search function ──
+      // ── Reset page to unfiltered state ──
+      function resetPage() {
+        sections.forEach(s => s.classList.remove('hidden'));
+        document.querySelectorAll('.docs-subsection').forEach(d => d.classList.remove('hidden'));
+        noResults.classList.remove('visible');
+        updateTocHighlights(new Set());
+        removeHighlights();
+        isFiltered = false;
+      }
+
+      // ── Main search (drives the dropdown) ──
       function performSearch() {
         const raw = searchInput.value.trim();
         searchClear.classList.toggle('visible', raw.length > 0);
 
-        removeHighlights();
-
         if (!raw) {
-          sections.forEach(s => s.classList.remove('hidden'));
-          noResults.classList.remove('visible');
-          searchResults.classList.remove('visible');
-          updateTocHighlights(new Set());
-          searchPrev.disabled = true;
-          searchNext.disabled = true;
+          hideDropdown();
+          resetPage();
           return;
         }
 
-        // Query MiniSearch — fuzzy + prefix + AND by default
-        const results = miniSearch.search(raw, {
+        // Query MiniSearch
+        let results = miniSearch.search(raw, {
           boost: { title: 3 },
           fuzzy: 0.2,
           prefix: true,
           combineWith: 'AND'
         });
 
-        // If strict AND returns nothing, fall back to OR
-        const finalResults = results.length > 0 ? results :
-          miniSearch.search(raw, { boost: { title: 3 }, fuzzy: 0.2, prefix: true, combineWith: 'OR' });
-
-        // Collect which sections matched (by relevance order)
-        const matchedSectionIds = new Set();
-        finalResults.forEach(r => {
-          matchedSectionIds.add(r.sectionId);
-        });
-
-        // Show/hide sections
-        let visibleCount = 0;
-        const visibleSectionIds = new Set();
-        sections.forEach(section => {
-          if (matchedSectionIds.has(section.id)) {
-            section.classList.remove('hidden');
-            visibleCount++;
-            if (section.id) visibleSectionIds.add(section.id);
-            section.querySelectorAll('h3[id]').forEach(h3 => visibleSectionIds.add(h3.id));
-          } else {
-            section.classList.add('hidden');
-          }
-        });
-
-        // Highlight matched terms in visible sections
-        const terms = getMatchTerms(finalResults);
-        if (terms.length > 0) {
-          sections.forEach(section => {
-            if (matchedSectionIds.has(section.id)) {
-              highlightTerms(section, terms);
-            }
+        // Fall back to OR if AND yields nothing
+        if (results.length === 0) {
+          results = miniSearch.search(raw, {
+            boost: { title: 3 },
+            fuzzy: 0.2,
+            prefix: true,
+            combineWith: 'OR'
           });
         }
 
-        noResults.classList.toggle('visible', visibleCount === 0);
-        updateTocHighlights(visibleSectionIds);
+        const terms = getMatchTerms(results);
+        renderDropdown(results, terms);
 
-        // Set up match navigation
-        allMarks = Array.from(document.querySelectorAll('mark.search-highlight'));
-        const hasMarks = allMarks.length > 0;
-
-        searchResults.classList.toggle('visible', hasMarks || visibleCount === 0);
-        searchPrev.disabled = !hasMarks;
-        searchNext.disabled = !hasMarks;
-
-        if (hasMarks) {
-          searchResultsText.textContent = allMarks.length + ' match' + (allMarks.length !== 1 ? 'es' : '') + ' in ' + visibleCount + ' section' + (visibleCount !== 1 ? 's' : '');
-          setCurrentMark(0);
-        } else if (visibleCount === 0) {
-          searchResultsText.textContent = 'No matches found';
-        }
+        // If the page was filtered from a previous selection, reset it
+        // so the user sees the full page while browsing the dropdown
+        if (isFiltered) resetPage();
       }
 
       // ── Event listeners ──
       searchInput.addEventListener('input', function() {
         clearTimeout(searchDebounceTimer);
-        searchDebounceTimer = setTimeout(performSearch, 120);
+        searchDebounceTimer = setTimeout(performSearch, 100);
+      });
+
+      searchInput.addEventListener('focus', function() {
+        if (searchInput.value.trim()) performSearch();
       });
 
       searchClear.addEventListener('click', function() {
         searchInput.value = '';
-        performSearch();
+        hideDropdown();
+        resetPage();
         searchInput.focus();
       });
 
-      searchPrev.addEventListener('click', function() { goToPrevMatch(); searchInput.focus(); });
-      searchNext.addEventListener('click', function() { goToNextMatch(); searchInput.focus(); });
+      // Close dropdown on outside click
+      document.addEventListener('click', function(e) {
+        if (!e.target.closest('#docs-search')) {
+          hideDropdown();
+        }
+      });
 
+      // Keyboard navigation
       document.addEventListener('keydown', function(e) {
+        const dropdownVisible = dropdown.classList.contains('visible');
+
+        // "/" to focus search
         if (e.key === '/' && !e.ctrlKey && !e.metaKey && document.activeElement !== searchInput) {
           e.preventDefault();
           searchInput.focus();
+          return;
         }
-        if (e.key === 'Escape' && document.activeElement === searchInput) {
-          searchInput.value = '';
-          performSearch();
-          searchInput.blur();
+
+        // Escape: close dropdown or clear search
+        if (e.key === 'Escape') {
+          if (dropdownVisible) {
+            e.preventDefault();
+            hideDropdown();
+            searchInput.focus();
+          } else if (document.activeElement === searchInput) {
+            e.preventDefault();
+            searchInput.value = '';
+            resetPage();
+            searchInput.blur();
+          }
+          return;
         }
-        if (e.key === 'Enter' && document.activeElement === searchInput) {
+
+        if (document.activeElement !== searchInput) return;
+
+        // Arrow down
+        if (e.key === 'ArrowDown' && dropdownVisible) {
           e.preventDefault();
-          if (e.shiftKey) goToPrevMatch();
-          else goToNextMatch();
+          const items = dropdown.querySelectorAll('.docs-search-dropdown-item');
+          const next = activeDropdownIndex < items.length - 1 ? activeDropdownIndex + 1 : 0;
+          setActiveDropdownItem(next);
+          return;
+        }
+
+        // Arrow up
+        if (e.key === 'ArrowUp' && dropdownVisible) {
+          e.preventDefault();
+          const items = dropdown.querySelectorAll('.docs-search-dropdown-item');
+          const prev = activeDropdownIndex > 0 ? activeDropdownIndex - 1 : items.length - 1;
+          setActiveDropdownItem(prev);
+          return;
+        }
+
+        // Enter: select active result
+        if (e.key === 'Enter' && dropdownVisible) {
+          e.preventDefault();
+          if (activeDropdownIndex >= 0) {
+            selectResult(activeDropdownIndex);
+          } else if (currentResults.length > 0) {
+            selectResult(0);
+          }
+          return;
         }
       });
 
@@ -1381,9 +1630,11 @@
           }
         });
 
-        tocLinks.forEach(link => {
-          link.classList.toggle('active', link.getAttribute('href') === '#' + currentId);
-        });
+        if (!isFiltered) {
+          tocLinks.forEach(link => {
+            link.classList.toggle('active', link.getAttribute('href') === '#' + currentId);
+          });
+        }
       }
 
       let scrollTicking = false;
