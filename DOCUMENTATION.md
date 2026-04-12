@@ -118,7 +118,7 @@ These flags work with any command and can appear in any position:
 
 ### `ezs agent`
 
-Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically.
+Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically. **Requires worktree mode** (`use_worktrees: true`) — the agent needs separate working directories for each branch to work in isolation without disrupting your workspace.
 
 ```
 ezs agent [options]
@@ -239,7 +239,7 @@ Subcommands:
 | `worktree_base_dir` | Base directory for worktrees | Path (per-repo) |
 | `default_base_branch` | Default base branch | e.g. `main`, `master` |
 | `cd_after_new` | Auto-cd to new worktree | `true` / `false` (per-repo) |
-| `use_worktrees` | Use git worktrees for new branches | `true` / `false` (per-repo) |
+| `use_worktrees` | Use git worktrees for new branches (required for `ezs agent`) | `true` / `false` (per-repo) |
 | `sync_strategy` | Sync method for rebase/merge | `rebase` / `merge` (per-repo) |
 | `github_token` | GitHub token for API access | Token string |
 
@@ -377,7 +377,7 @@ ezs new -r feature-branch           # Use PR for that branch, prompt for branch 
 ezs new -r 42 my-feature            # Use PR #42, create branch "my-feature" (no prompts)
 ```
 
-When `use_worktrees` is disabled, creates a git branch without a worktree and optionally checks it out.
+When `use_worktrees` is disabled, creates a git branch without a worktree and optionally checks it out. All core commands (`sync`, `commit`, `reparent`, `push`, `pr`) work fully in this mode via checkout-based sync. Note: `ezs agent` requires worktree mode.
 
 ---
 

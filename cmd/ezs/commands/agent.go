@@ -130,6 +130,12 @@ func Agent(args []string) error {
 		return fmt.Errorf("agent CLI '%s' not found in PATH.\nInstall it or configure a different agent: ezs config set agent_command <command>", agentCmd)
 	}
 
+	// Agent requires worktree mode — each branch needs its own working directory
+	// for the agent to work in isolation without disrupting user's workspace
+	if !cfg.GetUseWorktrees(repoPath) {
+		return fmt.Errorf("ezs agent requires worktree mode.\nThe agent needs separate working directories for each branch to work in isolation.\nEnable worktrees: ezs config set use_worktrees true")
+	}
+
 	// Feature mode — optionally uses an existing stack if one is available
 	if fs.NArg() > 0 && (fs.Arg(0) == "feature" || fs.Arg(0) == "feat") {
 		description := strings.Join(fs.Args()[1:], " ")
