@@ -549,3 +549,141 @@ func TestDetectSyncNeededForBranch_StackRoot(t *testing.T) {
 		t.Errorf("SyncInfo.BehindParent = %q, want empty (behind root, not parent)", info.BehindParent)
 	}
 }
+
+func TestRebaseResult_Remote(t *testing.T) {
+	// Test that RebaseResult carries the Remote field correctly
+	tests := []struct {
+		name     string
+		remote   string
+		expected string
+	}{
+		{"empty remote", "", ""},
+		{"custom remote", "fork-remote", "fork-remote"},
+		{"nopush", config.RemoteNoPush, config.RemoteNoPush},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := RebaseResult{
+				Branch:       "feature",
+				WorktreePath: "/tmp/wt",
+				Remote:       tt.remote,
+			}
+			if result.Remote != tt.expected {
+				t.Errorf("Remote = %q, want %q", result.Remote, tt.expected)
+			}
+		})
+	}
+}
+
+func TestMarkBranchRemote_WithRemote(t *testing.T) {
+	repoDir, _, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	// Create a branch and register it
+	exec.Command("git", "-C", repoDir, "checkout", "-b", "fork-branch").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	mgr.RegisterExistingBranch("fork-branch", "", "main")
+
+	// Mark as remote with a specific remote
+	err = mgr.MarkBranchRemote("fork-branch", "https://github.com/fork/repo/pull/1", "fork-user")
+	if err != nil {
+		t.Fatalf("MarkBranchRemote() error = %v", err)
+	}
+
+	// Verify the cache has the remote set
+	bc := mgr.stackConfig.Cache.GetBranchCache("fork-branch")
+	if bc == nil {
+		t.Fatal("BranchCache should exist after MarkBranchRemote")
+	}
+	if !bc.IsRemote {
+		t.Error("IsRemote should be true")
+	}
+	if bc.Remote != "fork-user" {
+		t.Errorf("Remote = %q, want %q", bc.Remote, "fork-user")
+	}
+
+	// Verify the branch object also has it
+	branch := mgr.GetBranch("fork-branch")
+	if branch == nil {
+		t.Fatal("GetBranch should find fork-branch")
+	}
+	if branch.Remote != "fork-user" {
+		t.Errorf("Branch.Remote = %q, want %q", branch.Remote, "fork-user")
+	}
+	if branch.EffectiveRemote() != "fork-user" {
+		t.Errorf("EffectiveRemote() = %q, want %q", branch.EffectiveRemote(), "fork-user")
+	}
+}
+
+func TestMarkBranchRemote_NoPush(t *testing.T) {
+	repoDir, _, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	exec.Command("git", "-C", repoDir, "checkout", "-b", "nopush-branch").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	mgr.RegisterExistingBranch("nopush-branch", "", "main")
+
+	err = mgr.MarkBranchRemote("nopush-branch", "", config.RemoteNoPush)
+	if err != nil {
+		t.Fatalf("MarkBranchRemote() error = %v", err)
+	}
+
+	branch := mgr.GetBranch("nopush-branch")
+	if branch == nil {
+		t.Fatal("GetBranch should find nopush-branch")
+	}
+	if branch.CanPush() {
+		t.Error("CanPush() should be false for _nopush branch")
+	}
+	if branch.EffectiveRemote() != config.RemoteNoPush {
+		t.Errorf("EffectiveRemote() = %q, want %q", branch.EffectiveRemote(), config.RemoteNoPush)
+	}
+}
+
+func TestMarkBranchRemote_EmptyRemote(t *testing.T) {
+	repoDir, _, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	exec.Command("git", "-C", repoDir, "checkout", "-b", "same-repo-branch").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	mgr.RegisterExistingBranch("same-repo-branch", "", "main")
+
+	// Empty remote means same-repo remote branch — defaults to "origin"
+	err = mgr.MarkBranchRemote("same-repo-branch", "https://github.com/org/repo/pull/5", "")
+	if err != nil {
+		t.Fatalf("MarkBranchRemote() error = %v", err)
+	}
+
+	branch := mgr.GetBranch("same-repo-branch")
+	if branch == nil {
+		t.Fatal("GetBranch should find same-repo-branch")
+	}
+	if branch.Remote != "" {
+		t.Errorf("Remote = %q, want empty for same-repo branch", branch.Remote)
+	}
+	if branch.EffectiveRemote() != "origin" {
+		t.Errorf("EffectiveRemote() = %q, want %q", branch.EffectiveRemote(), "origin")
+	}
+	if !branch.CanPush() {
+		t.Error("CanPush() should be true for same-repo branch")
+	}
+}
