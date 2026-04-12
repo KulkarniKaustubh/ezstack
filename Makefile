@@ -1,4 +1,4 @@
-.PHONY: build install clean test fmt vet
+.PHONY: build install clean test fmt vet docs
 
 # XDG convention
 INSTALL_PATH=$(HOME)/.local/bin
@@ -25,4 +25,7 @@ fmt:
 
 vet:
 	go vet ./...
+
+docs:
+	go run ./cmd/docgen -w
 
