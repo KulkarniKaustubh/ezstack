@@ -136,6 +136,78 @@ The app polls `ezs status` every 30 seconds (pauses when the window loses focus)
 - Operation output panel (terminal-like CLI output display)
 - Repo picker (open any git repository)
 - Status bar with repo path, current branch, last refresh time
+- Live connection pill in title bar with tri-state health (green / yellow / red) and latency
+- Polling uses exponential backoff on failure (30s → 60s → 120s → 240s → 300s cap)
+
+## Remote (SSH) Mode
+
+ezstack Desktop can drive an `ezs` install on a remote machine over SSH. The local
+app becomes a thin client; every `ezs`, `git`, and `gh` invocation runs on the remote
+host. This is useful for working against repos that live on a dev VM, build server, or
+beefy workstation without leaving your laptop.
+
+### Requirements (on the remote host)
+- `ezs` CLI on the login `PATH` (the diagnostics tab will tell you if it's missing)
+- `git` 2.20+ and `gh` (authenticated, for PR operations)
+- An entry in `~/.ezstack/config.json` for each repo you want to manage
+- OpenSSH server with key-based auth (password prompts won't work — `BatchMode` is on)
+
+### Connecting
+
+1. Click the **Connect** pill in the title bar.
+2. Fill in host, user, port, and (optionally) an SSH key path. The key picker uses a
+   native file dialog.
+3. **Jump host** (optional) — any value here is passed as `ssh -J <jump>`, so the same
+   `user@host[:port]` syntax OpenSSH uses works.
+4. **Label** (optional) — friendly name shown in the title-bar pill.
+5. Click **Connect**. The app runs a quick reachability probe, then lists every repo
+   from the remote `~/.ezstack/config.json` along with whether the worktree base dir
+   actually exists on disk.
+6. Pick a repo. The sidebar and stack views are now backed by the remote.
+
+### Diagnose
+
+The connect dialog has a **Diagnose** button that runs a 6-step health check:
+
+1. SSH connectivity + latency
+2. Login shell `PATH`
+3. `ezs` binary present and runnable
+4. `git` present
+5. `gh` authenticated
+6. `~/.ezstack/config.json` readable
+
+Each step reports pass / warn / fail with a per-step duration so you can see exactly
+where things break.
+
+### Saved profiles
+
+Profiles are saved to `~/.ezstack/desktop/connections.json` (mode `0600`) and contain
+host, user, port, key path, jump host, and the last repo you opened on that profile.
+No secrets are stored — auth still goes through your SSH agent or key file. Delete a
+profile by hovering it in the picker and clicking the trash icon.
+
+Override the profile location with the `EZSTACK_DESKTOP_HOME` environment variable
+(useful for tests or portable installs).
+
+### Health checks
+
+Once connected, the app pings the remote every 30 seconds (pauses on window blur).
+The title-bar pill turns:
+
+- **green** — healthy, latency ≤ 800 ms
+- **yellow** — healthy but slow (> 800 ms)
+- **red** — last ping failed (hover for the error)
+
+### Known limitations
+
+- **Agent prompt editor** is local-only — opening `$EDITOR` over SSH from a GUI is
+  fragile, so the desktop app blocks `agent prompts edit` while connected. View and
+  reset still work.
+- **Host key policy** — first connections use `StrictHostKeyChecking=accept-new`, so a
+  freshly-trusted host is added to your `known_hosts` automatically. Existing host
+  keys are still verified strictly.
+- **Latency** — every operation is at least one SSH round-trip. Stacked-PR workflows
+  are not chatty, but expect refreshes to feel a beat slower than local mode.
 
 ## Tech Stack
 

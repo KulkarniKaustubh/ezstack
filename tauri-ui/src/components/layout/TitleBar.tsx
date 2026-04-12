@@ -1,19 +1,30 @@
-import { Moon, Sun, RefreshCw, Settings, RefreshCcw, Monitor, Unplug } from "lucide-react";
+import { Moon, Sun, RefreshCw, Settings, RefreshCcw } from "lucide-react";
 import { useState } from "react";
 import { Button } from "../ui/button";
 import { useTheme } from "../../hooks/use-theme";
 import { APP_VERSION } from "../../version";
+import { ConnectionStatus } from "./ConnectionStatus";
+import type { SshConnection, ConnectionHealth } from "../../types/ezstack";
 
 interface TitleBarProps {
   onRefresh: () => void;
   onSync: () => void;
   onSettings: () => void;
   isLoading: boolean;
-  isConnected?: boolean;
-  onConnectRemote?: () => void;
+  connection: SshConnection | null;
+  connectionHealth: ConnectionHealth | null;
+  onConnectRemote: () => void;
 }
 
-export function TitleBar({ onRefresh, onSync, onSettings, isLoading, isConnected, onConnectRemote }: TitleBarProps) {
+export function TitleBar({
+  onRefresh,
+  onSync,
+  onSettings,
+  isLoading,
+  connection,
+  connectionHealth,
+  onConnectRemote,
+}: TitleBarProps) {
   const { theme, toggle } = useTheme();
   const [refreshFlash, setRefreshFlash] = useState(false);
 
@@ -35,21 +46,12 @@ export function TitleBar({ onRefresh, onSync, onSettings, isLoading, isConnected
       </div>
 
       <div className="flex items-center gap-1">
-        {onConnectRemote && (
-          <Button variant="ghost" size="sm" onClick={onConnectRemote} className={`gap-1.5 text-xs ${isConnected ? "text-green-600 dark:text-green-400" : ""}`}>
-            {isConnected ? (
-              <>
-                <Unplug className="h-3.5 w-3.5" />
-                Remote
-              </>
-            ) : (
-              <>
-                <Monitor className="h-3.5 w-3.5" />
-                Connect
-              </>
-            )}
-          </Button>
-        )}
+        <ConnectionStatus
+          connection={connection}
+          health={connectionHealth}
+          onClick={onConnectRemote}
+        />
+        <div className="w-px h-5 bg-border mx-1" />
         <Button variant="ghost" size="sm" onClick={onSync} disabled={isLoading} className="gap-1.5 text-xs">
           <RefreshCcw className="h-3.5 w-3.5" />
           Sync

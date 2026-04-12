@@ -756,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "ezstack-desktop"
-version = "3.2.0-beta.1"
+version = "3.2.6-beta.3"
 dependencies = [
  "dirs 5.0.1",
  "serde",
@@ -765,7 +765,6 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-shell",
- "tokio",
 ]
 
 [[package]]
@@ -3854,7 +3853,6 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
- "signal-hook-registry",
  "socket2",
  "windows-sys 0.61.2",
 ]

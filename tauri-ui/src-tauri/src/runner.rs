@@ -2,6 +2,7 @@ use crate::types::{CommandResult, SshConnection};
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Cached resolved path to the local `ezs` binary.
 static EZS_BINARY: OnceLock<String> = OnceLock::new();
@@ -134,11 +135,20 @@ pub fn run_ezs(repo_path: &str, args: &[&str]) -> Result<CommandResult, String> 
     })
 }
 
+/// Generate a unique-ish suffix for temp files.
+fn unique_suffix() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("{}-{}", std::process::id(), nanos)
+}
+
 /// Open an ezs command in an external terminal window.
 /// Used for interactive commands like `agent` that need stdin/stdout.
 pub fn open_in_terminal(repo_path: &str, args: &[String]) -> Result<(), String> {
     let tmp_dir = std::env::temp_dir();
-    let script_name = format!("ezstack-agent-{}.sh", std::process::id());
+    let script_name = format!("ezstack-agent-{}.sh", unique_suffix());
     let script_path = tmp_dir.join(script_name);
 
     let ezs_path = ezs_binary();
@@ -172,10 +182,46 @@ pub fn open_in_terminal(repo_path: &str, args: &[String]) -> Result<(), String> 
         .to_str()
         .ok_or("Temp script path contains invalid UTF-8")?;
 
-    std::process::Command::new("open")
-        .args(["-a", "Terminal", path_str])
-        .spawn()
-        .map_err(|e| format!("Failed to open terminal: {e}"))?;
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .args(["-a", "Terminal", path_str])
+            .spawn()
+            .map_err(|e| format!("Failed to open terminal: {e}"))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        // Try a sequence of common terminal emulators.
+        let attempts: &[(&str, &[&str])] = &[
+            ("x-terminal-emulator", &["-e"]),
+            ("gnome-terminal", &["--"]),
+            ("konsole", &["-e"]),
+            ("xterm", &["-e"]),
+        ];
+        let mut spawned = false;
+        for (term, flag) in attempts {
+            let mut cmd = std::process::Command::new(term);
+            cmd.args(*flag);
+            cmd.arg(path_str);
+            if cmd.spawn().is_ok() {
+                spawned = true;
+                break;
+            }
+        }
+        if !spawned {
+            return Err("No supported terminal emulator found (tried gnome-terminal, konsole, xterm)".to_string());
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // Run the script via WSL bash if available, otherwise via cmd.
+        std::process::Command::new("cmd")
+            .args(["/c", "start", "", "bash", path_str])
+            .spawn()
+            .map_err(|e| format!("Failed to open terminal: {e}"))?;
+    }
 
     Ok(())
 }
@@ -196,26 +242,75 @@ pub fn run_git(repo_path: &str, args: &[&str]) -> Result<CommandResult, String> 
 }
 
 /// Shell-escape a string by wrapping in single quotes.
-fn shell_escape(s: &str) -> String {
+pub fn shell_escape(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
 /// Build an SSH command prefix from the connection config.
 fn ssh_base(conn: &SshConnection) -> Command {
     let mut cmd = Command::new("ssh");
+    // TOFU: accept new host keys, but reject changed ones (real MITM defense).
     cmd.args(["-o", "StrictHostKeyChecking=accept-new"]);
     cmd.args(["-o", "ConnectTimeout=10"]);
     cmd.args(["-o", "ServerAliveInterval=30"]);
     cmd.args(["-o", "ServerAliveCountMax=3"]);
     cmd.args(["-o", "BatchMode=yes"]);
+    // Suppress noisy "Warning: Permanently added 'host' (ED25519) to known_hosts"
+    // on stderr so error classification doesn't trip on it.
+    cmd.args(["-o", "LogLevel=ERROR"]);
     if !conn.key_path.is_empty() {
         cmd.args(["-i", &conn.key_path]);
+    }
+    if !conn.jump_host.is_empty() {
+        cmd.args(["-J", &conn.jump_host]);
     }
     if conn.port != 22 {
         cmd.args(["-p", &conn.port.to_string()]);
     }
     cmd.arg(format!("{}@{}", conn.user, conn.host));
     cmd
+}
+
+/// Classify common SSH stderr patterns into a friendlier message.
+/// Falls back to the raw stderr (trimmed) if no pattern matches.
+pub fn classify_ssh_error(stderr: &str) -> String {
+    let s = stderr.trim();
+    let lower = s.to_lowercase();
+
+    if lower.contains("permission denied") {
+        return "SSH authentication failed (permission denied). Check the username, SSH key, and that your public key is in the remote ~/.ssh/authorized_keys.".to_string();
+    }
+    if lower.contains("host key verification failed") {
+        return "SSH host key verification failed. The remote host key has changed or is unknown. Inspect ~/.ssh/known_hosts on this machine.".to_string();
+    }
+    if lower.contains("could not resolve hostname") || lower.contains("name or service not known") {
+        return "Could not resolve remote hostname. Check spelling and that DNS is reachable.".to_string();
+    }
+    if lower.contains("connection timed out") || lower.contains("operation timed out") {
+        return "Connection to remote timed out. Check the host is reachable on the given port and the firewall allows SSH.".to_string();
+    }
+    if lower.contains("connection refused") {
+        return "Connection refused. Is sshd running on the remote on the configured port?".to_string();
+    }
+    if lower.contains("network is unreachable") || lower.contains("no route to host") {
+        return "Remote network is unreachable from this machine.".to_string();
+    }
+    if lower.contains("kex_exchange_identification") || lower.contains("connection closed by") {
+        return "SSH handshake failed (connection closed by remote). The host may be rate-limiting or sshd may be misconfigured.".to_string();
+    }
+    if lower.contains("warning: unprotected private key") {
+        return "Your SSH private key has overly permissive permissions. Run `chmod 600` on it.".to_string();
+    }
+    if lower.contains("no such identity") || lower.contains("no such file or directory") {
+        return "SSH key file not found. Check the path is correct and readable.".to_string();
+    }
+    if lower.contains("too many authentication failures") {
+        return "Too many authentication failures. Specify an explicit key with -i / IdentityFile to avoid trying every key in the SSH agent.".to_string();
+    }
+    if s.is_empty() {
+        return "SSH connection failed (no error output).".to_string();
+    }
+    s.to_string()
 }
 
 /// Run a raw SSH command (for connection testing).
@@ -266,4 +361,51 @@ pub fn run_git_auto(conn: Option<&SshConnection>, repo_path: &str, args: &[&str]
         Some(c) => run_remote_git(c, repo_path, args),
         None => run_git(repo_path, args),
     }
+}
+
+/// Scan a remote host's public keys via `ssh-keyscan` and pipe the result
+/// through `ssh-keygen -lf -` to produce SHA256 fingerprint lines.
+/// Returns one `<bits> SHA256:<hash> <host> (<keytype>)` line per host key.
+/// Used by the host-fingerprint preview so users can manually verify a key
+/// on first connect (defends against silent TOFU acceptance of MITM keys).
+pub fn ssh_host_fingerprints(host: &str, port: u16) -> Result<String, String> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let port_s = port.to_string();
+    let scan = Command::new("ssh-keyscan")
+        .args(["-T", "5", "-t", "ed25519,ecdsa,rsa", "-p", &port_s, host])
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|e| format!("Failed to run ssh-keyscan: {e}"))?;
+    if !scan.status.success() || scan.stdout.is_empty() {
+        return Err(format!("ssh-keyscan returned no host keys for {host}:{port} (host unreachable or DNS failure)"));
+    }
+
+    let mut keygen = Command::new("ssh-keygen")
+        .args(["-l", "-f", "-", "-E", "sha256"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to run ssh-keygen: {e}"))?;
+    {
+        let stdin = keygen
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "ssh-keygen stdin unavailable".to_string())?;
+        stdin
+            .write_all(&scan.stdout)
+            .map_err(|e| format!("Failed to write to ssh-keygen: {e}"))?;
+    }
+    let out = keygen
+        .wait_with_output()
+        .map_err(|e| format!("Failed to wait for ssh-keygen: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "ssh-keygen fingerprint failed: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).to_string())
 }
