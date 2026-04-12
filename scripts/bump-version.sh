@@ -77,7 +77,7 @@ for doc in docs/index.html docs/vscode.html docs/agent.html; do
 done
 
 # Clean up .bak files left by sed -i.bak
-find "$REPO_ROOT" -name "*.bak" -newer "$VERSION_FILE" -delete 2>/dev/null || true
+find "$REPO_ROOT" -name "*.bak" -not -path "*/node_modules/*" -delete 2>/dev/null || true
 
 echo "Updated ${#changed[@]} files:"
 for f in "${changed[@]}"; do
