@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	ezstack "github.com/KulkarniKaustubh/ezstack"
+	"github.com/KulkarniKaustubh/ezstack"
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
