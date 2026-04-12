@@ -734,10 +734,10 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool) error {
 	}
 
 	type conflictBranch struct {
-		branch    *config.Branch
-		stack     *config.Stack
-		isRebase  bool
-		isMerge   bool
+		branch   *config.Branch
+		stack    *config.Stack
+		isRebase bool
+		isMerge  bool
 	}
 
 	var found []conflictBranch

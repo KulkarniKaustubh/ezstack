@@ -26,9 +26,9 @@ type category struct {
 }
 
 // categories defines the accordion groupings and order.
-// Keys must match the command name extracted from `### \`ezs <name>\`` headings.
+// Keys must match the command name extracted from `### \`ezs <name>\“ headings.
 // Combined headings like "commit / amend" are keyed by the first name ("commit").
-// Sub-headings like "up / down" are keyed "down" (heading is `### \`ezs down\` / \`ezs up\``).
+// Sub-headings like "up / down" are keyed "down" (heading is `### \`ezs down\` / \`ezs up\“).
 var categories = []category{
 	{
 		Label:    "Stack Management",
