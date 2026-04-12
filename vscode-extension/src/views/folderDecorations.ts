@@ -55,7 +55,8 @@ export class FolderDecorationProvider
     try {
       const stacks = await this.cli.listStacks(true);
       this.rebuildMap(stacks);
-    } catch {
+    } catch (err) {
+      console.warn("ezstack: failed to refresh folder decorations:", err instanceof Error ? err.message : err);
       this.worktreeMap.clear();
     }
     this._onDidChangeFileDecorations.fire(undefined);
