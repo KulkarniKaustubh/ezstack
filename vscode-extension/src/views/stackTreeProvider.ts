@@ -255,22 +255,35 @@ export class StackTreeProvider
   async fetchData(): Promise<void> {
     const seq = ++this.fetchSeq;
 
+    let fetched: StatusStackJSON[];
     try {
-      this.stacks = await this.cli.statusStacks(true);
+      fetched = await this.cli.statusStacks(true);
     } catch {
       try {
+        // Fallback: basic listStacks lacks status fields — normalize so
+        // downstream consumers don't see `undefined` where they expect
+        // booleans / paths.
         const basic = await this.cli.listStacks(true);
-        this.stacks = basic as StatusStackJSON[];
+        fetched = basic.map((s) => ({
+          ...s,
+          branches: s.branches.map((b) => ({
+            ...b,
+            is_merged: false,
+            worktree_path: (b as unknown as { worktree_path?: string }).worktree_path ?? "",
+          })),
+        })) as unknown as StatusStackJSON[];
       } catch {
-        this.stacks = [];
+        fetched = [];
       }
     }
 
     // If a newer fetch was started while we were awaiting, abandon this one
+    // BEFORE mutating any shared state.
     if (seq !== this.fetchSeq) {
       return;
     }
 
+    this.stacks = fetched;
     this.childrenMap.clear();
     this.parentMap.clear();
     this.nodeCache.clear();

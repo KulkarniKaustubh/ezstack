@@ -122,12 +122,20 @@ func updatePRMetadata(gh *github.Client, s *config.Stack, currentBranch *config.
 	}
 }
 
-// OfferForcePush prompts the user to force push a branch with --force-with-lease
-// Returns true if push was successful, false otherwise
-func OfferForcePush(branchName, worktreePath string) bool {
+// OfferForcePush prompts the user to force push a branch with --force-with-lease.
+// remote specifies which git remote to push to (empty defaults to "origin").
+// Returns true if push was successful, false otherwise.
+func OfferForcePush(branchName, worktreePath, remote string) bool {
+	if remote == config.RemoteNoPush {
+		ui.Warn(fmt.Sprintf("Skipping push for %s (fork does not allow maintainer push)", branchName))
+		return true // Don't block sync continuation
+	}
+	if remote == "" {
+		remote = "origin"
+	}
 	g := git.New(worktreePath)
 
-	needsPush, err := g.IsLocalAheadOfOrigin(branchName)
+	needsPush, err := g.IsLocalAheadOfRemote(branchName, remote)
 	if err != nil {
 		ui.Warn(fmt.Sprintf("Could not check if push is needed: %v", err))
 		needsPush = true
@@ -139,9 +147,9 @@ func OfferForcePush(branchName, worktreePath string) bool {
 
 	fmt.Fprintln(os.Stderr)
 	ui.Warn("Force push required to update remote branch")
-	if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease)", branchName)) {
+	if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
 		ui.Info("Pushing...")
-		if err := g.PushForce(); err != nil {
+		if err := g.PushForce(remote); err != nil {
 			ui.Error(fmt.Sprintf("Push failed: %v. Check your network connection and remote access", err))
 			return false
 		}
@@ -152,9 +160,10 @@ func OfferForcePush(branchName, worktreePath string) bool {
 	return false
 }
 
-// OfferForcePushMultiple prompts the user to force push multiple branches
-// Returns the number of successfully pushed branches
-func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) string) int {
+// OfferForcePushMultiple prompts the user to force push multiple branches.
+// getBranchRemote returns the git remote for a given branch (empty defaults to "origin").
+// Returns the number of successfully pushed branches.
+func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) string, getBranchRemote func(string) string) int {
 	if len(branches) == 0 {
 		return 0
 	}
@@ -169,15 +178,27 @@ func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) st
 			continue
 		}
 
+		remote := ""
+		if getBranchRemote != nil {
+			remote = getBranchRemote(branchName)
+		}
+		if remote == config.RemoteNoPush {
+			ui.Warn(fmt.Sprintf("Skipping push for %s (fork does not allow maintainer push)", branchName))
+			continue
+		}
+		if remote == "" {
+			remote = "origin"
+		}
+
 		g := git.New(worktreePath)
-		needsPush, err := g.IsLocalAheadOfOrigin(branchName)
+		needsPush, err := g.IsLocalAheadOfRemote(branchName, remote)
 		if err == nil && !needsPush {
 			continue
 		}
 
-		if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease)", branchName)) {
+		if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
 			ui.Info(fmt.Sprintf("Pushing %s...", branchName))
-			if err := g.PushForce(); err != nil {
+			if err := g.PushForce(remote); err != nil {
 				ui.Error(fmt.Sprintf("Push failed for %s: %v. Check remote access or try: git push --force-with-lease", branchName, err))
 			} else {
 				ui.Success(fmt.Sprintf("Pushed %s successfully", branchName))
@@ -190,12 +211,20 @@ func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) st
 }
 
 // OfferPush prompts the user to push a branch (regular push, not force).
+// remote specifies which git remote to push to (empty defaults to "origin").
 // Used after merge operations where history is not rewritten.
 // Returns true if push was successful or not needed, false if declined.
-func OfferPush(branchName, worktreePath string) bool {
+func OfferPush(branchName, worktreePath, remote string) bool {
+	if remote == config.RemoteNoPush {
+		ui.Warn(fmt.Sprintf("Skipping push for %s (fork does not allow maintainer push)", branchName))
+		return true // Don't block sync continuation
+	}
+	if remote == "" {
+		remote = "origin"
+	}
 	g := git.New(worktreePath)
 
-	needsPush, err := g.IsLocalAheadOfOrigin(branchName)
+	needsPush, err := g.IsLocalAheadOfRemote(branchName, remote)
 	if err != nil {
 		ui.Warn(fmt.Sprintf("Could not check if push is needed: %v", err))
 		needsPush = true
@@ -206,13 +235,13 @@ func OfferPush(branchName, worktreePath string) bool {
 	}
 
 	fmt.Fprintln(os.Stderr)
-	if ui.ConfirmTUI(fmt.Sprintf("Push %s to remote", branchName)) {
+	if ui.ConfirmTUI(fmt.Sprintf("Push %s to %s", branchName, remote)) {
 		ui.Info("Pushing...")
-		if err := g.Push(false); err != nil {
+		if err := g.Push(false, remote); err != nil {
 			// If regular push fails (e.g., diverged history from prior rebase), offer force push
 			ui.Warn(fmt.Sprintf("Push failed: %v", err))
-			if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease)", branchName)) {
-				if err := g.PushForce(); err != nil {
+			if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
+				if err := g.PushForce(remote); err != nil {
 					ui.Error(fmt.Sprintf("Force push failed: %v", err))
 					return false
 				}
@@ -229,9 +258,10 @@ func OfferPush(branchName, worktreePath string) bool {
 }
 
 // OfferPushMultiple prompts the user to push multiple branches (regular push, not force).
+// getBranchRemote returns the git remote for a given branch (empty defaults to "origin").
 // Used after merge operations where history is not rewritten.
 // Returns the number of successfully pushed branches.
-func OfferPushMultiple(branches []string, getBranchWorktree func(string) string) int {
+func OfferPushMultiple(branches []string, getBranchWorktree func(string) string, getBranchRemote func(string) string) int {
 	if len(branches) == 0 {
 		return 0
 	}
@@ -245,18 +275,30 @@ func OfferPushMultiple(branches []string, getBranchWorktree func(string) string)
 			continue
 		}
 
+		remote := ""
+		if getBranchRemote != nil {
+			remote = getBranchRemote(branchName)
+		}
+		if remote == config.RemoteNoPush {
+			ui.Warn(fmt.Sprintf("Skipping push for %s (fork does not allow maintainer push)", branchName))
+			continue
+		}
+		if remote == "" {
+			remote = "origin"
+		}
+
 		g := git.New(worktreePath)
-		needsPush, err := g.IsLocalAheadOfOrigin(branchName)
+		needsPush, err := g.IsLocalAheadOfRemote(branchName, remote)
 		if err == nil && !needsPush {
 			continue
 		}
 
-		if ui.ConfirmTUI(fmt.Sprintf("Push %s to remote", branchName)) {
+		if ui.ConfirmTUI(fmt.Sprintf("Push %s to %s", branchName, remote)) {
 			ui.Info(fmt.Sprintf("Pushing %s...", branchName))
-			if err := g.Push(false); err != nil {
+			if err := g.Push(false, remote); err != nil {
 				// Fall back to force push if regular push fails
 				ui.Warn(fmt.Sprintf("Push failed: %v. Trying force push...", err))
-				if err := g.PushForce(); err != nil {
+				if err := g.PushForce(remote); err != nil {
 					ui.Error(fmt.Sprintf("Force push failed for %s: %v", branchName, err))
 				} else {
 					ui.Success(fmt.Sprintf("Pushed %s successfully (force)", branchName))
@@ -465,7 +507,9 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 					if existing.RootBase == "" {
 						existing.RootBase = pr.Base
 					}
-					sc.Save(mainWorktree)
+					if err := sc.Save(mainWorktree); err != nil {
+						fmt.Fprintf(os.Stderr, "  Warning: failed to save stack config after root PR discovery: %v\n", err)
+					}
 				}
 			}
 		}
@@ -550,7 +594,9 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 					cache.SetBranchCache(branch.Name, bc)
 				}
 			}
-			cache.Save(mainWorktree)
+			if err := cache.Save(mainWorktree); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to save PR cache: %v\n", err)
+			}
 		}
 	}
 
@@ -763,7 +809,9 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 				}
 			}
 			if changed {
-				cache.Save(mainWorktree)
+				if err := cache.Save(mainWorktree); err != nil {
+					fmt.Fprintf(os.Stderr, "  Warning: failed to save status cache: %v\n", err)
+				}
 			}
 		}
 	}

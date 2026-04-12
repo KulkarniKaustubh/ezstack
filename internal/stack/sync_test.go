@@ -549,3 +549,545 @@ func TestDetectSyncNeededForBranch_StackRoot(t *testing.T) {
 		t.Errorf("SyncInfo.BehindParent = %q, want empty (behind root, not parent)", info.BehindParent)
 	}
 }
+
+func TestRebaseResult_Remote(t *testing.T) {
+	// Test that RebaseResult carries the Remote field correctly
+	tests := []struct {
+		name     string
+		remote   string
+		expected string
+	}{
+		{"empty remote", "", ""},
+		{"custom remote", "fork-remote", "fork-remote"},
+		{"nopush", config.RemoteNoPush, config.RemoteNoPush},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := RebaseResult{
+				Branch:       "feature",
+				WorktreePath: "/tmp/wt",
+				Remote:       tt.remote,
+			}
+			if result.Remote != tt.expected {
+				t.Errorf("Remote = %q, want %q", result.Remote, tt.expected)
+			}
+		})
+	}
+}
+
+func TestMarkBranchRemote_WithRemote(t *testing.T) {
+	repoDir, _, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	// Create a branch and register it
+	exec.Command("git", "-C", repoDir, "checkout", "-b", "fork-branch").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	mgr.RegisterExistingBranch("fork-branch", "", "main")
+
+	// Mark as remote with a specific remote
+	err = mgr.MarkBranchRemote("fork-branch", "https://github.com/fork/repo/pull/1", "fork-user")
+	if err != nil {
+		t.Fatalf("MarkBranchRemote() error = %v", err)
+	}
+
+	// Verify the cache has the remote set
+	bc := mgr.stackConfig.Cache.GetBranchCache("fork-branch")
+	if bc == nil {
+		t.Fatal("BranchCache should exist after MarkBranchRemote")
+	}
+	if !bc.IsRemote {
+		t.Error("IsRemote should be true")
+	}
+	if bc.Remote != "fork-user" {
+		t.Errorf("Remote = %q, want %q", bc.Remote, "fork-user")
+	}
+
+	// Verify the branch object also has it
+	branch := mgr.GetBranch("fork-branch")
+	if branch == nil {
+		t.Fatal("GetBranch should find fork-branch")
+	}
+	if branch.Remote != "fork-user" {
+		t.Errorf("Branch.Remote = %q, want %q", branch.Remote, "fork-user")
+	}
+	if branch.EffectiveRemote() != "fork-user" {
+		t.Errorf("EffectiveRemote() = %q, want %q", branch.EffectiveRemote(), "fork-user")
+	}
+}
+
+func TestMarkBranchRemote_NoPush(t *testing.T) {
+	repoDir, _, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	exec.Command("git", "-C", repoDir, "checkout", "-b", "nopush-branch").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	mgr.RegisterExistingBranch("nopush-branch", "", "main")
+
+	err = mgr.MarkBranchRemote("nopush-branch", "", config.RemoteNoPush)
+	if err != nil {
+		t.Fatalf("MarkBranchRemote() error = %v", err)
+	}
+
+	branch := mgr.GetBranch("nopush-branch")
+	if branch == nil {
+		t.Fatal("GetBranch should find nopush-branch")
+	}
+	if branch.CanPush() {
+		t.Error("CanPush() should be false for _nopush branch")
+	}
+	if branch.EffectiveRemote() != config.RemoteNoPush {
+		t.Errorf("EffectiveRemote() = %q, want %q", branch.EffectiveRemote(), config.RemoteNoPush)
+	}
+}
+
+func TestMarkBranchRemote_EmptyRemote(t *testing.T) {
+	repoDir, _, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("NewManager() error = %v", err)
+	}
+
+	exec.Command("git", "-C", repoDir, "checkout", "-b", "same-repo-branch").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	mgr.RegisterExistingBranch("same-repo-branch", "", "main")
+
+	// Empty remote means same-repo remote branch — defaults to "origin"
+	err = mgr.MarkBranchRemote("same-repo-branch", "https://github.com/org/repo/pull/5", "")
+	if err != nil {
+		t.Fatalf("MarkBranchRemote() error = %v", err)
+	}
+
+	branch := mgr.GetBranch("same-repo-branch")
+	if branch == nil {
+		t.Fatal("GetBranch should find same-repo-branch")
+	}
+	if branch.Remote != "" {
+		t.Errorf("Remote = %q, want empty for same-repo branch", branch.Remote)
+	}
+	if branch.EffectiveRemote() != "origin" {
+		t.Errorf("EffectiveRemote() = %q, want %q", branch.EffectiveRemote(), "origin")
+	}
+	if !branch.CanPush() {
+		t.Error("CanPush() should be true for same-repo branch")
+	}
+}
+
+// TestSyncStack_NoWorktree verifies that SyncStack works for branches without worktrees
+// by using the checkout-based fallback.
+func TestSyncStack_NoWorktree(t *testing.T) {
+	repoDir, _, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Set up origin
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+
+	// Create a no-worktree branch: main -> feature-nwt
+	mgr, _ := NewManager(repoDir)
+	_, err := mgr.CreateBranchNoWorktree("feature-nwt", "main", "")
+	if err != nil {
+		t.Fatalf("CreateBranchNoWorktree failed: %v", err)
+	}
+
+	// Add a commit to feature-nwt
+	exec.Command("git", "-C", repoDir, "checkout", "feature-nwt").Run()
+	nwtFile := filepath.Join(repoDir, "nwt.txt")
+	os.WriteFile(nwtFile, []byte("no-worktree content\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Add nwt.txt").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	// Advance main on origin
+	mainFile := filepath.Join(repoDir, "main-update.txt")
+	os.WriteFile(mainFile, []byte("main update\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Update main").Run()
+	exec.Command("git", "-C", repoDir, "push", "origin", "main").Run()
+
+	// Switch to the branch so SyncStack can find the current stack
+	exec.Command("git", "-C", repoDir, "checkout", "feature-nwt").Run()
+
+	// Sync — should rebase feature-nwt via checkout
+	mgr, _ = NewManager(repoDir)
+	results, err := mgr.SyncStack(nil, nil)
+	if err != nil {
+		t.Fatalf("SyncStack error: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("SyncStack returned %d results, want 1", len(results))
+	}
+
+	r := results[0]
+	if r.Branch != "feature-nwt" {
+		t.Errorf("result.Branch = %q, want %q", r.Branch, "feature-nwt")
+	}
+	if !r.Success {
+		t.Errorf("result.Success = false, want true (error: %v)", r.Error)
+	}
+
+	// Verify the branch now has the main update
+	// syncViaCheckout should have returned us to feature-nwt (we were on it)
+	mainUpdatePath := filepath.Join(repoDir, "main-update.txt")
+	exec.Command("git", "-C", repoDir, "checkout", "feature-nwt").Run()
+	if _, err := os.Stat(mainUpdatePath); os.IsNotExist(err) {
+		t.Error("feature-nwt should have main-update.txt after sync")
+	}
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+}
+
+// TestRebaseChildren_NoWorktree verifies that RebaseChildren works when child branches
+// don't have worktrees.
+func TestRebaseChildren_NoWorktree(t *testing.T) {
+	repoDir, _, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Create a stack: main -> parent-nwt -> child-nwt (all no-worktree)
+	mgr, _ := NewManager(repoDir)
+	_, err := mgr.CreateBranchNoWorktree("parent-nwt", "main", "")
+	if err != nil {
+		t.Fatalf("CreateBranchNoWorktree parent-nwt failed: %v", err)
+	}
+
+	// Add a commit to parent-nwt
+	exec.Command("git", "-C", repoDir, "checkout", "parent-nwt").Run()
+	pFile := filepath.Join(repoDir, "parent.txt")
+	os.WriteFile(pFile, []byte("parent content\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Add parent.txt").Run()
+
+	// Create child-nwt from parent-nwt
+	mgr, _ = NewManager(repoDir)
+	_, err = mgr.CreateBranchNoWorktree("child-nwt", "parent-nwt", "")
+	if err != nil {
+		t.Fatalf("CreateBranchNoWorktree child-nwt failed: %v", err)
+	}
+
+	// Add a commit to child-nwt
+	exec.Command("git", "-C", repoDir, "checkout", "child-nwt").Run()
+	cFile := filepath.Join(repoDir, "child.txt")
+	os.WriteFile(cFile, []byte("child content\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Add child.txt").Run()
+
+	// Go back to parent-nwt and add a new commit (simulating amend/rebase)
+	exec.Command("git", "-C", repoDir, "checkout", "parent-nwt").Run()
+	pFile2 := filepath.Join(repoDir, "parent2.txt")
+	os.WriteFile(pFile2, []byte("parent extra content\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Add parent2.txt").Run()
+
+	// RebaseChildren should sync child-nwt onto parent-nwt
+	mgr, _ = NewManager(repoDir)
+	results, err := mgr.RebaseChildren()
+	if err != nil {
+		t.Fatalf("RebaseChildren error: %v", err)
+	}
+
+	if len(results) != 1 {
+		t.Fatalf("RebaseChildren returned %d results, want 1", len(results))
+	}
+
+	r := results[0]
+	if r.Branch != "child-nwt" {
+		t.Errorf("result.Branch = %q, want %q", r.Branch, "child-nwt")
+	}
+	if !r.Success {
+		t.Errorf("result.Success = false, want true (error: %v)", r.Error)
+	}
+
+	// Verify child-nwt now has parent2.txt
+	exec.Command("git", "-C", repoDir, "checkout", "child-nwt").Run()
+	parent2Path := filepath.Join(repoDir, "parent2.txt")
+	if _, err := os.Stat(parent2Path); os.IsNotExist(err) {
+		t.Error("child-nwt should have parent2.txt after rebase")
+	}
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+}
+
+// TestSyncBranch_NoWorktree verifies that SyncBranch works for a specific branch
+// without a worktree.
+func TestSyncBranch_NoWorktree(t *testing.T) {
+	repoDir, _, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Set up origin
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+
+	// Create a no-worktree branch
+	mgr, _ := NewManager(repoDir)
+	_, err := mgr.CreateBranchNoWorktree("sync-nwt", "main", "")
+	if err != nil {
+		t.Fatalf("CreateBranchNoWorktree failed: %v", err)
+	}
+
+	// Add a commit to the branch
+	exec.Command("git", "-C", repoDir, "checkout", "sync-nwt").Run()
+	sFile := filepath.Join(repoDir, "sync-file.txt")
+	os.WriteFile(sFile, []byte("sync content\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Add sync-file.txt").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	// Advance main on origin
+	mainFile := filepath.Join(repoDir, "new-on-main.txt")
+	os.WriteFile(mainFile, []byte("new on main\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "New on main").Run()
+	exec.Command("git", "-C", repoDir, "push", "origin", "main").Run()
+
+	// SyncBranch
+	mgr, _ = NewManager(repoDir)
+	result, err := mgr.SyncBranch("sync-nwt", nil)
+	if err != nil {
+		t.Fatalf("SyncBranch error: %v", err)
+	}
+
+	if !result.Success {
+		t.Errorf("SyncBranch result.Success = false, want true (error: %v)", result.Error)
+	}
+
+	// Verify the branch now has the main update
+	exec.Command("git", "-C", repoDir, "checkout", "sync-nwt").Run()
+	mainUpdatePath := filepath.Join(repoDir, "new-on-main.txt")
+	if _, err := os.Stat(mainUpdatePath); os.IsNotExist(err) {
+		t.Error("sync-nwt should have new-on-main.txt after sync")
+	}
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+}
+
+// TestReparentBranch_NoWorktree verifies that ReparentBranch with doRebase=true works
+// for branches without worktrees.
+func TestReparentBranch_NoWorktree(t *testing.T) {
+	repoDir, _, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Create two branches from main
+	mgr, _ := NewManager(repoDir)
+	_, err := mgr.CreateBranchNoWorktree("branch-a", "main", "")
+	if err != nil {
+		t.Fatalf("CreateBranchNoWorktree branch-a failed: %v", err)
+	}
+
+	exec.Command("git", "-C", repoDir, "checkout", "branch-a").Run()
+	aFile := filepath.Join(repoDir, "a.txt")
+	os.WriteFile(aFile, []byte("branch-a content\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Add a.txt").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	mgr, _ = NewManager(repoDir)
+	_, err = mgr.CreateBranchNoWorktree("branch-b", "main", "new")
+	if err != nil {
+		t.Fatalf("CreateBranchNoWorktree branch-b failed: %v", err)
+	}
+
+	exec.Command("git", "-C", repoDir, "checkout", "branch-b").Run()
+	bFile := filepath.Join(repoDir, "b.txt")
+	os.WriteFile(bFile, []byte("branch-b content\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "Add b.txt").Run()
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	// Reparent branch-b onto branch-a with rebase
+	mgr, _ = NewManager(repoDir)
+	result, err := mgr.ReparentBranch("branch-b", "branch-a", true)
+	if err != nil {
+		t.Fatalf("ReparentBranch error: %v", err)
+	}
+
+	if result.HasConflict {
+		t.Errorf("ReparentBranch had unexpected conflict in: %s", result.ConflictDir)
+	}
+
+	// Verify branch-b now has branch-a's content
+	exec.Command("git", "-C", repoDir, "checkout", "branch-b").Run()
+	aFilePath := filepath.Join(repoDir, "a.txt")
+	if _, err := os.Stat(aFilePath); os.IsNotExist(err) {
+		t.Error("branch-b should have a.txt after reparenting onto branch-a")
+	}
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+}
+
+// TestRebaseChildren_StopsOnRecursiveConflict verifies that when a conflict
+// surfaces deep in the recursion (a grandchild, not a direct child),
+// RebaseChildren stops processing sibling subtrees of the failing branch.
+// Regression for a bug where the outer loop appended childResults but did
+// not check them for HasConflict before continuing to the next sibling.
+func TestRebaseChildren_StopsOnRecursiveConflict(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	_, err := mgr.CreateBranch("parent", "main", filepath.Join(worktreeBaseDir, "parent"), "")
+	if err != nil {
+		t.Fatalf("CreateBranch parent failed: %v", err)
+	}
+	parentPath := filepath.Join(worktreeBaseDir, "parent")
+
+	sharedInParent := filepath.Join(parentPath, "shared.txt")
+	os.WriteFile(sharedInParent, []byte("parent v1\n"), 0644)
+	exec.Command("git", "-C", parentPath, "add", ".").Run()
+	exec.Command("git", "-C", parentPath, "commit", "-m", "parent: add shared.txt").Run()
+
+	mgr, _ = NewManager(repoDir)
+	_, err = mgr.CreateBranch("child-a", "parent", filepath.Join(worktreeBaseDir, "child-a"), "")
+	if err != nil {
+		t.Fatalf("CreateBranch child-a failed: %v", err)
+	}
+	childAPath := filepath.Join(worktreeBaseDir, "child-a")
+	os.WriteFile(filepath.Join(childAPath, "child-a.txt"), []byte("child-a\n"), 0644)
+	exec.Command("git", "-C", childAPath, "add", ".").Run()
+	exec.Command("git", "-C", childAPath, "commit", "-m", "child-a: add file").Run()
+
+	mgr, _ = NewManager(repoDir)
+	_, err = mgr.CreateBranch("grandchild-a", "child-a", filepath.Join(worktreeBaseDir, "grandchild-a"), "")
+	if err != nil {
+		t.Fatalf("CreateBranch grandchild-a failed: %v", err)
+	}
+	gcPath := filepath.Join(worktreeBaseDir, "grandchild-a")
+	os.WriteFile(filepath.Join(gcPath, "shared.txt"), []byte("grandchild rewrite\n"), 0644)
+	exec.Command("git", "-C", gcPath, "add", ".").Run()
+	exec.Command("git", "-C", gcPath, "commit", "-m", "grandchild-a: rewrite shared.txt").Run()
+
+	mgr, _ = NewManager(repoDir)
+	_, err = mgr.CreateBranch("sibling-b", "parent", filepath.Join(worktreeBaseDir, "sibling-b"), "")
+	if err != nil {
+		t.Fatalf("CreateBranch sibling-b failed: %v", err)
+	}
+	sbPath := filepath.Join(worktreeBaseDir, "sibling-b")
+	os.WriteFile(filepath.Join(sbPath, "sibling-b.txt"), []byte("sibling-b\n"), 0644)
+	exec.Command("git", "-C", sbPath, "add", ".").Run()
+	exec.Command("git", "-C", sbPath, "commit", "-m", "sibling-b: add file").Run()
+
+	sbHead, err := exec.Command("git", "-C", sbPath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse sibling-b: %v", err)
+	}
+
+	// Parent bumps shared.txt → conflict with grandchild-a
+	os.WriteFile(sharedInParent, []byte("parent v2\n"), 0644)
+	exec.Command("git", "-C", parentPath, "add", ".").Run()
+	exec.Command("git", "-C", parentPath, "commit", "-m", "parent: bump shared.txt").Run()
+
+	mgr, _ = NewManager(parentPath)
+	results, err := mgr.RebaseChildren()
+	if err != nil {
+		t.Fatalf("RebaseChildren returned error: %v", err)
+	}
+
+	hasConflict := false
+	for _, r := range results {
+		if r.HasConflict || r.Error != nil {
+			hasConflict = true
+		}
+		if r.Branch == "sibling-b" && r.Success {
+			t.Error("sibling-b must not be synced after grandchild-a conflict")
+		}
+	}
+	if !hasConflict {
+		t.Fatalf("expected a conflict to be reported; got results: %+v", results)
+	}
+
+	sbHeadAfter, err := exec.Command("git", "-C", sbPath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse sibling-b after: %v", err)
+	}
+	if string(sbHead) != string(sbHeadAfter) {
+		t.Errorf("sibling-b HEAD changed after a conflict in grandchild subtree:\n  before=%s  after=%s",
+			string(sbHead), string(sbHeadAfter))
+	}
+
+	exec.Command("git", "-C", gcPath, "rebase", "--abort").Run()
+	exec.Command("git", "-C", childAPath, "rebase", "--abort").Run()
+}
+
+// TestSyncStack_PersistsMergedCacheOnConflict verifies that when the walk
+// marks a parent as merged and a later branch conflicts in the non-merged-
+// parent path, the merged-cache update is still persisted. Regression for
+// a bug where saveState was skipped in the non-merged-parent conflict path.
+func TestSyncStack_PersistsMergedCacheOnConflict(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+
+	mgr, _ := NewManager(repoDir)
+	if _, err := mgr.CreateBranch("A", "main", filepath.Join(worktreeBaseDir, "A"), ""); err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	aPath := filepath.Join(worktreeBaseDir, "A")
+	os.WriteFile(filepath.Join(aPath, "a.txt"), []byte("a\n"), 0644)
+	exec.Command("git", "-C", aPath, "add", ".").Run()
+	exec.Command("git", "-C", aPath, "commit", "-m", "A: add a.txt").Run()
+
+	mgr, _ = NewManager(repoDir)
+	if _, err := mgr.CreateBranch("B", "A", filepath.Join(worktreeBaseDir, "B"), ""); err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+	bPath := filepath.Join(worktreeBaseDir, "B")
+	os.WriteFile(filepath.Join(bPath, "b.txt"), []byte("b\n"), 0644)
+	exec.Command("git", "-C", bPath, "add", ".").Run()
+	exec.Command("git", "-C", bPath, "commit", "-m", "B: add b.txt").Run()
+
+	mgr, _ = NewManager(repoDir)
+	if _, err := mgr.CreateBranch("C", "B", filepath.Join(worktreeBaseDir, "C"), ""); err != nil {
+		t.Fatalf("create C: %v", err)
+	}
+	cPath := filepath.Join(worktreeBaseDir, "C")
+	os.WriteFile(filepath.Join(cPath, "shared.txt"), []byte("C version\n"), 0644)
+	exec.Command("git", "-C", cPath, "add", ".").Run()
+	exec.Command("git", "-C", cPath, "commit", "-m", "C: add shared.txt").Run()
+
+	// Fast-forward origin/main to A, then add a conflicting commit on top.
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+	aHead, _ := exec.Command("git", "-C", aPath, "rev-parse", "HEAD").Output()
+	exec.Command("git", "-C", repoDir, "reset", "--hard", string(aHead[:len(aHead)-1])).Run()
+	os.WriteFile(filepath.Join(repoDir, "shared.txt"), []byte("main version\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "main: add shared.txt").Run()
+	exec.Command("git", "-C", repoDir, "push", "origin", "main").Run()
+	exec.Command("git", "-C", repoDir, "fetch", "origin").Run()
+
+	mgr, _ = NewManager(cPath)
+	_, err := mgr.SyncStack(nil, nil)
+	if err != nil {
+		t.Fatalf("SyncStack error: %v", err)
+	}
+
+	// Re-open and check the cache was persisted.
+	freshMgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("reopen manager: %v", err)
+	}
+	bc := freshMgr.stackConfig.Cache.GetBranchCache("A")
+	if bc == nil || !bc.IsMerged {
+		t.Errorf("expected A to be persisted as merged in cache after conflict; got %+v", bc)
+	}
+
+	exec.Command("git", "-C", cPath, "rebase", "--abort").Run()
+}
