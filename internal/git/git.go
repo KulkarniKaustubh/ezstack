@@ -331,21 +331,31 @@ func (g *Git) GetDiffStat(base, head string) (added int, removed int, err error)
 	return added, removed, nil
 }
 
-// IsLocalAheadOfOrigin checks if the local branch has commits not in origin
-// Returns true if local is ahead (needs push), false if in sync or behind
-func (g *Git) IsLocalAheadOfOrigin(branch string) (bool, error) {
-	originBranch := "origin/" + branch
-	// Check if origin branch exists
-	_, err := g.run("rev-parse", "--verify", originBranch)
+// IsLocalAheadOfRemote checks if the local branch has commits not in the remote.
+// If remote is empty, defaults to "origin".
+// Returns true if local is ahead (needs push), false if in sync or behind.
+func (g *Git) IsLocalAheadOfRemote(branch string, remote string) (bool, error) {
+	if remote == "" {
+		remote = "origin"
+	}
+	remoteBranch := remote + "/" + branch
+	// Check if remote branch exists
+	_, err := g.run("rev-parse", "--verify", remoteBranch)
 	if err != nil {
-		// Origin branch doesn't exist - local is ahead (needs first push)
+		// Remote branch doesn't exist - local is ahead (needs first push)
 		return true, nil
 	}
-	ahead, err := g.GetCommitsAhead(branch, originBranch)
+	ahead, err := g.GetCommitsAhead(branch, remoteBranch)
 	if err != nil {
 		return false, err
 	}
 	return ahead > 0, nil
+}
+
+// IsLocalAheadOfOrigin checks if the local branch has commits not in origin.
+// Deprecated: Use IsLocalAheadOfRemote instead.
+func (g *Git) IsLocalAheadOfOrigin(branch string) (bool, error) {
+	return g.IsLocalAheadOfRemote(branch, "origin")
 }
 
 // RemoteBranchExists checks if a remote branch exists
@@ -608,14 +618,57 @@ func (g *Git) GetRemote(name string) (string, error) {
 	return g.run("remote", "get-url", name)
 }
 
-// PushForce force pushes the current branch with lease (safer than --force)
-// Explicitly specifies origin and branch name to handle branches without upstream
-func (g *Git) PushForce() error {
+// FindRemoteByOwner finds a git remote that points to a repo owned by the given GitHub owner.
+// Returns the remote name and URL, or empty strings if not found.
+func (g *Git) FindRemoteByOwner(owner string) (string, string, error) {
+	output, err := g.run("remote", "-v")
+	if err != nil {
+		return "", "", err
+	}
+	lowerOwner := strings.ToLower(owner)
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		remoteName := fields[0]
+		remoteURL := fields[1]
+		// Match owner in SSH (git@github.com:owner/) or HTTPS (github.com/owner/)
+		lowerURL := strings.ToLower(remoteURL)
+		if strings.Contains(lowerURL, ":"+lowerOwner+"/") || strings.Contains(lowerURL, "/"+lowerOwner+"/") {
+			return remoteName, remoteURL, nil
+		}
+	}
+	return "", "", nil
+}
+
+// AddRemote adds a new git remote
+func (g *Git) AddRemote(name, url string) error {
+	_, err := g.run("remote", "add", name, url)
+	return err
+}
+
+// FetchRemote fetches from a specific remote
+func (g *Git) FetchRemote(remote string) error {
+	_, err := g.run("fetch", remote)
+	return err
+}
+
+// PushForce force pushes the current branch with lease (safer than --force).
+// If remote is empty, defaults to "origin".
+func (g *Git) PushForce(remote ...string) error {
+	r := "origin"
+	if len(remote) > 0 && remote[0] != "" {
+		r = remote[0]
+	}
 	branch, err := g.CurrentBranch()
 	if err != nil {
 		return fmt.Errorf("failed to get current branch: %w", err)
 	}
-	return g.RunInteractive("push", "--force-with-lease", "origin", branch)
+	return g.RunInteractive("push", "--force-with-lease", r, branch)
 }
 
 // PruneWorktrees prunes stale worktree metadata from git

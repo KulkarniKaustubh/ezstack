@@ -55,6 +55,7 @@ type RebaseResult struct {
 	WorktreePath string // Path to the worktree (useful for conflict resolution)
 	BehindBy     int    // Number of commits behind (for branches that need sync with origin/main)
 	StackName    string // Display name of the stack this branch belongs to
+	Remote       string // Git remote to push to (empty means "origin")
 }
 
 // SyncInfo contains information about a branch that needs syncing
@@ -404,7 +405,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				continue
 			}
 
-			result := RebaseResult{Branch: branch.Name, WorktreePath: branch.WorktreePath, StackName: stack.DisplayName()}
+			result := RebaseResult{Branch: branch.Name, WorktreePath: branch.WorktreePath, StackName: stack.DisplayName(), Remote: branch.Remote}
 			g := git.New(branch.WorktreePath)
 
 			// Autostash: stash uncommitted changes before rebase
@@ -766,7 +767,7 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 		return nil, fmt.Errorf("branch '%s' has no worktree path configured", branchName)
 	}
 
-	result := &RebaseResult{Branch: branch.Name, WorktreePath: branch.WorktreePath}
+	result := &RebaseResult{Branch: branch.Name, WorktreePath: branch.WorktreePath, Remote: branch.Remote}
 	g := git.New(branch.WorktreePath)
 
 	if branch.Parent == stack.Root {
@@ -951,7 +952,7 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 	children := m.GetChildren(currentBranch.Name)
 
 	for _, child := range children {
-		result := RebaseResult{Branch: child.Name, WorktreePath: child.WorktreePath}
+		result := RebaseResult{Branch: child.Name, WorktreePath: child.WorktreePath, Remote: child.Remote}
 		g := git.New(child.WorktreePath)
 
 		// Count commits in the child branch that are not in the parent
