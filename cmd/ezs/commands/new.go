@@ -602,7 +602,49 @@ func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noC
 		}
 	}
 	if _, regErr := mgr.RegisterExistingBranch(remoteBranch, worktreePath, baseBranch); regErr == nil {
-		mgr.MarkBranchRemote(remoteBranch, prURL)
+		// Detect fork remote for the PR
+		forkRemote := ""
+		if gh != nil && pr != nil {
+			forkInfo, forkErr := gh.GetPRForkInfo(pr.Number)
+			if forkErr == nil && forkInfo.IsFork {
+				if !forkInfo.MaintainerCanModify {
+					ui.Warn(fmt.Sprintf("PR #%d is from a fork (%s) but maintainer push is not allowed — push will be skipped during sync", pr.Number, forkInfo.HeadRepoOwner))
+					forkRemote = config.RemoteNoPush
+				} else {
+					// Check if the current user actually has push access to the fork repo
+					currentUser, userErr := github.GetCurrentUser()
+					canPush := false
+					if userErr == nil {
+						canPush = github.CanPushToRepo(forkInfo.HeadRepoOwner, forkInfo.HeadRepoName, currentUser)
+					}
+					if !canPush {
+						ui.Warn(fmt.Sprintf("PR #%d is from a fork (%s) — you don't have push access to the fork, push will be skipped during sync", pr.Number, forkInfo.HeadRepoOwner))
+						forkRemote = config.RemoteNoPush
+					} else {
+						// Find or add a git remote for the fork owner
+						remoteName, _, _ := g.FindRemoteByOwner(forkInfo.HeadRepoOwner)
+						if remoteName != "" {
+							forkRemote = remoteName
+						} else {
+							// Add a remote for the fork so we can push to it
+							remoteName = forkInfo.HeadRepoOwner
+							forkURL := fmt.Sprintf("https://github.com/%s/%s.git", forkInfo.HeadRepoOwner, forkInfo.HeadRepoName)
+							if addErr := g.AddRemote(remoteName, forkURL); addErr != nil {
+								ui.Warn(fmt.Sprintf("Could not add git remote '%s': %v — push will be skipped during sync", remoteName, addErr))
+								forkRemote = config.RemoteNoPush
+							} else {
+								ui.Info(fmt.Sprintf("Added git remote '%s' for fork (%s)", remoteName, forkURL))
+								forkRemote = remoteName
+								if fetchErr := g.FetchRemote(remoteName); fetchErr != nil {
+									ui.Warn(fmt.Sprintf("Failed to fetch from '%s': %v", remoteName, fetchErr))
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		mgr.MarkBranchRemote(remoteBranch, prURL, forkRemote)
 	}
 
 	// Show PR info and diff stats

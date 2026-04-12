@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
@@ -144,10 +145,20 @@ func commitInternal(args []string, amend bool) error {
 
 	currentBranch, _ := g.CurrentBranch()
 	if currentBranch != "" && g.RemoteBranchExists(currentBranch) {
-		if amend {
+		// Look up the branch's configured remote
+		remote := "origin"
+		if mgr, err := stack.NewReadOnlyManager(cwd); err == nil {
+			if b := mgr.GetBranch(currentBranch); b != nil {
+				remote = b.EffectiveRemote()
+			}
+		}
+
+		if remote == config.RemoteNoPush {
+			// Fork branch where we can't push — skip push prompt
+		} else if amend {
 			// Amend rewrites history — regular push will always fail, so offer force push directly
 			if ui.ConfirmTUIWithDefault("Force push to remote? (amend rewrites history)", true) {
-				if err := g.PushForce(); err != nil {
+				if err := g.PushForce(remote); err != nil {
 					ui.Warn(fmt.Sprintf("Force push failed: %v", err))
 				} else {
 					ui.Success("Pushed to remote")
@@ -155,10 +166,10 @@ func commitInternal(args []string, amend bool) error {
 			}
 		} else {
 			if ui.ConfirmTUIWithDefault("Push to remote?", true) {
-				if err := g.Push(false); err != nil {
+				if err := g.Push(false, remote); err != nil {
 					ui.Warn(fmt.Sprintf("Push failed: %v", err))
 					if ui.ConfirmTUI("Force push?") {
-						if err := g.PushForce(); err != nil {
+						if err := g.PushForce(remote); err != nil {
 							ui.Warn(fmt.Sprintf("Force push failed: %v", err))
 						} else {
 							ui.Success("Pushed to remote")
