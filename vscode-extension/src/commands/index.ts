@@ -807,9 +807,10 @@ export function registerCommands(
         const terminal = vscode.window.createTerminal({
           name: "ezstack: fetch & pull",
           cwd,
+          shellPath: "bash",
+          shellArgs: ["-c", "git fetch && git pull"],
         });
         terminal.show();
-        terminal.sendText("git fetch && git pull");
       },
     ),
   );
