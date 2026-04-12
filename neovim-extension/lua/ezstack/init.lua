@@ -26,21 +26,35 @@ local defaults = {
 M.config = vim.deepcopy(defaults)
 
 ---@type boolean
-local _setup_done = false
+local _setup_done_flag = false
+
+--- Returns true after setup() has been called at least once.
+---@return boolean
+function M._setup_done()
+  return _setup_done_flag
+end
 
 --- Setup ezstack.nvim with user options.
 ---@param opts? table Partial config overrides
 function M.setup(opts)
   M.config = vim.tbl_deep_extend("force", defaults, opts or {})
-  _setup_done = true
+  _setup_done_flag = true
+
+  -- Reset cached binary path in case cli_path changed.
+  pcall(function()
+    require("ezstack.cli")._reset_binary_cache()
+  end)
 
   -- Register highlight groups
   M._setup_highlights()
 
-  -- Register commands
+  -- The :Ezs user command is registered by plugin/ezstack.lua so it is
+  -- available before setup() is called. We still call register() here as
+  -- an idempotent fallback for users who load the plugin via dofile() or
+  -- without the plugin/ directory on rtp.
   require("ezstack.commands").register()
 
-  -- Setup fugitive integration
+  -- Setup fugitive / EzstackChanged auto-refresh integration
   if M.config.auto_refresh then
     require("ezstack.fugitive").setup()
   end
@@ -54,13 +68,6 @@ function M.setup(opts)
       )
     end
   end)
-end
-
---- Auto-setup called from plugin/ezstack.vim if setup() hasn't been called.
-function M.auto_setup()
-  if not _setup_done then
-    M.setup()
-  end
 end
 
 --- Define highlight groups with sensible defaults.
