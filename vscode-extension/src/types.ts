@@ -58,3 +58,32 @@ export interface SyncInfoJSON {
   parent?: string;
   behind_by?: number;
 }
+
+/** Mirrors the Go diffOutputJSON struct from cmd/ezs/commands/diff.go */
+export interface DiffFileJSON {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface DiffOutputJSON {
+  files: DiffFileJSON[];
+  total_files: number;
+  total_additions: number;
+  total_deletions: number;
+}
+
+/** Mirrors the Go logOutputJSON struct from cmd/ezs/commands/log.go */
+export interface CommitJSON {
+  hash: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
+export interface LogOutputJSON {
+  branch: string;
+  parent: string;
+  commits: CommitJSON[];
+  count: number;
+}

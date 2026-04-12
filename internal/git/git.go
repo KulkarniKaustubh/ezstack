@@ -23,6 +23,11 @@ func New(repoDir string) *Git {
 }
 
 // run executes a git command and returns the output
+// RunCapture executes a git command and returns stdout.
+func (g *Git) RunCapture(args ...string) (string, error) {
+	return g.run(args...)
+}
+
 func (g *Git) run(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = g.RepoDir

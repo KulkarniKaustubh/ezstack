@@ -268,10 +268,12 @@ Show diff against parent branch.
 ezs diff [options] [-- git-diff-options]
 
 Options:
-    --stat         Show diffstat only
+    -b, --branch <name>  Show diff for a specific branch (default: current)
+    --stat               Show diffstat only
+    --json               Output file-level diff stats as JSON
 ```
 
-Shows the diff between the current branch and its parent in the stack. Any arguments after `--` are passed directly to `git diff`.
+Shows the diff between a branch and its parent in the stack. Any arguments after `--` are passed directly to `git diff`. Use `--branch` to diff any branch without switching to it. Use `--json` for machine-readable output with per-file additions/deletions.
 
 ---
 
@@ -316,6 +318,22 @@ Options:
 The `--json` flag outputs stack structure to stdout for editor integrations and scripts.
 
 The list view also shows diff stats (+/-) for each branch relative to its parent, giving a quick sense of change size across the stack.
+
+---
+
+### `ezs log`
+
+Show commits in a branch since its parent.
+
+```
+ezs log [options]
+
+Options:
+    -b, --branch <name>  Show log for a specific branch (default: current)
+    --json               Output as JSON
+```
+
+Shows the commits that exist in a branch but not in its parent branch. Use `--branch` to view commits for any branch without switching to it. The `--json` flag outputs structured commit data (hash, message, author, date) for editor integrations.
 
 ---
 
@@ -400,8 +418,9 @@ Push current branch or entire stack to remote.
 ezs push [options]
 
 Options:
-    -s, --stack    Push all branches in the current stack
-    -f, --force    Force push
+    -s, --stack          Push all branches in the current stack
+    -b, --branch <name>  Push a specific branch by name
+    -f, --force          Force push
 ```
 
 ---
@@ -448,8 +467,9 @@ Show status of current stack with PR and CI info. Aliases: `st`
 ezs status [options]
 
 Options:
-    -a, --all     Show all stacks
-    -d, --debug   Show debug output
+    -a, --all              Show all stacks
+    -b, --branch <name>    Show status for a specific branch's stack
+    -d, --debug            Show debug output
 ```
 
 ---
@@ -466,6 +486,7 @@ Options:
     -s, --stack            Sync current stack (auto-detect what needs syncing)
     -a, --all              Sync ALL stacks
     -c, --current          Sync current branch only (auto-detect what it needs)
+    -b, --branch <name>    Sync a specific branch by name (rebase onto parent + cascade to children)
     -p, --parent           Rebase current branch onto its parent
     -C, --children         Rebase child branches onto current branch
     --merge                Use git merge instead of git rebase
