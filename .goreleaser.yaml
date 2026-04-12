@@ -47,12 +47,13 @@ release:
   github:
     owner: KulkarniKaustubh
     name: ezstack
-  draft: false
+  draft: true
   prerelease: auto
   name_template: "v{{.Version}}"
 
 brews:
   - name: ezstack
+    skip_upload: true
     repository:
       owner: KulkarniKaustubh
       name: homebrew-ezstack

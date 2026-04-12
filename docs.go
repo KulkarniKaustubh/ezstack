@@ -1,5 +1,5 @@
-// Package docs provides embedded documentation files for use in agent prompts.
-package docs
+// Package ezstack provides embedded documentation files for use in agent prompts.
+package ezstack
 
 import _ "embed"
 

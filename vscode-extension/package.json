@@ -2,7 +2,7 @@
   "name": "ezstack",
   "displayName": "ezstack",
   "description": "Manage stacked pull requests with git worktrees",
-  "version": "3.2.5",
+  "version": "3.2.6",
   "icon": "resources/icon.png",
   "publisher": "kaustubh",
   "license": "MIT",
@@ -566,18 +566,19 @@
   "scripts": {
     "compile": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
     "watch": "npm run compile -- --watch",
-    "lint": "eslint src --ext ts",
-    "package": "vsce package",
-    "pretest": "npm run compile",
-    "test": "node ./dist/test/runTest.js"
+    "lint": "eslint src --ignore-pattern '**/__mocks__/**'",
+    "test": "vitest run",
+    "package": "vsce package"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
-    "@vscode/test-electron": "^2.3.0",
     "@vscode/vsce": "^2.22.0",
     "esbuild": "^0.19.0",
-    "eslint": "^8.50.0",
-    "typescript": "^5.9.3"
+    "eslint": "^10.2.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.58.1",
+    "vitest": "^4.1.4"
   }
 }
