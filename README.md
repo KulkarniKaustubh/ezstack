@@ -83,13 +83,16 @@ ezs sync -a
 
 ## PR Review
 
-Quickly check out a teammate's branch into its own worktree for review:
+Quickly check out a teammate's branch into its own worktree for review or collaboration:
 
 ```bash
 # Creates a local worktree tracking the remote branch
+# Registers it as a stack (root = PR base branch or main)
+# Shows as (remote) in ezs ls
 ezs new origin/feature-branch
 
 # Shows PR info, review status, and line diff automatically
+# You can work on it, push, sync — all commands work normally
 # When done, clean up with:
 ezs delete feature-branch
 ```

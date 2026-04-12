@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack/docs"
+	"github.com/KulkarniKaustubh/ezstack"
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
@@ -937,8 +937,8 @@ func spawnAgentProcess(agentCmd, workDir, prompt string) error {
 
 // ezsCommandsReference and ezsDocsReference are loaded from embedded documentation files.
 var (
-	ezsCommandsReference = docs.Agents
-	ezsDocsReference     = docs.Documentation
+	ezsCommandsReference = ezstack.Agents
+	ezsDocsReference     = ezstack.Documentation
 )
 
 // defaultWorkBranchPromptTemplate is used when the agent is scoped to a single branch (--branch).
