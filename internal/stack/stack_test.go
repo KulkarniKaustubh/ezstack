@@ -36,7 +36,7 @@ func setupTestEnv(t *testing.T) (repoDir, worktreeBaseDir string, cleanup func()
 	originalHome := os.Getenv("EZSTACK_HOME")
 	os.Setenv("EZSTACK_HOME", configDir)
 
-	exec.Command("git", "-C", repoDir, "init").Run()
+	exec.Command("git", "-C", repoDir, "init", "-b", "main").Run()
 	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
 	exec.Command("git", "-C", repoDir, "config", "user.name", "Test User").Run()
 
@@ -899,7 +899,7 @@ func TestManager_CreateWorktreeOnly_NoWorktreeDir(t *testing.T) {
 	os.Setenv("EZSTACK_HOME", configDir)
 	defer os.Setenv("EZSTACK_HOME", originalHome)
 
-	exec.Command("git", "-C", repoDir, "init").Run()
+	exec.Command("git", "-C", repoDir, "init", "-b", "main").Run()
 	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
 	exec.Command("git", "-C", repoDir, "config", "user.name", "Test User").Run()
 	os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("# Test\n"), 0644)

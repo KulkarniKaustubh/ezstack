@@ -36,7 +36,7 @@ func setupSyncTestEnv(t *testing.T) (repoDir, worktreeBaseDir string, cleanup fu
 	originalHome := os.Getenv("EZSTACK_HOME")
 	os.Setenv("EZSTACK_HOME", configDir)
 
-	exec.Command("git", "-C", repoDir, "init").Run()
+	exec.Command("git", "-C", repoDir, "init", "-b", "main").Run()
 	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
 	exec.Command("git", "-C", repoDir, "config", "user.name", "Test User").Run()
 
@@ -108,7 +108,7 @@ func TestSyncStack_StopsOnConflict(t *testing.T) {
 
 	// Create a bare repo to simulate origin
 	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
-	exec.Command("git", "init", "--bare", bareDir).Run()
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
 	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
 	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
 
@@ -267,7 +267,7 @@ func TestSyncStack_ContinuesWithoutConflict(t *testing.T) {
 
 	// Create bare repo for origin
 	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
-	exec.Command("git", "init", "--bare", bareDir).Run()
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
 	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
 	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
 
@@ -311,7 +311,7 @@ func TestDetectSyncNeeded_NonMainRoot(t *testing.T) {
 
 	// Create bare repo as origin and push both branches
 	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
-	exec.Command("git", "init", "--bare", bareDir).Run()
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
 	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
 	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
 	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "develop").Run()
@@ -381,7 +381,7 @@ func TestDetectSyncNeeded_NonMainRoot_NotBehindMain(t *testing.T) {
 
 	// Create bare repo and push
 	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
-	exec.Command("git", "init", "--bare", bareDir).Run()
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
 	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
 	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
 	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "develop").Run()
@@ -438,7 +438,7 @@ func TestSyncStack_NonMainRoot(t *testing.T) {
 
 	// Set up origin
 	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
-	exec.Command("git", "init", "--bare", bareDir).Run()
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
 	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
 	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
 	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "develop").Run()
@@ -505,7 +505,7 @@ func TestDetectSyncNeededForBranch_StackRoot(t *testing.T) {
 
 	// Set up origin
 	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
-	exec.Command("git", "init", "--bare", bareDir).Run()
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
 	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
 	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
 	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "staging").Run()
