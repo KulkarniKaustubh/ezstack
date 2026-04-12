@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/pflag"
 )
 
-
 // List lists all stacks and branches
 func List(args []string) error {
 	fs := pflag.NewFlagSet("list", pflag.ContinueOnError)

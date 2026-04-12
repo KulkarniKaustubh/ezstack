@@ -718,8 +718,8 @@ type agentContext struct {
 // targetStack must not be nil and must have at least one branch (validated by caller).
 func buildAgentContext(g *git.Git, repoPath string, targetStack *config.Stack, branchName string) *agentContext {
 	ctx := &agentContext{
-		repoPath: repoPath,
-		hasStack: true,
+		repoPath:  repoPath,
+		hasStack:  true,
 		stackJSON: buildStackJSON(targetStack),
 	}
 
@@ -894,8 +894,8 @@ changes in them and add new branches to this stack as needed.
 func buildTemplateVars(ctx *agentContext) map[string]string {
 	vars := map[string]string{
 		"STACK_JSON":    ctx.stackJSON,
-		"BRANCH_NAME":  ctx.branchName,
-		"PARENT_NAME":  ctx.parentName,
+		"BRANCH_NAME":   ctx.branchName,
+		"PARENT_NAME":   ctx.parentName,
 		"WORKTREE_PATH": ctx.worktreePath,
 		"EZS_COMMANDS":  ezsCommandsReference,
 		"EZS_DOCS":      ezsDocsReference,

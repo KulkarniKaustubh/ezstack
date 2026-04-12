@@ -18,7 +18,7 @@ func setupTestRepo(t *testing.T) (string, func()) {
 	}
 
 	// Initialize git repo
-	cmd := exec.Command("git", "init")
+	cmd := exec.Command("git", "init", "-b", "main")
 	cmd.Dir = dir
 	if err := cmd.Run(); err != nil {
 		os.RemoveAll(dir)
