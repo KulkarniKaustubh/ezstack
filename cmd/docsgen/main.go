@@ -54,7 +54,7 @@ func main() {
 		fatal("render markdown: %v", err)
 	}
 
-	htmlBody = defaultCodeLanguage(htmlBody, "bash")
+	htmlBody = highlightCodeBlocks(htmlBody)
 
 	wrapped, toc := wrapSectionsAndBuildTOC(htmlBody)
 
@@ -134,15 +134,200 @@ func preprocessMarkdown(md string) string {
 	return out
 }
 
-// defaultCodeLanguage adds class="language-<lang>" to any <code> directly
-// inside a <pre> that doesn't already declare a language. Goldmark emits a
-// bare <pre><code> for fenced blocks without an info string, but the help-text
-// blocks in DOCUMENTATION.md (command usage, flag listings) read like shell
-// output, so we want highlight.js to apply the bash grammar to them.
-var bareCodeRe = regexp.MustCompile(`<pre><code>`)
+// highlightCodeBlocks finds <pre><code...>...</code></pre> blocks in the
+// rendered markdown HTML and rewrites their inner text into a hand-tokenized
+// form using the c-prompt/c-cmd/c-flag/c-str/c-dim/c-comment span classes that
+// the page CSS already styles. This restores the coloring scheme the
+// pre-docsgen page had, without needing a client-side syntax highlighter
+// (which can't easily reproduce the "command / subcommand / args" convention
+// the docs use, since it isn't actually a real language grammar).
+//
+// The block contents are HTML-escaped by goldmark, so we unescape, tokenize
+// per-line, then re-escape inside the spans.
+var preCodeRe = regexp.MustCompile(`(?s)<pre><code(?:\s+class="[^"]*")?>(.*?)</code></pre>`)
 
-func defaultCodeLanguage(body, lang string) string {
-	return bareCodeRe.ReplaceAllString(body, `<pre><code class="language-`+lang+`">`)
+func highlightCodeBlocks(body string) string {
+	return preCodeRe.ReplaceAllStringFunc(body, func(match string) string {
+		sub := preCodeRe.FindStringSubmatch(match)
+		text := stdhtml.UnescapeString(sub[1])
+		var b strings.Builder
+		b.WriteString("<pre><code>")
+		lines := strings.Split(text, "\n")
+		for i, line := range lines {
+			if i > 0 {
+				b.WriteByte('\n')
+			}
+			b.WriteString(tokenizeShellLine(line))
+		}
+		b.WriteString("</code></pre>")
+		return b.String()
+	})
+}
+
+// tokenizeShellLine produces an HTML span-wrapped version of one line of
+// shell-ish code. The rules are tuned for the help-text and example-command
+// shapes that show up in DOCUMENTATION.md, not for being a real bash parser:
+//
+//   - Leading whitespace is preserved verbatim.
+//   - A line whose first non-space char is `#` is a comment (whole line dim italic).
+//   - A leading `$ ` becomes a dim prompt.
+//   - The first word on the line is the command (green).
+//   - The next word, if it's pure alphabetic, is treated as a subcommand (yellow).
+//   - Subsequent words are arguments (cyan).
+//   - Any word starting with `-` (e.g. `--flag`, `-y,`) is a flag (yellow),
+//     wherever it appears.
+//   - Quoted spans ("..." or '...') are strings (cyan).
+//   - An unquoted `#` mid-line starts an inline comment to end of line.
+//   - After a run of 2+ spaces, the rest of the line is treated as descriptive
+//     help text (dim) — this matches the "  flag         description" layout
+//     used by the help blocks.
+func tokenizeShellLine(line string) string {
+	if line == "" {
+		return ""
+	}
+	var b strings.Builder
+
+	// Preserve leading whitespace.
+	i := 0
+	for i < len(line) && (line[i] == ' ' || line[i] == '\t') {
+		b.WriteByte(line[i])
+		i++
+	}
+	rest := line[i:]
+	if rest == "" {
+		return b.String()
+	}
+
+	// Whole-line comment.
+	if rest[0] == '#' {
+		b.WriteString(`<span class="c-comment">`)
+		b.WriteString(htmlEscape(rest))
+		b.WriteString(`</span>`)
+		return b.String()
+	}
+
+	// Prompt prefix `$ `.
+	if strings.HasPrefix(rest, "$ ") {
+		b.WriteString(`<span class="c-prompt">$</span> `)
+		rest = rest[2:]
+	}
+
+	// State for the cmd / subcmd / arg progression.
+	wordIdx := 0 // 0 = command, 1 = subcommand candidate, 2+ = args
+	j := 0
+	for j < len(rest) {
+		c := rest[j]
+
+		// Inline comment.
+		if c == '#' {
+			b.WriteString(`<span class="c-comment">`)
+			b.WriteString(htmlEscape(rest[j:]))
+			b.WriteString(`</span>`)
+			return b.String()
+		}
+
+		// Whitespace run.
+		if c == ' ' || c == '\t' {
+			k := j
+			for k < len(rest) && (rest[k] == ' ' || rest[k] == '\t') {
+				k++
+			}
+			b.WriteString(rest[j:k])
+			gap := k - j
+			j = k
+			// 2+ spaces → treat the remainder as a dim description, unless
+			// the remainder itself starts with a flag-looking token (so that
+			// e.g. `-y, --yes` still highlights both flags) or a quote.
+			if gap >= 2 && j < len(rest) {
+				next := rest[j]
+				if next != '-' && next != '"' && next != '\'' && next != '#' {
+					b.WriteString(`<span class="c-dim">`)
+					b.WriteString(htmlEscape(rest[j:]))
+					b.WriteString(`</span>`)
+					return b.String()
+				}
+			}
+			continue
+		}
+
+		// Quoted string (single or double).
+		if c == '"' || c == '\'' {
+			quote := c
+			k := j + 1
+			for k < len(rest) {
+				if rest[k] == '\\' && k+1 < len(rest) {
+					k += 2
+					continue
+				}
+				if rest[k] == quote {
+					k++
+					break
+				}
+				k++
+			}
+			b.WriteString(`<span class="c-str">`)
+			b.WriteString(htmlEscape(rest[j:k]))
+			b.WriteString(`</span>`)
+			j = k
+			if wordIdx == 0 {
+				wordIdx = 1
+			}
+			wordIdx++
+			continue
+		}
+
+		// Bare word — read until whitespace or quote.
+		k := j
+		for k < len(rest) {
+			ch := rest[k]
+			if ch == ' ' || ch == '\t' || ch == '"' || ch == '\'' {
+				break
+			}
+			k++
+		}
+		word := rest[j:k]
+		j = k
+
+		switch {
+		case strings.HasPrefix(word, "-"):
+			b.WriteString(`<span class="c-flag">`)
+			b.WriteString(htmlEscape(word))
+			b.WriteString(`</span>`)
+		case wordIdx == 0 && isAlphaWord(word):
+			b.WriteString(`<span class="c-cmd">`)
+			b.WriteString(htmlEscape(word))
+			b.WriteString(`</span>`)
+		case wordIdx == 1 && isAlphaWord(word):
+			b.WriteString(`<span class="c-flag">`)
+			b.WriteString(htmlEscape(word))
+			b.WriteString(`</span>`)
+		case wordIdx >= 1:
+			b.WriteString(`<span class="c-str">`)
+			b.WriteString(htmlEscape(word))
+			b.WriteString(`</span>`)
+		default:
+			b.WriteString(htmlEscape(word))
+		}
+		wordIdx++
+	}
+	return b.String()
+}
+
+// isAlphaWord reports whether w is a non-empty word made entirely of ASCII
+// letters. Used to decide whether a token looks like a command/subcommand
+// (e.g. `brew`, `install`) versus an argument-shaped token (e.g. `<key>`,
+// `[options]`, `(default)`, paths, URLs).
+func isAlphaWord(w string) bool {
+	if w == "" {
+		return false
+	}
+	for i := 0; i < len(w); i++ {
+		c := w[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+			return false
+		}
+	}
+	return true
 }
 
 // section represents one h2 region of the rendered documentation: an id, a
