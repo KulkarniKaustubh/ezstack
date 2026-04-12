@@ -319,9 +319,13 @@ func (g *Git) GetDiffStat(base, head string) (added int, removed int, err error)
 	for _, part := range strings.Split(output, ",") {
 		part = strings.TrimSpace(part)
 		if strings.Contains(part, "insertion") {
-			fmt.Sscanf(part, "%d", &added)
+			if n, parseErr := strconv.Atoi(strings.Fields(part)[0]); parseErr == nil {
+				added = n
+			}
 		} else if strings.Contains(part, "deletion") {
-			fmt.Sscanf(part, "%d", &removed)
+			if n, parseErr := strconv.Atoi(strings.Fields(part)[0]); parseErr == nil {
+				removed = n
+			}
 		}
 	}
 	return added, removed, nil

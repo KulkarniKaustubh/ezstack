@@ -42,28 +42,28 @@ changed+=("VERSION")
 # 2. Go CLI constant
 FILE="$REPO_ROOT/cmd/ezs/main.go"
 if [ -f "$FILE" ]; then
-    sed -i '' "s/const version = \"$OLD_VERSION\"/const version = \"$NEW_VERSION\"/" "$FILE"
+    sed -i.bak "s/const version = \"$OLD_VERSION\"/const version = \"$NEW_VERSION\"/" "$FILE"
     changed+=("cmd/ezs/main.go")
 fi
 
 # 3. VS Code extension package.json
 FILE="$REPO_ROOT/vscode-extension/package.json"
 if [ -f "$FILE" ]; then
-    sed -i '' "s/\"version\": \"$OLD_VERSION\"/\"version\": \"$NEW_VERSION\"/" "$FILE"
+    sed -i.bak "s/\"version\": \"$OLD_VERSION\"/\"version\": \"$NEW_VERSION\"/" "$FILE"
     changed+=("vscode-extension/package.json")
 fi
 
 # 4. VS Code extension package-lock.json
 FILE="$REPO_ROOT/vscode-extension/package-lock.json"
 if [ -f "$FILE" ]; then
-    sed -i '' "s/\"version\": \"$OLD_VERSION\"/\"version\": \"$NEW_VERSION\"/g" "$FILE"
+    sed -i.bak "s/\"version\": \"$OLD_VERSION\"/\"version\": \"$NEW_VERSION\"/g" "$FILE"
     changed+=("vscode-extension/package-lock.json")
 fi
 
 # 5. VS Code extension README
 FILE="$REPO_ROOT/vscode-extension/README.md"
 if [ -f "$FILE" ]; then
-    sed -i '' "s/ezstack-$OLD_VERSION\.vsix/ezstack-$NEW_VERSION.vsix/g" "$FILE"
+    sed -i.bak "s/ezstack-$OLD_VERSION\.vsix/ezstack-$NEW_VERSION.vsix/g" "$FILE"
     changed+=("vscode-extension/README.md")
 fi
 
@@ -71,10 +71,13 @@ fi
 for doc in docs/index.html docs/vscode.html docs/agent.html; do
     FILE="$REPO_ROOT/$doc"
     if [ -f "$FILE" ]; then
-        sed -i '' "s/$OLD_VERSION/$NEW_VERSION/g" "$FILE"
+        sed -i.bak "s/$OLD_VERSION/$NEW_VERSION/g" "$FILE"
         changed+=("$doc")
     fi
 done
+
+# Clean up .bak files left by sed -i.bak
+find "$REPO_ROOT" -name "*.bak" -not -path "*/node_modules/*" -delete 2>/dev/null || true
 
 echo "Updated ${#changed[@]} files:"
 for f in "${changed[@]}"; do

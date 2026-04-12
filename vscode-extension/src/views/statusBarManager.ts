@@ -16,7 +16,7 @@ export class StatusBarManager {
     this.item.tooltip = "ezstack: Click to navigate branches";
     this.disposables.push(this.item);
     this.disposables.push(
-      vscode.window.onDidChangeActiveTextEditor(() => this.update()),
+      vscode.window.onDidChangeActiveTextEditor(() => void this.update()),
     );
   }
 
