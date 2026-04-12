@@ -599,6 +599,7 @@
         <li><a href="#ezs-down-ezs-up" class="toc-h3">ezs down / ezs up</a></li>
         <li><a href="#ezs-goto" class="toc-h3">ezs goto</a></li>
         <li><a href="#ezs-list" class="toc-h3">ezs list</a></li>
+        <li><a href="#ezs-log" class="toc-h3">ezs log</a></li>
         <li><a href="#ezs-new" class="toc-h3">ezs new</a></li>
         <li><a href="#ezs-pr" class="toc-h3">ezs pr</a></li>
         <li><a href="#ezs-push" class="toc-h3">ezs push</a></li>
@@ -825,8 +826,10 @@
         <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">diff</span> [options] [-- git-diff-options]
 
 <span class="c-dim">Options:</span>
-    <span class="c-flag">--stat</span>         <span class="c-dim">Show diffstat only</span></code></pre>
-        <p>Shows the diff between the current branch and its parent in the stack. Any arguments after <code>--</code> are passed directly to <code>git diff</code>.</p>
+    <span class="c-flag">-b, --branch &lt;name&gt;</span>  <span class="c-dim">Show diff for a specific branch (default: current)</span>
+    <span class="c-flag">--stat</span>               <span class="c-dim">Show diffstat only</span>
+    <span class="c-flag">--json</span>               <span class="c-dim">Output file-level diff stats as JSON</span></code></pre>
+        <p>Shows the diff between a branch and its parent in the stack. Any arguments after <code>--</code> are passed directly to <code>git diff</code>. Use <code>--branch</code> to diff any branch without switching to it. Use <code>--json</code> for machine-readable output with per-file additions/deletions.</p>
 
         <hr>
 
@@ -858,6 +861,18 @@
     <span class="c-flag">-d, --debug</span>   <span class="c-dim">Show debug output</span></code></pre>
         <p>The <code>--json</code> flag outputs stack structure to stdout for editor integrations and scripts.</p>
         <p>The list view also shows diff stats (+/-) for each branch relative to its parent, giving a quick sense of change size across the stack.</p>
+
+        <hr>
+
+        <!-- ezs log -->
+        <h3 id="ezs-log"><code>ezs log</code></h3>
+        <p>Show commits in a branch since its parent.</p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">log</span> [options]
+
+<span class="c-dim">Options:</span>
+    <span class="c-flag">-b, --branch &lt;name&gt;</span>  <span class="c-dim">Show log for a specific branch (default: current)</span>
+    <span class="c-flag">--json</span>               <span class="c-dim">Output as JSON</span></code></pre>
+        <p>Shows the commits that exist in a branch but not in its parent branch. Use <code>--branch</code> to view commits for any branch without switching to it. The <code>--json</code> flag outputs structured commit data (hash, message, author, date) for editor integrations.</p>
 
         <hr>
 
@@ -919,8 +934,9 @@
         <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">push</span> [options]
 
 <span class="c-dim">Options:</span>
-    <span class="c-flag">-s, --stack</span>    <span class="c-dim">Push all branches in the current stack</span>
-    <span class="c-flag">-f, --force</span>    <span class="c-dim">Force push</span></code></pre>
+    <span class="c-flag">-s, --stack</span>          <span class="c-dim">Push all branches in the current stack</span>
+    <span class="c-flag">-b, --branch &lt;name&gt;</span>  <span class="c-dim">Push a specific branch by name</span>
+    <span class="c-flag">-f, --force</span>          <span class="c-dim">Force push</span></code></pre>
 
         <hr>
 
@@ -957,8 +973,9 @@
         <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">status</span> [options]
 
 <span class="c-dim">Options:</span>
-    <span class="c-flag">-a, --all</span>     <span class="c-dim">Show all stacks</span>
-    <span class="c-flag">-d, --debug</span>   <span class="c-dim">Show debug output</span></code></pre>
+    <span class="c-flag">-a, --all</span>              <span class="c-dim">Show all stacks</span>
+    <span class="c-flag">-b, --branch &lt;name&gt;</span>    <span class="c-dim">Show status for a specific branch's stack</span>
+    <span class="c-flag">-d, --debug</span>            <span class="c-dim">Show debug output</span></code></pre>
 
         <hr>
 
@@ -972,6 +989,7 @@
     <span class="c-flag">-s, --stack</span>            <span class="c-dim">Sync current stack (auto-detect what needs syncing)</span>
     <span class="c-flag">-a, --all</span>              <span class="c-dim">Sync ALL stacks</span>
     <span class="c-flag">-c, --current</span>          <span class="c-dim">Sync current branch only (auto-detect what it needs)</span>
+    <span class="c-flag">-b, --branch &lt;name&gt;</span>    <span class="c-dim">Sync a specific branch by name (rebase onto parent + cascade to children)</span>
     <span class="c-flag">-p, --parent</span>           <span class="c-dim">Rebase current branch onto its parent</span>
     <span class="c-flag">-C, --children</span>         <span class="c-dim">Rebase child branches onto current branch</span>
     <span class="c-flag">--merge</span>                <span class="c-dim">Use git merge instead of git rebase</span>
@@ -1080,7 +1098,7 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License · v3.2.6</span>
+          <span class="footer-meta">MIT License · v3.2.7</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
