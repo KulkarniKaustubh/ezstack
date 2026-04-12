@@ -552,6 +552,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					result.HasConflict = true
 					result.Error = fmt.Errorf("%s", conflictMsg())
 					results = append(results, result)
+					saveState(sc)
 					if !allStacks {
 						return results, nil
 					}
@@ -561,6 +562,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					popStash()
 					result.Error = syncResult.Error
 					results = append(results, result)
+					saveState(sc)
 					if !allStacks {
 						return results, nil
 					}
@@ -757,6 +759,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					result.HasConflict = true
 					result.Error = fmt.Errorf("%s", conflictMsg())
 					results = append(results, result)
+					saveState(sc)
 					if !allStacks {
 						return results, nil
 					}
@@ -766,6 +769,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					popStash()
 					result.Error = syncResult.Error
 					results = append(results, result)
+					saveState(sc)
 					if !allStacks {
 						return results, nil
 					}
@@ -793,6 +797,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				result.HasConflict = true
 				result.Error = fmt.Errorf("%s", conflictMsg())
 				results = append(results, result)
+				saveState(sc)
 				if !allStacks {
 					return results, nil
 				}
@@ -802,6 +807,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				popStash()
 				result.Error = syncResult.Error
 				results = append(results, result)
+				saveState(sc)
 				if !allStacks {
 					return results, nil
 				}
@@ -1138,30 +1144,69 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 		}
 
 		// Recursively sync this child's children
+		var childResults []RebaseResult
 		if child.WorktreePath != "" {
 			childMgr, err := NewManager(child.WorktreePath)
 			if err != nil {
-				continue
+				result := RebaseResult{
+					Branch:       child.Name,
+					WorktreePath: child.WorktreePath,
+					Remote:       child.Remote,
+					Error:        fmt.Errorf("failed to open manager for %s: %w", child.WorktreePath, err),
+				}
+				results = append(results, result)
+				return results, nil
 			}
-			childResults, err := childMgr.RebaseChildren(merge)
+			cr, err := childMgr.RebaseChildren(merge)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "  Warning: failed to sync children of %s: %v\n", child.Name, err)
 			}
-			results = append(results, childResults...)
+			childResults = cr
 		} else {
 			// For non-worktree children, checkout the child branch so
 			// GetCurrentStack() sees it, then recurse, then checkout back.
-			origBranch, _ := m.git.CurrentBranch()
-			if err := m.git.CheckoutBranch(child.Name); err == nil {
-				childMgr, err := NewManager(m.repoDir)
-				if err == nil {
-					childResults, err := childMgr.RebaseChildren(merge)
-					if err != nil {
-						fmt.Fprintf(os.Stderr, "  Warning: failed to sync children of %s: %v\n", child.Name, err)
-					}
-					results = append(results, childResults...)
+			origBranch, err := m.git.CurrentBranch()
+			if err != nil {
+				result := RebaseResult{
+					Branch: child.Name,
+					Error:  fmt.Errorf("failed to get current branch before recursing into %s: %w", child.Name, err),
 				}
+				results = append(results, result)
+				return results, nil
+			}
+			if err := m.git.CheckoutBranch(child.Name); err != nil {
+				result := RebaseResult{
+					Branch: child.Name,
+					Error:  fmt.Errorf("failed to checkout %s for recursive sync: %w", child.Name, err),
+				}
+				results = append(results, result)
+				return results, nil
+			}
+			childMgr, err := NewManager(m.repoDir)
+			if err != nil {
 				_ = m.git.CheckoutBranch(origBranch)
+				result := RebaseResult{
+					Branch: child.Name,
+					Error:  fmt.Errorf("failed to open manager after checkout of %s: %w", child.Name, err),
+				}
+				results = append(results, result)
+				return results, nil
+			}
+			cr, rerr := childMgr.RebaseChildren(merge)
+			if rerr != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to sync children of %s: %v\n", child.Name, rerr)
+			}
+			childResults = cr
+			if err := m.git.CheckoutBranch(origBranch); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: synced children of %s but failed to switch back to %s: %v\n", child.Name, origBranch, err)
+			}
+		}
+		results = append(results, childResults...)
+		// If any recursive result hit a conflict or error, stop so the user
+		// can resolve before syncing further siblings.
+		for _, cr := range childResults {
+			if cr.HasConflict || cr.Error != nil {
+				return results, nil
 			}
 		}
 	}
