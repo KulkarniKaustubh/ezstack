@@ -104,10 +104,10 @@ type diffFileJSON struct {
 }
 
 type diffOutputJSON struct {
-	Files         []diffFileJSON `json:"files"`
-	TotalFiles    int            `json:"total_files"`
-	TotalAdded    int            `json:"total_additions"`
-	TotalDeleted  int            `json:"total_deletions"`
+	Files        []diffFileJSON `json:"files"`
+	TotalFiles   int            `json:"total_files"`
+	TotalAdded   int            `json:"total_additions"`
+	TotalDeleted int            `json:"total_deletions"`
 }
 
 func diffJSON(g *git.Git, parentRef, branchName string) error {
