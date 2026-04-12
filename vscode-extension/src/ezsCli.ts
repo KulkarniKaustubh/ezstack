@@ -145,10 +145,10 @@ export class EzsCli {
     const terminal = vscode.window.createTerminal({
       name: `ezstack: ${args[0]}`,
       cwd: this.workspaceRoot,
+      shellPath: this.cliPath,
+      shellArgs: args,
     });
     terminal.show();
-    const quoted = [this.cliPath, ...args].map(EzsCli.shellQuote);
-    terminal.sendText(quoted.join(" "));
     return terminal;
   }
 
