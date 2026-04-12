@@ -668,6 +668,11 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 				statusInfo = getStatusIcons(branch, statusMap)
 			}
 
+			remoteTag := ""
+			if branch.IsRemote {
+				remoteTag = " " + Gray + "(remote)" + Reset
+			}
+
 			if shouldStrike {
 				prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
 				diffWithStrike := ""
@@ -678,13 +683,13 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 				if statusInfo != "" {
 					statusWithStrike = strings.ReplaceAll(statusInfo, Reset, Reset+Strikethrough)
 				}
-				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s  %s%s%s%s\n",
+				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s  %s%s%s%s\n",
 					pointer, color, prefix, connector, Strikethrough+Bold, name, Reset+Strikethrough,
-					prWithStrike, diffWithStrike, statusWithStrike, Reset)
+					remoteTag, prWithStrike, diffWithStrike, statusWithStrike, Reset)
 			} else {
-				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s  %s%s%s%s\n",
+				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s  %s%s%s%s\n",
 					pointer, color, prefix, connector, Bold, name, Reset,
-					prFormatted, diffInfo, statusInfo, Reset)
+					remoteTag, prFormatted, diffInfo, statusInfo, Reset)
 			}
 
 			if children, ok := childrenMap[branch.Name]; ok {

@@ -1,0 +1,1672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Documentation - ezstack</title>
+  <meta name="description" content="Comprehensive documentation for ezstack — the CLI tool for managing stacked pull requests with worktrees.">
+  <meta name="theme-color" content="#09090b">
+  <link rel="canonical" href="https://kulkarnikaustubh.github.io/ezstack/documentation.html">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Documentation - ezstack">
+  <meta property="og:description" content="Comprehensive documentation for ezstack — the CLI tool for managing stacked pull requests with worktrees.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://kulkarnikaustubh.github.io/ezstack/documentation.html">
+
+  <!-- Favicon -->
+  <link rel="icon" href="img/favicon.png" type="image/png">
+  <link rel="icon" href="img/favicon.svg" type="image/svg+xml">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/style.css">
+
+  <style>
+    /* Override global overflow-x:hidden which breaks position:sticky */
+    html, body {
+      overflow-x: clip;
+    }
+
+    /* Docs page layout */
+    .docs-search {
+      position: sticky;
+      top: 60px;
+      z-index: 90;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 0;
+    }
+    .docs-search-inner {
+      max-width: var(--container);
+      margin: 0 auto;
+      padding: 0 2rem;
+      position: relative;
+    }
+    .docs-search-icon {
+      position: absolute;
+      left: 2.75rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-dim);
+      pointer-events: none;
+    }
+    .docs-search-input {
+      width: 100%;
+      padding: 0.75rem 2.5rem 0.75rem 2.75rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-family: var(--font-mono);
+      font-size: 0.875rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .docs-search-input::placeholder {
+      color: var(--text-dim);
+    }
+    .docs-search-input:focus {
+      border-color: var(--accent);
+    }
+    .docs-search-clear {
+      position: absolute;
+      right: 2.75rem;
+      top: 50%;
+      transform: translateY(-50%);
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 0.25rem;
+      display: none;
+      line-height: 1;
+    }
+    .docs-search-clear.visible {
+      display: block;
+    }
+    .docs-search-clear:hover {
+      color: var(--text);
+    }
+    .docs-search-shortcut {
+      position: absolute;
+      right: 2.75rem;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      font-size: 0.7rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.15rem 0.4rem;
+      pointer-events: none;
+    }
+    .docs-search-input:focus ~ .docs-search-shortcut,
+    .docs-search-clear.visible ~ .docs-search-shortcut {
+      display: none;
+    }
+
+    /* Layout */
+    .docs-layout {
+      max-width: var(--container);
+      margin: 0 auto;
+      padding: 2rem;
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 3rem;
+      align-items: start;
+    }
+
+    /* Sidebar */
+    .docs-sidebar {
+      position: sticky;
+      top: 120px;
+      max-height: calc(100vh - 140px);
+      overflow-y: auto;
+      padding-right: 1rem;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    .docs-sidebar::-webkit-scrollbar {
+      width: 4px;
+    }
+    .docs-sidebar::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    .docs-sidebar::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 2px;
+    }
+    .docs-sidebar-title {
+      font-size: 0.7rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+      margin-bottom: 0.75rem;
+    }
+    .docs-toc {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .docs-toc li {
+      margin: 0;
+    }
+    .docs-toc a {
+      display: block;
+      padding: 0.35rem 0.75rem;
+      font-size: 0.8rem;
+      color: var(--text-secondary);
+      text-decoration: none;
+      border-left: 2px solid transparent;
+      transition: color 0.2s, border-color 0.2s;
+    }
+    .docs-toc a:hover {
+      color: var(--text);
+    }
+    .docs-toc a.active {
+      color: var(--accent);
+      border-left-color: var(--accent);
+    }
+    .docs-toc a.toc-h3 {
+      padding-left: 1.5rem;
+      font-size: 0.75rem;
+    }
+
+    /* Content */
+    .docs-content {
+      min-width: 0;
+    }
+    .docs-section {
+      margin-bottom: 3rem;
+      padding-bottom: 3rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .docs-section:last-child {
+      border-bottom: none;
+    }
+    .docs-section.hidden {
+      display: none;
+    }
+    .docs-subsection.hidden {
+      display: none;
+    }
+    .docs-section[id] {
+      scroll-margin-top: 140px;
+    }
+    .docs-content h3[id] {
+      scroll-margin-top: 140px;
+    }
+
+    /* Prose typography */
+    .docs-content h2 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--text);
+      margin: 0 0 1rem 0;
+      padding-top: 1rem;
+    }
+    .docs-content h3 {
+      font-size: 1.25rem;
+      font-weight: 600;
+      color: var(--text);
+      margin: 2rem 0 0.75rem 0;
+    }
+    .docs-content h4 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text);
+      margin: 1.5rem 0 0.5rem 0;
+    }
+    .docs-content p {
+      color: var(--text-secondary);
+      line-height: 1.7;
+      margin: 0 0 1rem 0;
+    }
+    .docs-content strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+    .docs-content em {
+      font-style: italic;
+    }
+    .docs-content a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .docs-content a:hover {
+      text-decoration: underline;
+    }
+    .docs-content ul, .docs-content ol {
+      color: var(--text-secondary);
+      line-height: 1.7;
+      margin: 0 0 1rem 0;
+      padding-left: 1.5rem;
+    }
+    .docs-content li {
+      margin-bottom: 0.35rem;
+    }
+    .docs-content li code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.1rem 0.4rem;
+      font-family: var(--font-mono);
+      font-size: 0.8em;
+      color: var(--cyan);
+    }
+    .docs-content p code,
+    .docs-content td code {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 0.1rem 0.4rem;
+      font-family: var(--font-mono);
+      font-size: 0.8em;
+      color: var(--cyan);
+    }
+    .docs-content hr {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 2rem 0;
+    }
+
+    /* Code blocks */
+    .docs-content pre {
+      background: var(--terminal-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 1rem 1.25rem;
+      overflow-x: auto;
+      margin: 0 0 1rem 0;
+    }
+    .docs-content pre code {
+      font-family: var(--font-mono);
+      font-size: 0.8rem;
+      line-height: 1.6;
+      color: var(--text-secondary);
+    }
+    .c-prompt { color: var(--text-dim); }
+    .c-cmd { color: var(--green); }
+    .c-flag { color: var(--yellow); }
+    .c-str { color: var(--cyan); }
+    .c-dim { color: var(--text-dim); }
+    .c-comment { color: var(--text-dim); font-style: italic; }
+
+    /* Tables */
+    .docs-content table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 0 0 1rem 0;
+      font-size: 0.85rem;
+    }
+    .docs-content th {
+      text-align: left;
+      padding: 0.6rem 0.75rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-weight: 600;
+    }
+    .docs-content td {
+      padding: 0.6rem 0.75rem;
+      border: 1px solid var(--border);
+      color: var(--text-secondary);
+    }
+
+    /* Search highlight */
+    mark.search-highlight {
+      background: rgba(234, 179, 8, 0.25);
+      color: inherit;
+      border-radius: 2px;
+      padding: 0 1px;
+      scroll-margin-top: 180px;
+    }
+    mark.search-highlight.current {
+      background: rgba(234, 179, 8, 0.7);
+      outline: 2px solid rgba(234, 179, 8, 0.9);
+      outline-offset: 1px;
+    }
+
+    /* Search results dropdown */
+    .docs-search-dropdown {
+      display: none;
+      position: absolute;
+      top: calc(100% + 0.5rem);
+      left: 2rem;
+      right: 2rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: 0 8px 30px rgba(0,0,0,0.4);
+      max-height: 420px;
+      overflow-y: auto;
+      z-index: 100;
+      scrollbar-width: thin;
+      scrollbar-color: var(--border) transparent;
+    }
+    .docs-search-dropdown.visible {
+      display: block;
+    }
+    .docs-search-dropdown-header {
+      padding: 0.5rem 0.75rem;
+      font-size: 0.65rem;
+      font-family: var(--font-mono);
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+    }
+    .docs-search-dropdown-item {
+      display: block;
+      padding: 0.6rem 0.75rem;
+      cursor: pointer;
+      border-bottom: 1px solid var(--border);
+      transition: background 0.1s;
+      text-decoration: none;
+    }
+    .docs-search-dropdown-item:last-child {
+      border-bottom: none;
+    }
+    .docs-search-dropdown-item:hover,
+    .docs-search-dropdown-item.active {
+      background: rgba(59, 130, 246, 0.1);
+    }
+    .docs-search-dropdown-item.active {
+      outline: none;
+    }
+    .docs-search-dropdown-title {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text);
+      margin-bottom: 0.2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+    .docs-search-dropdown-title .search-section-tag {
+      font-size: 0.6rem;
+      font-weight: 500;
+      color: var(--text-dim);
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0.05rem 0.35rem;
+      font-family: var(--font-mono);
+      flex-shrink: 0;
+    }
+    .docs-search-dropdown-snippet {
+      font-size: 0.75rem;
+      color: var(--text-secondary);
+      line-height: 1.5;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .docs-search-dropdown-snippet mark {
+      background: rgba(234, 179, 8, 0.3);
+      color: inherit;
+      border-radius: 2px;
+      padding: 0 1px;
+    }
+    .docs-search-dropdown-empty {
+      padding: 2rem 0.75rem;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 0.8rem;
+    }
+    .docs-search-dropdown-hint {
+      padding: 0.4rem 0.75rem;
+      font-size: 0.6rem;
+      font-family: var(--font-mono);
+      color: var(--text-dim);
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 1rem;
+    }
+    .docs-search-dropdown-hint kbd {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 0 0.3rem;
+      font-size: 0.6rem;
+      margin-right: 0.2rem;
+    }
+
+    /* TOC filtering during search */
+    .docs-toc a.search-dimmed {
+      opacity: 0.3;
+    }
+    .docs-toc a.search-match {
+      color: var(--accent);
+    }
+
+    /* No results */
+    .docs-no-results {
+      display: none;
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--text-dim);
+      font-size: 0.9rem;
+    }
+    .docs-no-results.visible {
+      display: block;
+    }
+
+    /* Mobile sidebar toggle */
+    .docs-sidebar-toggle {
+      display: none;
+      position: fixed;
+      bottom: 1.5rem;
+      right: 1.5rem;
+      z-index: 100;
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: none;
+      color: white;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Mobile */
+    @media (max-width: 768px) {
+      .docs-layout {
+        grid-template-columns: 1fr;
+        gap: 0;
+        padding: 1rem;
+      }
+      .docs-sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 280px;
+        height: 100vh;
+        max-height: 100vh;
+        background: var(--bg);
+        border-right: 1px solid var(--border);
+        z-index: 200;
+        padding: 5rem 1.5rem 2rem 1.5rem;
+        transform: translateX(-100%);
+        transition: transform 0.3s ease;
+      }
+      .docs-sidebar.open {
+        transform: translateX(0);
+      }
+      .docs-sidebar-toggle {
+        display: flex;
+      }
+      .docs-sidebar-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        z-index: 199;
+      }
+      .docs-sidebar-overlay.open {
+        display: block;
+      }
+      .docs-search-inner {
+        padding: 0 1rem;
+      }
+      .docs-search-dropdown {
+        left: 1rem;
+        right: 1rem;
+        max-height: 60vh;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-brand"><img src="img/logo.png" alt="ezstack" width="24" height="24" class="nav-logo">ezstack</a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="nav-links" id="nav-links">
+        <a href="index.html#features">Features</a>
+        <a href="documentation.html" class="active">Docs</a>
+        <div class="nav-dropdown">
+          <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
+          <div class="nav-dropdown-menu">
+            <a href="agent.html">AI Agent</a>
+            <a href="vscode.html">VS Code Extension</a>
+            <a href="index.html#ecosystem">Desktop App</a>
+            <a href="index.html#ecosystem">Neovim Plugin</a>
+          </div>
+        </div>
+        <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener" class="nav-github">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="agent-hero" id="hero">
+    <div class="hero-glow"></div>
+    <div class="container">
+      <div class="hero-content">
+        <a href="index.html" class="back-link">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+          Back to ezstack
+        </a>
+        <h1>Documentation</h1>
+        <p class="hero-sub">Comprehensive guide to using ezstack for managing stacked pull requests.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Search -->
+  <div class="docs-search" id="docs-search">
+    <div class="docs-search-inner">
+      <svg class="docs-search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <input type="text" class="docs-search-input" id="docs-search-input" placeholder="Search documentation..." autocomplete="off">
+      <button class="docs-search-clear" id="docs-search-clear" aria-label="Clear search">&times;</button>
+      <span class="docs-search-shortcut" id="docs-search-shortcut">/</span>
+      <div class="docs-search-dropdown" id="docs-search-dropdown"></div>
+    </div>
+  </div>
+
+  <!-- Main Layout -->
+  <div class="docs-layout">
+    <!-- Sidebar -->
+    <aside class="docs-sidebar" id="docs-sidebar">
+      <div class="docs-sidebar-title">On this page</div>
+      <ul class="docs-toc" id="docs-toc">
+        <li><a href="#overview">Overview</a></li>
+        <li><a href="#installation">Installation</a></li>
+        <li><a href="#configuration">Configuration</a></li>
+        <li><a href="#commands">Commands</a></li>
+        <li><a href="#ezs-agent" class="toc-h3">ezs agent</a></li>
+        <li><a href="#ezs-commit-ezs-amend" class="toc-h3">ezs commit / ezs amend</a></li>
+        <li><a href="#ezs-config" class="toc-h3">ezs config</a></li>
+        <li><a href="#ezs-delete" class="toc-h3">ezs delete</a></li>
+        <li><a href="#ezs-diff" class="toc-h3">ezs diff</a></li>
+        <li><a href="#ezs-down-ezs-up" class="toc-h3">ezs down / ezs up</a></li>
+        <li><a href="#ezs-goto" class="toc-h3">ezs goto</a></li>
+        <li><a href="#ezs-list" class="toc-h3">ezs list</a></li>
+        <li><a href="#ezs-new" class="toc-h3">ezs new</a></li>
+        <li><a href="#ezs-pr" class="toc-h3">ezs pr</a></li>
+        <li><a href="#ezs-push" class="toc-h3">ezs push</a></li>
+        <li><a href="#ezs-reparent" class="toc-h3">ezs reparent</a></li>
+        <li><a href="#ezs-stack" class="toc-h3">ezs stack</a></li>
+        <li><a href="#ezs-status" class="toc-h3">ezs status</a></li>
+        <li><a href="#ezs-sync" class="toc-h3">ezs sync</a></li>
+        <li><a href="#ezs-unstack" class="toc-h3">ezs unstack</a></li>
+        <li><a href="#manual-git-operations">Manual Git Operations</a></li>
+        <li><a href="#workflows">Workflows</a></li>
+        <li><a href="#creating-a-stacked-pr" class="toc-h3">Creating a Stacked PR</a></li>
+        <li><a href="#after-parent-is-merged" class="toc-h3">After Parent is Merged</a></li>
+        <li><a href="#navigating-the-stack" class="toc-h3">Navigating the Stack</a></li>
+        <li><a href="#reviewing-a-remote-pr" class="toc-h3">Reviewing a Remote PR</a></li>
+        <li><a href="#stacking-on-a-remote-pr" class="toc-h3">Stacking on a Remote PR</a></li>
+      </ul>
+    </aside>
+
+    <!-- Content -->
+    <main class="docs-content" id="docs-content">
+
+      <!-- Overview -->
+      <section class="docs-section" id="overview" data-heading="Overview">
+        <h2>Overview</h2>
+        <p>ezstack is a CLI tool for managing stacked pull requests. It supports two workflow modes:</p>
+        <ul>
+          <li><strong>Worktree mode (default):</strong> Each branch lives in its own git worktree, allowing parallel work across the stack</li>
+          <li><strong>Checkout mode:</strong> Branches use standard <code>git checkout</code>, keeping a single working directory</li>
+        </ul>
+        <p><strong>Key Concepts</strong></p>
+        <ul>
+          <li><strong>Stack</strong> — A chain of branches where each branch builds on its parent</li>
+          <li><strong>Worktree</strong> — A separate working directory for each branch (optional)</li>
+          <li><strong>Sync</strong> — Rebase branches when parents are merged or updated</li>
+          <li><strong>Auto-restack</strong> — <code>ezs commit</code> and <code>ezs amend</code> automatically rebase children</li>
+        </ul>
+      </section>
+
+      <!-- Installation -->
+      <section class="docs-section" id="installation" data-heading="Installation">
+        <h2>Installation</h2>
+        <p><strong>Prerequisites</strong></p>
+        <ul>
+          <li>Go 1.25+</li>
+          <li>Git 2.20+</li>
+          <li><a href="https://github.com/junegunn/fzf" target="_blank" rel="noopener">fzf</a> — interactive selection</li>
+          <li><a href="https://cli.github.com/" target="_blank" rel="noopener">GitHub CLI</a> (<code>gh</code>) — PR operations</li>
+        </ul>
+        <p><strong>Homebrew (macOS/Linux)</strong></p>
+        <pre><code><span class="c-prompt">$</span> <span class="c-cmd">brew</span> <span class="c-flag">tap</span> <span class="c-str">KulkarniKaustubh/ezstack</span>
+<span class="c-prompt">$</span> <span class="c-cmd">brew</span> <span class="c-flag">install</span> <span class="c-str">ezstack</span></code></pre>
+        <p><strong>Go Install</strong></p>
+        <pre><code><span class="c-prompt">$</span> <span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/cmd/ezs@latest</span></code></pre>
+        <p><strong>Build from source</strong></p>
+        <pre><code><span class="c-prompt">$</span> <span class="c-cmd">git</span> <span class="c-flag">clone</span> <span class="c-str">https://github.com/KulkarniKaustubh/ezstack.git</span>
+<span class="c-prompt">$</span> <span class="c-cmd">cd</span> <span class="c-str">ezstack</span>
+<span class="c-prompt">$</span> <span class="c-cmd">make</span> <span class="c-str">install</span></code></pre>
+        <p><strong>Shell integration (recommended)</strong></p>
+        <p>Add to your shell configuration:</p>
+        <pre><code><span class="c-comment"># bash</span>
+<span class="c-prompt">$</span> <span class="c-cmd">echo</span> <span class="c-str">'eval "$(ezs --shell-init)"'</span> &gt;&gt; ~/.bashrc
+
+<span class="c-comment"># zsh</span>
+<span class="c-prompt">$</span> <span class="c-cmd">echo</span> <span class="c-str">'eval "$(ezs --shell-init)"'</span> &gt;&gt; ~/.zshrc</code></pre>
+        <p>This enables automatic directory changes for <code>goto</code>, <code>new</code>, <code>delete</code>, <code>sync</code>, <code>up</code>, and <code>down</code> commands.</p>
+        <p>Without shell integration, commands that would change your directory will instead print a helpful message with the path to <code>cd</code> to manually.</p>
+      </section>
+
+      <!-- Configuration -->
+      <section class="docs-section" id="configuration" data-heading="Configuration">
+        <h2>Configuration</h2>
+        <p>Run <code>ezs config</code> in your repository to configure:</p>
+        <ul>
+          <li><strong>Use worktrees</strong> — Whether to create worktrees for new branches (default: yes)</li>
+          <li><strong>Worktree base directory</strong> — Where branch worktrees will be created</li>
+          <li><strong>Main branch name</strong> — Usually <code>main</code> or <code>master</code></li>
+          <li><strong>Auto-cd</strong> — Whether to cd into new worktrees after creation (default: yes)</li>
+          <li><strong>Sync strategy</strong> — Whether to use <code>rebase</code> (default) or <code>merge</code> when syncing branches</li>
+        </ul>
+        <p>Configuration is stored in <code>~/.ezstack/config.json</code>.</p>
+        <p><strong>Subcommands</strong></p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> &lt;key&gt; &lt;value&gt;    <span class="c-dim">Set a configuration value</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">show</span>                 <span class="c-dim">Show current configuration</span></code></pre>
+        <p><strong>Available keys:</strong> <code>worktree_base_dir</code>, <code>default_base_branch</code>, <code>cd_after_new</code>, <code>use_worktrees</code>, <code>sync_strategy</code></p>
+        <p><strong>Global flags</strong></p>
+        <p>These flags work with any command and can appear in any position:</p>
+        <pre><code><span class="c-flag">-y, --yes</span>        <span class="c-dim">Auto-confirm all yes/no prompts (selection menus still show)</span>
+<span class="c-flag">-h, --help</span>       <span class="c-dim">Show help</span>
+<span class="c-flag">-v, --version</span>    <span class="c-dim">Show version</span>
+<span class="c-flag">--shell-init</span>     <span class="c-dim">Output shell function for cd support</span></code></pre>
+      </section>
+
+      <!-- Commands -->
+      <section class="docs-section" id="commands" data-heading="Commands">
+        <h2>Commands</h2>
+
+        <!-- ezs agent -->
+        <h3 id="ezs-agent"><code>ezs agent</code></h3>
+        <p>Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically.</p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">agent</span> [options]
+<span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">feature</span> <span class="c-str">"description"</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">prompt</span> &lt;flag&gt; &lt;work|feature&gt;
+
+<span class="c-dim">Modes:</span>
+    (default)   <span class="c-dim">Work session — agent scoped to a stack with full context</span>
+    feature     <span class="c-dim">Feature builder — agent breaks a feature into stacked branches</span>
+    prompt      <span class="c-dim">View or edit the prompt templates used by the agent</span>
+
+<span class="c-dim">Options:</span>
+    <span class="c-flag">--cmd</span> &lt;command&gt;      <span class="c-dim">Agent CLI to use (default: configured or "claude")</span>
+    <span class="c-flag">-s, --stack</span> &lt;hash&gt;   <span class="c-dim">Stack to work on (hash prefix or "name")</span>
+    <span class="c-flag">-b, --branch</span> &lt;name&gt;  <span class="c-dim">Branch to work in (implies stack)</span>
+    <span class="c-flag">--dry-run</span>            <span class="c-dim">Print the composed prompt and exit (don't launch agent)</span></code></pre>
+
+        <h4>Prompt Composition</h4>
+        <p>The final agent prompt is composed from three layers:</p>
+        <ol>
+          <li><strong>Shipped prompt</strong> — built into ezstack, updated with releases</li>
+          <li><strong>Custom instructions</strong> — <code>~/.ezstack/agent-{work,feature}-prompt.md</code> (personal, all repos)</li>
+          <li><strong>Repo instructions</strong> — <code>&lt;repo&gt;/.ezstack/agent-{work,feature}-prompt.md</code> (per-repo, committable)</li>
+        </ol>
+        <p>Custom and repo instructions are injected into the shipped prompt. To fully override the shipped prompt, add <code>override: full</code> as the first line of your custom instructions file. Repo instructions are still injected.</p>
+        <p>These files use template variables that are replaced at runtime:</p>
+        <table>
+          <thead>
+            <tr><th>Variable</th><th>Description</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>{{STACK_JSON}}</code></td><td>Current stack structure as JSON</td></tr>
+            <tr><td><code>{{BRANCH_NAME}}</code></td><td>Current branch name</td></tr>
+            <tr><td><code>{{PARENT_NAME}}</code></td><td>Parent branch name</td></tr>
+            <tr><td><code>{{WORKTREE_PATH}}</code></td><td>Path to the current worktree</td></tr>
+            <tr><td><code>{{EZS_COMMANDS}}</code></td><td>Available ezs commands reference</td></tr>
+            <tr><td><code>{{EZS_DOCS}}</code></td><td>Full ezstack documentation for AI agents</td></tr>
+            <tr><td><code>{{FEATURE_DESCRIPTION}}</code></td><td>Feature description (feature mode only)</td></tr>
+            <tr><td><code>{{CUSTOM_INSTRUCTIONS}}</code></td><td>Custom instructions slot</td></tr>
+            <tr><td><code>{{REPO_INSTRUCTIONS}}</code></td><td>Repository instructions slot</td></tr>
+          </tbody>
+        </table>
+
+        <h4><code>ezs agent prompt</code></h4>
+        <p>View or edit the prompt templates. Requires a positional argument: <code>work</code> or <code>feature</code>.</p>
+        <pre><code><span class="c-dim">Flags:</span>
+    <span class="c-flag">--shipped</span>            <span class="c-dim">View the shipped (built-in) prompt template</span>
+    <span class="c-flag">--custom</span>             <span class="c-dim">View your custom instructions (~/.ezstack/)</span>
+    <span class="c-flag">--repo</span>               <span class="c-dim">View or target repo-specific instructions (&lt;repo&gt;/.ezstack/)</span>
+    <span class="c-flag">--edit</span>               <span class="c-dim">Edit custom instructions (combine with --repo for repo-specific)</span>
+    <span class="c-flag">--reset</span>              <span class="c-dim">Delete custom instructions (combine with --repo for repo-specific)</span></code></pre>
+        <p><strong>Examples:</strong></p>
+        <pre><code><span class="c-comment"># View the shipped work prompt</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">prompt</span> <span class="c-flag">--shipped</span> <span class="c-str">work</span>
+
+<span class="c-comment"># View your custom work instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">prompt</span> <span class="c-flag">--custom</span> <span class="c-str">work</span>
+
+<span class="c-comment"># Edit custom work instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">prompt</span> <span class="c-flag">--edit</span> <span class="c-str">work</span>
+
+<span class="c-comment"># Edit repo-specific work instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">prompt</span> <span class="c-flag">--edit</span> <span class="c-flag">--repo</span> <span class="c-str">work</span>
+
+<span class="c-comment"># Reset custom work instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">prompt</span> <span class="c-flag">--reset</span> <span class="c-str">work</span>
+
+<span class="c-comment"># Reset repo-specific feature instructions</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">prompt</span> <span class="c-flag">--reset</span> <span class="c-flag">--repo</span> <span class="c-str">feature</span></code></pre>
+
+        <h4>Configuration</h4>
+        <pre><code><span class="c-comment"># Set the agent CLI (default: claude)</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">claude</span></code></pre>
+
+        <hr>
+
+        <!-- ezs commit / ezs amend -->
+        <h3 id="ezs-commit-ezs-amend"><code>ezs commit</code> / <code>ezs amend</code></h3>
+        <p>Wrap <code>git commit</code> / <code>git commit --amend</code> and auto-sync child branches. Aliases: <code>ci</code></p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">commit</span> [git-commit-options] [<span class="c-flag">--merge</span>|<span class="c-flag">--rebase</span>]
+<span class="c-cmd">ezs</span> <span class="c-flag">amend</span> [git-commit-options] [<span class="c-flag">--merge</span>|<span class="c-flag">--rebase</span>]</code></pre>
+        <p>All arguments are passed through to <code>git commit</code>. After committing, any child branches in the stack are automatically synced onto the updated branch.</p>
+        <p>Uses the configured <code>sync_strategy</code> (default: rebase) for child syncing. Use <code>--merge</code> or <code>--rebase</code> to override.</p>
+
+        <hr>
+
+        <!-- ezs config -->
+        <h3 id="ezs-config"><code>ezs config</code></h3>
+        <p>Configure ezstack for the current repository. Aliases: <code>cfg</code></p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">config</span> [subcommand] [options]
+
+<span class="c-dim">Subcommands:</span>
+    <span class="c-str">set</span> &lt;key&gt; &lt;value&gt;    <span class="c-dim">Set a configuration value</span>
+    <span class="c-str">show</span>                 <span class="c-dim">Show current configuration</span></code></pre>
+        <p><strong>Available keys for <code>set</code>:</strong></p>
+        <table>
+          <thead>
+            <tr><th>Key</th><th>Description</th><th>Values</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>worktree_base_dir</code></td><td>Base directory for worktrees</td><td>Path (per-repo)</td></tr>
+            <tr><td><code>default_base_branch</code></td><td>Default base branch</td><td>e.g. <code>main</code>, <code>master</code></td></tr>
+            <tr><td><code>cd_after_new</code></td><td>Auto-cd to new worktree</td><td><code>true</code> / <code>false</code> (per-repo)</td></tr>
+            <tr><td><code>use_worktrees</code></td><td>Use git worktrees for new branches</td><td><code>true</code> / <code>false</code> (per-repo)</td></tr>
+            <tr><td><code>sync_strategy</code></td><td>Sync method for rebase/merge</td><td><code>rebase</code> / <code>merge</code> (per-repo)</td></tr>
+            <tr><td><code>github_token</code></td><td>GitHub token for API access</td><td>Token string</td></tr>
+          </tbody>
+        </table>
+
+        <hr>
+
+        <!-- ezs delete -->
+        <h3 id="ezs-delete"><code>ezs delete</code></h3>
+        <p>Delete a branch and its worktree. Aliases: <code>del</code>, <code>rm</code></p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">delete</span> [branch-name] [options]
+<span class="c-cmd">ezs</span> <span class="c-flag">delete</span> [stack-hash] [options]
+
+<span class="c-dim">Options:</span>
+    <span class="c-flag">-f, --force</span>            <span class="c-dim">Force delete even if branch has children</span>
+    <span class="c-flag">-s, --stack</span>            <span class="c-dim">Treat argument as a stack hash (delete entire stack)</span></code></pre>
+
+        <hr>
+
+        <!-- ezs diff -->
+        <h3 id="ezs-diff"><code>ezs diff</code></h3>
+        <p>Show diff against parent branch.</p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">diff</span> [options] [-- git-diff-options]
+
+<span class="c-dim">Options:</span>
+    <span class="c-flag">--stat</span>         <span class="c-dim">Show diffstat only</span></code></pre>
+        <p>Shows the diff between the current branch and its parent in the stack. Any arguments after <code>--</code> are passed directly to <code>git diff</code>.</p>
+
+        <hr>
+
+        <!-- ezs down / ezs up -->
+        <h3 id="ezs-down-ezs-up"><code>ezs down</code> / <code>ezs up</code></h3>
+        <p>Navigate down (toward children/leaves) or up (toward parent/base) in the stack.</p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">down</span> [n]    <span class="c-dim">Navigate n levels toward children (default: 1)</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">up</span> [n]      <span class="c-dim">Navigate n levels toward parent (default: 1)</span></code></pre>
+        <p>When navigating down with multiple children, shows an interactive selector.</p>
+
+        <hr>
+
+        <!-- ezs goto -->
+        <h3 id="ezs-goto"><code>ezs goto</code></h3>
+        <p>Navigate to a branch worktree. Aliases: <code>go</code></p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">goto</span> [branch-name]</code></pre>
+        <p>If branch-name is omitted, shows interactive selection. Falls back to <code>git checkout</code> when the branch has no worktree.</p>
+
+        <hr>
+
+        <!-- ezs list -->
+        <h3 id="ezs-list"><code>ezs list</code></h3>
+        <p>List all stacks and branches. Aliases: <code>ls</code></p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">list</span> [options]
+
+<span class="c-dim">Options:</span>
+    <span class="c-flag">-a, --all</span>     <span class="c-dim">Show all stacks</span>
+    <span class="c-flag">--json</span>        <span class="c-dim">Output as JSON (machine-readable)</span>
+    <span class="c-flag">-d, --debug</span>   <span class="c-dim">Show debug output</span></code></pre>
+        <p>The <code>--json</code> flag outputs stack structure to stdout for editor integrations and scripts.</p>
+        <p>The list view also shows diff stats (+/-) for each branch relative to its parent, giving a quick sense of change size across the stack.</p>
+
+        <hr>
+
+        <!-- ezs new -->
+        <h3 id="ezs-new"><code>ezs new</code></h3>
+        <p>Create a new branch in the stack. Aliases: <code>n</code></p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">new</span> [branch-name] [options]
+
+<span class="c-dim">Options:</span>
+    <span class="c-flag">-p, --parent</span> &lt;branch&gt;     <span class="c-dim">Parent branch (defaults to current branch)</span>
+    <span class="c-flag">-w, --worktree</span> &lt;path&gt;     <span class="c-dim">Worktree path (defaults to configured base dir + branch name)</span>
+    <span class="c-flag">-c, --cd</span>                  <span class="c-dim">Change to the new worktree after creation</span>
+    <span class="c-flag">-C, --no-cd</span>               <span class="c-dim">Don't change to the new worktree (overrides config)</span>
+    <span class="c-flag">-f, --from-worktree</span>       <span class="c-dim">Register an existing worktree as a stack root</span>
+    <span class="c-flag">-r, --from-remote</span>         <span class="c-dim">Create a stack from a remote branch/PR</span></code></pre>
+        <p>With <code>origin/&lt;branch&gt;</code>, creates a local worktree tracking the remote branch and registers it in a stack (root = PR base branch, or <code>main</code> by default). The branch is marked as <code>(remote)</code> in <code>ezs ls</code> output. All commands (sync, push, commit, etc.) work normally on it.</p>
+        <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">origin/feature-branch</span>       <span class="c-comment"># Checkout remote branch into a worktree + register stack</span></code></pre>
+        <p>This fetches the latest remote refs, creates a local tracking branch, sets up a worktree, and registers the branch in ezstack's config. If the branch has an associated PR, it displays PR info (title, state, review status) and a line diff summary against the base branch.</p>
+        <p>With <code>--from-remote</code>, positional args are <code>[pr-number-or-branch] [new-branch-name]</code>:</p>
+        <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span>                          <span class="c-comment"># Interactive PR selection + branch name prompt</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span> <span class="c-str">42</span>                       <span class="c-comment"># Use PR #42, prompt for branch name</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span> <span class="c-str">feature-branch</span>           <span class="c-comment"># Use PR for that branch, prompt for branch name</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span> <span class="c-str">42</span> <span class="c-str">my-feature</span>            <span class="c-comment"># Use PR #42, create branch "my-feature" (no prompts)</span></code></pre>
+        <p>When <code>use_worktrees</code> is disabled, creates a git branch without a worktree and optionally checks it out.</p>
+
+        <hr>
+
+        <!-- ezs pr -->
+        <h3 id="ezs-pr"><code>ezs pr</code></h3>
+        <p>Manage pull requests.</p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">pr</span> &lt;subcommand&gt; [options]
+
+<span class="c-dim">Subcommands:</span>
+    <span class="c-str">create</span>    <span class="c-dim">Create a new pull request</span>
+    <span class="c-str">draft</span>     <span class="c-dim">Toggle PR between draft and ready</span>
+    <span class="c-str">merge</span>     <span class="c-dim">Merge a pull request</span>
+    <span class="c-str">stack</span>     <span class="c-dim">Update all PR descriptions with stack info</span>
+    <span class="c-str">update</span>    <span class="c-dim">Push changes and update PR metadata (base branch, descriptions)</span></code></pre>
+
+        <h4><code>ezs pr create</code></h4>
+        <pre><code><span class="c-dim">Options:</span>
+    <span class="c-flag">-t, --title</span> &lt;title&gt;    <span class="c-dim">PR title (defaults to branch name)</span>
+    <span class="c-flag">-b, --body</span> &lt;body&gt;      <span class="c-dim">PR body/description</span>
+    <span class="c-flag">-d, --draft</span>            <span class="c-dim">Create as draft PR</span></code></pre>
+
+        <h4><code>ezs pr draft</code></h4>
+        <p>Toggles the current branch's PR between draft and ready-for-review state.</p>
+
+        <h4><code>ezs pr merge</code></h4>
+        <pre><code><span class="c-dim">Options:</span>
+    <span class="c-flag">-m, --method</span> &lt;method&gt;      <span class="c-dim">Merge method: merge, squash, rebase (default: interactive)</span>
+    <span class="c-flag">--no-delete-branch</span>         <span class="c-dim">Don't delete the remote branch after merge</span></code></pre>
+
+        <hr>
+
+        <!-- ezs push -->
+        <h3 id="ezs-push"><code>ezs push</code></h3>
+        <p>Push current branch or entire stack to remote.</p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">push</span> [options]
+
+<span class="c-dim">Options:</span>
+    <span class="c-flag">-s, --stack</span>    <span class="c-dim">Push all branches in the current stack</span>
+    <span class="c-flag">-f, --force</span>    <span class="c-dim">Force push</span></code></pre>
+
+        <hr>
+
+        <!-- ezs reparent -->
+        <h3 id="ezs-reparent"><code>ezs reparent</code></h3>
+        <p>Change the parent of a branch and sync commits onto the new parent. Aliases: <code>rp</code></p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">reparent</span> [branch] [new-parent] [options]
+
+<span class="c-dim">Options:</span>
+    <span class="c-flag">-b, --branch</span> &lt;name&gt;     <span class="c-dim">Branch to reparent</span>
+    <span class="c-flag">-p, --parent</span> &lt;name&gt;     <span class="c-dim">New parent branch</span>
+    <span class="c-flag">--merge</span>                 <span class="c-dim">Use git merge instead of git rebase</span>
+    <span class="c-flag">--rebase</span>                <span class="c-dim">Use git rebase (overrides sync_strategy config)</span></code></pre>
+        <p>Uses the configured <code>sync_strategy</code> (default: rebase). If the sync conflicts, the reparent metadata is still updated and you can resolve conflicts manually.</p>
+
+        <hr>
+
+        <!-- ezs stack -->
+        <h3 id="ezs-stack"><code>ezs stack</code></h3>
+        <p>Add an untracked branch/worktree to an existing stack, start a new stack, or rename a stack.</p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">stack</span> [branch] [parent] [options]
+<span class="c-cmd">ezs</span> <span class="c-flag">stack</span> <span class="c-str">rename</span> [stack-hash] [name]
+
+<span class="c-dim">Options:</span>
+    <span class="c-flag">-b, --branch</span> &lt;name&gt;     <span class="c-dim">Branch to add to stack</span>
+    <span class="c-flag">-p, --parent</span> &lt;name&gt;     <span class="c-dim">Parent branch in the stack</span>
+    <span class="c-flag">-B, --base</span> &lt;name&gt;       <span class="c-dim">Base branch for a new stack (e.g. develop, staging)</span></code></pre>
+
+        <hr>
+
+        <!-- ezs status -->
+        <h3 id="ezs-status"><code>ezs status</code></h3>
+        <p>Show status of current stack with PR and CI info. Aliases: <code>st</code></p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">status</span> [options]
+
+<span class="c-dim">Options:</span>
+    <span class="c-flag">-a, --all</span>     <span class="c-dim">Show all stacks</span>
+    <span class="c-flag">-d, --debug</span>   <span class="c-dim">Show debug output</span></code></pre>
+
+        <hr>
+
+        <!-- ezs sync -->
+        <h3 id="ezs-sync"><code>ezs sync</code></h3>
+        <p>Sync stack with remote. Handles rebasing onto updated parents, cleaning up merged branches, and force pushing after rebase.</p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">sync</span> [options]
+<span class="c-cmd">ezs</span> <span class="c-flag">sync</span> &lt;hash-prefix&gt;
+
+<span class="c-dim">Options:</span>
+    <span class="c-flag">-s, --stack</span>            <span class="c-dim">Sync current stack (auto-detect what needs syncing)</span>
+    <span class="c-flag">-a, --all</span>              <span class="c-dim">Sync ALL stacks</span>
+    <span class="c-flag">-c, --current</span>          <span class="c-dim">Sync current branch only (auto-detect what it needs)</span>
+    <span class="c-flag">-p, --parent</span>           <span class="c-dim">Rebase current branch onto its parent</span>
+    <span class="c-flag">-C, --children</span>         <span class="c-dim">Rebase child branches onto current branch</span>
+    <span class="c-flag">--merge</span>                <span class="c-dim">Use git merge instead of git rebase</span>
+    <span class="c-flag">--rebase</span>               <span class="c-dim">Use git rebase (overrides sync_strategy config)</span>
+    <span class="c-flag">--no-delete-local</span>      <span class="c-dim">Don't delete local branches after their PRs are merged</span>
+    <span class="c-flag">--dry-run</span>              <span class="c-dim">Preview what would be synced without making changes</span>
+    <span class="c-flag">--continue</span>             <span class="c-dim">Continue after resolving conflicts</span>
+    <span class="c-flag">--no-autostash</span>         <span class="c-dim">Don't stash uncommitted changes before rebase (autostash is on by default)</span>
+    <span class="c-flag">--json</span>                 <span class="c-dim">Output dry-run results as JSON (requires --dry-run)</span></code></pre>
+        <p>By default, sync uses git rebase. Use <code>--merge</code> to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with <code>ezs config set sync_strategy merge</code>. Use <code>--rebase</code> or <code>--merge</code> to override the configured strategy for a single run.</p>
+        <p>You can sync a specific stack by passing its hash prefix (minimum 3 characters).</p>
+
+        <hr>
+
+        <!-- ezs unstack -->
+        <h3 id="ezs-unstack"><code>ezs unstack</code></h3>
+        <p>Remove a branch from stack tracking without deleting the git branch or worktree.</p>
+        <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">unstack</span> [branch] [options]
+
+<span class="c-dim">Options:</span>
+    <span class="c-flag">-b, --branch</span> &lt;name&gt;     <span class="c-dim">Branch to untrack</span></code></pre>
+      </section>
+
+      <!-- Manual Git Operations -->
+      <section class="docs-section" id="manual-git-operations" data-heading="Manual Git Operations">
+        <h2>Manual Git Operations</h2>
+        <p>If you rename or delete branches outside of ezstack, the next <code>ezs</code> command will automatically detect the change and reconcile config:</p>
+        <pre><code><span class="c-prompt">$</span> <span class="c-cmd">git</span> <span class="c-flag">branch</span> <span class="c-flag">-m</span> <span class="c-str">old-name</span> <span class="c-str">new-name</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">status</span>    <span class="c-comment"># auto-detects the rename, preserves stack position and PR metadata</span>
+
+<span class="c-prompt">$</span> <span class="c-cmd">git</span> <span class="c-flag">branch</span> <span class="c-flag">-D</span> <span class="c-str">some-branch</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">ls</span>        <span class="c-comment"># auto-removes orphaned branch from config</span></code></pre>
+      </section>
+
+      <!-- Workflows -->
+      <section class="docs-section" id="workflows" data-heading="Workflows">
+        <h2>Workflows</h2>
+
+        <h3 id="creating-a-stacked-pr">Creating a Stacked PR</h3>
+        <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">feature-1</span>
+<span class="c-comment"># make changes</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">commit</span> <span class="c-flag">-m</span> <span class="c-str">"Add feature part 1"</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">feature-2</span> <span class="c-flag">--parent</span> <span class="c-str">feature-1</span>
+<span class="c-comment"># make changes</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">commit</span> <span class="c-flag">-m</span> <span class="c-str">"Add feature part 2"</span>
+
+<span class="c-comment"># Create PRs for the whole stack</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">create</span> <span class="c-flag">-t</span> <span class="c-str">"Part 1: Add feature"</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">goto</span> <span class="c-str">feature-2</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">create</span> <span class="c-flag">-t</span> <span class="c-str">"Part 2: Add feature"</span>
+
+<span class="c-comment"># Update all PR descriptions with stack info</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">stack</span></code></pre>
+
+        <h3 id="after-parent-is-merged">After Parent is Merged</h3>
+        <pre><code><span class="c-comment"># Sync will detect merged parents and rebase</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">sync</span> <span class="c-flag">-a</span>
+
+<span class="c-comment"># Or merge from the CLI and sync</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">merge</span> <span class="c-flag">-m</span> <span class="c-str">squash</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">goto</span> <span class="c-str">feature-2</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">sync</span> <span class="c-flag">-a</span></code></pre>
+
+        <h3 id="navigating-the-stack">Navigating the Stack</h3>
+        <pre><code><span class="c-comment"># Move between branches</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">up</span>        <span class="c-comment"># go to parent</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">down</span>      <span class="c-comment"># go to child</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">up</span> <span class="c-str">2</span>      <span class="c-comment"># go up two levels</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">goto</span> <span class="c-str">feature-1</span>   <span class="c-comment"># jump to a specific branch</span></code></pre>
+
+        <h3 id="reviewing-a-remote-pr">Reviewing a Remote PR</h3>
+        <pre><code><span class="c-comment"># Checkout a teammate's branch into its own worktree</span>
+<span class="c-comment"># Registers a stack with the PR's base branch as root</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">origin/feature-branch</span>
+
+<span class="c-comment"># ezstack fetches, creates a tracking worktree, and shows:</span>
+<span class="c-comment">#   PR #42: Add user authentication</span>
+<span class="c-comment">#   URL: https://github.com/you/repo/pull/42</span>
+<span class="c-comment">#   State: OPEN  Base: main</span>
+<span class="c-comment">#   Review: REVIEW_REQUIRED</span>
+<span class="c-comment">#   Diff vs main: +320 / -45 lines</span>
+
+<span class="c-comment"># The branch shows up in ezs ls with a (remote) tag</span>
+<span class="c-comment"># You can work on it, push changes, sync — all commands work</span>
+
+<span class="c-comment"># When you're done, clean up</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">delete</span> <span class="c-str">feature-branch</span></code></pre>
+
+        <h3 id="stacking-on-a-remote-pr">Stacking on a Remote PR</h3>
+        <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">stack</span>
+<span class="c-comment"># Select "Start a new stack from a remote PR"</span>
+<span class="c-comment"># Pick the PR, then pick your branch to stack on top</span></code></pre>
+      </section>
+
+      <!-- No results message -->
+      <div class="docs-no-results" id="docs-no-results">
+        No documentation sections match your search.
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <span class="footer-name">ezstack</span>
+          <span class="footer-meta">MIT License · v3.2.6</span>
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/blob/main/DOCUMENTATION.md" target="_blank" rel="noopener">Docs</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/issues" target="_blank" rel="noopener">Issues</a>
+        </div>
+        <div class="footer-credit">
+          Made by <a href="https://github.com/KulkarniKaustubh" target="_blank" rel="noopener">Kaustubh Kulkarni</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <button class="docs-sidebar-toggle" id="docs-sidebar-toggle" aria-label="Toggle table of contents">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+  </button>
+  <div class="docs-sidebar-overlay" id="docs-sidebar-overlay"></div>
+
+  <script src="js/main.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/minisearch@7.1.1/dist/umd/index.min.js"></script>
+  <script>
+    (function() {
+      const searchInput = document.getElementById('docs-search-input');
+      const searchClear = document.getElementById('docs-search-clear');
+      const searchShortcut = document.getElementById('docs-search-shortcut');
+      const dropdown = document.getElementById('docs-search-dropdown');
+      const sections = document.querySelectorAll('.docs-section');
+      const noResults = document.getElementById('docs-no-results');
+      const tocLinks = document.querySelectorAll('.docs-toc a');
+      const sidebar = document.getElementById('docs-sidebar');
+      const sidebarToggle = document.getElementById('docs-sidebar-toggle');
+      const sidebarOverlay = document.getElementById('docs-sidebar-overlay');
+
+      // ── Build MiniSearch index ──
+      // Wrap h3 subsections in divs for granular show/hide
+      const docs = [];
+      const docElMap = {}; // docId -> element to show/hide
+      let docId = 0;
+
+      // Map parent section names for display in results
+      const sectionNames = {};
+      sections.forEach(section => {
+        const h2 = section.querySelector('h2');
+        if (h2) sectionNames[section.id] = h2.textContent;
+      });
+
+      sections.forEach(section => {
+        const h2 = section.querySelector('h2');
+        const h3s = Array.from(section.querySelectorAll('h3[id]'));
+
+        if (h3s.length === 0) {
+          docs.push({
+            id: docId,
+            title: h2 ? h2.textContent : '',
+            body: section.textContent,
+            sectionId: section.id,
+            anchorId: section.id
+          });
+          docElMap[docId] = section;
+          docId++;
+        } else {
+          // Wrap intro nodes
+          const introNodes = [];
+          let node = section.firstChild;
+          while (node && !(node.nodeType === 1 && node.tagName === 'H3')) {
+            introNodes.push(node);
+            node = node.nextSibling;
+          }
+          if (introNodes.length > 0) {
+            const introDiv = document.createElement('div');
+            introDiv.className = 'docs-subsection docs-subsection-intro';
+            introNodes.forEach(n => introDiv.appendChild(n));
+            section.insertBefore(introDiv, section.firstChild);
+            docs.push({
+              id: docId,
+              title: h2 ? h2.textContent : '',
+              body: introDiv.textContent,
+              sectionId: section.id,
+              anchorId: section.id,
+              isIntro: true
+            });
+            docElMap[docId] = introDiv;
+            docId++;
+          }
+
+          // Wrap each h3 subsection
+          h3s.forEach(h3 => {
+            const subDiv = document.createElement('div');
+            subDiv.className = 'docs-subsection';
+            if (h3.id) subDiv.setAttribute('data-subsection-id', h3.id);
+            h3.parentNode.insertBefore(subDiv, h3);
+            subDiv.appendChild(h3);
+            while (subDiv.nextSibling && !(subDiv.nextSibling.nodeType === 1 &&
+                   (subDiv.nextSibling.tagName === 'H3' ||
+                    subDiv.nextSibling.classList.contains('docs-subsection')))) {
+              subDiv.appendChild(subDiv.nextSibling);
+            }
+            docs.push({
+              id: docId,
+              title: h3.textContent,
+              body: subDiv.textContent,
+              sectionId: section.id,
+              anchorId: h3.id || section.id,
+              subsectionId: h3.id || null
+            });
+            docElMap[docId] = subDiv;
+            docId++;
+          });
+        }
+      });
+
+      const miniSearch = new MiniSearch({
+        fields: ['title', 'body'],
+        storeFields: ['title', 'sectionId', 'anchorId'],
+        searchOptions: {
+          boost: { title: 3 },
+          fuzzy: 0.2,
+          prefix: true,
+          combineWith: 'AND'
+        }
+      });
+      miniSearch.addAll(docs);
+
+      // ── State ──
+      let searchDebounceTimer = null;
+      let activeDropdownIndex = -1;
+      let currentResults = [];
+      let isFiltered = false; // true when page is filtered to a selection
+
+      // ── Snippet extraction ──
+      function extractSnippet(docObj, terms, maxLen) {
+        maxLen = maxLen || 120;
+        const body = docObj.body || '';
+        const lower = body.toLowerCase();
+
+        // Find the best position: earliest term match
+        let bestIdx = -1;
+        for (let i = 0; i < terms.length; i++) {
+          const idx = lower.indexOf(terms[i].toLowerCase());
+          if (idx !== -1 && (bestIdx === -1 || idx < bestIdx)) bestIdx = idx;
+        }
+
+        let start, end;
+        if (bestIdx === -1) {
+          start = 0;
+          end = maxLen;
+        } else {
+          start = Math.max(0, bestIdx - 30);
+          end = start + maxLen;
+        }
+
+        let snippet = body.slice(start, end).replace(/\s+/g, ' ').trim();
+        if (start > 0) snippet = '\u2026' + snippet;
+        if (end < body.length) snippet += '\u2026';
+
+        // Highlight terms in snippet
+        for (let i = 0; i < terms.length; i++) {
+          const re = new RegExp('(' + terms[i].replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'gi');
+          snippet = snippet.replace(re, '<mark>$1</mark>');
+        }
+        return snippet;
+      }
+
+      function getMatchTerms(results) {
+        const terms = new Set();
+        results.forEach(r => {
+          // MiniSearch match format: { matchedTerm: [field1, field2, ...] }
+          // Keys are the actual matched terms
+          Object.keys(r.match).forEach(t => terms.add(t.toLowerCase()));
+        });
+        return Array.from(terms);
+      }
+
+      // ── Dropdown rendering ──
+      function renderDropdown(results, terms) {
+        currentResults = results;
+        activeDropdownIndex = -1;
+
+        if (results.length === 0) {
+          dropdown.innerHTML = '<div class="docs-search-dropdown-empty">No results found</div>';
+          dropdown.classList.add('visible');
+          return;
+        }
+
+        // Limit to top 10 results
+        const top = results.slice(0, 10);
+
+        let html = '<div class="docs-search-dropdown-header">' +
+          '<span>' + results.length + ' result' + (results.length !== 1 ? 's' : '') + '</span>' +
+          '</div>';
+
+        top.forEach((r, i) => {
+          const doc = docs[r.id];
+          const parentName = sectionNames[r.sectionId] || '';
+          const snippet = extractSnippet(doc, terms);
+          const showTag = doc.title !== parentName && parentName;
+
+          html += '<div class="docs-search-dropdown-item" data-index="' + i + '">' +
+            '<div class="docs-search-dropdown-title">' +
+              escapeHtml(doc.title) +
+              (showTag ? ' <span class="search-section-tag">' + escapeHtml(parentName) + '</span>' : '') +
+            '</div>' +
+            '<div class="docs-search-dropdown-snippet">' + snippet + '</div>' +
+          '</div>';
+        });
+
+        html += '<div class="docs-search-dropdown-hint">' +
+          '<span><kbd>&uarr;</kbd><kbd>&darr;</kbd> navigate</span>' +
+          '<span><kbd>Enter</kbd> jump to section</span>' +
+          '<span><kbd>Esc</kbd> close</span>' +
+        '</div>';
+
+        dropdown.innerHTML = html;
+        dropdown.classList.add('visible');
+
+        // Click handlers
+        dropdown.querySelectorAll('.docs-search-dropdown-item').forEach(item => {
+          item.addEventListener('click', function() {
+            const idx = parseInt(this.getAttribute('data-index'));
+            selectResult(idx);
+          });
+        });
+      }
+
+      function escapeHtml(str) {
+        return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+      }
+
+      function setActiveDropdownItem(index) {
+        const items = dropdown.querySelectorAll('.docs-search-dropdown-item');
+        items.forEach(item => item.classList.remove('active'));
+        if (index >= 0 && index < items.length) {
+          activeDropdownIndex = index;
+          items[index].classList.add('active');
+          items[index].scrollIntoView({ block: 'nearest' });
+        } else {
+          activeDropdownIndex = -1;
+        }
+      }
+
+      function hideDropdown() {
+        dropdown.classList.remove('visible');
+        dropdown.innerHTML = '';
+        currentResults = [];
+        activeDropdownIndex = -1;
+      }
+
+      // ── Select a result: filter page + scroll + highlight ──
+      function selectResult(index) {
+        if (index < 0 || index >= currentResults.length) return;
+
+        const result = currentResults[index];
+        const doc = docs[result.id];
+        const terms = getMatchTerms(currentResults);
+        const savedResults = currentResults.slice();
+
+        hideDropdown();
+
+        // Filter page to show only matching sections/subsections
+        const matchedDocIds = new Set();
+        savedResults.forEach(r => matchedDocIds.add(r.id));
+
+        const matchedSectionIds = new Set();
+        savedResults.forEach(r => matchedSectionIds.add(r.sectionId));
+
+        const visibleTocIds = new Set();
+
+        sections.forEach(section => {
+          const subsections = section.querySelectorAll('.docs-subsection');
+
+          if (subsections.length === 0) {
+            const matched = matchedSectionIds.has(section.id);
+            section.classList.toggle('hidden', !matched);
+            if (matched && section.id) visibleTocIds.add(section.id);
+          } else {
+            let sectionHasMatch = false;
+            for (let did = 0; did < docs.length; did++) {
+              if (docs[did].sectionId !== section.id) continue;
+              const el = docElMap[did];
+              if (!el || !el.classList.contains('docs-subsection')) continue;
+              if (matchedDocIds.has(did)) {
+                el.classList.remove('hidden');
+                sectionHasMatch = true;
+                const subId = el.getAttribute('data-subsection-id');
+                if (subId) visibleTocIds.add(subId);
+                if (docs[did].isIntro && section.id) visibleTocIds.add(section.id);
+              } else {
+                el.classList.add('hidden');
+              }
+            }
+            section.classList.toggle('hidden', !sectionHasMatch);
+            if (sectionHasMatch && section.id) visibleTocIds.add(section.id);
+          }
+        });
+
+        updateTocHighlights(visibleTocIds);
+        isFiltered = true;
+
+        // Highlight terms in visible subsections
+        removeHighlights();
+        if (terms.length > 0) {
+          matchedDocIds.forEach(did => {
+            const el = docElMap[did];
+            if (el && !el.classList.contains('hidden')) {
+              highlightTermsInElement(el, terms);
+            }
+          });
+        }
+
+        // Scroll to the selected result's anchor
+        const anchor = document.getElementById(doc.anchorId);
+        if (anchor) {
+          setTimeout(function() {
+            anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 50);
+        }
+
+        searchInput.blur();
+      }
+
+      // ── Highlight helpers ──
+      function removeHighlights() {
+        document.querySelectorAll('mark.search-highlight').forEach(m => {
+          const parent = m.parentNode;
+          parent.replaceChild(document.createTextNode(m.textContent), m);
+          parent.normalize();
+        });
+      }
+
+      function highlightTermsInElement(element, terms) {
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
+          acceptNode: function(node) {
+            if (node.parentElement.closest('script, style, mark.search-highlight')) return NodeFilter.FILTER_REJECT;
+            const lower = node.textContent.toLowerCase();
+            for (let i = 0; i < terms.length; i++) {
+              if (lower.includes(terms[i])) return NodeFilter.FILTER_ACCEPT;
+            }
+            return NodeFilter.FILTER_REJECT;
+          }
+        });
+
+        const textNodes = [];
+        while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+        textNodes.forEach(node => {
+          const text = node.textContent;
+          const lower = text.toLowerCase();
+          const ranges = [];
+
+          for (let t = 0; t < terms.length; t++) {
+            const term = terms[t];
+            let pos = 0;
+            while (true) {
+              const idx = lower.indexOf(term, pos);
+              if (idx === -1) break;
+              ranges.push({ start: idx, end: idx + term.length });
+              pos = idx + 1;
+            }
+          }
+          if (ranges.length === 0) return;
+
+          ranges.sort((a, b) => a.start - b.start || a.end - b.end);
+          const merged = [ranges[0]];
+          for (let i = 1; i < ranges.length; i++) {
+            const prev = merged[merged.length - 1];
+            if (ranges[i].start <= prev.end) {
+              prev.end = Math.max(prev.end, ranges[i].end);
+            } else {
+              merged.push(ranges[i]);
+            }
+          }
+
+          const frag = document.createDocumentFragment();
+          let lastEnd = 0;
+          for (let i = 0; i < merged.length; i++) {
+            if (merged[i].start > lastEnd)
+              frag.appendChild(document.createTextNode(text.slice(lastEnd, merged[i].start)));
+            const mark = document.createElement('mark');
+            mark.className = 'search-highlight';
+            mark.textContent = text.slice(merged[i].start, merged[i].end);
+            frag.appendChild(mark);
+            lastEnd = merged[i].end;
+          }
+          if (lastEnd < text.length)
+            frag.appendChild(document.createTextNode(text.slice(lastEnd)));
+          node.parentNode.replaceChild(frag, node);
+        });
+      }
+
+      // ── TOC highlights ──
+      function updateTocHighlights(visibleIds) {
+        tocLinks.forEach(link => {
+          const href = link.getAttribute('href');
+          if (!href) return;
+          const id = href.replace('#', '');
+          if (visibleIds.size === 0) {
+            link.classList.remove('search-dimmed', 'search-match');
+          } else if (visibleIds.has(id)) {
+            link.classList.remove('search-dimmed');
+            link.classList.add('search-match');
+          } else {
+            link.classList.remove('search-match');
+            link.classList.add('search-dimmed');
+          }
+        });
+      }
+
+      // ── Reset page to unfiltered state ──
+      function resetPage() {
+        sections.forEach(s => s.classList.remove('hidden'));
+        document.querySelectorAll('.docs-subsection').forEach(d => d.classList.remove('hidden'));
+        noResults.classList.remove('visible');
+        updateTocHighlights(new Set());
+        removeHighlights();
+        isFiltered = false;
+      }
+
+      // ── Main search (drives the dropdown) ──
+      function performSearch() {
+        const raw = searchInput.value.trim();
+        searchClear.classList.toggle('visible', raw.length > 0);
+
+        if (!raw) {
+          hideDropdown();
+          resetPage();
+          return;
+        }
+
+        // Query MiniSearch
+        let results = miniSearch.search(raw, {
+          boost: { title: 3 },
+          fuzzy: 0.2,
+          prefix: true,
+          combineWith: 'AND'
+        });
+
+        // Fall back to OR if AND yields nothing
+        if (results.length === 0) {
+          results = miniSearch.search(raw, {
+            boost: { title: 3 },
+            fuzzy: 0.2,
+            prefix: true,
+            combineWith: 'OR'
+          });
+        }
+
+        const terms = getMatchTerms(results);
+        renderDropdown(results, terms);
+
+        // If the page was filtered from a previous selection, reset it
+        // so the user sees the full page while browsing the dropdown
+        if (isFiltered) resetPage();
+      }
+
+      // ── Event listeners ──
+      searchInput.addEventListener('input', function() {
+        clearTimeout(searchDebounceTimer);
+        searchDebounceTimer = setTimeout(performSearch, 100);
+      });
+
+      searchInput.addEventListener('focus', function() {
+        if (searchInput.value.trim()) performSearch();
+      });
+
+      searchClear.addEventListener('click', function() {
+        searchInput.value = '';
+        hideDropdown();
+        resetPage();
+        searchInput.focus();
+      });
+
+      // Close dropdown on outside click
+      document.addEventListener('click', function(e) {
+        if (!e.target.closest('#docs-search')) {
+          hideDropdown();
+        }
+      });
+
+      // Keyboard navigation
+      document.addEventListener('keydown', function(e) {
+        const dropdownVisible = dropdown.classList.contains('visible');
+
+        // "/" to focus search
+        if (e.key === '/' && !e.ctrlKey && !e.metaKey && document.activeElement !== searchInput) {
+          e.preventDefault();
+          searchInput.focus();
+          return;
+        }
+
+        // Escape: close dropdown or clear search
+        if (e.key === 'Escape') {
+          if (dropdownVisible) {
+            e.preventDefault();
+            hideDropdown();
+            searchInput.focus();
+          } else if (document.activeElement === searchInput) {
+            e.preventDefault();
+            searchInput.value = '';
+            resetPage();
+            searchInput.blur();
+          }
+          return;
+        }
+
+        if (document.activeElement !== searchInput) return;
+
+        // Arrow down
+        if (e.key === 'ArrowDown' && dropdownVisible) {
+          e.preventDefault();
+          const items = dropdown.querySelectorAll('.docs-search-dropdown-item');
+          const next = activeDropdownIndex < items.length - 1 ? activeDropdownIndex + 1 : 0;
+          setActiveDropdownItem(next);
+          return;
+        }
+
+        // Arrow up
+        if (e.key === 'ArrowUp' && dropdownVisible) {
+          e.preventDefault();
+          const items = dropdown.querySelectorAll('.docs-search-dropdown-item');
+          const prev = activeDropdownIndex > 0 ? activeDropdownIndex - 1 : items.length - 1;
+          setActiveDropdownItem(prev);
+          return;
+        }
+
+        // Enter: select active result
+        if (e.key === 'Enter' && dropdownVisible) {
+          e.preventDefault();
+          if (activeDropdownIndex >= 0) {
+            selectResult(activeDropdownIndex);
+          } else if (currentResults.length > 0) {
+            selectResult(0);
+          }
+          return;
+        }
+      });
+
+      // ── Scroll spy ──
+      function updateScrollSpy() {
+        const headings = document.querySelectorAll('.docs-section[id], .docs-content h3[id]');
+        let currentId = '';
+        const offset = 160;
+
+        headings.forEach(heading => {
+          const rect = heading.getBoundingClientRect();
+          if (rect.top <= offset) {
+            currentId = heading.id;
+          }
+        });
+
+        if (!isFiltered) {
+          tocLinks.forEach(link => {
+            link.classList.toggle('active', link.getAttribute('href') === '#' + currentId);
+          });
+        }
+      }
+
+      let scrollTicking = false;
+      window.addEventListener('scroll', function() {
+        if (!scrollTicking) {
+          requestAnimationFrame(function() {
+            updateScrollSpy();
+            scrollTicking = false;
+          });
+          scrollTicking = true;
+        }
+      });
+      updateScrollSpy();
+
+      // ── Mobile sidebar ──
+      sidebarToggle.addEventListener('click', function() {
+        sidebar.classList.toggle('open');
+        sidebarOverlay.classList.toggle('open');
+      });
+      sidebarOverlay.addEventListener('click', function() {
+        sidebar.classList.remove('open');
+        sidebarOverlay.classList.remove('open');
+      });
+      tocLinks.forEach(link => {
+        link.addEventListener('click', function() {
+          sidebar.classList.remove('open');
+          sidebarOverlay.classList.remove('open');
+        });
+      });
+    })();
+  </script>
+
+</body>
+</html>
