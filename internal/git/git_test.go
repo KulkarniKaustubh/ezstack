@@ -586,3 +586,132 @@ func TestStashPop_Targeted(t *testing.T) {
 		t.Error("ezstack stash should have been popped")
 	}
 }
+
+func TestIsLocalAheadOfRemote(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// When there's no remote, local should be considered ahead
+	ahead, err := g.IsLocalAheadOfRemote("main", "origin")
+	if err != nil {
+		t.Fatalf("IsLocalAheadOfRemote() error = %v", err)
+	}
+	if !ahead {
+		t.Error("expected branch to be ahead when remote doesn't exist")
+	}
+
+	// Also test with empty remote (should default to origin)
+	ahead, err = g.IsLocalAheadOfRemote("main", "")
+	if err != nil {
+		t.Fatalf("IsLocalAheadOfRemote() with empty remote error = %v", err)
+	}
+	if !ahead {
+		t.Error("expected branch to be ahead with empty remote when origin doesn't exist")
+	}
+}
+
+func TestIsLocalAheadOfOrigin_DelegatesToRemote(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// Deprecated wrapper should work the same
+	ahead1, err1 := g.IsLocalAheadOfOrigin("main")
+	ahead2, err2 := g.IsLocalAheadOfRemote("main", "origin")
+
+	if err1 != nil || err2 != nil {
+		t.Fatalf("errors: %v, %v", err1, err2)
+	}
+	if ahead1 != ahead2 {
+		t.Errorf("IsLocalAheadOfOrigin = %v, IsLocalAheadOfRemote = %v, should match", ahead1, ahead2)
+	}
+}
+
+func TestFindRemoteByOwner(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// Add remotes for testing
+	exec.Command("git", "-C", dir, "remote", "add", "origin", "https://github.com/mainowner/repo.git").Run()
+	exec.Command("git", "-C", dir, "remote", "add", "fork-user", "https://github.com/forkuser/repo.git").Run()
+	exec.Command("git", "-C", dir, "remote", "add", "ssh-fork", "git@github.com:sshfork/repo.git").Run()
+
+	tests := []struct {
+		name       string
+		owner      string
+		wantRemote string
+		wantFound  bool
+	}{
+		{"find HTTPS remote", "forkuser", "fork-user", true},
+		{"find SSH remote", "sshfork", "ssh-fork", true},
+		{"find origin", "mainowner", "origin", true},
+		{"case insensitive", "ForkUser", "fork-user", true},
+		{"not found", "nonexistent", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			remoteName, _, err := g.FindRemoteByOwner(tt.owner)
+			if err != nil {
+				t.Fatalf("FindRemoteByOwner(%q) error = %v", tt.owner, err)
+			}
+			if tt.wantFound && remoteName == "" {
+				t.Errorf("FindRemoteByOwner(%q) returned empty, want %q", tt.owner, tt.wantRemote)
+			}
+			if tt.wantFound && remoteName != tt.wantRemote {
+				t.Errorf("FindRemoteByOwner(%q) = %q, want %q", tt.owner, remoteName, tt.wantRemote)
+			}
+			if !tt.wantFound && remoteName != "" {
+				t.Errorf("FindRemoteByOwner(%q) = %q, want empty", tt.owner, remoteName)
+			}
+		})
+	}
+}
+
+func TestAddRemote(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// Add a remote
+	err := g.AddRemote("myremote", "https://github.com/user/repo.git")
+	if err != nil {
+		t.Fatalf("AddRemote() error = %v", err)
+	}
+
+	// Verify it exists
+	url, err := g.GetRemote("myremote")
+	if err != nil {
+		t.Fatalf("GetRemote() error = %v", err)
+	}
+	if !strings.Contains(url, "user/repo") {
+		t.Errorf("GetRemote() = %q, expected to contain user/repo", url)
+	}
+
+	// Adding duplicate should fail
+	err = g.AddRemote("myremote", "https://github.com/other/repo.git")
+	if err == nil {
+		t.Error("AddRemote() should fail for duplicate remote name")
+	}
+}
+
+func TestPushForce_VariadicRemote(t *testing.T) {
+	// Test that Push and PushForce compile and accept variadic args
+	// (Can't test actual push without a real remote, but verify the API works)
+	g := New("/nonexistent")
+
+	// These should not panic even though the directory doesn't exist
+	// They'll return errors, which is fine
+	_ = g.Push(false)
+	_ = g.Push(false, "custom-remote")
+	_ = g.Push(false, "")
+	_ = g.PushForce()
+	_ = g.PushForce("custom-remote")
+	_ = g.PushForce("")
+}
