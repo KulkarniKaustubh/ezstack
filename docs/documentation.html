@@ -1336,15 +1336,16 @@
         const result = currentResults[index];
         const doc = docs[result.id];
         const terms = getMatchTerms(currentResults);
+        const savedResults = currentResults.slice();
 
         hideDropdown();
 
         // Filter page to show only matching sections/subsections
         const matchedDocIds = new Set();
-        currentResults.forEach(r => matchedDocIds.add(r.id));
+        savedResults.forEach(r => matchedDocIds.add(r.id));
 
         const matchedSectionIds = new Set();
-        currentResults.forEach(r => matchedSectionIds.add(r.sectionId));
+        savedResults.forEach(r => matchedSectionIds.add(r.sectionId));
 
         const visibleTocIds = new Set();
 
