@@ -225,7 +225,7 @@ func commitInternal(args []string, amend bool) error {
 	for _, result := range results {
 		if result.HasConflict {
 			ui.Warn(fmt.Sprintf("Conflict in '%s': resolve in %s", result.Branch, result.WorktreePath))
-			ui.Info(fmt.Sprintf("To resolve: cd to the worktree, fix conflicts, run 'git add .' then '%s'", continueCmd))
+			ui.Info(fmt.Sprintf("To resolve: cd to %s, fix conflicts, run 'git add .' then '%s'", result.WorktreePath, continueCmd))
 			return nil
 		} else if result.Error != nil {
 			ui.Warn(fmt.Sprintf("Failed to sync '%s': %v", result.Branch, result.Error))
