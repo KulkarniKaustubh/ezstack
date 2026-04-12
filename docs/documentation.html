@@ -26,6 +26,11 @@
   <link rel="stylesheet" href="css/style.css">
 
   <style>
+    /* Override global overflow-x:hidden which breaks position:sticky */
+    html, body {
+      overflow-x: clip;
+    }
+
     /* Docs page layout */
     .docs-search {
       position: sticky;
@@ -1038,6 +1043,7 @@
   <div class="docs-sidebar-overlay" id="docs-sidebar-overlay"></div>
 
   <script src="js/main.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/minisearch@7.1.1/dist/umd/index.min.js"></script>
   <script>
     (function() {
       const searchInput = document.getElementById('docs-search-input');
@@ -1049,12 +1055,83 @@
       const sidebar = document.getElementById('docs-sidebar');
       const sidebarToggle = document.getElementById('docs-sidebar-toggle');
       const sidebarOverlay = document.getElementById('docs-sidebar-overlay');
-
-      // Search
       const searchResults = document.getElementById('docs-search-results');
       const searchResultsText = document.getElementById('docs-search-results-text');
       const searchPrev = document.getElementById('docs-search-prev');
       const searchNext = document.getElementById('docs-search-next');
+
+      // ── Build MiniSearch index ──
+      // Each document = one section (h2) or subsection (h3) block
+      const docs = [];
+      const sectionMap = {}; // docId -> { sectionEl, headingEl }
+      let docId = 0;
+
+      sections.forEach(section => {
+        const h2 = section.querySelector('h2');
+        const h3s = section.querySelectorAll('h3[id]');
+
+        if (h3s.length === 0) {
+          // Section has no subsections — index as one document
+          docs.push({
+            id: docId,
+            title: h2 ? h2.textContent : '',
+            body: section.textContent,
+            sectionId: section.id
+          });
+          sectionMap[docId] = { sectionEl: section, headingEl: section };
+          docId++;
+        } else {
+          // Index the h2 intro (content before first h3)
+          let introText = '';
+          let node = h2 ? h2.nextSibling : section.firstChild;
+          while (node && !(node.nodeType === 1 && node.tagName === 'H3')) {
+            introText += node.textContent || '';
+            node = node.nextSibling;
+          }
+          if (introText.trim()) {
+            docs.push({
+              id: docId,
+              title: h2 ? h2.textContent : '',
+              body: introText,
+              sectionId: section.id
+            });
+            sectionMap[docId] = { sectionEl: section, headingEl: section };
+            docId++;
+          }
+
+          // Index each h3 subsection
+          h3s.forEach(h3 => {
+            let subText = '';
+            let sib = h3.nextSibling;
+            while (sib && !(sib.nodeType === 1 && (sib.tagName === 'H3' || sib.tagName === 'H2'))) {
+              subText += sib.textContent || '';
+              sib = sib.nextSibling;
+            }
+            docs.push({
+              id: docId,
+              title: h3.textContent,
+              body: h3.textContent + ' ' + subText,
+              sectionId: section.id
+            });
+            sectionMap[docId] = { sectionEl: section, headingEl: h3 };
+            docId++;
+          });
+        }
+      });
+
+      const miniSearch = new MiniSearch({
+        fields: ['title', 'body'],
+        storeFields: ['title', 'sectionId'],
+        searchOptions: {
+          boost: { title: 3 },
+          fuzzy: 0.2,
+          prefix: true,
+          combineWith: 'AND'
+        }
+      });
+      miniSearch.addAll(docs);
+
+      // ── Highlight / navigation state ──
       let allMarks = [];
       let currentMarkIndex = -1;
       let searchDebounceTimer = null;
@@ -1082,16 +1159,14 @@
       }
 
       function goToNextMatch() {
-        if (allMarks.length === 0) return;
-        setCurrentMark(currentMarkIndex + 1);
+        if (allMarks.length > 0) setCurrentMark(currentMarkIndex + 1);
       }
-
       function goToPrevMatch() {
-        if (allMarks.length === 0) return;
-        setCurrentMark(currentMarkIndex - 1);
+        if (allMarks.length > 0) setCurrentMark(currentMarkIndex - 1);
       }
 
-      function highlightAllOccurrences(element, terms) {
+      // Highlight all occurrences of terms in an element
+      function highlightTerms(element, terms) {
         const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, {
           acceptNode: function(node) {
             if (node.parentElement.closest('script, style, mark.search-highlight')) return NodeFilter.FILTER_REJECT;
@@ -1109,35 +1184,33 @@
         textNodes.forEach(node => {
           const text = node.textContent;
           const lower = text.toLowerCase();
+          const ranges = [];
 
-          // Find all match positions for all terms
-          const matches = [];
           for (let t = 0; t < terms.length; t++) {
             const term = terms[t];
-            let startPos = 0;
+            let pos = 0;
             while (true) {
-              const idx = lower.indexOf(term, startPos);
+              const idx = lower.indexOf(term, pos);
               if (idx === -1) break;
-              matches.push({ start: idx, end: idx + term.length });
-              startPos = idx + 1;
+              ranges.push({ start: idx, end: idx + term.length });
+              pos = idx + 1;
             }
           }
 
-          if (matches.length === 0) return;
+          if (ranges.length === 0) return;
 
-          // Sort by start position, then merge overlapping
-          matches.sort((a, b) => a.start - b.start || a.end - b.end);
-          const merged = [matches[0]];
-          for (let i = 1; i < matches.length; i++) {
+          // Merge overlapping ranges
+          ranges.sort((a, b) => a.start - b.start || a.end - b.end);
+          const merged = [ranges[0]];
+          for (let i = 1; i < ranges.length; i++) {
             const prev = merged[merged.length - 1];
-            if (matches[i].start <= prev.end) {
-              prev.end = Math.max(prev.end, matches[i].end);
+            if (ranges[i].start <= prev.end) {
+              prev.end = Math.max(prev.end, ranges[i].end);
             } else {
-              merged.push(matches[i]);
+              merged.push(ranges[i]);
             }
           }
 
-          // Build replacement fragment
           const frag = document.createDocumentFragment();
           let lastEnd = 0;
           for (let i = 0; i < merged.length; i++) {
@@ -1153,17 +1226,19 @@
           if (lastEnd < text.length) {
             frag.appendChild(document.createTextNode(text.slice(lastEnd)));
           }
-
           node.parentNode.replaceChild(frag, node);
         });
       }
 
-      function sectionMatchesAllTerms(section, terms) {
-        const text = section.textContent.toLowerCase();
-        for (let i = 0; i < terms.length; i++) {
-          if (!text.includes(terms[i])) return false;
-        }
-        return true;
+      // Extract highlight terms from MiniSearch results
+      function getMatchTerms(results) {
+        const terms = new Set();
+        results.forEach(r => {
+          Object.values(r.match).forEach(fieldTerms => {
+            fieldTerms.forEach(t => terms.add(t.toLowerCase()));
+          });
+        });
+        return Array.from(terms);
       }
 
       function updateTocHighlights(visibleSectionIds) {
@@ -1172,7 +1247,6 @@
           if (!href) return;
           const id = href.replace('#', '');
           if (visibleSectionIds.size === 0) {
-            // No active search — reset
             link.classList.remove('search-dimmed', 'search-match');
           } else if (visibleSectionIds.has(id)) {
             link.classList.remove('search-dimmed');
@@ -1184,8 +1258,9 @@
         });
       }
 
+      // ── Main search function ──
       function performSearch() {
-        const raw = searchInput.value.trim().toLowerCase();
+        const raw = searchInput.value.trim();
         searchClear.classList.toggle('visible', raw.length > 0);
 
         removeHighlights();
@@ -1200,19 +1275,31 @@
           return;
         }
 
-        // Split into terms for multi-word AND matching
-        const terms = raw.split(/\s+/).filter(t => t.length > 0);
-        if (terms.length === 0) return;
+        // Query MiniSearch — fuzzy + prefix + AND by default
+        const results = miniSearch.search(raw, {
+          boost: { title: 3 },
+          fuzzy: 0.2,
+          prefix: true,
+          combineWith: 'AND'
+        });
 
+        // If strict AND returns nothing, fall back to OR
+        const finalResults = results.length > 0 ? results :
+          miniSearch.search(raw, { boost: { title: 3 }, fuzzy: 0.2, prefix: true, combineWith: 'OR' });
+
+        // Collect which sections matched (by relevance order)
+        const matchedSectionIds = new Set();
+        finalResults.forEach(r => {
+          matchedSectionIds.add(r.sectionId);
+        });
+
+        // Show/hide sections
         let visibleCount = 0;
         const visibleSectionIds = new Set();
-
         sections.forEach(section => {
-          if (sectionMatchesAllTerms(section, terms)) {
+          if (matchedSectionIds.has(section.id)) {
             section.classList.remove('hidden');
             visibleCount++;
-            highlightAllOccurrences(section, terms);
-            // Track section id and any h3 ids within
             if (section.id) visibleSectionIds.add(section.id);
             section.querySelectorAll('h3[id]').forEach(h3 => visibleSectionIds.add(h3.id));
           } else {
@@ -1220,10 +1307,20 @@
           }
         });
 
+        // Highlight matched terms in visible sections
+        const terms = getMatchTerms(finalResults);
+        if (terms.length > 0) {
+          sections.forEach(section => {
+            if (matchedSectionIds.has(section.id)) {
+              highlightTerms(section, terms);
+            }
+          });
+        }
+
         noResults.classList.toggle('visible', visibleCount === 0);
         updateTocHighlights(visibleSectionIds);
 
-        // Gather all marks and set up navigation
+        // Set up match navigation
         allMarks = Array.from(document.querySelectorAll('mark.search-highlight'));
         const hasMarks = allMarks.length > 0;
 
@@ -1233,16 +1330,16 @@
 
         if (hasMarks) {
           searchResultsText.textContent = allMarks.length + ' match' + (allMarks.length !== 1 ? 'es' : '') + ' in ' + visibleCount + ' section' + (visibleCount !== 1 ? 's' : '');
-          // Auto-scroll to first match
           setCurrentMark(0);
         } else if (visibleCount === 0) {
           searchResultsText.textContent = 'No matches found';
         }
       }
 
+      // ── Event listeners ──
       searchInput.addEventListener('input', function() {
         clearTimeout(searchDebounceTimer);
-        searchDebounceTimer = setTimeout(performSearch, 150);
+        searchDebounceTimer = setTimeout(performSearch, 120);
       });
 
       searchClear.addEventListener('click', function() {
@@ -1254,7 +1351,6 @@
       searchPrev.addEventListener('click', function() { goToPrevMatch(); searchInput.focus(); });
       searchNext.addEventListener('click', function() { goToNextMatch(); searchInput.focus(); });
 
-      // Keyboard shortcuts
       document.addEventListener('keydown', function(e) {
         if (e.key === '/' && !e.ctrlKey && !e.metaKey && document.activeElement !== searchInput) {
           e.preventDefault();
@@ -1272,7 +1368,7 @@
         }
       });
 
-      // Scroll spy
+      // ── Scroll spy ──
       function updateScrollSpy() {
         const headings = document.querySelectorAll('.docs-section[id], .docs-content h3[id]');
         let currentId = '';
@@ -1302,7 +1398,7 @@
       });
       updateScrollSpy();
 
-      // Mobile sidebar
+      // ── Mobile sidebar ──
       sidebarToggle.addEventListener('click', function() {
         sidebar.classList.toggle('open');
         sidebarOverlay.classList.toggle('open');
