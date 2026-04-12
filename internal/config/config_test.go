@@ -365,9 +365,9 @@ func TestStackConfig_MultiRepo(t *testing.T) {
 
 func TestStack_DisplayName(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		stack Stack
-		want string
+		want  string
 	}{
 		{
 			name:  "with name",

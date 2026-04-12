@@ -57,8 +57,8 @@ type RepoConfig struct {
 	CdAfterNew          *bool  `json:"cd_after_new,omitempty"`
 	UseWorktrees        *bool  `json:"use_worktrees,omitempty"`
 	AutoDraftWipCommits *bool  `json:"auto_draft_wip_commits,omitempty"`
-	SyncStrategy        string `json:"sync_strategy,omitempty"`    // "rebase" (default) or "merge"
-	AgentCommand        string `json:"agent_command,omitempty"`    // AI agent CLI command (default: "claude")
+	SyncStrategy        string `json:"sync_strategy,omitempty"` // "rebase" (default) or "merge"
+	AgentCommand        string `json:"agent_command,omitempty"` // AI agent CLI command (default: "claude")
 }
 
 // GetAgentCommand returns the configured agent command, defaulting to "claude".
@@ -159,16 +159,16 @@ type StackConfig struct {
 // Stack represents a chain of stacked branches as a tree
 // Hash is the map key in StackConfig.Stacks and is populated at load time.
 type Stack struct {
-	Hash            string       `json:"-"`                           // Populated from map key at load time
-	Name            string       `json:"name,omitempty"`              // Optional user-given name for the stack
-	Root            string       `json:"root"`                       // The base branch (e.g. "main", or a remote branch name)
-	RootBase        string       `json:"root_base,omitempty"`        // The branch the root's PR targets (for computing root diff)
-	RootPRNumber    int          `json:"-"`                           // Runtime-only: derived from RootPRUrl
-	RootPRUrl       string       `json:"root_pr_url,omitempty"`      // PR URL of the root branch (for remote base branches)
-	DeleteDeclined  bool         `json:"delete_declined,omitempty"`   // User declined cleanup prompt; don't re-ask
-	Tree            BranchTree   `json:"tree"`                       // The tree of branches
-	Branches        []*Branch    `json:"-"`                           // Runtime-only: populated from Tree for backward compatibility
-	cache           *CacheConfig // Runtime-only: reference to cache for metadata
+	Hash           string       `json:"-"`                         // Populated from map key at load time
+	Name           string       `json:"name,omitempty"`            // Optional user-given name for the stack
+	Root           string       `json:"root"`                      // The base branch (e.g. "main", or a remote branch name)
+	RootBase       string       `json:"root_base,omitempty"`       // The branch the root's PR targets (for computing root diff)
+	RootPRNumber   int          `json:"-"`                         // Runtime-only: derived from RootPRUrl
+	RootPRUrl      string       `json:"root_pr_url,omitempty"`     // PR URL of the root branch (for remote base branches)
+	DeleteDeclined bool         `json:"delete_declined,omitempty"` // User declined cleanup prompt; don't re-ask
+	Tree           BranchTree   `json:"tree"`                      // The tree of branches
+	Branches       []*Branch    `json:"-"`                         // Runtime-only: populated from Tree for backward compatibility
+	cache          *CacheConfig // Runtime-only: reference to cache for metadata
 }
 
 // DisplayName returns the display string for a stack: "name [hash]" or just hash
@@ -189,7 +189,7 @@ func GenerateStackHash(name string) string {
 // BranchCache holds cached metadata for a branch
 type BranchCache struct {
 	WorktreePath string `json:"worktree_path,omitempty"`
-	PRNumber     int    `json:"-"`                      // Runtime-only: derived from PRUrl via PRNumberFromURL
+	PRNumber     int    `json:"-"` // Runtime-only: derived from PRUrl via PRNumberFromURL
 	PRUrl        string `json:"pr_url,omitempty"`
 	PRState      string `json:"pr_state,omitempty"` // Cached: "OPEN", "DRAFT", "MERGED", "CLOSED"
 	IsMerged     bool   `json:"is_merged,omitempty"`
@@ -207,7 +207,7 @@ type Branch struct {
 	Name         string `json:"name"`
 	Parent       string `json:"parent"`
 	WorktreePath string `json:"worktree_path"`
-	PRNumber     int    `json:"-"`                   // Runtime-only: derived from PRUrl via PRNumberFromURL
+	PRNumber     int    `json:"-"` // Runtime-only: derived from PRUrl via PRNumberFromURL
 	PRUrl        string `json:"pr_url,omitempty"`
 	PRState      string `json:"pr_state,omitempty"`  // Cached: "OPEN", "DRAFT", "MERGED", "CLOSED"
 	BaseBranch   string `json:"base_branch"`         // original tree parent, used for display ordering
@@ -506,8 +506,8 @@ func migrateV1ToV2(data []byte) ([]byte, error) {
 					newCacheData, err := json.MarshalIndent(cacheFile, "", "  ")
 					if err == nil {
 						if wErr := atomicWriteFile(cachePath, newCacheData, 0644); wErr != nil {
-						fmt.Fprintf(os.Stderr, "Warning: failed to update cache.json: %v\n", wErr)
-					}
+							fmt.Fprintf(os.Stderr, "Warning: failed to update cache.json: %v\n", wErr)
+						}
 					}
 				}
 			}
@@ -691,8 +691,8 @@ func migrateV3ToV4(data []byte) ([]byte, error) {
 // This migration just bumps the version number.
 func migrateV4ToV5(data []byte) ([]byte, error) {
 	var file struct {
-		Version int                    `json:"version"`
-		Repos   map[string]*repoData   `json:"repos"`
+		Version int                  `json:"version"`
+		Repos   map[string]*repoData `json:"repos"`
 	}
 	if err := json.Unmarshal(data, &file); err != nil {
 		return nil, err
