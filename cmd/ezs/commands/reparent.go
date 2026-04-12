@@ -373,10 +373,10 @@ func doReparentCore(mgr *stack.Manager, branchName, newParent string, rebase boo
 		}
 		if useMerge {
 			ui.Info("Branch was merged. Push to update the PR.")
-			pushSucceeded = OfferPush(branchName, worktreePath)
+			pushSucceeded = OfferPush(branchName, worktreePath, branch.EffectiveRemote())
 		} else {
 			ui.Info("Branch was rebased. Force-push required to update the PR.")
-			pushSucceeded = OfferForcePush(branchName, worktreePath)
+			pushSucceeded = OfferForcePush(branchName, worktreePath, branch.EffectiveRemote())
 		}
 	}
 

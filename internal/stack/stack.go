@@ -704,32 +704,55 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 	result := &ReparentResult{Branch: m.GetBranch(branch.Name)}
 
 	// Perform git rebase/merge if requested (after config is saved)
-	if doRebase && branch.WorktreePath != "" {
-		g := git.New(branch.WorktreePath)
+	if doRebase {
 		newParentRef := m.getParentRef(newParentName)
+		workDir := branch.WorktreePath
+		if workDir == "" {
+			workDir = m.repoDir
+		}
 
-		if useMerge {
-			syncResult := g.MergeNonInteractive(newParentRef)
-			if syncResult.HasConflict {
-				result.HasConflict = true
-				result.ConflictDir = branch.WorktreePath
-			} else if syncResult.Error != nil {
-				return result, fmt.Errorf("merge failed: %w", syncResult.Error)
+		if branch.WorktreePath != "" {
+			g := git.New(branch.WorktreePath)
+			if useMerge {
+				syncResult := g.MergeNonInteractive(newParentRef)
+				if syncResult.HasConflict {
+					result.HasConflict = true
+					result.ConflictDir = branch.WorktreePath
+				} else if syncResult.Error != nil {
+					return result, fmt.Errorf("merge failed: %w", syncResult.Error)
+				}
+			} else {
+				oldParentRef := m.getParentRef(oldParent)
+				mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
+				if err != nil {
+					mergeBase = oldParentRef
+				}
+				rebaseResult := g.RebaseOntoNonInteractive(newParentRef, mergeBase)
+				if rebaseResult.HasConflict {
+					result.HasConflict = true
+					result.ConflictDir = branch.WorktreePath
+				} else if rebaseResult.Error != nil {
+					return result, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
+				}
 			}
 		} else {
-			// Get the merge-base between current branch and old parent
-			oldParentRef := m.getParentRef(oldParent)
-			mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
-			if err != nil {
-				mergeBase = oldParentRef
-			}
-
-			rebaseResult := g.RebaseOntoNonInteractive(newParentRef, mergeBase)
-			if rebaseResult.HasConflict {
+			// No worktree — use checkout-based sync in the main repo
+			syncResult := syncViaCheckout(m.git, branch.Name, func(g *git.Git) git.RebaseResult {
+				if useMerge {
+					return g.MergeNonInteractive(newParentRef)
+				}
+				oldParentRef := m.getParentRef(oldParent)
+				mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
+				if err != nil {
+					mergeBase = oldParentRef
+				}
+				return g.RebaseOntoNonInteractive(newParentRef, mergeBase)
+			})
+			if syncResult.HasConflict {
 				result.HasConflict = true
-				result.ConflictDir = branch.WorktreePath
-			} else if rebaseResult.Error != nil {
-				return result, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
+				result.ConflictDir = workDir
+			} else if syncResult.Error != nil {
+				return result, fmt.Errorf("sync failed: %w", syncResult.Error)
 			}
 		}
 	}
@@ -796,26 +819,42 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 
 	result := &ReparentResult{Branch: m.GetBranch(branchName)}
 
-	// Perform git rebase/merge if requested and we have a worktree (after config is saved)
-	if doRebase && worktreePath != "" {
-		g := git.New(worktreePath)
+	// Perform git rebase/merge if requested (after config is saved)
+	if doRebase {
 		newParentRef := m.getParentRef(newParentName)
 
-		if useMerge {
-			syncResult := g.MergeNonInteractive(newParentRef)
-			if syncResult.HasConflict {
-				result.HasConflict = true
-				result.ConflictDir = worktreePath
-			} else if syncResult.Error != nil {
-				return result, fmt.Errorf("merge failed: %w", syncResult.Error)
+		if worktreePath != "" {
+			g := git.New(worktreePath)
+			if useMerge {
+				syncResult := g.MergeNonInteractive(newParentRef)
+				if syncResult.HasConflict {
+					result.HasConflict = true
+					result.ConflictDir = worktreePath
+				} else if syncResult.Error != nil {
+					return result, fmt.Errorf("merge failed: %w", syncResult.Error)
+				}
+			} else {
+				rebaseResult := g.RebaseNonInteractive(newParentRef)
+				if rebaseResult.HasConflict {
+					result.HasConflict = true
+					result.ConflictDir = worktreePath
+				} else if rebaseResult.Error != nil {
+					return result, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
+				}
 			}
 		} else {
-			rebaseResult := g.RebaseNonInteractive(newParentRef)
-			if rebaseResult.HasConflict {
+			// No worktree — use checkout-based sync in the main repo
+			syncResult := syncViaCheckout(m.git, branchName, func(g *git.Git) git.RebaseResult {
+				if useMerge {
+					return g.MergeNonInteractive(newParentRef)
+				}
+				return g.RebaseNonInteractive(newParentRef)
+			})
+			if syncResult.HasConflict {
 				result.HasConflict = true
-				result.ConflictDir = worktreePath
-			} else if rebaseResult.Error != nil {
-				return result, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
+				result.ConflictDir = m.repoDir
+			} else if syncResult.Error != nil {
+				return result, fmt.Errorf("sync failed: %w", syncResult.Error)
 			}
 		}
 	}
@@ -1401,7 +1440,8 @@ func (m *Manager) MarkBranchMerged(branchName string) error {
 
 // MarkBranchRemote marks a branch as belonging to another contributor.
 // Remote branches are not rebased during sync. Optionally sets PR URL.
-func (m *Manager) MarkBranchRemote(branchName, prURL string) error {
+// If remote is non-empty, it specifies the git remote to push to (for fork PRs).
+func (m *Manager) MarkBranchRemote(branchName, prURL, remote string) error {
 	cache := m.stackConfig.Cache
 	bc := cache.GetBranchCache(branchName)
 	if bc == nil {
@@ -1410,6 +1450,9 @@ func (m *Manager) MarkBranchRemote(branchName, prURL string) error {
 	bc.IsRemote = true
 	if prURL != "" {
 		bc.PRUrl = prURL
+	}
+	if remote != "" {
+		bc.Remote = remote
 	}
 	cache.SetBranchCache(branchName, bc)
 
