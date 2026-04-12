@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
@@ -102,7 +103,7 @@ func (c *Client) GetPRByBranch(branch string) (*PR, error) {
 
 	var pr PR
 	if err := json.Unmarshal([]byte(output), &pr); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse PR response for branch %q: %w", branch, err)
 	}
 	pr.Merged = pr.MergedAt != ""
 	return &pr, nil
@@ -119,7 +120,7 @@ func (c *Client) getPRByHeadBranch(branch string) (*PR, error) {
 
 	var prs []PR
 	if err := json.Unmarshal([]byte(output), &prs); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse PR list response for branch %q: %w", branch, err)
 	}
 	if len(prs) == 0 {
 		return nil, fmt.Errorf("no pull requests found for branch %q", branch)
@@ -138,7 +139,7 @@ func (c *Client) GetPR(number int) (*PR, error) {
 
 	var pr PR
 	if err := json.Unmarshal([]byte(output), &pr); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse PR response for #%d: %w", number, err)
 	}
 	// Set Merged based on whether mergedAt is present
 	pr.Merged = pr.MergedAt != ""
@@ -149,8 +150,7 @@ func (c *Client) GetPR(number int) (*PR, error) {
 func (c *Client) GetPRChecks(number int) (*CheckStatus, error) {
 	output, err := c.runGH("pr", "checks", fmt.Sprintf("%d", number))
 	if err != nil {
-		// If checks fail to fetch, return unknown status
-		return &CheckStatus{State: "unknown", Summary: "checks unavailable"}, nil
+		return nil, fmt.Errorf("failed to fetch PR checks for #%d: %w", number, err)
 	}
 
 	lines := strings.Split(strings.TrimSpace(output), "\n")
@@ -173,15 +173,21 @@ func (c *Client) GetPRChecks(number int) (*CheckStatus, error) {
 		if strings.Contains(lower, "successful") && strings.Contains(lower, "pending checks") {
 			re := regexp.MustCompile(`(\d+)\s+failing`)
 			if matches := re.FindStringSubmatch(lower); len(matches) > 1 {
-				fmt.Sscanf(matches[1], "%d", &failed)
+				if n, err := strconv.Atoi(matches[1]); err == nil {
+					failed = n
+				}
 			}
 			re = regexp.MustCompile(`(\d+)\s+successful`)
 			if matches := re.FindStringSubmatch(lower); len(matches) > 1 {
-				fmt.Sscanf(matches[1], "%d", &passed)
+				if n, err := strconv.Atoi(matches[1]); err == nil {
+					passed = n
+				}
 			}
 			re = regexp.MustCompile(`(\d+)\s+pending`)
 			if matches := re.FindStringSubmatch(lower); len(matches) > 1 {
-				fmt.Sscanf(matches[1], "%d", &pending)
+				if n, err := strconv.Atoi(matches[1]); err == nil {
+					pending = n
+				}
 			}
 			// Found summary line, use these counts
 			break
@@ -284,7 +290,7 @@ func (c *Client) ListOpenPRs() ([]OpenPR, error) {
 		} `json:"author"`
 	}
 	if err := json.Unmarshal([]byte(output), &prs); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse PR list response: %w", err)
 	}
 
 	result := make([]OpenPR, len(prs))

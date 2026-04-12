@@ -330,7 +330,11 @@ export class FileTreeProvider implements vscode.TreeDataProvider<FileNode> {
           .localeCompare(path.basename(b.absolutePath));
       });
       return nodes;
-    } catch {
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (!msg.includes("ENOENT")) {
+        console.warn(`ezstack: failed to read directory ${dirPath}: ${msg}`);
+      }
       return [];
     }
   }
