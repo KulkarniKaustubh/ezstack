@@ -413,6 +413,10 @@ func prCreate(args []string) error {
 	}
 	ui.Info(fmt.Sprintf("Will create %s '%s' with base branch: %s", prType, prTitle, branch.Parent))
 
+	if !branch.CanPush() {
+		return fmt.Errorf("cannot create PR: push not allowed for '%s' (fork does not allow maintainer push)", branch.Name)
+	}
+
 	if err := g.Fetch(); err != nil {
 		ui.Warn(fmt.Sprintf("Could not fetch from remote: %v", err))
 	}
@@ -434,17 +438,17 @@ func prCreate(args []string) error {
 			ui.Warn("Cancelled - cannot create PR without pushing")
 			return nil
 		}
-		if err := g.PushForce(); err != nil {
+		if err := g.PushForce(branch.EffectiveRemote()); err != nil {
 			return fmt.Errorf("failed to force push: %w", err)
 		}
 	} else if g.RemoteBranchExists(branch.Name) {
 		// Remote exists and local is ahead or in sync - regular push should work
-		if err := g.Push(false); err != nil {
+		if err := g.Push(false, branch.EffectiveRemote()); err != nil {
 			return fmt.Errorf("failed to push: %w", err)
 		}
 	} else {
 		// Remote doesn't exist - set upstream
-		if err := g.PushSetUpstream(); err != nil {
+		if err := g.PushSetUpstream(branch.EffectiveRemote()); err != nil {
 			return fmt.Errorf("failed to push: %w", err)
 		}
 	}
@@ -614,13 +618,17 @@ func prUpdate(args []string) error {
 		confirmMsg = fmt.Sprintf("Push %d commit(s) to PR #%d?", len(commits), branch.PRNumber)
 	}
 
+	if !branch.CanPush() {
+		return fmt.Errorf("push not allowed for '%s' (fork does not allow maintainer push)", branch.Name)
+	}
+
 	if !ui.ConfirmTUI(confirmMsg) {
 		ui.Warn("Cancelled")
 		return nil
 	}
 
 	ui.Info("Pushing changes...")
-	if err := g.PushBranch(branch.Name, needsForcePush); err != nil {
+	if err := g.PushBranch(branch.Name, needsForcePush, branch.EffectiveRemote()); err != nil {
 		return fmt.Errorf("failed to push: %w", err)
 	}
 

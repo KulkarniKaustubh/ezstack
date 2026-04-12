@@ -9,6 +9,64 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/github"
 )
 
+// syncViaCheckout performs a rebase or merge for a branch that has no worktree.
+// It checks out the branch in the main repo, performs the operation, then checks
+// out the original branch. Returns a git.RebaseResult.
+// The caller must ensure no uncommitted changes exist in the main repo.
+func syncViaCheckout(mainGit *git.Git, branchName string, doOp func(g *git.Git) git.RebaseResult) git.RebaseResult {
+	// Save current branch so we can return to it
+	origBranch, err := mainGit.CurrentBranch()
+	if err != nil {
+		return git.RebaseResult{Error: fmt.Errorf("failed to get current branch: %w", err)}
+	}
+
+	// Checkout the target branch
+	if err := mainGit.CheckoutBranch(branchName); err != nil {
+		return git.RebaseResult{Error: fmt.Errorf("failed to checkout %s: %w", branchName, err)}
+	}
+
+	// Perform the rebase/merge operation
+	result := doOp(mainGit)
+
+	// If there was a conflict, stay on the branch so the user can resolve it
+	if result.HasConflict {
+		return result
+	}
+
+	// Return to the original branch
+	if err := mainGit.CheckoutBranch(origBranch); err != nil {
+		// Non-fatal: the sync succeeded but we couldn't switch back
+		fmt.Fprintf(os.Stderr, "  Warning: synced %s but failed to switch back to %s: %v\n", branchName, origBranch, err)
+	}
+
+	return result
+}
+
+// resetViaCheckout performs a git reset --hard for a branch that has no worktree.
+// It checks out the branch in the main repo, resets, then checks out back.
+func resetViaCheckout(mainGit *git.Git, branchName, ref string) error {
+	origBranch, err := mainGit.CurrentBranch()
+	if err != nil {
+		return fmt.Errorf("failed to get current branch: %w", err)
+	}
+
+	if err := mainGit.CheckoutBranch(branchName); err != nil {
+		return fmt.Errorf("failed to checkout %s: %w", branchName, err)
+	}
+
+	if err := mainGit.ResetHard(ref); err != nil {
+		// Try to go back even on failure
+		_ = mainGit.CheckoutBranch(origBranch)
+		return err
+	}
+
+	if err := mainGit.CheckoutBranch(origBranch); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: reset %s but failed to switch back to %s: %v\n", branchName, origBranch, err)
+	}
+
+	return nil
+}
+
 // syncCache holds the cache during sync operations to track and persist changes
 type syncCache struct {
 	cache   *config.CacheConfig
@@ -55,6 +113,7 @@ type RebaseResult struct {
 	WorktreePath string // Path to the worktree (useful for conflict resolution)
 	BehindBy     int    // Number of commits behind (for branches that need sync with origin/main)
 	StackName    string // Display name of the stack this branch belongs to
+	Remote       string // Git remote to push to (empty means "origin")
 }
 
 // SyncInfo contains information about a branch that needs syncing
@@ -396,20 +455,46 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				continue
 			}
 
-			// Skip branches without a worktree path (can't rebase without a working directory)
-			if branch.WorktreePath == "" {
-				if callbacks != nil && callbacks.BeforeRebase != nil {
-					fmt.Fprintf(os.Stderr, "  Skipping %s: no worktree path (use 'ezs goto %s' to set up)\n", branch.Name, branch.Name)
-				}
-				continue
+			// Determine the working directory for git operations
+			// Branches with worktrees use their own directory; branches without
+			// use checkout-based sync in the main repo.
+			useCheckout := branch.WorktreePath == ""
+			var g *git.Git
+			if useCheckout {
+				g = m.git // will use syncViaCheckout for operations
+			} else {
+				g = git.New(branch.WorktreePath)
 			}
 
-			result := RebaseResult{Branch: branch.Name, WorktreePath: branch.WorktreePath, StackName: stack.DisplayName()}
-			g := git.New(branch.WorktreePath)
+			workDir := branch.WorktreePath
+			if workDir == "" {
+				workDir = m.repoDir
+			}
+
+			result := RebaseResult{Branch: branch.Name, WorktreePath: workDir, StackName: stack.DisplayName(), Remote: branch.Remote}
+
+			// Create checkout-aware sync functions for this branch
+			branchDoSync := func(target string) git.RebaseResult {
+				if useCheckout {
+					return syncViaCheckout(m.git, branch.Name, func(cg *git.Git) git.RebaseResult {
+						return doSync(cg, target)
+					})
+				}
+				return doSync(g, target)
+			}
+			branchDoSyncOnto := func(newBase, oldBase string) git.RebaseResult {
+				if useCheckout {
+					return syncViaCheckout(m.git, branch.Name, func(cg *git.Git) git.RebaseResult {
+						return doSyncOnto(cg, newBase, oldBase)
+					})
+				}
+				return doSyncOnto(g, newBase, oldBase)
+			}
 
 			// Autostash: stash uncommitted changes before rebase
+			// Skip autostash for checkout-based sync (no worktree to have uncommitted changes in)
 			didStash := false
-			if callbacks != nil && callbacks.Autostash {
+			if !useCheckout && callbacks != nil && callbacks.Autostash {
 				// Check for orphaned ezstack stash from a previous conflicted sync
 				if _, found := g.FindEzstackStash(branch.Name); found {
 					fmt.Fprintf(os.Stderr, "  Note: existing autostash found for %s (from a previous sync)\n", branch.Name)
@@ -432,7 +517,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			}
 			// conflictMsg appends stash info to the conflict error when applicable
 			conflictMsg := func() string {
-				msg := fmt.Sprintf("resolve conflicts in: %s", branch.WorktreePath)
+				msg := fmt.Sprintf("resolve conflicts in: %s", workDir)
 				if didStash {
 					msg += " (uncommitted changes stashed — will be restored on next successful sync, or run 'git stash pop' manually)"
 				}
@@ -462,11 +547,12 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					}
 				}
 
-				syncResult := doSync(g, "origin/"+stack.Root)
+				syncResult := branchDoSync("origin/" + stack.Root)
 				if syncResult.HasConflict {
 					result.HasConflict = true
 					result.Error = fmt.Errorf("%s", conflictMsg())
 					results = append(results, result)
+					saveState(sc)
 					if !allStacks {
 						return results, nil
 					}
@@ -476,6 +562,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					popStash()
 					result.Error = syncResult.Error
 					results = append(results, result)
+					saveState(sc)
 					if !allStacks {
 						return results, nil
 					}
@@ -570,7 +657,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					rebaseTarget = "origin/" + stack.Root
 				}
 
-				syncResult := doSyncOnto(g, rebaseTarget, mergeBase)
+				syncResult := branchDoSyncOnto(rebaseTarget, mergeBase)
 				if syncResult.HasConflict {
 					result.HasConflict = true
 					result.Error = fmt.Errorf("%s", conflictMsg())
@@ -640,9 +727,15 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				childHead, err := m.git.GetBranchCommit(branch.Name)
 				if err == nil && childHead == oldParentHead {
 					// No commits in child - just reset to new parent HEAD
-					if err := g.ResetHard(parentRef); err != nil {
+					var resetErr error
+					if useCheckout {
+						resetErr = resetViaCheckout(m.git, branch.Name, parentRef)
+					} else {
+						resetErr = g.ResetHard(parentRef)
+					}
+					if resetErr != nil {
 						popStash()
-						result.Error = fmt.Errorf("failed to fast-forward: %w", err)
+						result.Error = fmt.Errorf("failed to fast-forward: %w", resetErr)
 						results = append(results, result)
 						continue
 					}
@@ -661,11 +754,12 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					continue
 				}
 
-				syncResult := doSyncOnto(g, parentRef, oldParentHead)
+				syncResult := branchDoSyncOnto(parentRef, oldParentHead)
 				if syncResult.HasConflict {
 					result.HasConflict = true
 					result.Error = fmt.Errorf("%s", conflictMsg())
 					results = append(results, result)
+					saveState(sc)
 					if !allStacks {
 						return results, nil
 					}
@@ -675,6 +769,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					popStash()
 					result.Error = syncResult.Error
 					results = append(results, result)
+					saveState(sc)
 					if !allStacks {
 						return results, nil
 					}
@@ -697,11 +792,12 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			}
 
 			// Fallback: no old HEAD recorded, try simple sync
-			syncResult := doSync(g, parentRef)
+			syncResult := branchDoSync(parentRef)
 			if syncResult.HasConflict {
 				result.HasConflict = true
 				result.Error = fmt.Errorf("%s", conflictMsg())
 				results = append(results, result)
+				saveState(sc)
 				if !allStacks {
 					return results, nil
 				}
@@ -711,6 +807,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				popStash()
 				result.Error = syncResult.Error
 				results = append(results, result)
+				saveState(sc)
 				if !allStacks {
 					return results, nil
 				}
@@ -762,12 +859,29 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 		return nil, fmt.Errorf("branch '%s' not found in any stack", branchName)
 	}
 
-	if branch.WorktreePath == "" {
-		return nil, fmt.Errorf("branch '%s' has no worktree path configured", branchName)
+	// Determine working directory and whether to use checkout-based sync
+	useCheckout := branch.WorktreePath == ""
+	var g *git.Git
+	if useCheckout {
+		g = m.git
+	} else {
+		g = git.New(branch.WorktreePath)
 	}
 
-	result := &RebaseResult{Branch: branch.Name, WorktreePath: branch.WorktreePath}
-	g := git.New(branch.WorktreePath)
+	workDir := branch.WorktreePath
+	if workDir == "" {
+		workDir = m.repoDir
+	}
+
+	// Helper to run sync operation with checkout fallback if needed
+	doSyncOp := func(op func(g *git.Git) git.RebaseResult) git.RebaseResult {
+		if useCheckout {
+			return syncViaCheckout(m.git, branchName, op)
+		}
+		return op(g)
+	}
+
+	result := &RebaseResult{Branch: branch.Name, WorktreePath: workDir, Remote: branch.Remote}
 
 	if branch.Parent == stack.Root {
 		behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
@@ -779,15 +893,15 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 		result.BehindBy = behindBy
 		result.SyncedParent = "origin/" + stack.Root
 
-		var syncResult git.RebaseResult
-		if merge {
-			syncResult = g.MergeNonInteractive("origin/" + stack.Root)
-		} else {
-			syncResult = g.RebaseNonInteractive("origin/" + stack.Root)
-		}
+		syncResult := doSyncOp(func(sg *git.Git) git.RebaseResult {
+			if merge {
+				return sg.MergeNonInteractive("origin/" + stack.Root)
+			}
+			return sg.RebaseNonInteractive("origin/" + stack.Root)
+		})
 		if syncResult.HasConflict {
 			result.HasConflict = true
-			result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
+			result.Error = fmt.Errorf("resolve conflicts in: %s", workDir)
 			return result, nil
 		} else if syncResult.Error != nil {
 			result.Error = syncResult.Error
@@ -844,15 +958,15 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 			mergeBase = oldParentRef
 		}
 
-		var syncResult git.RebaseResult
-		if merge {
-			syncResult = g.MergeNonInteractive("origin/" + stack.Root)
-		} else {
-			syncResult = g.RebaseOntoNonInteractive("origin/"+stack.Root, mergeBase)
-		}
+		syncResult := doSyncOp(func(sg *git.Git) git.RebaseResult {
+			if merge {
+				return sg.MergeNonInteractive("origin/" + stack.Root)
+			}
+			return sg.RebaseOntoNonInteractive("origin/"+stack.Root, mergeBase)
+		})
 		if syncResult.HasConflict {
 			result.HasConflict = true
-			result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
+			result.Error = fmt.Errorf("resolve conflicts in: %s", workDir)
 		} else if syncResult.Error != nil {
 			result.Error = syncResult.Error
 		} else {
@@ -885,8 +999,14 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 
 	if commitCount == 0 {
 		// No commits in child - just reset to parent (fast-forward)
-		if err := g.ResetHard(parentRef); err != nil {
-			result.Error = fmt.Errorf("failed to fast-forward: %w", err)
+		var resetErr error
+		if useCheckout {
+			resetErr = resetViaCheckout(m.git, branchName, parentRef)
+		} else {
+			resetErr = g.ResetHard(parentRef)
+		}
+		if resetErr != nil {
+			result.Error = fmt.Errorf("failed to fast-forward: %w", resetErr)
 			return result, nil
 		}
 		result.Success = true
@@ -894,15 +1014,15 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 	}
 
 	// Has commits - sync normally, let conflicts bubble up
-	var syncResult git.RebaseResult
-	if merge {
-		syncResult = g.MergeNonInteractive(parentRef)
-	} else {
-		syncResult = g.RebaseNonInteractive(parentRef)
-	}
+	syncResult := doSyncOp(func(sg *git.Git) git.RebaseResult {
+		if merge {
+			return sg.MergeNonInteractive(parentRef)
+		}
+		return sg.RebaseNonInteractive(parentRef)
+	})
 	if syncResult.HasConflict {
 		result.HasConflict = true
-		result.Error = fmt.Errorf("resolve conflicts in: %s", branch.WorktreePath)
+		result.Error = fmt.Errorf("resolve conflicts in: %s", workDir)
 		return result, nil
 	} else if syncResult.Error != nil {
 		result.Error = syncResult.Error
@@ -951,8 +1071,20 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 	children := m.GetChildren(currentBranch.Name)
 
 	for _, child := range children {
-		result := RebaseResult{Branch: child.Name, WorktreePath: child.WorktreePath}
-		g := git.New(child.WorktreePath)
+		useCheckout := child.WorktreePath == ""
+		var g *git.Git
+		if useCheckout {
+			g = m.git
+		} else {
+			g = git.New(child.WorktreePath)
+		}
+
+		workDir := child.WorktreePath
+		if workDir == "" {
+			workDir = m.repoDir
+		}
+
+		result := RebaseResult{Branch: child.Name, WorktreePath: workDir, Remote: child.Remote}
 
 		// Count commits in the child branch that are not in the parent
 		// git rev-list --count parent..child
@@ -965,8 +1097,14 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 
 		if commitCount == 0 {
 			// No commits in child - just reset to parent (fast-forward)
-			if err := g.ResetHard(currentBranch.Name); err != nil {
-				result.Error = fmt.Errorf("failed to fast-forward: %w", err)
+			var resetErr error
+			if useCheckout {
+				resetErr = resetViaCheckout(m.git, child.Name, currentBranch.Name)
+			} else {
+				resetErr = g.ResetHard(currentBranch.Name)
+			}
+			if resetErr != nil {
+				result.Error = fmt.Errorf("failed to fast-forward: %w", resetErr)
 				results = append(results, result)
 				continue
 			}
@@ -975,14 +1113,23 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 		} else {
 			// Has commits - sync normally, let conflicts bubble up
 			var syncResult git.RebaseResult
-			if merge {
-				syncResult = g.MergeNonInteractive(currentBranch.Name)
+			if useCheckout {
+				syncResult = syncViaCheckout(m.git, child.Name, func(cg *git.Git) git.RebaseResult {
+					if merge {
+						return cg.MergeNonInteractive(currentBranch.Name)
+					}
+					return cg.RebaseNonInteractive(currentBranch.Name)
+				})
 			} else {
-				syncResult = g.RebaseNonInteractive(currentBranch.Name)
+				if merge {
+					syncResult = g.MergeNonInteractive(currentBranch.Name)
+				} else {
+					syncResult = g.RebaseNonInteractive(currentBranch.Name)
+				}
 			}
 			if syncResult.HasConflict {
 				result.HasConflict = true
-				result.Error = fmt.Errorf("resolve conflicts in: %s", child.WorktreePath)
+				result.Error = fmt.Errorf("resolve conflicts in: %s", workDir)
 				results = append(results, result)
 				// Stop immediately on conflict - user must resolve before continuing
 				return results, nil
@@ -997,15 +1144,71 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 		}
 
 		// Recursively sync this child's children
-		childMgr, err := NewManager(child.WorktreePath)
-		if err != nil {
-			continue
-		}
-		childResults, err := childMgr.RebaseChildren(merge)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: failed to sync children of %s: %v\n", child.Name, err)
+		var childResults []RebaseResult
+		if child.WorktreePath != "" {
+			childMgr, err := NewManager(child.WorktreePath)
+			if err != nil {
+				result := RebaseResult{
+					Branch:       child.Name,
+					WorktreePath: child.WorktreePath,
+					Remote:       child.Remote,
+					Error:        fmt.Errorf("failed to open manager for %s: %w", child.WorktreePath, err),
+				}
+				results = append(results, result)
+				return results, nil
+			}
+			cr, err := childMgr.RebaseChildren(merge)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to sync children of %s: %v\n", child.Name, err)
+			}
+			childResults = cr
+		} else {
+			// For non-worktree children, checkout the child branch so
+			// GetCurrentStack() sees it, then recurse, then checkout back.
+			origBranch, err := m.git.CurrentBranch()
+			if err != nil {
+				result := RebaseResult{
+					Branch: child.Name,
+					Error:  fmt.Errorf("failed to get current branch before recursing into %s: %w", child.Name, err),
+				}
+				results = append(results, result)
+				return results, nil
+			}
+			if err := m.git.CheckoutBranch(child.Name); err != nil {
+				result := RebaseResult{
+					Branch: child.Name,
+					Error:  fmt.Errorf("failed to checkout %s for recursive sync: %w", child.Name, err),
+				}
+				results = append(results, result)
+				return results, nil
+			}
+			childMgr, err := NewManager(m.repoDir)
+			if err != nil {
+				_ = m.git.CheckoutBranch(origBranch)
+				result := RebaseResult{
+					Branch: child.Name,
+					Error:  fmt.Errorf("failed to open manager after checkout of %s: %w", child.Name, err),
+				}
+				results = append(results, result)
+				return results, nil
+			}
+			cr, rerr := childMgr.RebaseChildren(merge)
+			if rerr != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to sync children of %s: %v\n", child.Name, rerr)
+			}
+			childResults = cr
+			if err := m.git.CheckoutBranch(origBranch); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: synced children of %s but failed to switch back to %s: %v\n", child.Name, origBranch, err)
+			}
 		}
 		results = append(results, childResults...)
+		// If any recursive result hit a conflict or error, stop so the user
+		// can resolve before syncing further siblings.
+		for _, cr := range childResults {
+			if cr.HasConflict || cr.Error != nil {
+				return results, nil
+			}
+		}
 	}
 
 	return results, nil

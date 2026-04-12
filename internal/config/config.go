@@ -194,6 +194,7 @@ type BranchCache struct {
 	PRState      string `json:"pr_state,omitempty"` // Cached: "OPEN", "DRAFT", "MERGED", "CLOSED"
 	IsMerged     bool   `json:"is_merged,omitempty"`
 	IsRemote     bool   `json:"is_remote,omitempty"`
+	Remote       string `json:"remote,omitempty"` // git remote to push to (e.g. fork remote); defaults to "origin"
 }
 
 // CacheConfig holds cached branch metadata for a repo
@@ -213,6 +214,24 @@ type Branch struct {
 	BaseBranch   string `json:"base_branch"`         // original tree parent, used for display ordering
 	IsRemote     bool   `json:"is_remote,omitempty"` // branch belongs to another contributor
 	IsMerged     bool   `json:"is_merged,omitempty"`
+	Remote       string `json:"remote,omitempty"` // Git remote to push to (empty means "origin")
+}
+
+// RemoteNoPush is a sentinel value indicating that push is not allowed for this branch
+// (e.g., a fork PR where maintainerCanModify is false).
+const RemoteNoPush = "_nopush"
+
+// EffectiveRemote returns the remote for this branch, defaulting to "origin".
+func (b *Branch) EffectiveRemote() string {
+	if b.Remote != "" {
+		return b.Remote
+	}
+	return "origin"
+}
+
+// CanPush returns true if push operations are allowed for this branch.
+func (b *Branch) CanPush() bool {
+	return b.Remote != RemoteNoPush
 }
 
 // legacyStackConfigFile represents the old config format for backward compatibility
@@ -1124,6 +1143,7 @@ func (s *Stack) walkTree(treeParent, effectiveParent string, tree BranchTree, ca
 				branch.PRState = bc.PRState
 				branch.IsMerged = bc.IsMerged
 				branch.IsRemote = bc.IsRemote
+				branch.Remote = bc.Remote
 			}
 		}
 
