@@ -113,9 +113,15 @@ All commands are exposed under the |:Ezs| user command.
 :Ezs menu                Open the interactive ezs menu.
 :Ezs agent               Launch AI agent with stack context.
 :Ezs agent feature {desc}  Build a feature with the agent.
-:Ezs agent prompt        View shipped prompts.
-:Ezs agent prompt edit [repo] [work|feature]  Edit prompt files.
-:Ezs agent prompt reset [repo] [work|feature] Reset prompts to defaults.
+:Ezs agent prompt        View shipped work + feature prompts.
+:Ezs agent prompt {work|feature}    View a single shipped prompt.
+:Ezs agent prompt shipped [work|feature]  View shipped prompts.
+:Ezs agent prompt custom [work|feature]   View custom instructions.
+:Ezs agent prompt repo [work|feature]     View repo-specific instructions.
+:Ezs agent prompt edit [work|feature]     Edit custom instructions.
+:Ezs agent prompt edit repo [work|feature] Edit repo-specific instructions.
+:Ezs agent prompt reset [work|feature]    Reset custom instructions to defaults.
+:Ezs agent prompt reset repo [work|feature] Reset repo-specific instructions.
 
 Tab completion is available for subcommands, common flags, and branch
 names where applicable.

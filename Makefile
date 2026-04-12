@@ -28,4 +28,5 @@ vet:
 
 docs:
 	go run ./cmd/docgen -w
+	go run ./cmd/docsgen
 

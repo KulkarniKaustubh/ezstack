@@ -168,14 +168,28 @@ pub fn open_in_terminal(repo_path: &str, args: &[String]) -> Result<(), String> 
     }
     script.push('\n');
 
-    std::fs::write(&script_path, &script)
-        .map_err(|e| format!("Failed to write temp script: {e}"))?;
-
+    // Create the script with 0o700 from the start (avoid the
+    // chmod-after-write TOCTOU window on shared /tmp filesystems) and
+    // refuse to overwrite an existing file (defends against predictable
+    // name collisions from pid+nanos suffix).
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&script_path, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| format!("Failed to set script permissions: {e}"))?;
+        use std::io::Write;
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .mode(0o700)
+            .open(&script_path)
+            .map_err(|e| format!("Failed to create temp script: {e}"))?;
+        f.write_all(script.as_bytes())
+            .map_err(|e| format!("Failed to write temp script: {e}"))?;
+    }
+
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&script_path, &script)
+            .map_err(|e| format!("Failed to write temp script: {e}"))?;
     }
 
     let path_str = script_path

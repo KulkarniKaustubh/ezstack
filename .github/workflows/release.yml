@@ -48,11 +48,96 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${{ github.ref_name }}" vscode-extension/ezstack-*.vsix
+          gh release upload "${{ github.ref_name }}" vscode-extension/ezstack-*.vsix --clobber
+
+  nvim:
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package Neovim plugin
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # Stage as ezstack-nvim/ so users get a clean top-level dir on extract
+          mkdir -p dist
+          rsync -a --exclude '.git' neovim-plugin/ "ezstack-nvim/"
+          tar czf "dist/ezstack-nvim-${VERSION}.tar.gz" ezstack-nvim
+          (cd ezstack-nvim/.. && zip -qr "dist/ezstack-nvim-${VERSION}.zip" ezstack-nvim)
+
+      - name: Upload Neovim plugin to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" dist/ezstack-nvim-*.tar.gz dist/ezstack-nvim-*.zip --clobber
+
+  desktop:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            args: "--target universal-apple-darwin"
+            rust-targets: "aarch64-apple-darwin,x86_64-apple-darwin"
+          - platform: ubuntu-22.04
+            args: ""
+            rust-targets: ""
+          - platform: windows-latest
+            args: ""
+            rust-targets: ""
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            build-essential \
+            curl \
+            wget \
+            file
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust-targets }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tauri-ui/src-tauri -> target
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tauri-ui/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: tauri-ui
+        run: npm ci
+
+      - name: Build & upload desktop bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: tauri-ui
+          tagName: ${{ github.ref_name }}
+          releaseName: ${{ github.ref_name }}
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
 
   publish:
     runs-on: ubuntu-latest
-    needs: [release, vsix]
+    needs: [release, vsix, nvim, desktop]
     steps:
       - uses: actions/checkout@v4
 
@@ -72,18 +157,41 @@ jobs:
           ref: main
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
       - name: Bump version references
         run: |
           # Strip leading 'v' from tag
           VERSION="${GITHUB_REF_NAME#v}"
           ./scripts/bump-version.sh "$VERSION"
 
+      - name: Regenerate docs from source
+        run: make docs
+
       - name: Commit and push
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           VERSION="${GITHUB_REF_NAME#v}"
-          git add -A
+          git add \
+            VERSION \
+            cmd/ezs/main.go \
+            vscode-extension/package.json \
+            vscode-extension/package-lock.json \
+            vscode-extension/README.md \
+            tauri-ui/package.json \
+            tauri-ui/package-lock.json \
+            tauri-ui/src-tauri/tauri.conf.json \
+            tauri-ui/src-tauri/Cargo.toml \
+            tauri-ui/src-tauri/Cargo.lock \
+            docs/index.html \
+            docs/vscode.html \
+            docs/agent.html \
+            docs/nvim.html \
+            docs/desktop.html \
+            docs/documentation.html
           git diff --cached --quiet && echo "Nothing to commit" && exit 0
           git commit -m "bump version references to v${VERSION}"
           git push

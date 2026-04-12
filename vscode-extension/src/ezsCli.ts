@@ -21,6 +21,8 @@ const COMMON_PATHS = [
   path.join(os.homedir(), "go", "bin", "ezs"),
   // system-wide
   "/usr/local/bin/ezs",
+  // Homebrew on Apple Silicon (not on default PATH for GUI launches)
+  "/opt/homebrew/bin/ezs",
 ].filter(Boolean);
 
 function findEzsBinary(): string {
