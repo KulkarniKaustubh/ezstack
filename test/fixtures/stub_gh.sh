@@ -51,26 +51,26 @@ case "$COMMAND" in
                 while [ $i -lt ${#ARGS[@]} ]; do
                     case "${ARGS[$i]}" in
                         --title)
-                            ((i++))
+                            i=$((i + 1))
                             TITLE="${ARGS[$i]}"
                             ;;
                         --body)
-                            ((i++))
+                            i=$((i + 1))
                             BODY="${ARGS[$i]}"
                             ;;
                         --base)
-                            ((i++))
+                            i=$((i + 1))
                             BASE="${ARGS[$i]}"
                             ;;
                         --head)
-                            ((i++))
+                            i=$((i + 1))
                             HEAD="${ARGS[$i]}"
                             ;;
                         --draft)
                             DRAFT="true"
                             ;;
                     esac
-                    ((i++))
+                    i=$((i + 1))
                 done
 
                 if [ -z "$HEAD" ]; then
@@ -131,7 +131,7 @@ EOF
                 while [ $i -lt ${#ARGS[@]} ]; do
                     case "${ARGS[$i]}" in
                         --body)
-                            ((i++))
+                            i=$((i + 1))
                             NEW_BODY="${ARGS[$i]}"
                             TMP_FILE=$(mktemp)
                             ESCAPED_BODY=$(echo "$NEW_BODY" | sed 's/"/\\"/g' | tr '\n' ' ')
@@ -139,7 +139,7 @@ EOF
                             mv "$TMP_FILE" "$PR_FILE"
                             ;;
                     esac
-                    ((i++))
+                    i=$((i + 1))
                 done
                 ;;
 
