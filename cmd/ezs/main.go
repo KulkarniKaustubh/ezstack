@@ -11,7 +11,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
-const version = "3.2.6"
+const version = "3.2.7"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
@@ -140,6 +140,8 @@ func main() {
 		err = commands.Amend(args)
 	case "diff":
 		err = commands.Diff(args)
+	case "log":
+		err = commands.Log(args)
 	case "push":
 		err = commands.Push(args)
 	case "up":
@@ -318,7 +320,7 @@ fi
 
 var topLevelCommands = []string{
 	"agent", "amend", "commit", "config", "delete", "diff", "down",
-	"goto", "list", "menu", "new", "pr", "push",
+	"goto", "list", "log", "menu", "new", "pr", "push",
 	"reparent", "stack", "status", "sync", "unstack", "up",
 }
 

@@ -111,6 +111,7 @@ ezs delete feature-branch
 | `down` | | Navigate down the stack (toward children) |
 | `goto` | `go` | Navigate to a branch worktree |
 | `list` | `ls` | List all stacks and branches |
+| `log` | | Show commits in a branch since its parent |
 | `menu` | | Interactive command menu |
 | `new` | `n` | Create a new branch in the stack |
 | `pr` | | Manage pull requests (create, update, merge, draft, stack) |
