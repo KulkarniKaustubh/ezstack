@@ -69,6 +69,12 @@
         "icon": "$(sync)"
       },
       {
+        "command": "ezstack.syncBranch",
+        "title": "Sync Branch",
+        "category": "ezstack",
+        "icon": "$(sync)"
+      },
+      {
         "command": "ezstack.push",
         "title": "Push Branch",
         "category": "ezstack"
@@ -403,6 +409,11 @@
           "command": "ezstack.sync",
           "when": "view == ezstackStacks && viewItem == rootRepo",
           "group": "1_actions@3"
+        },
+        {
+          "command": "ezstack.syncBranch",
+          "when": "view == ezstackStacks && viewItem =~ /^branch/",
+          "group": "1_actions@0"
         },
         {
           "command": "ezstack.push",
