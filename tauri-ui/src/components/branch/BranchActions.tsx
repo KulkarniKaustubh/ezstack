@@ -7,6 +7,7 @@ import {
   Trash2,
   ArrowRightLeft,
   Layers,
+  Bot,
 } from "lucide-react";
 import { Button } from "../ui/button";
 import { Tooltip } from "../ui/tooltip";
@@ -16,6 +17,7 @@ interface BranchActionsProps {
   branch: StatusBranch;
   onSync: () => void;
   onPush: () => void;
+  onPushStack: () => void;
   onCreatePR: () => void;
   onUpdatePR: () => void;
   onMergePR: () => void;
@@ -23,6 +25,7 @@ interface BranchActionsProps {
   onDelete: () => void;
   onReparent: () => void;
   onUpdateStack: () => void;
+  onOpenAgent: () => void;
   isLoading: boolean;
 }
 
@@ -30,6 +33,7 @@ export function BranchActions({
   branch,
   onSync,
   onPush,
+  onPushStack,
   onCreatePR,
   onUpdatePR,
   onMergePR,
@@ -37,6 +41,7 @@ export function BranchActions({
   onDelete,
   onReparent,
   onUpdateStack,
+  onOpenAgent,
   isLoading,
 }: BranchActionsProps) {
   const hasPR = !!branch.pr_number;
@@ -57,6 +62,13 @@ export function BranchActions({
           <Button variant="outline" size="sm" onClick={onPush} disabled={isLoading} className="w-full justify-start">
             <Upload className="h-3.5 w-3.5" />
             Push
+          </Button>
+        </Tooltip>
+
+        <Tooltip content="Push all branches in stack">
+          <Button variant="outline" size="sm" onClick={onPushStack} disabled={isLoading} className="w-full justify-start">
+            <Upload className="h-3.5 w-3.5" />
+            Push Stack
           </Button>
         </Tooltip>
 
@@ -99,6 +111,13 @@ export function BranchActions({
             </Tooltip>
           </>
         )}
+
+        <Tooltip content="Open AI agent on this branch">
+          <Button variant="outline" size="sm" onClick={onOpenAgent} disabled={isLoading} className="w-full justify-start col-span-2">
+            <Bot className="h-3.5 w-3.5" />
+            Open Agent
+          </Button>
+        </Tooltip>
 
         <Tooltip content="Update stack descriptions">
           <Button variant="outline" size="sm" onClick={onUpdateStack} disabled={isLoading} className="w-full justify-start">

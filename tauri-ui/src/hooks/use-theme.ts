@@ -1,19 +1,17 @@
 import { useEffect, useState, useCallback } from "react";
 
-type Theme = "light" | "dark" | "system";
-
-function getSystemTheme(): "light" | "dark" {
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
+type Theme = "light" | "dark";
 
 function applyTheme(theme: Theme) {
-  const resolved = theme === "system" ? getSystemTheme() : theme;
-  document.documentElement.classList.toggle("dark", resolved === "dark");
+  document.documentElement.classList.toggle("dark", theme === "dark");
 }
 
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(() => {
-    return (localStorage.getItem("ezstack-theme") as Theme) || "system";
+    const stored = localStorage.getItem("ezstack-theme") as Theme | null;
+    if (stored === "light" || stored === "dark") return stored;
+    // Default based on system preference
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   });
 
   const setTheme = useCallback((t: Theme) => {
@@ -22,15 +20,13 @@ export function useTheme() {
     applyTheme(t);
   }, []);
 
+  const toggle = useCallback(() => {
+    setTheme(theme === "dark" ? "light" : "dark");
+  }, [theme, setTheme]);
+
   useEffect(() => {
     applyTheme(theme);
-    const mq = window.matchMedia("(prefers-color-scheme: dark)");
-    const handler = () => {
-      if (theme === "system") applyTheme("system");
-    };
-    mq.addEventListener("change", handler);
-    return () => mq.removeEventListener("change", handler);
   }, [theme]);
 
-  return { theme, setTheme };
+  return { theme, toggle };
 }
