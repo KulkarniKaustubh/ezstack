@@ -204,7 +204,6 @@ func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber i
 	return hash, nil
 }
 
-
 // AddBranchToStack adds an existing branch to a stack (worktree should already exist)
 // This is used when the worktree was created externally (e.g., from a remote branch)
 // If targetStackHash is non-empty, the branch is added to that specific stack.
@@ -457,7 +456,6 @@ func (m *Manager) GetStackForBranch(branchName string) *config.Stack {
 	}
 	return m.stackConfig.Stacks[key]
 }
-
 
 // GetStackByHash finds a stack by hash prefix (minimum 3 characters). Returns error if 0 or >1 stacks match.
 func (m *Manager) GetStackByHash(prefix string) (*config.Stack, error) {
