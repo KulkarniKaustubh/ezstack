@@ -193,6 +193,8 @@ export async function activate(
     .getConfiguration("ezstack")
     .get<boolean>("autoRefresh", true);
 
+  const pendingTimers: ReturnType<typeof setTimeout>[] = [];
+
   if (autoRefresh) {
     const watcher = new ConfigWatcher(workspaceRoot);
     let debounceTimer: ReturnType<typeof setTimeout> | undefined;
@@ -202,8 +204,8 @@ export async function activate(
       }
       debounceTimer = setTimeout(() => {
         treeProvider.refresh();
-        statusBar.update();
-        decorations.refresh();
+        void statusBar.update();
+        void decorations.refresh();
       }, 500);
     });
     context.subscriptions.push(watcher);
@@ -227,15 +229,28 @@ export async function activate(
   context.subscriptions.push(
     vscode.window.onDidCloseTerminal((terminal) => {
       if (terminal.name.startsWith("ezstack:")) {
-        setTimeout(() => {
+        const timer = setTimeout(() => {
           treeProvider.refresh();
-          statusBar.update();
-          decorations.refresh();
+          void statusBar.update();
+          void decorations.refresh();
           fileTreeProvider.refresh();
         }, 1000);
+        pendingTimers.push(timer);
       }
     }),
   );
+
+  // Clean up timers on deactivation
+  context.subscriptions.push({
+    dispose() {
+      for (const t of pendingTimers) {
+        clearTimeout(t);
+      }
+      if (saveTimer) {
+        clearTimeout(saveTimer);
+      }
+    },
+  });
 }
 
 export function deactivate(): void {

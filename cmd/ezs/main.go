@@ -11,7 +11,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
-const version = "3.2.7-nvim-beta.4"
+const version = "3.2.8-nvim-beta.5"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
