@@ -278,14 +278,16 @@ func Status(args []string) error {
     When not in a stack, shows a message. Use -a to see all stacks.
 
 %sOPTIONS%s
-    -a, --all     Show all stacks
-    -d, --debug   Show debug output
-    --json        Output as JSON (machine-readable)
-    -h, --help    Show this help message
+    -a, --all              Show all stacks
+    -b, --branch <name>    Show status for a specific branch's stack
+    -d, --debug            Show debug output
+    --json                 Output as JSON (machine-readable)
+    -h, --help             Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 	all := fs.BoolP("all", "a", false, "Show all stacks")
+	branchFlag := fs.StringP("branch", "b", "", "Show status for a specific branch's stack")
 	debug := fs.BoolP("debug", "d", false, "Show debug output")
 	jsonFlag := fs.Bool("json", false, "Output as JSON")
 	if err := fs.Parse(args); err != nil {
@@ -368,6 +370,20 @@ func Status(args []string) error {
 			ui.Warn("GitHub CLI not authenticated. Run 'gh auth login' for PR/CI status.")
 		}
 		return nil
+	}
+
+	// Handle --branch flag: show status for a specific branch's stack
+	if *branchFlag != "" {
+		targetStack := mgr.FindStackForBranch(*branchFlag)
+		if targetStack == nil {
+			if *jsonFlag {
+				fmt.Fprintln(os.Stdout, "[]")
+				return nil
+			}
+			return fmt.Errorf("branch %q not found in any stack", *branchFlag)
+		}
+		statusMaps := fetchStatusMaps([]*config.Stack{targetStack})
+		return printOrJSON([]*config.Stack{targetStack}, statusMaps)
 	}
 
 	currentStack, branch, err := mgr.GetCurrentStack()
