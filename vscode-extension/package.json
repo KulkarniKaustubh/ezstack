@@ -575,7 +575,7 @@
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^2.22.0",
-    "esbuild": "^0.19.0",
+    "esbuild": "^0.28.0",
     "eslint": "^10.2.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.58.1",
