@@ -75,10 +75,55 @@ if [ -f "$FILE" ]; then
     changed+=("vscode-extension/README.md")
 fi
 
-# 6-8. Docs HTML files — use OLD_VERSION to avoid clobbering unrelated version strings
-#      Skipped when OLD_VERSION == NEW_VERSION (already correct)
+# 6. Tauri desktop frontend package.json
+FILE="$REPO_ROOT/tauri-ui/package.json"
+if [ -f "$FILE" ]; then
+    sed -i.bak "s/\"version\": \"$SV\"/\"version\": \"$NEW_VERSION\"/" "$FILE"
+    changed+=("tauri-ui/package.json")
+fi
+
+# 7. Tauri desktop frontend package-lock.json
+FILE="$REPO_ROOT/tauri-ui/package-lock.json"
+if [ -f "$FILE" ] && command -v node >/dev/null 2>&1; then
+    node -e "
+      const fs = require('fs');
+      const lock = JSON.parse(fs.readFileSync('$FILE', 'utf8'));
+      lock.version = '$NEW_VERSION';
+      if (lock.packages && lock.packages['']) {
+        lock.packages[''].version = '$NEW_VERSION';
+      }
+      fs.writeFileSync('$FILE', JSON.stringify(lock, null, 2) + '\n');
+    "
+    changed+=("tauri-ui/package-lock.json")
+fi
+
+# 8. Tauri desktop tauri.conf.json
+FILE="$REPO_ROOT/tauri-ui/src-tauri/tauri.conf.json"
+if [ -f "$FILE" ]; then
+    sed -i.bak "s/\"version\": \"$SV\"/\"version\": \"$NEW_VERSION\"/" "$FILE"
+    changed+=("tauri-ui/src-tauri/tauri.conf.json")
+fi
+
+# 9. Tauri desktop Cargo.toml — match the package's [package] version line.
+#    Anchored to the line that immediately follows `name = "ezstack-desktop"` so
+#    we don't clobber dependency versions further down the file.
+FILE="$REPO_ROOT/tauri-ui/src-tauri/Cargo.toml"
+if [ -f "$FILE" ]; then
+    sed -i.bak "/^name = \"ezstack-desktop\"$/{n;s/^version = \"$SV\"$/version = \"$NEW_VERSION\"/;}" "$FILE"
+    changed+=("tauri-ui/src-tauri/Cargo.toml")
+fi
+
+# 10. Tauri desktop Cargo.lock — same anchored approach.
+FILE="$REPO_ROOT/tauri-ui/src-tauri/Cargo.lock"
+if [ -f "$FILE" ]; then
+    sed -i.bak "/^name = \"ezstack-desktop\"$/{n;s/^version = \"$SV\"$/version = \"$NEW_VERSION\"/;}" "$FILE"
+    changed+=("tauri-ui/src-tauri/Cargo.lock")
+fi
+
+# 11. Docs HTML files — use OLD_VERSION to avoid clobbering unrelated version strings.
+#     Skipped when OLD_VERSION == NEW_VERSION (already correct).
 if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
-    for doc in docs/index.html docs/vscode.html docs/agent.html; do
+    for doc in docs/index.html docs/vscode.html docs/agent.html docs/nvim.html docs/desktop.html docs/documentation.html; do
         FILE="$REPO_ROOT/$doc"
         if [ -f "$FILE" ]; then
             sed -i.bak "s/$OLD_VERSION/$NEW_VERSION/g" "$FILE"

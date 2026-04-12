@@ -187,6 +187,57 @@ The `--merge` and `--rebase` flags work with `sync`, `commit`, `amend`, and `rep
 | 8 | Network/remote error |
 | 10 | User cancelled |
 
+## Editor & Desktop Integrations
+
+ezstack ships with first-party clients so you can drive the same `ezs` CLI from
+your editor or a native GUI:
+
+| Integration | Description | Docs |
+|---|---|---|
+| **VS Code Extension** (`vscode-extension/`) | Sidebar stack tree, per-branch file browser, PR & CI status, command palette, agent integration | [vscode.html](https://kulkarnikaustubh.github.io/ezstack/vscode.html) · [README](vscode-extension/README.md) |
+| **Neovim Plugin** (`neovim-plugin/`) | Native Lua plugin with `:Ezs` command suite, styled stack viewer, Telescope pickers, statusline component, fugitive auto-refresh | [nvim.html](https://kulkarnikaustubh.github.io/ezstack/nvim.html) · [README](neovim-plugin/README.md) |
+| **Desktop App** (`tauri-ui/`) | Tauri v2 + React 19 desktop GUI. Three-panel layout, visual stack graph, every operation as a dialog, remote SSH mode | [desktop.html](https://kulkarnikaustubh.github.io/ezstack/desktop.html) · [README](tauri-ui/README.md) |
+
+### VS Code
+
+```bash
+# Install from a pre-built VSIX (download from the Releases page)
+code --install-extension ezstack-4.0.0.vsix
+```
+
+Then open the **ezstack** panel in the activity bar. Auto-refreshes on
+`~/.ezstack/stacks.json` changes. Configure with `ezstack.cliPath`,
+`ezstack.autoRefresh`, and `ezstack.ticketPattern`.
+
+### Neovim
+
+```lua
+-- lazy.nvim
+{
+  "KulkarniKaustubh/ezstack",
+  subdir = "neovim-plugin",
+  cmd    = { "Ezs" },
+  config = function() require("ezstack").setup() end,
+}
+```
+
+Requires Neovim 0.10+ and the `ezs` CLI on `$PATH`. Run `:Ezs` to open the
+stack viewer or `:Telescope ezstack branches` for fuzzy picking. See
+`:help ezstack` for the full reference.
+
+### Desktop App
+
+```bash
+cd tauri-ui
+npm install
+npm run tauri dev      # development
+npm run tauri build    # production bundle in src-tauri/target/release/bundle/
+```
+
+Or grab a prebuilt installer from the
+[Releases page](https://github.com/KulkarniKaustubh/ezstack/releases).
+Supports Remote (SSH) mode for driving `ezs` on a dev VM.
+
 ## Documentation
 
 See [DOCUMENTATION.md](DOCUMENTATION.md) for comprehensive documentation, or [AGENTS.md](AGENTS.md) for AI-assisted workflows.

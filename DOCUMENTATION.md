@@ -10,7 +10,7 @@
 
 **Table of Contents**
 
-[Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows)
+[Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows) · [Editor & Desktop Integrations](#editor--desktop-integrations)
 
 **Commands:** [agent](#ezs-agent) · [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [push](#ezs-push) · [diff](#ezs-diff) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [config](#ezs-config)
 
@@ -619,3 +619,198 @@ ezs stack
 # Select "Start a new stack from a remote PR"
 # Pick the PR, then pick your branch to stack on top
 ```
+
+---
+
+## Editor & Desktop Integrations
+
+ezstack ships with three first-party clients that wrap the `ezs` CLI. They all
+read and write the same on-disk state (`~/.ezstack/stacks.json` and per-repo
+config), so you can mix and match them freely &mdash; the CLI, your editor, and
+the desktop app all stay in sync.
+
+### VS Code Extension
+
+Located in `vscode-extension/`. Adds an **ezstack** panel to the activity bar
+with two views: a stack tree (branches grouped by stack, with PR state, CI
+checks, and review status) and a per-branch file browser. Auto-refreshes when
+`~/.ezstack/stacks.json` changes.
+
+**Install**
+
+```bash
+# Pre-built (from the Releases page)
+code --install-extension ezstack-4.0.0.vsix
+
+# From source
+cd vscode-extension
+npm install
+npm run compile
+npx vsce package
+code --install-extension ezstack-4.0.0.vsix
+```
+
+**Commands** are available under the `ezstack:` prefix in the command palette
+(`Cmd+Shift+P`):
+
+- **Branch ops**: `New Branch`, `Sync`, `Sync Branch`, `Push Branch`,
+  `Push Stack`, `Delete Branch`, `Reparent Branch`
+- **PR ops**: `Create PR`, `Update PR`, `Merge PR`, `Toggle PR Draft`,
+  `Update Stack Info in PRs`
+- **Agent**: `Open Agent`, `Build Feature with Agent`, `Edit Agent Prompt`
+- **File navigation**: `Cmd+Alt+Up` / `Cmd+Alt+Down` jump to the same file in
+  the parent / child PR; right-click to compare against the previous PR
+
+**Settings**
+
+| Setting | Default | Description |
+|---|---|---|
+| `ezstack.cliPath` | `"ezs"` | Path to the `ezs` binary |
+| `ezstack.autoRefresh` | `true` | Refresh tree view when config files change |
+| `ezstack.ticketPattern` | `""` | Regex to extract ticket IDs from branch names (e.g. `PROJ-\d+`). Shown in the status bar and folder badges |
+
+Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/vscode.html>.
+
+### Neovim Plugin
+
+Located in `neovim-plugin/`. Native Lua plugin for Neovim 0.10+. Exposes a
+single `:Ezs` user command with subcommand and flag completion, plus a styled
+stack viewer buffer, Telescope pickers, and a statusline component.
+
+**Install (lazy.nvim)**
+
+```lua
+{
+  "KulkarniKaustubh/ezstack",
+  subdir = "neovim-plugin",
+  cmd    = { "Ezs" },
+  keys   = { { "<leader>ez", "<cmd>Ezs<cr>", desc = "Ezstack viewer" } },
+  config = function()
+    require("ezstack").setup()
+    require("telescope").load_extension("ezstack")  -- optional
+  end,
+}
+```
+
+`packer.nvim` and a manual `runtimepath+=...` install also work &mdash; see
+`neovim-plugin/README.md` for the alternatives.
+
+**Key commands** (every `ezs` subcommand has a `:Ezs` mirror):
+
+```vim
+:Ezs                 " open the stack viewer
+:Ezs status          " viewer with PR/CI info
+:Ezs new <name> [parent]
+:Ezs sync -s         " sync entire stack
+:Ezs sync --continue " resume after conflicts
+:Ezs push -s         " push entire stack
+:Ezs pr create [title]
+:Ezs pr merge        " prompts for method
+:Ezs goto [branch]   " switch worktree (uses :tcd by default)
+:Ezs up | :Ezs down  " navigate the stack
+:Ezs agent           " launch the AI agent
+:Ezs agent feature "description"
+```
+
+The viewer is a non-modifiable buffer with single-key bindings: `<CR>` goto,
+`o` open PR, `r` refresh, `n` new, `d` delete, `p`/`P` push, `s` sync, `a`/`A`
+agent, `?` help, `q` close.
+
+**Telescope pickers** (when telescope.nvim is installed):
+
+```vim
+:Telescope ezstack branches    " fuzzy-find branches across stacks
+:Telescope ezstack stacks      " fuzzy-find stacks
+```
+
+**Setup options**
+
+| Option | Default | Description |
+|---|---|---|
+| `cli_path` | `"ezs"` | Path to the `ezs` binary (auto-discovered) |
+| `auto_refresh` | `true` | Refresh on `FugitiveChanged` / `EzstackChanged` |
+| `viewer_position` | `"botright"` | Split position for the viewer |
+| `viewer_height` | `15` | Viewer window height |
+| `statusline_cache_ttl` | `5000` | Statusline cache TTL (ms) |
+| `goto_strategy` | `"tcd"` | `"tcd"` (tab-local), `"cd"` (global), or `"lcd"` (window) |
+| `goto_close_buffers` | `false` | Close unmodified buffers from the previous worktree on goto |
+| `goto_open_explorer` | `true` | Open the file explorer at the new worktree root |
+
+The plugin fires `User EzstackChanged` after every CLI mutation and
+`User EzstackGoto` after a worktree switch &mdash; hook your own logic in via
+`autocmd`. Run `:help ezstack` for the bundled vimdoc reference.
+
+Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/nvim.html>.
+
+### Desktop App
+
+Located in `tauri-ui/`. A native desktop app built with **Tauri v2** (Rust
+backend) and **React 19 + TypeScript** on the frontend. The Rust backend is a
+thin wrapper that runs `ezs status --json --all` for queries and `ezs -y
+<command>` for mutations &mdash; the desktop app shows its own confirmation
+dialogs.
+
+**Install / build**
+
+```bash
+cd tauri-ui
+npm install
+
+# Development (hot reload via Vite + Tauri window)
+npm run tauri dev
+
+# Production bundle
+npm run tauri build
+# → src-tauri/target/release/bundle/
+```
+
+Or grab a prebuilt installer from the
+[Releases page](https://github.com/KulkarniKaustubh/ezstack/releases).
+
+**Layout** &mdash; three panels:
+
+1. **Stacks sidebar** &mdash; every stack in the repo, with branch counts
+2. **Stack graph** &mdash; visual tree, color-coded by health, current branch
+   highlighted
+3. **Branch detail** &mdash; PR state, CI checks, review status, mergeable
+   state, and action buttons
+
+The status bar shows repo path, current branch, and last refresh time. The
+title bar has a theme toggle (dark / light / system) and a connection pill
+that turns green / yellow / red based on health.
+
+**Operations** are exposed as dialogs: new branch, sync, push, delete,
+reparent, PR create/update/merge, toggle draft, update stack tables, agent
+(branch- or stack-scoped), agent feature, and agent prompt management
+(view/edit/reset across the shipped, custom, and repo layers). The CLI output
+of every operation lands in a terminal-like panel below the main view.
+
+**Polling** &mdash; every 30 seconds (paused when the window loses focus).
+Failures back off exponentially (30s → 60s → 120s → 240s → 300s).
+
+**Keyboard shortcuts**: `Cmd+R` refresh, `Cmd+N` new branch.
+
+**Remote (SSH) mode** &mdash; the desktop app can drive an `ezs` install on a
+remote machine. Click the **Connect** pill in the title bar, fill in
+host/user/port/key (and optionally a jump host), and pick a repo from the
+remote `~/.ezstack/config.json`. Profiles are saved to
+`~/.ezstack/desktop/connections.json` (mode `0600`); override with the
+`EZSTACK_DESKTOP_HOME` environment variable.
+
+The connect dialog has a **Diagnose** button that runs a 6-step health check
+(SSH connectivity + latency, login `PATH`, `ezs` present, `git` present, `gh`
+authenticated, `~/.ezstack/config.json` readable) and reports per-step pass /
+warn / fail with timings. Once connected, the app pings the remote every 30
+seconds and the title-bar pill reflects the result.
+
+**Known limitations of remote mode:**
+
+- The agent prompt **editor** is local-only &mdash; opening `$EDITOR` over SSH
+  from a GUI is fragile, so the desktop app blocks `agent prompts edit` while
+  connected. View and reset still work.
+- First connections use `StrictHostKeyChecking=accept-new`; existing host keys
+  are still verified strictly.
+- Every operation is at least one SSH round-trip &mdash; expect a beat of
+  added latency on refreshes.
+
+Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/desktop.html>.

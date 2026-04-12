@@ -152,7 +152,9 @@ function M.branches()
             return
           end
           vim.notify("Pushing...", vim.log.levels.INFO)
-          cli.push(function(push_err)
+          -- cli.push signature is (opts, callback) — pass an empty opts
+          -- table so the callback isn't bound to opts and silently dropped.
+          cli.push({}, function(push_err)
             if push_err then
               vim.notify("Push failed: " .. push_err, vim.log.levels.ERROR)
             else

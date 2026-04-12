@@ -756,7 +756,7 @@ dependencies = [
 
 [[package]]
 name = "ezstack-desktop"
-version = "3.2.6-beta.3"
+version = "4.0.0"
 dependencies = [
  "dirs 5.0.1",
  "serde",

@@ -804,13 +804,16 @@ export function registerCommands(
       "ezstack.gitPull",
       (node?: RootRepoNode) => {
         const cwd = node instanceof RootRepoNode ? node.repoPath : cli.getWorkspaceRoot();
+        // Launch the user's default shell (don't hardcode `bash` — it
+        // isn't always on the PATH that VS Code resolves for shellPath,
+        // particularly on macOS GUI launches and Apple Silicon Homebrew
+        // setups). sendText runs git via the user's interactive shell.
         const terminal = vscode.window.createTerminal({
           name: "ezstack: fetch & pull",
           cwd,
-          shellPath: "bash",
-          shellArgs: ["-c", "git fetch && git pull"],
         });
         terminal.show();
+        terminal.sendText("git fetch && git pull");
       },
     ),
   );
