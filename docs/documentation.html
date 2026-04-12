@@ -1248,9 +1248,9 @@
       function getMatchTerms(results) {
         const terms = new Set();
         results.forEach(r => {
-          Object.values(r.match).forEach(fieldTerms => {
-            fieldTerms.forEach(t => terms.add(t.toLowerCase()));
-          });
+          // MiniSearch match format: { matchedTerm: [field1, field2, ...] }
+          // Keys are the actual matched terms
+          Object.keys(r.match).forEach(t => terms.add(t.toLowerCase()));
         });
         return Array.from(terms);
       }
