@@ -929,3 +929,165 @@ func TestReparentBranch_NoWorktree(t *testing.T) {
 	}
 	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
 }
+
+// TestRebaseChildren_StopsOnRecursiveConflict verifies that when a conflict
+// surfaces deep in the recursion (a grandchild, not a direct child),
+// RebaseChildren stops processing sibling subtrees of the failing branch.
+// Regression for a bug where the outer loop appended childResults but did
+// not check them for HasConflict before continuing to the next sibling.
+func TestRebaseChildren_StopsOnRecursiveConflict(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	_, err := mgr.CreateBranch("parent", "main", filepath.Join(worktreeBaseDir, "parent"), "")
+	if err != nil {
+		t.Fatalf("CreateBranch parent failed: %v", err)
+	}
+	parentPath := filepath.Join(worktreeBaseDir, "parent")
+
+	sharedInParent := filepath.Join(parentPath, "shared.txt")
+	os.WriteFile(sharedInParent, []byte("parent v1\n"), 0644)
+	exec.Command("git", "-C", parentPath, "add", ".").Run()
+	exec.Command("git", "-C", parentPath, "commit", "-m", "parent: add shared.txt").Run()
+
+	mgr, _ = NewManager(repoDir)
+	_, err = mgr.CreateBranch("child-a", "parent", filepath.Join(worktreeBaseDir, "child-a"), "")
+	if err != nil {
+		t.Fatalf("CreateBranch child-a failed: %v", err)
+	}
+	childAPath := filepath.Join(worktreeBaseDir, "child-a")
+	os.WriteFile(filepath.Join(childAPath, "child-a.txt"), []byte("child-a\n"), 0644)
+	exec.Command("git", "-C", childAPath, "add", ".").Run()
+	exec.Command("git", "-C", childAPath, "commit", "-m", "child-a: add file").Run()
+
+	mgr, _ = NewManager(repoDir)
+	_, err = mgr.CreateBranch("grandchild-a", "child-a", filepath.Join(worktreeBaseDir, "grandchild-a"), "")
+	if err != nil {
+		t.Fatalf("CreateBranch grandchild-a failed: %v", err)
+	}
+	gcPath := filepath.Join(worktreeBaseDir, "grandchild-a")
+	os.WriteFile(filepath.Join(gcPath, "shared.txt"), []byte("grandchild rewrite\n"), 0644)
+	exec.Command("git", "-C", gcPath, "add", ".").Run()
+	exec.Command("git", "-C", gcPath, "commit", "-m", "grandchild-a: rewrite shared.txt").Run()
+
+	mgr, _ = NewManager(repoDir)
+	_, err = mgr.CreateBranch("sibling-b", "parent", filepath.Join(worktreeBaseDir, "sibling-b"), "")
+	if err != nil {
+		t.Fatalf("CreateBranch sibling-b failed: %v", err)
+	}
+	sbPath := filepath.Join(worktreeBaseDir, "sibling-b")
+	os.WriteFile(filepath.Join(sbPath, "sibling-b.txt"), []byte("sibling-b\n"), 0644)
+	exec.Command("git", "-C", sbPath, "add", ".").Run()
+	exec.Command("git", "-C", sbPath, "commit", "-m", "sibling-b: add file").Run()
+
+	sbHead, err := exec.Command("git", "-C", sbPath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse sibling-b: %v", err)
+	}
+
+	// Parent bumps shared.txt → conflict with grandchild-a
+	os.WriteFile(sharedInParent, []byte("parent v2\n"), 0644)
+	exec.Command("git", "-C", parentPath, "add", ".").Run()
+	exec.Command("git", "-C", parentPath, "commit", "-m", "parent: bump shared.txt").Run()
+
+	mgr, _ = NewManager(parentPath)
+	results, err := mgr.RebaseChildren()
+	if err != nil {
+		t.Fatalf("RebaseChildren returned error: %v", err)
+	}
+
+	hasConflict := false
+	for _, r := range results {
+		if r.HasConflict || r.Error != nil {
+			hasConflict = true
+		}
+		if r.Branch == "sibling-b" && r.Success {
+			t.Error("sibling-b must not be synced after grandchild-a conflict")
+		}
+	}
+	if !hasConflict {
+		t.Fatalf("expected a conflict to be reported; got results: %+v", results)
+	}
+
+	sbHeadAfter, err := exec.Command("git", "-C", sbPath, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse sibling-b after: %v", err)
+	}
+	if string(sbHead) != string(sbHeadAfter) {
+		t.Errorf("sibling-b HEAD changed after a conflict in grandchild subtree:\n  before=%s  after=%s",
+			string(sbHead), string(sbHeadAfter))
+	}
+
+	exec.Command("git", "-C", gcPath, "rebase", "--abort").Run()
+	exec.Command("git", "-C", childAPath, "rebase", "--abort").Run()
+}
+
+// TestSyncStack_PersistsMergedCacheOnConflict verifies that when the walk
+// marks a parent as merged and a later branch conflicts in the non-merged-
+// parent path, the merged-cache update is still persisted. Regression for
+// a bug where saveState was skipped in the non-merged-parent conflict path.
+func TestSyncStack_PersistsMergedCacheOnConflict(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+
+	mgr, _ := NewManager(repoDir)
+	if _, err := mgr.CreateBranch("A", "main", filepath.Join(worktreeBaseDir, "A"), ""); err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	aPath := filepath.Join(worktreeBaseDir, "A")
+	os.WriteFile(filepath.Join(aPath, "a.txt"), []byte("a\n"), 0644)
+	exec.Command("git", "-C", aPath, "add", ".").Run()
+	exec.Command("git", "-C", aPath, "commit", "-m", "A: add a.txt").Run()
+
+	mgr, _ = NewManager(repoDir)
+	if _, err := mgr.CreateBranch("B", "A", filepath.Join(worktreeBaseDir, "B"), ""); err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+	bPath := filepath.Join(worktreeBaseDir, "B")
+	os.WriteFile(filepath.Join(bPath, "b.txt"), []byte("b\n"), 0644)
+	exec.Command("git", "-C", bPath, "add", ".").Run()
+	exec.Command("git", "-C", bPath, "commit", "-m", "B: add b.txt").Run()
+
+	mgr, _ = NewManager(repoDir)
+	if _, err := mgr.CreateBranch("C", "B", filepath.Join(worktreeBaseDir, "C"), ""); err != nil {
+		t.Fatalf("create C: %v", err)
+	}
+	cPath := filepath.Join(worktreeBaseDir, "C")
+	os.WriteFile(filepath.Join(cPath, "shared.txt"), []byte("C version\n"), 0644)
+	exec.Command("git", "-C", cPath, "add", ".").Run()
+	exec.Command("git", "-C", cPath, "commit", "-m", "C: add shared.txt").Run()
+
+	// Fast-forward origin/main to A, then add a conflicting commit on top.
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+	aHead, _ := exec.Command("git", "-C", aPath, "rev-parse", "HEAD").Output()
+	exec.Command("git", "-C", repoDir, "reset", "--hard", string(aHead[:len(aHead)-1])).Run()
+	os.WriteFile(filepath.Join(repoDir, "shared.txt"), []byte("main version\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "main: add shared.txt").Run()
+	exec.Command("git", "-C", repoDir, "push", "origin", "main").Run()
+	exec.Command("git", "-C", repoDir, "fetch", "origin").Run()
+
+	mgr, _ = NewManager(cPath)
+	_, err := mgr.SyncStack(nil, nil)
+	if err != nil {
+		t.Fatalf("SyncStack error: %v", err)
+	}
+
+	// Re-open and check the cache was persisted.
+	freshMgr, err := NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("reopen manager: %v", err)
+	}
+	bc := freshMgr.stackConfig.Cache.GetBranchCache("A")
+	if bc == nil || !bc.IsMerged {
+		t.Errorf("expected A to be persisted as merged in cache after conflict; got %+v", bc)
+	}
+
+	exec.Command("git", "-C", cPath, "rebase", "--abort").Run()
+}

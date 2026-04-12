@@ -507,7 +507,9 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 					if existing.RootBase == "" {
 						existing.RootBase = pr.Base
 					}
-					sc.Save(mainWorktree)
+					if err := sc.Save(mainWorktree); err != nil {
+						fmt.Fprintf(os.Stderr, "  Warning: failed to save stack config after root PR discovery: %v\n", err)
+					}
 				}
 			}
 		}
@@ -592,7 +594,9 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 					cache.SetBranchCache(branch.Name, bc)
 				}
 			}
-			cache.Save(mainWorktree)
+			if err := cache.Save(mainWorktree); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to save PR cache: %v\n", err)
+			}
 		}
 	}
 
@@ -805,7 +809,9 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 				}
 			}
 			if changed {
-				cache.Save(mainWorktree)
+				if err := cache.Save(mainWorktree); err != nil {
+					fmt.Fprintf(os.Stderr, "  Warning: failed to save status cache: %v\n", err)
+				}
 			}
 		}
 	}

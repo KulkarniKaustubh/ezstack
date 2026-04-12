@@ -151,8 +151,11 @@ func (g *Git) CreateWorktreeFromRemoteBranch(localBranch, worktreePath string) e
 		if _, err := g.run("branch", "-f", localBranch, remoteBranch); err != nil {
 			return fmt.Errorf("failed to update local branch '%s' to match remote: %w", localBranch, err)
 		}
-		// Ensure tracking is set up
-		g.run("branch", "--set-upstream-to="+remoteBranch, localBranch)
+		// Ensure tracking is set up. Non-fatal: worktree creation still
+		// succeeds without upstream tracking; the user can set it later.
+		if _, err := g.run("branch", "--set-upstream-to="+remoteBranch, localBranch); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: failed to set upstream for %s: %v\n", localBranch, err)
+		}
 	} else {
 		// Create new branch tracking remote
 		if _, err := g.run("branch", "--track", localBranch, remoteBranch); err != nil {
