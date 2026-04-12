@@ -386,8 +386,13 @@ func makeSyncCallbacks(singleStackMode bool, autostash bool, useMerge bool) *sta
 			ui.Success(fmt.Sprintf("Rebased %s", result.Branch))
 		}
 
+		remote := result.Remote
+		if remote == "" {
+			remote = "origin"
+		}
+
 		if useMerge {
-			if !OfferPush(result.Branch, result.WorktreePath) {
+			if !OfferPush(result.Branch, result.WorktreePath, remote) {
 				if singleStackMode {
 					fmt.Fprintln(os.Stderr)
 					ui.Error("Cannot continue syncing child branches without pushing parent first.")
@@ -399,7 +404,7 @@ func makeSyncCallbacks(singleStackMode bool, autostash bool, useMerge bool) *sta
 				return false
 			}
 		} else {
-			if !OfferForcePush(result.Branch, result.WorktreePath) {
+			if !OfferForcePush(result.Branch, result.WorktreePath, remote) {
 				if singleStackMode {
 					fmt.Fprintln(os.Stderr)
 					ui.Error("Cannot continue syncing child branches without pushing parent first.")
@@ -813,9 +818,9 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool) error {
 
 		// Offer to push
 		if cb.isRebase {
-			OfferForcePush(cb.branch.Name, cb.branch.WorktreePath)
+			OfferForcePush(cb.branch.Name, cb.branch.WorktreePath, cb.branch.EffectiveRemote())
 		} else {
-			OfferPush(cb.branch.Name, cb.branch.WorktreePath)
+			OfferPush(cb.branch.Name, cb.branch.WorktreePath, cb.branch.EffectiveRemote())
 		}
 	}
 
@@ -857,9 +862,9 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool) error {
 			} else {
 				ui.Success(fmt.Sprintf("Synced %s", child.Name))
 				if useMerge {
-					OfferPush(child.Name, child.WorktreePath)
+					OfferPush(child.Name, child.WorktreePath, child.EffectiveRemote())
 				} else {
-					OfferForcePush(child.Name, child.WorktreePath)
+					OfferForcePush(child.Name, child.WorktreePath, child.EffectiveRemote())
 				}
 			}
 		}
@@ -925,10 +930,10 @@ func syncOntoParent(mgr *stack.Manager, branch *config.Branch, useMerge bool) er
 	}
 	if useMerge {
 		ui.Success("Merge complete")
-		OfferPush(branch.Name, worktreePath)
+		OfferPush(branch.Name, worktreePath, branch.EffectiveRemote())
 	} else {
 		ui.Success("Rebase complete")
-		OfferForcePush(branch.Name, worktreePath)
+		OfferForcePush(branch.Name, worktreePath, branch.EffectiveRemote())
 	}
 	return nil
 }
@@ -996,30 +1001,28 @@ func syncChildren(mgr *stack.Manager, branch *config.Branch, useMerge bool) erro
 
 		// Offer to push successfully synced branches
 		if len(successfulBranches) > 0 {
+			getWorktree := func(branchName string) string {
+				childBranch := mgr.GetBranch(branchName)
+				if childBranch == nil {
+					return ""
+				}
+				if childBranch.WorktreePath == "" {
+					cwd, _ := os.Getwd()
+					return cwd
+				}
+				return childBranch.WorktreePath
+			}
+			getRemote := func(branchName string) string {
+				childBranch := mgr.GetBranch(branchName)
+				if childBranch == nil {
+					return "origin"
+				}
+				return childBranch.EffectiveRemote()
+			}
 			if useMerge {
-				OfferPushMultiple(successfulBranches, func(branchName string) string {
-					childBranch := mgr.GetBranch(branchName)
-					if childBranch == nil {
-						return ""
-					}
-					if childBranch.WorktreePath == "" {
-						cwd, _ := os.Getwd()
-						return cwd
-					}
-					return childBranch.WorktreePath
-				})
+				OfferPushMultiple(successfulBranches, getWorktree, getRemote)
 			} else {
-				OfferForcePushMultiple(successfulBranches, func(branchName string) string {
-					childBranch := mgr.GetBranch(branchName)
-					if childBranch == nil {
-						return ""
-					}
-					if childBranch.WorktreePath == "" {
-						cwd, _ := os.Getwd()
-						return cwd
-					}
-					return childBranch.WorktreePath
-				})
+				OfferForcePushMultiple(successfulBranches, getWorktree, getRemote)
 			}
 		}
 	}
@@ -1103,10 +1106,14 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 		} else {
 			ui.Success(fmt.Sprintf("Synced %s", result.Branch))
 		}
+		resultRemote := result.Remote
+		if resultRemote == "" {
+			resultRemote = "origin"
+		}
 		if useMerge {
-			OfferPush(result.Branch, result.WorktreePath)
+			OfferPush(result.Branch, result.WorktreePath, resultRemote)
 		} else {
-			OfferForcePush(result.Branch, result.WorktreePath)
+			OfferForcePush(result.Branch, result.WorktreePath, resultRemote)
 		}
 	} else if result.HasConflict {
 		ui.Warn(fmt.Sprintf("Conflict in %s", result.Branch))
