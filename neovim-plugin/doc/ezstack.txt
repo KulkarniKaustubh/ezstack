@@ -37,7 +37,7 @@ leaving Neovim.
 lazy.nvim: >lua
   {
     "KulkarniKaustubh/ezstack",
-    subdir = "neovim-extension",
+    subdir = "neovim-plugin",
     cmd = "Ezs",
     config = function()
       require("ezstack").setup()
