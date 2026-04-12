@@ -360,6 +360,15 @@ ezs new origin/feature-branch       # Checkout remote branch into a worktree + r
 
 This fetches the latest remote refs, creates a local tracking branch, sets up a worktree, and registers the branch in ezstack's config. If the branch has an associated PR, it displays PR info (title, state, review status) and a line diff summary against the base branch.
 
+**Fork PR handling:** When the PR comes from a fork, ezstack automatically:
+- Detects the fork repository via the GitHub API
+- Checks if "Allow edits from maintainers" is enabled on the PR
+- Verifies that you have push access to the fork repo
+- Adds a git remote for the fork (named after the fork owner) and fetches it
+- All subsequent push/sync operations target the fork remote instead of `origin`
+
+If the fork doesn't allow maintainer edits, or you don't have push access, the branch is marked as read-only — sync will still rebase/merge locally, but push is skipped with a warning.
+
 With `--from-remote`, positional args are `[pr-number-or-branch] [new-branch-name]`:
 ```bash
 ezs new -r                          # Interactive PR selection + branch name prompt
@@ -422,6 +431,8 @@ Options:
     -b, --branch <name>  Push a specific branch by name
     -f, --force          Force push
 ```
+
+Each branch pushes to its configured remote — `origin` by default, or the fork remote for fork-based PR branches. Branches marked as read-only (fork PRs where you don't have push access) are skipped with a warning.
 
 ---
 
@@ -501,6 +512,8 @@ Options:
 By default, sync uses git rebase. Use `--merge` to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with `ezs config set sync_strategy merge`. Use `--rebase` or `--merge` to override the configured strategy for a single run.
 
 You can sync a specific stack by passing its hash prefix (minimum 3 characters).
+
+**Fork branches:** After syncing, each branch is pushed to its configured remote. For fork-based PR branches, this is the fork's remote (not `origin`). If you don't have push access to the fork, the push step is skipped automatically — the local rebase/merge still happens so your working copy stays up to date.
 
 ---
 
@@ -590,6 +603,10 @@ ezs new origin/feature-branch
 
 # The branch shows up in ezs ls with a (remote) tag
 # You can work on it, push changes, sync — all commands work
+
+# For fork PRs, ezstack auto-detects the fork remote:
+#   - If maintainer push is enabled AND you have access → adds fork remote, pushes there
+#   - Otherwise → marks branch read-only, skips push during sync
 
 # When you're done, clean up
 ezs delete feature-branch

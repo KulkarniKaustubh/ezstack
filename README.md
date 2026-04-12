@@ -93,6 +93,7 @@ ezs new origin/feature-branch
 
 # Shows PR info, review status, and line diff automatically
 # You can work on it, push, sync — all commands work normally
+# Fork PRs are auto-detected: adds the fork remote and pushes there
 # When done, clean up with:
 ezs delete feature-branch
 ```
