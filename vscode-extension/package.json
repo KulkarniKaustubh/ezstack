@@ -69,6 +69,12 @@
         "icon": "$(sync)"
       },
       {
+        "command": "ezstack.syncBranch",
+        "title": "Sync Branch",
+        "category": "ezstack",
+        "icon": "$(sync)"
+      },
+      {
         "command": "ezstack.push",
         "title": "Push Branch",
         "category": "ezstack"
@@ -405,6 +411,11 @@
           "group": "1_actions@3"
         },
         {
+          "command": "ezstack.syncBranch",
+          "when": "view == ezstackStacks && viewItem =~ /^branch/",
+          "group": "1_actions@0"
+        },
+        {
           "command": "ezstack.push",
           "when": "view == ezstackStacks && viewItem =~ /^branch/",
           "group": "1_actions@1"
@@ -575,7 +586,7 @@
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^2.22.0",
-    "esbuild": "^0.19.0",
+    "esbuild": "^0.28.0",
     "eslint": "^10.2.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.58.1",
