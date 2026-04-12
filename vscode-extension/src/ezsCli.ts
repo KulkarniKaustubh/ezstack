@@ -4,6 +4,8 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import {
+  DiffOutputJSON,
+  LogOutputJSON,
   StackJSON,
   StatusStackJSON,
   SyncInfoJSON,
@@ -294,20 +296,14 @@ export class EzsCli {
   // ── Mutations (headless with -y) ──
 
   async push(force = false, branch?: string): Promise<void> {
+    const args = ["push"];
     if (branch) {
-      // Push a specific branch by name (for non-current branches)
-      const args = ["push", "-u", "origin", branch];
-      if (force) {
-        args.splice(1, 0, "--force-with-lease");
-      }
-      await this.execGit(args);
-    } else {
-      const args = ["push"];
-      if (force) {
-        args.push("--force");
-      }
-      await this.execYes(args);
+      args.push("--branch", branch);
     }
+    if (force) {
+      args.push("--force");
+    }
+    await this.execYes(args);
   }
 
   async pushStack(force = false): Promise<void> {
@@ -427,6 +423,25 @@ export class EzsCli {
       fs.writeFileSync(promptPath, starter);
     }
     return promptPath;
+  }
+
+  async syncBranch(branch: string): Promise<void> {
+    await this.execYes(["sync", "--branch", branch]);
+  }
+
+  async diffJSON(branch: string): Promise<DiffOutputJSON> {
+    const out = await this.exec(["diff", "--branch", branch, "--json"]);
+    return EzsCli.parseJSON(out, "diff --json");
+  }
+
+  async logJSON(branch: string): Promise<LogOutputJSON> {
+    const out = await this.exec(["log", "--branch", branch, "--json"]);
+    return EzsCli.parseJSON(out, "log --json");
+  }
+
+  async statusBranch(branch: string): Promise<StatusStackJSON[]> {
+    const out = await this.exec(["status", "--branch", branch, "--json"]);
+    return EzsCli.parseJSON(out, "status --branch --json");
   }
 
   // ── Interactive (terminal) ──

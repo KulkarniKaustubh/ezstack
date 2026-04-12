@@ -28,6 +28,7 @@ func Sync(args []string) error {
     -s, --stack            Sync current stack (auto-detect what needs syncing)
     -a, --all              Sync ALL stacks
     -c, --current          Sync current branch only (auto-detect what it needs)
+    -b, --branch <name>    Sync a specific branch by name (rebase onto parent + cascade to children)
     -p, --parent           Rebase current branch onto its parent
     -C, --children         Rebase child branches onto current branch
     --continue             Continue after resolving conflicts (completes rebase/merge, pushes, syncs children)
@@ -64,6 +65,7 @@ func Sync(args []string) error {
     ezs sync -s           Auto-sync current stack
     ezs sync -a           Auto-sync all stacks
     ezs sync -c           Sync current branch only
+    ezs sync -b feat-x    Sync a specific branch by name
     ezs sync -p           Rebase current onto parent
     ezs sync -C           Rebase children onto current
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
@@ -73,6 +75,7 @@ func Sync(args []string) error {
 	stackFlag := fs.BoolP("stack", "s", false, "Sync current stack")
 	allFlag := fs.BoolP("all", "a", false, "Sync all stacks")
 	currentFlag := fs.BoolP("current", "c", false, "Sync current branch only")
+	branchFlag := fs.StringP("branch", "b", "", "Sync a specific branch by name")
 	parentFlag := fs.BoolP("parent", "p", false, "Rebase onto parent")
 	childrenFlag := fs.BoolP("children", "C", false, "Rebase children")
 	mergeFlag := fs.Bool("merge", false, "Use git merge instead of git rebase")
@@ -132,6 +135,27 @@ func Sync(args []string) error {
 
 	if jsonOutput && !dryRun {
 		return fmt.Errorf("--json requires --dry-run")
+	}
+
+	// Handle --branch flag: sync a specific branch by name
+	if *branchFlag != "" {
+		branch := mgr.GetBranch(*branchFlag)
+		if branch == nil {
+			return fmt.Errorf("branch %q not found in any stack", *branchFlag)
+		}
+		targetStack := mgr.FindStackForBranch(*branchFlag)
+		if targetStack == nil {
+			return fmt.Errorf("branch %q is not part of any stack", *branchFlag)
+		}
+		if dryRun {
+			return syncDryRun(mgr, gh, []*config.Stack{targetStack}, jsonOutput)
+		}
+		// Use the branch's worktree path so stash operations target the correct worktree
+		branchCwd := cwd
+		if branch.WorktreePath != "" {
+			branchCwd = branch.WorktreePath
+		}
+		return syncCurrentBranch(mgr, gh, branch, branchCwd, autostash, useMerge)
 	}
 
 	// Check for positional arg (hash prefix)

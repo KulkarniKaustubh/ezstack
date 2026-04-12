@@ -15,6 +15,9 @@ test/worktrees/
 test/worktrees_reparent/
 test/worktrees_update/
 
+# GoReleaser output
+dist/
+
 # Go build cache
 *.test
 *.out
