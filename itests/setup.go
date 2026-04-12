@@ -86,7 +86,7 @@ func initGitRepo(t *testing.T, repoDir string) {
 	t.Helper()
 
 	commands := [][]string{
-		{"git", "-C", repoDir, "init"},
+		{"git", "-C", repoDir, "init", "-b", "main"},
 		{"git", "-C", repoDir, "config", "user.email", TestUserEmail},
 		{"git", "-C", repoDir, "config", "user.name", TestUserName},
 	}
