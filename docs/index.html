@@ -73,6 +73,7 @@
         <a href="#features">Features</a>
         <a href="#how-it-works">How It Works</a>
         <a href="#commands">Commands</a>
+        <a href="documentation.html">Docs</a>
         <div class="nav-dropdown">
           <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
           <div class="nav-dropdown-menu">
@@ -93,7 +94,7 @@
     <div class="hero-glow"></div>
     <div class="container">
       <div class="hero-content">
-        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v3.2.5 &mdash; Latest Release</a>
+        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v3.2.6 &mdash; Latest Release</a>
         <h1>Stacked PRs.<br>Zero friction.</h1>
         <p class="hero-sub">Manage stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs &mdash; all from one CLI.</p>
         <div class="hero-actions">
@@ -319,7 +320,7 @@
   <section class="how-it-works" id="pr-review" style="padding-top: 2rem;">
     <div class="container">
       <h2 class="section-title" data-animate>Review PRs in seconds</h2>
-      <p class="section-sub" data-animate>Check out any remote branch into its own worktree. See PR info, review status, and line diffs instantly.</p>
+      <p class="section-sub" data-animate>Check out any remote branch into its own worktree and stack. See PR info, review status, and line diffs instantly. Work on it, push, sync &mdash; everything just works.</p>
       <div class="steps">
         <div class="step" data-animate>
           <div class="step-number" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">
@@ -405,13 +406,13 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>new</code> <span class="cmd-alias">n</span></td><td>Create a new branch in the stack</td></tr>
-                <tr><td class="cmd-name"><code>list</code> <span class="cmd-alias">ls</span></td><td>List all stacks with tree-style display and diff stats</td></tr>
-                <tr><td class="cmd-name"><code>status</code> <span class="cmd-alias">st</span></td><td>Show status with PR and CI info</td></tr>
-                <tr><td class="cmd-name"><code>stack</code></td><td>Add a branch to a stack or start a new stack</td></tr>
-                <tr><td class="cmd-name"><code>unstack</code></td><td>Remove a branch from tracking</td></tr>
-                <tr><td class="cmd-name"><code>delete</code> <span class="cmd-alias">del, rm</span></td><td>Delete a branch and its worktree</td></tr>
-                <tr><td class="cmd-name"><code>reparent</code> <span class="cmd-alias">rp</span></td><td>Change the parent of a branch. Use <code>--no-rebase</code> for metadata-only</td></tr>
+                <tr><td class="cmd-name"><code>new</code> <span class="cmd-alias">n</span></td><td>Create a new branch in the stack.</td></tr>
+                <tr><td class="cmd-name"><code>list</code> <span class="cmd-alias">ls</span></td><td>List all stacks and branches.</td></tr>
+                <tr><td class="cmd-name"><code>status</code> <span class="cmd-alias">st</span></td><td>Show status of current stack with PR and CI info.</td></tr>
+                <tr><td class="cmd-name"><code>stack</code></td><td>Add an untracked branch/worktree to an existing stack, start a new stack, or rename a stack.</td></tr>
+                <tr><td class="cmd-name"><code>unstack</code></td><td>Remove a branch from stack tracking without deleting the git branch or worktree.</td></tr>
+                <tr><td class="cmd-name"><code>delete</code> <span class="cmd-alias">del, rm</span></td><td>Delete a branch and its worktree.</td></tr>
+                <tr><td class="cmd-name"><code>reparent</code> <span class="cmd-alias">rp</span></td><td>Change the parent of a branch and sync commits onto the new parent.</td></tr>
               </tbody>
             </table>
           </div>
@@ -426,7 +427,7 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>goto</code> <span class="cmd-alias">go</span></td><td>Navigate to a branch worktree (fzf selection if no args)</td></tr>
+                <tr><td class="cmd-name"><code>goto</code> <span class="cmd-alias">go</span></td><td>Navigate to a branch worktree.</td></tr>
                 <tr><td class="cmd-name"><code>up</code></td><td>Navigate up the stack toward parent</td></tr>
                 <tr><td class="cmd-name"><code>down</code></td><td>Navigate down the stack toward children</td></tr>
               </tbody>
@@ -443,11 +444,11 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>sync</code></td><td>Sync stack with remote (rebase or merge). Use <code>--continue</code> after resolving conflicts</td></tr>
+                <tr><td class="cmd-name"><code>sync</code></td><td>Sync stack with remote.</td></tr>
                 <tr><td class="cmd-name"><code>commit</code> <span class="cmd-alias">ci</span></td><td>Commit and auto-sync child branches</td></tr>
                 <tr><td class="cmd-name"><code>amend</code></td><td>Amend last commit and auto-sync children</td></tr>
-                <tr><td class="cmd-name"><code>push</code></td><td>Push current branch or entire stack</td></tr>
-                <tr><td class="cmd-name"><code>diff</code></td><td>Show diff against parent branch</td></tr>
+                <tr><td class="cmd-name"><code>push</code></td><td>Push current branch or entire stack to remote.</td></tr>
+                <tr><td class="cmd-name"><code>diff</code></td><td>Show diff against parent branch.</td></tr>
               </tbody>
             </table>
           </div>
@@ -493,14 +494,15 @@
         <div class="accordion-item">
           <button class="accordion-header" aria-expanded="false">
             <span class="accordion-label">AI Agent</span>
-            <span class="accordion-count">2 commands</span>
+            <span class="accordion-count">3 commands</span>
             <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 8 10 12 14 8"/></svg>
           </button>
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>agent</code></td><td>Launch AI agent scoped to a stack. Use <code>agent feature "desc"</code> to build a feature as stacked branches</td></tr>
-                <tr><td class="cmd-name"><code>agent prompt</code></td><td>View or edit agent prompt templates. Use <code>--edit</code> to open in <code>$EDITOR</code>, <code>--reset</code> to restore defaults</td></tr>
+                <tr><td class="cmd-name"><code>agent</code></td><td>Launch AI agent scoped to a stack with full context</td></tr>
+                <tr><td class="cmd-name"><code>agent feature</code></td><td>Break a feature into stacked branches via AI</td></tr>
+                <tr><td class="cmd-name"><code>agent prompt</code></td><td>View or edit agent prompt templates</td></tr>
               </tbody>
             </table>
             <div class="cmd-detail">
@@ -563,7 +565,7 @@
           <div class="eco-install">
             <h4>Install</h4>
             <ol>
-              <li>Download <code>ezstack-3.2.5.vsix</code> from the release page</li>
+              <li>Download <code>ezstack-3.2.6.vsix</code> from the release page</li>
               <li>In VS Code: <code>Cmd+Shift+P</code> &rarr; "Install from VSIX" &rarr; select the file</li>
               <li>Open a repo with ezstack configured &mdash; the panel appears in the sidebar</li>
             </ol>
@@ -608,11 +610,11 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v3.2.5</span>
+          <span class="footer-meta">MIT License &middot; v3.2.6</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
-          <a href="https://github.com/KulkarniKaustubh/ezstack/blob/main/DOCUMENTATION.md" target="_blank" rel="noopener">Docs</a>
+          <a href="documentation.html">Docs</a>
           <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener">Releases</a>
           <a href="https://github.com/KulkarniKaustubh/ezstack/issues" target="_blank" rel="noopener">Issues</a>
         </div>
