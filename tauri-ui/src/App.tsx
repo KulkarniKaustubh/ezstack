@@ -3,6 +3,7 @@ import { useAppStore } from "./store/app-store";
 import { useStacks } from "./hooks/use-stacks";
 import { useOperation } from "./hooks/use-operation";
 import { useResizable } from "./hooks/use-resizable";
+import { useConnectionHealth } from "./hooks/use-connection-health";
 import { TitleBar } from "./components/layout/TitleBar";
 import { Sidebar } from "./components/layout/Sidebar";
 import { StatusBar } from "./components/layout/StatusBar";
@@ -64,18 +65,21 @@ export default function App() {
   const { refresh } = useStacks();
   const { run } = useOperation();
   const [dialog, setDialog] = useState<DialogState>({ type: "none" });
-  const [isConnected, setIsConnected] = useState(false);
   const [connectError, setConnectError] = useState<string | null>(null);
   const [currentConnection, setCurrentConnection] = useState<SshConnection | null>(null);
+  const isConnected = currentConnection !== null;
+  const { health: connectionHealth } = useConnectionHealth(isConnected);
 
   // Restore connection state on mount
   useEffect(() => {
     ezs.getConnection().then((conn) => {
       if (conn) {
-        setIsConnected(true);
         setCurrentConnection(conn);
       }
-    }).catch(() => {});
+    }).catch((e) => {
+      // Don't crash startup, but surface in console so users can debug.
+      console.warn("Failed to restore SSH connection state:", e);
+    });
   }, []);
 
   // Resizable sidebar
@@ -104,6 +108,9 @@ export default function App() {
     const handler = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT") return;
+      // Don't fire app-level shortcuts while a modal is open — let Radix dialogs
+      // own ESC/Enter and prevent global Cmd-N etc. from racing dialog handlers.
+      if (dialog.type !== "none") return;
 
       if (e.metaKey && e.key === "r") {
         e.preventDefault();
@@ -160,7 +167,7 @@ export default function App() {
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [refresh, stacks, selectedStack, selectedStackHash, focusedBranchIndex, selectStack, selectBranch, setFocusedBranchIndex]);
+  }, [refresh, stacks, selectedStack, selectedStackHash, focusedBranchIndex, selectStack, selectBranch, setFocusedBranchIndex, dialog.type]);
 
   const runAndRefresh = useCallback(
     async (op: () => Promise<ezs.CommandResult>) => {
@@ -275,7 +282,8 @@ export default function App() {
         onSync={() => setDialog({ type: "sync" })}
         onSettings={() => setDialog({ type: "settings" })}
         isLoading={isLoading}
-        isConnected={isConnected}
+        connection={currentConnection}
+        connectionHealth={connectionHealth}
         onConnectRemote={() => setDialog({ type: "connect-remote" })}
       />
 
@@ -464,25 +472,37 @@ export default function App() {
         isLoading={operationLoading}
         error={connectError}
         currentConnection={currentConnection}
-        onConnect={async (host, user, port, keyPath) => {
-          return ezs.connectRemote(host, user, port, keyPath);
+        onConnect={async (host, user, port, keyPath, jumpHost) => {
+          return ezs.connectRemote(host, user, port, keyPath, jumpHost);
         }}
-        onSelectRepo={async (host, user, port, keyPath, repoPath) => {
+        onSelectRepo={async (host, user, port, keyPath, jumpHost, repoPath, label) => {
           setConnectError(null);
           try {
-            const resolvedPath = await ezs.selectRemoteRepo(host, user, port, keyPath, repoPath);
-            setIsConnected(true);
+            const resolvedPath = await ezs.selectRemoteRepo(
+              host,
+              user,
+              port,
+              keyPath,
+              jumpHost,
+              repoPath,
+              label,
+            );
             const conn = await ezs.getConnection();
             setCurrentConnection(conn);
 
-            // Add remote repo to store and select it
-            const currentRepos = useAppStore.getState().repos;
-            if (!currentRepos.some((r) => r.repo_path === resolvedPath)) {
-              const remoteRepo: RepoConfig = {
-                repo_path: resolvedPath,
-                worktree_base_dir: "",
-              };
-              useAppStore.getState().setRepos([remoteRepo, ...currentRepos]);
+            // Re-fetch repo list from the (now-active) remote so all repos appear in the sidebar.
+            try {
+              const remoteRepos = await ezs.getEzstackRepos();
+              useAppStore.getState().setRepos(remoteRepos);
+            } catch {
+              const currentRepos = useAppStore.getState().repos;
+              if (!currentRepos.some((r) => r.repo_path === resolvedPath)) {
+                const remoteRepo: RepoConfig = {
+                  repo_path: resolvedPath,
+                  worktree_base_dir: "",
+                };
+                useAppStore.getState().setRepos([remoteRepo, ...currentRepos]);
+              }
             }
             selectRepo(resolvedPath);
             setDialog({ type: "none" });
@@ -494,8 +514,18 @@ export default function App() {
         }}
         onDisconnect={async () => {
           await ezs.disconnectRemote();
-          setIsConnected(false);
           setCurrentConnection(null);
+          // Reload local repos after disconnecting.
+          try {
+            const localRepos = await ezs.getEzstackRepos();
+            useAppStore.getState().setRepos(localRepos);
+            if (localRepos.length > 0) {
+              selectRepo(localRepos[0].repo_path);
+              refresh();
+            }
+          } catch {
+            // ignore
+          }
         }}
       />
 

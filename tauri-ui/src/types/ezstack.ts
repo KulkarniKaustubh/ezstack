@@ -43,7 +43,48 @@ export interface SshConnection {
   user: string;
   port: number;
   key_path: string;
+  jump_host: string;
   remote_repo_path: string;
+  label: string;
+}
+
+export interface ConnectionProfile {
+  id: string;
+  name: string;
+  host: string;
+  user: string;
+  port: number;
+  key_path: string;
+  jump_host: string;
+  last_repo_path: string;
+}
+
+export interface RemoteRepoSummary {
+  repo_path: string;
+  worktree_base_dir?: string;
+  default_base_branch?: string;
+  exists: boolean;
+}
+
+export type DiagnosticStatus = "ok" | "warn" | "fail" | "skip";
+
+export interface DiagnosticStep {
+  name: string;
+  status: DiagnosticStatus;
+  message: string;
+  duration_ms?: number;
+}
+
+export interface ConnectionHealth {
+  ok: boolean;
+  latency_ms: number;
+  message?: string;
+}
+
+export interface HostFingerprint {
+  key_type: string;
+  bits: number;
+  fingerprint: string;
 }
 
 export interface TreeNode {
