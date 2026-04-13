@@ -9,6 +9,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/github"
+	"github.com/KulkarniKaustubh/ezstack/internal/hooks"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 	"github.com/spf13/pflag"
@@ -16,6 +17,9 @@ import (
 
 // Sync syncs the stack with remote - handles merged parents and branches behind origin/main
 func Sync(args []string) error {
+	if HasExamplesFlag("sync", args) {
+		return nil
+	}
 	fs := pflag.NewFlagSet("sync", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sSync stack with remote%s
@@ -34,6 +38,8 @@ func Sync(args []string) error {
     --continue             Continue after resolving conflicts (completes rebase/merge, pushes, syncs children)
     --merge                Use git merge instead of git rebase
     --rebase               Use git rebase (overrides sync_strategy config)
+    --stats                Print commits-per-branch summary after syncing
+    --squash               Squash each child's commits before rebasing onto parent
     --no-delete-local      Don't delete local branches after their PRs are merged
     --dry-run              Preview what would be synced without making changes
     --no-autostash         Don't stash uncommitted changes before rebase
@@ -72,6 +78,8 @@ func Sync(args []string) error {
 	}
 
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
+	statsFlag := fs.Bool("stats", false, "Print commits-per-branch summary after syncing")
+	squashFlag := fs.Bool("squash", false, "Squash each child's commits into one before rebase")
 	stackFlag := fs.BoolP("stack", "s", false, "Sync current stack")
 	allFlag := fs.BoolP("all", "a", false, "Sync all stacks")
 	currentFlag := fs.BoolP("current", "c", false, "Sync current branch only")
@@ -97,6 +105,44 @@ func Sync(args []string) error {
 		return nil
 	}
 
+	if err := hooks.Run("pre-sync", nil); err != nil {
+		return err
+	}
+	defer func() {
+		if hookErr := hooks.Run("post-sync", nil); hookErr != nil {
+			ui.Warn(hookErr.Error())
+		}
+	}()
+
+	if *statsFlag {
+		defer func() {
+			cwd, gerr := os.Getwd()
+			if gerr != nil {
+				return
+			}
+			mgrLocal, mErr := stack.NewReadOnlyManager(cwd)
+			if mErr != nil {
+				return
+			}
+			currentStack, _, csErr := mgrLocal.GetCurrentStack()
+			if csErr != nil || currentStack == nil {
+				return
+			}
+			gLocal := git.New(cwd)
+			fmt.Fprintf(os.Stderr, "\n%sSync stats (commits ahead of parent):%s\n", ui.Bold, ui.Reset)
+			for _, b := range currentStack.Branches {
+				if b.Parent == "" {
+					continue
+				}
+				ahead, err := gLocal.GetCommitsAhead(b.Name, b.Parent)
+				if err != nil {
+					continue
+				}
+				fmt.Fprintf(os.Stderr, "  %s %-30s %s%d commits%s\n", ui.IconBullet, b.Name, ui.Yellow, ahead, ui.Reset)
+			}
+		}()
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -106,6 +152,13 @@ func Sync(args []string) error {
 	mgr, err := stack.NewManager(cwd)
 	if err != nil {
 		return err
+	}
+
+	if *squashFlag {
+		ui.Info("--squash: squashing children before sync")
+		if err := squashStackChildren(mgr); err != nil {
+			return err
+		}
 	}
 
 	gh, _ := newGitHubClient(g)
@@ -219,6 +272,52 @@ func Sync(args []string) error {
 	}
 
 	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal, autostash, useMerge)
+}
+
+// squashStackChildren rewrites every non-root branch in the current stack so it
+// has a single commit relative to its parent. Existing per-branch commits are
+// soft-reset onto the parent and re-committed under one message. Branches with
+// 0 or 1 commit ahead are left alone. Dirty worktrees are skipped with a warning.
+func squashStackChildren(mgr *stack.Manager) error {
+	currentStack, _, err := mgr.GetCurrentStack()
+	if err != nil {
+		return err
+	}
+	for _, b := range currentStack.Branches {
+		if b.Parent == "" || b.Parent == currentStack.Root {
+			// Roots aren't squashed; their parent is main and we don't want to
+			// collapse history there.
+			continue
+		}
+		if b.WorktreePath == "" {
+			ui.Warn(fmt.Sprintf("Skipping squash of '%s': no worktree", b.Name))
+			continue
+		}
+		bg := git.New(b.WorktreePath)
+		dirty, _ := bg.HasChanges()
+		if dirty {
+			ui.Warn(fmt.Sprintf("Skipping squash of '%s': uncommitted changes", b.Name))
+			continue
+		}
+		ahead, err := bg.GetCommitsAhead(b.Name, b.Parent)
+		if err != nil || ahead < 2 {
+			continue
+		}
+		msg := fmt.Sprintf("squash: %s onto %s", b.Name, b.Parent)
+		if last, lerr := bg.GetLastCommitMessage(); lerr == nil && last != "" {
+			msg = last
+		}
+		if _, runErr := bg.RunCapture("reset", "--soft", b.Parent); runErr != nil {
+			ui.Warn(fmt.Sprintf("Squash failed for '%s' (reset): %v", b.Name, runErr))
+			continue
+		}
+		if _, runErr := bg.RunCapture("commit", "-m", msg); runErr != nil {
+			ui.Warn(fmt.Sprintf("Squash failed for '%s' (commit): %v", b.Name, runErr))
+			continue
+		}
+		ui.Success(fmt.Sprintf("Squashed '%s' (%d → 1 commit)", b.Name, ahead))
+	}
+	return nil
 }
 
 // syncDryRun previews what sync would do for specific stacks

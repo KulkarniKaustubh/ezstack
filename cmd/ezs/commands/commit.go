@@ -6,12 +6,16 @@ import (
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/hooks"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
 // Commit wraps git commit and auto-syncs child branches
 func Commit(args []string) error {
+	if HasExamplesFlag("commit", args) {
+		return nil
+	}
 	// Only parse --help ourselves; pass everything else to git
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		fmt.Fprintf(os.Stderr, `%sCommit changes and auto-sync child branches%s
@@ -126,9 +130,17 @@ func commitInternal(args []string, amend bool) error {
 	}
 	gitArgs = append(gitArgs, gitPassthroughArgs...)
 
+	if err := hooks.Run("pre-commit", nil); err != nil {
+		return err
+	}
+
 	// Run git commit interactively so the user can use their editor
 	if err := g.RunInteractive(gitArgs...); err != nil {
 		return fmt.Errorf("git commit failed: %w", err)
+	}
+
+	if err := hooks.Run("post-commit", nil); err != nil {
+		ui.Warn(err.Error())
 	}
 
 	action := "Committed"
