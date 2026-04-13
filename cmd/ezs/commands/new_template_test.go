@@ -151,6 +151,75 @@ func TestApplyTemplate_SymlinkInsideTemplateCopiedAsSymlink(t *testing.T) {
 	}
 }
 
+// A template symlink whose target is absolute and points outside the
+// destination worktree must be rejected — otherwise a malicious template
+// could plant `secrets → /etc/passwd` that later leaks via cat or push.
+func TestApplyTemplate_RejectsAbsoluteSymlinkEscapingDest(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX")
+	}
+	src := setupTemplateEnv(t, "escape-abs")
+	if err := os.Symlink("/etc/passwd", filepath.Join(src, "secrets")); err != nil {
+		t.Fatal(err)
+	}
+	dest := t.TempDir()
+	err := applyTemplate("escape-abs", dest)
+	if err == nil || !strings.Contains(err.Error(), "outside worktree") {
+		t.Errorf("expected outside-worktree rejection, got %v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(dest, "secrets")); statErr == nil {
+		t.Error("dest/secrets should not exist after rejection")
+	}
+}
+
+// A template symlink whose target is relative but traverses outside the
+// destination via `..` must also be rejected.
+func TestApplyTemplate_RejectsRelativeSymlinkEscapingDest(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX")
+	}
+	src := setupTemplateEnv(t, "escape-rel")
+	// Place a symlink under a subdir so `../../../etc/passwd` has depth to
+	// escape without the cleaned target collapsing to something innocuous.
+	if err := os.MkdirAll(filepath.Join(src, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../../../../../etc/passwd", filepath.Join(src, "sub", "leak")); err != nil {
+		t.Fatal(err)
+	}
+	dest := t.TempDir()
+	err := applyTemplate("escape-rel", dest)
+	if err == nil || !strings.Contains(err.Error(), "outside worktree") {
+		t.Errorf("expected outside-worktree rejection, got %v", err)
+	}
+}
+
+// Relative symlinks that stay inside dest (the common case) must still work.
+func TestApplyTemplate_AllowsInternalRelativeSymlinks(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX")
+	}
+	src := setupTemplateEnv(t, "internal-rel")
+	if err := os.MkdirAll(filepath.Join(src, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "target.txt"), []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// sub/alias → ../target.txt  (stays inside dest)
+	if err := os.Symlink("../target.txt", filepath.Join(src, "sub", "alias")); err != nil {
+		t.Fatal(err)
+	}
+	dest := t.TempDir()
+	if err := applyTemplate("internal-rel", dest); err != nil {
+		t.Fatalf("applyTemplate: %v", err)
+	}
+	fi, err := os.Lstat(filepath.Join(dest, "sub", "alias"))
+	if err != nil || fi.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("internal relative symlink missing, err=%v", err)
+	}
+}
+
 func TestApplyTemplate_ReplacesPreExistingDestSymlink(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("symlinks are POSIX-only in this test")

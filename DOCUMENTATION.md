@@ -679,6 +679,14 @@ When the hook is invoked from an `ezs agent` session that was launched with `--n
 
 `ezs push --verify` promotes `pre-push` from optional to required: ezstack aborts with an error if the hook file is missing or not executable. This is the knob to use in CI or on shared machines where push-time validation is non-negotiable.
 
+### Dry-run contract
+
+Hooks only fire when ezstack is about to mutate state. Preview commands never invoke them:
+
+- `ezs sync --dry-run` does **not** run `pre-sync` or `post-sync`. A failing `pre-sync` hook will not block a dry-run, and a `--dry-run --squash` combination will not rewrite history — the squash is part of the dry-run short-circuit as well.
+- `ezs sync --continue` runs `post-sync` (to signal "sync is done") but never re-runs `pre-sync`; the original invocation already fired it.
+- `ezs commit` / `ezs push` have no dry-run mode of their own, so their hook behaviour is unconditional.
+
 ---
 
 ## Discoverability: `--info`, `--examples`, "did you mean"

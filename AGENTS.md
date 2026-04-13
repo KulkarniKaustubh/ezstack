@@ -42,6 +42,16 @@ ezs -y delete feature-1 # Delete without confirmation
 
 ## Common Agent Workflows
 
+### Environment sanity check
+
+```bash
+# Verify git, gh, fzf, and ezstack config are all healthy.
+# Exits non-zero with a problem count if anything is missing or broken.
+ezs doctor
+```
+
+Run this as the first step of any automated workflow on a fresh machine — it surfaces missing dependencies before the agent starts issuing `ezs` commands that would fail with cryptic errors deep in the pipeline.
+
 ### Creating a stacked PR series
 
 ```bash

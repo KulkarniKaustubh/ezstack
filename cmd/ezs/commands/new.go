@@ -706,11 +706,11 @@ func showDiffStatsAgainstBase(g *git.Git, branch, baseBranch string) {
 //   - Every destination path must stay inside dest after joining — guards
 //     against "../" payloads in template file names.
 //   - Symlinks inside the template are recreated as symlinks in dest
-//     verbatim; we do not dereference them into regular files. This lets
-//     template authors ship symlinks (e.g. to node_modules stubs) without
-//     silently turning them into copies, and it means a symlink pointing
-//     outside the worktree stays a dangling link instead of exfiltrating
-//     content.
+//     verbatim, BUT only if their target (resolved relative to the
+//     symlink's new location in dest) stays inside dest. A symlink that
+//     would resolve outside the worktree — absolute or relative — is
+//     rejected, so a malicious template can't plant `secrets → /etc/passwd`
+//     that later leaks via a grep, cat, or commit+push.
 func applyTemplate(name, dest string) error {
 	cfgDir, err := config.ConfigDir()
 	if err != nil {
@@ -774,6 +774,20 @@ func applyTemplate(name, dest string) error {
 			linkTarget, rerr := os.Readlink(path)
 			if rerr != nil {
 				return rerr
+			}
+			// Resolve the symlink's effective target as it would appear
+			// once the link lives at `target` inside dest. Relative links
+			// are anchored at filepath.Dir(target); absolute links are
+			// used as-is. Either way, the cleaned path must remain inside
+			// destReal — otherwise a malicious template could plant a
+			// pointer to an arbitrary file on the host.
+			resolved := linkTarget
+			if !filepath.IsAbs(resolved) {
+				resolved = filepath.Join(filepath.Dir(target), resolved)
+			}
+			resolved = filepath.Clean(resolved)
+			if !strings.HasPrefix(resolved, destReal+string(os.PathSeparator)) && resolved != destReal {
+				return fmt.Errorf("template symlink %q points outside worktree (%s)", rel, linkTarget)
 			}
 			_ = os.Remove(target)
 			return os.Symlink(linkTarget, target)

@@ -159,30 +159,34 @@ func Sync(args []string) error {
 		return syncContinue(mgr, gh, useMerge)
 	}
 
-	if err := hooks.Run("pre-sync", hookCtx); err != nil {
-		return err
-	}
-	defer func() {
-		if hookErr := hooks.Run("post-sync", hookCtx); hookErr != nil {
-			ui.Warn(hookErr.Error())
-		}
-	}()
-
-	// --stats prints a commits-ahead summary after sync completes. Registered
-	// AFTER the post-sync defer so LIFO fires stats first, post-sync second.
-	if *statsFlag {
-		defer printSyncStats(statsCwd)
-	}
-
-	if *squashFlag {
-		ui.Info("--squash: squashing children before sync")
-		if err := squashStackChildren(mgr); err != nil {
-			return err
-		}
-	}
-
 	if jsonOutput && !dryRun {
 		return fmt.Errorf("--json requires --dry-run")
+	}
+
+	// Dry-run must be side-effect free: no hooks fire, no squash runs.
+	// Everything below up through --squash is gated on !dryRun.
+	if !dryRun {
+		if err := hooks.Run("pre-sync", hookCtx); err != nil {
+			return err
+		}
+		defer func() {
+			if hookErr := hooks.Run("post-sync", hookCtx); hookErr != nil {
+				ui.Warn(hookErr.Error())
+			}
+		}()
+
+		// --stats prints a commits-ahead summary after sync completes. Registered
+		// AFTER the post-sync defer so LIFO fires stats first, post-sync second.
+		if *statsFlag {
+			defer printSyncStats(statsCwd)
+		}
+
+		if *squashFlag {
+			ui.Info("--squash: squashing children before sync")
+			if err := squashStackChildren(mgr); err != nil {
+				return err
+			}
+		}
 	}
 
 	// Handle --branch flag: sync a specific branch by name
