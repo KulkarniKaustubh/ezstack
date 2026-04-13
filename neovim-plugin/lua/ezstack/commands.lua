@@ -6,9 +6,9 @@ local M = {}
 
 --- All top-level subcommands. Used for both dispatch and completion.
 local SUBCOMMAND_NAMES = {
-  "agent", "amend", "commit", "config", "delete", "diff", "down", "goto",
-  "list", "log", "menu", "new", "pr", "push", "rename", "reparent",
-  "stack", "status", "sync", "unstack", "up",
+  "actions", "agent", "amend", "commit", "config", "delete", "diff", "down",
+  "goto", "graph", "list", "log", "menu", "new", "pr", "push", "rename",
+  "reparent", "stack", "status", "sync", "unstack", "up",
 }
 
 --- Subcommand dispatch table.
@@ -492,6 +492,11 @@ subcommands["diff"] = function(args)
     end
     show(parent)
   end, { force = true, all = true })
+end
+
+--- `:Ezs graph` — render the stack as an ASCII tree.
+subcommands["graph"] = function()
+  ui.show_graph()
 end
 
 --- `:Ezs commit [args]`
