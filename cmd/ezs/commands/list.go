@@ -1,12 +1,15 @@
 package commands
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
@@ -266,15 +269,15 @@ func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusM
 	return enc.Encode(result)
 }
 
-// Status shows the status of current stack or all stacks with PR and CI info
-func Status(args []string) error {
-	if HasExamplesFlag("status", args) {
-		return nil
-	}
-	// Pre-extract --watch (and optional integer interval) so the inner Status
-	// invocation never sees it. Supports both "--watch" and "--watch=10".
+// parseWatchFlag pre-extracts --watch / --watch=N from args. It returns the
+// watch interval in seconds (0 if no --watch flag was present, 5 as the
+// default when --watch is present without a valid positive integer) plus the
+// remaining args in their original order. Supports both "--watch",
+// "--watch 10" (eats the next arg if it parses as a positive int), and
+// "--watch=10" forms. Bogus values like "--watch=abc" fall back to 5.
+func parseWatchFlag(args []string) (int, []string) {
 	watchInterval := 0
-	var passthrough []string
+	var rest []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--watch" {
@@ -295,9 +298,34 @@ func Status(args []string) error {
 			}
 			continue
 		}
-		passthrough = append(passthrough, a)
+		rest = append(rest, a)
 	}
+	return watchInterval, rest
+}
+
+// Status shows the status of current stack or all stacks with PR and CI info
+func Status(args []string) error {
+	if HasExamplesFlag("status", args) {
+		return nil
+	}
+	// Pre-extract --watch (and optional integer interval) so the inner Status
+	// invocation never sees it. Supports both "--watch" and "--watch=10".
+	watchInterval, passthrough := parseWatchFlag(args)
 	if watchInterval > 0 {
+		// --watch is fundamentally interactive: it clears the screen and
+		// redraws on a timer. --json is meant for machine consumption and
+		// expects a single parseable document. Combining them produces
+		// garbage on both ends, so reject up front.
+		for _, a := range passthrough {
+			if a == "--json" {
+				return fmt.Errorf("--watch and --json cannot be combined")
+			}
+		}
+		// Throttle: GitHub's gh API isn't free. 2s is already aggressive
+		// for a stack with N branches × gh calls; anything lower is abuse.
+		if watchInterval < 2 {
+			watchInterval = 2
+		}
 		return runStatusWatch(passthrough, watchInterval)
 	}
 	args = passthrough
@@ -494,15 +522,26 @@ func Status(args []string) error {
 }
 
 // runStatusWatch repeatedly clears the screen and runs status until the user
-// interrupts. The wrapped invocation should not include --watch.
+// interrupts with SIGINT/SIGTERM. The wrapped invocation must not include --watch.
+// We use signal.NotifyContext so Ctrl-C breaks the sleep cleanly between refreshes
+// instead of killing the process mid-render or mid-gh-request.
 func runStatusWatch(passthrough []string, intervalSec int) error {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	interval := time.Duration(intervalSec) * time.Second
 	for {
 		fmt.Fprint(os.Stderr, "\033[2J\033[H")
 		fmt.Fprintf(os.Stderr, "%sezs status --watch (every %ds, Ctrl-C to exit)%s\n\n", ui.Bold, intervalSec, ui.Reset)
 		if err := Status(passthrough); err != nil {
 			ui.Warn(err.Error())
 		}
-		time.Sleep(time.Duration(intervalSec) * time.Second)
+		select {
+		case <-ctx.Done():
+			fmt.Fprintln(os.Stderr)
+			return nil
+		case <-time.After(interval):
+		}
 	}
 }
 

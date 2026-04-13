@@ -10,9 +10,36 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/github"
+	"github.com/KulkarniKaustubh/ezstack/internal/hooks"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
+
+// BuildHookContext returns a hooks.Context populated with the current repo
+// root, branch, and (if available) stack hash/name. Errors are swallowed: a
+// hook with partial context is better than no hook at all.
+func BuildHookContext() *hooks.Context {
+	ctx := &hooks.Context{}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return ctx
+	}
+	g := git.New(cwd)
+	if root, rErr := g.GetRepoRoot(); rErr == nil {
+		ctx.RepoRoot = root
+	}
+	if br, bErr := g.CurrentBranch(); bErr == nil {
+		ctx.Branch = br
+	}
+	mgr, mErr := stack.NewReadOnlyManager(cwd)
+	if mErr == nil {
+		if cs, _, csErr := mgr.GetCurrentStack(); csErr == nil && cs != nil {
+			ctx.StackHash = cs.Hash
+			ctx.StackName = cs.Name
+		}
+	}
+	return ctx
+}
 
 // IsShellWrapped returns true if ezs is running through the shell wrapper function.
 // When true, stdout "cd <path>" will be eval'd by the shell. When false, the tool
@@ -980,18 +1007,29 @@ func HasExamplesFlag(cmdName string, args []string) bool {
 	return false
 }
 
-// PrintExamples prints the example invocations for a command.
+// PrintExamples prints the example invocations for a command. Output goes to
+// stdout so users can pipe/grep it; `--examples` is an explicit info request.
 func PrintExamples(cmdName string) {
 	examples, ok := commandExamples[cmdName]
 	if !ok {
 		fmt.Fprintf(os.Stderr, "No examples available for '%s'\n", cmdName)
 		return
 	}
-	fmt.Fprintf(os.Stderr, "%sExamples for 'ezs %s'%s\n\n", ui.Bold, cmdName, ui.Reset)
+	fmt.Fprintf(os.Stdout, "%sExamples for 'ezs %s'%s\n\n", ui.Bold, cmdName, ui.Reset)
 	for _, ex := range examples {
-		fmt.Fprintf(os.Stderr, "  %s# %s%s\n", ui.Gray, ex[1], ui.Reset)
-		fmt.Fprintf(os.Stderr, "  %s%s%s\n\n", ui.Cyan, ex[0], ui.Reset)
+		fmt.Fprintf(os.Stdout, "  %s# %s%s\n", ui.Gray, ex[1], ui.Reset)
+		fmt.Fprintf(os.Stdout, "  %s%s%s\n\n", ui.Cyan, ex[0], ui.Reset)
 	}
+}
+
+// CommandsWithExamples returns the list of commands that have registered
+// examples. Used by docs generation and tests.
+func CommandsWithExamples() []string {
+	out := make([]string, 0, len(commandExamples))
+	for k := range commandExamples {
+		out = append(out, k)
+	}
+	return out
 }
 
 // NavigateToBranch navigates to a branch by cd-ing to its worktree or checking out the branch.

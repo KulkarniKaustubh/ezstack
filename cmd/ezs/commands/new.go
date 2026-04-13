@@ -690,54 +690,125 @@ func showDiffStatsAgainstBase(g *git.Git, branch, baseBranch string) {
 		baseBranch, ui.Green, added, ui.Reset, ui.Red, removed, ui.Reset))
 }
 
-// applyTemplate copies the contents of ~/.ezstack/templates/<name>/ into dest.
-// Existing files in dest are overwritten so the template can layer on top of
-// the freshly-created worktree. The .git directory is never touched.
+// applyTemplate copies the contents of ~/.ezstack/templates/<name>/ into
+// dest. It is a layered overlay: existing files in dest are overwritten, new
+// directories are created, and file modes (including the executable bit) are
+// preserved.
+//
+// Safety rules enforced here (all failures abort the copy with an error —
+// partial overlays are never left behind):
+//
+//   - The template root must be a real directory, not a symlink.
+//   - Every source path must be inside the template root after EvalSymlinks,
+//     so a symlink inside the template can't escape to read arbitrary files.
+//   - The `.git` directory of the template (if any) is skipped — it's a
+//     template authoring artifact, not content.
+//   - Every destination path must stay inside dest after joining — guards
+//     against "../" payloads in template file names.
+//   - Symlinks inside the template are recreated as symlinks in dest
+//     verbatim; we do not dereference them into regular files. This lets
+//     template authors ship symlinks (e.g. to node_modules stubs) without
+//     silently turning them into copies, and it means a symlink pointing
+//     outside the worktree stays a dangling link instead of exfiltrating
+//     content.
 func applyTemplate(name, dest string) error {
 	cfgDir, err := config.ConfigDir()
 	if err != nil {
 		return err
 	}
 	src := filepath.Join(cfgDir, "templates", name)
-	info, err := os.Stat(src)
+	info, err := os.Lstat(src)
 	if err != nil {
 		return fmt.Errorf("template '%s' not found at %s", name, src)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("template '%s' is a symlink; refusing to follow", name)
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("template '%s' is not a directory", src)
 	}
-	return filepath.Walk(src, func(path string, fi os.FileInfo, walkErr error) error {
+	// Resolve once so per-file containment checks can compare against a
+	// canonical base path.
+	srcReal, err := filepath.EvalSymlinks(src)
+	if err != nil {
+		return fmt.Errorf("failed to resolve template path: %w", err)
+	}
+	destReal, err := filepath.Abs(dest)
+	if err != nil {
+		return fmt.Errorf("failed to resolve dest path: %w", err)
+	}
+
+	return filepath.Walk(srcReal, func(path string, fi os.FileInfo, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
-		rel, relErr := filepath.Rel(src, path)
+		rel, relErr := filepath.Rel(srcReal, path)
 		if relErr != nil {
 			return relErr
 		}
 		if rel == "." {
 			return nil
 		}
+		// Skip any .git metadata the template might carry.
 		if rel == ".git" || strings.HasPrefix(rel, ".git"+string(os.PathSeparator)) {
+			if fi.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
-		target := filepath.Join(dest, rel)
-		if fi.IsDir() {
-			return os.MkdirAll(target, fi.Mode())
+		// Belt & suspenders: reject any rel that escapes.
+		if strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+			return fmt.Errorf("template entry %q escapes template root", rel)
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			return err
-		}
-		in, err := os.Open(path)
+		target := filepath.Join(destReal, rel)
+		targetAbs, err := filepath.Abs(target)
 		if err != nil {
 			return err
 		}
-		defer in.Close()
-		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fi.Mode())
-		if err != nil {
-			return err
+		if !strings.HasPrefix(targetAbs, destReal+string(os.PathSeparator)) && targetAbs != destReal {
+			return fmt.Errorf("template entry %q resolves outside dest", rel)
 		}
-		defer out.Close()
-		_, copyErr := io.Copy(out, in)
-		return copyErr
+
+		switch {
+		case fi.Mode()&os.ModeSymlink != 0:
+			linkTarget, rerr := os.Readlink(path)
+			if rerr != nil {
+				return rerr
+			}
+			_ = os.Remove(target)
+			return os.Symlink(linkTarget, target)
+		case fi.IsDir():
+			return os.MkdirAll(target, fi.Mode().Perm())
+		default:
+			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+				return err
+			}
+			return copyRegularFile(path, target, fi.Mode().Perm())
+		}
 	})
+}
+
+// copyRegularFile copies src to dest, creating dest with the given mode. It
+// never follows a dest symlink: an existing symlink at dest is removed first
+// so writes can't leak through a pre-placed link.
+func copyRegularFile(src, dest string, mode os.FileMode) error {
+	if fi, err := os.Lstat(dest); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		if rmErr := os.Remove(dest); rmErr != nil {
+			return rmErr
+		}
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	if _, copyErr := io.Copy(out, in); copyErr != nil {
+		return copyErr
+	}
+	return out.Chmod(mode)
 }

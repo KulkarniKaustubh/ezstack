@@ -47,8 +47,8 @@ ezstack configuration is valid.
 	}
 
 	checkBin("git", "required", true)
-	checkBin("gh", "required for PR/CI features", false)
-	checkBin("fzf", "required for fuzzy selection", false)
+	checkBin("gh", "required for PR/CI features", true)
+	checkBin("fzf", "required for interactive selection", true)
 
 	cfgDir, err := config.ConfigDir()
 	if err != nil {

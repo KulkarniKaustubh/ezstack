@@ -93,24 +93,34 @@ func init() {
 	}
 }
 
-// SuggestCommand returns the candidate from candidates with the smallest
-// edit distance to input, provided the distance is small enough to be
-// plausibly a typo. Returns "" if no candidate qualifies.
+// SuggestCommand returns the candidate with the smallest Levenshtein distance
+// to input, provided the distance is plausibly a typo (≤3 and ≤ half the
+// longer of the two strings). Returns "" when nothing qualifies, the input is
+// empty, or the candidate list is empty.
 func SuggestCommand(input string, candidates []string) string {
+	if input == "" || len(candidates) == 0 {
+		return ""
+	}
 	best := ""
 	bestDist := -1
 	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
 		d := levenshtein(input, c)
 		if bestDist == -1 || d < bestDist {
 			bestDist = d
 			best = c
 		}
 	}
+	if best == "" {
+		return ""
+	}
 	maxLen := len(input)
 	if len(best) > maxLen {
 		maxLen = len(best)
 	}
-	if bestDist >= 0 && bestDist <= 3 && bestDist*2 <= maxLen {
+	if bestDist <= 3 && bestDist*2 <= maxLen {
 		return best
 	}
 	return ""

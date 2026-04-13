@@ -11,7 +11,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
-const version = "4.1.2"
+const version = "4.2.0"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
@@ -86,6 +86,15 @@ func main() {
 	case "--info":
 		commands.Info(version)
 		return
+	case "doctor":
+		// doctor runs outside a git repo on purpose: most of what it
+		// checks (required binaries, global config) has nothing to do
+		// with the current directory. Route it before the repo guard.
+		if err := commands.Doctor(args); err != nil {
+			ui.Error(err.Error())
+			os.Exit(ui.GetExitCode(err))
+		}
+		return
 	}
 
 	// Check if we're in a git repo for all other commands
@@ -153,8 +162,6 @@ func main() {
 		err = commands.Down(args)
 	case "agent":
 		err = commands.Agent(args)
-	case "doctor":
-		err = commands.Doctor(args)
 	case "menu":
 		err = runInteractiveMenu()
 	default:

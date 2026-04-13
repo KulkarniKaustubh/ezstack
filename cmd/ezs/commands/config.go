@@ -3,7 +3,6 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -300,40 +299,70 @@ func valueOrDefault(val, def string) string {
 	return val
 }
 
-// configExport writes the global ezstack config file to the given path.
+// redactedExportMarker is written in place of the real github_token on
+// export. Imports that see this value preserve the existing token instead of
+// clobbering it, so exporting + importing is a safe round-trip even when the
+// token is redacted.
+const redactedExportMarker = "<redacted-by-ezs-export>"
+
+// configExport writes the global ezstack config file to the given path. The
+// github_token field is always redacted — backups that live outside
+// ~/.ezstack should never leak a PAT. The file is written 0600 because even
+// a redacted config reveals repo layouts worth protecting on shared hosts.
 func configExport(dest string) error {
 	cfg, err := config.Load()
 	if err != nil {
 		return err
 	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	exportCopy := *cfg
+	if exportCopy.GitHubToken != "" {
+		exportCopy.GitHubToken = redactedExportMarker
+	}
+	data, err := json.MarshalIndent(&exportCopy, "", "  ")
 	if err != nil {
 		return err
 	}
 	dest = helpers.ExpandPath(dest)
-	if err := os.WriteFile(dest, data, 0644); err != nil {
+	if err := os.WriteFile(dest, data, 0600); err != nil {
 		return fmt.Errorf("failed to write %s: %w", dest, err)
 	}
-	ui.Success(fmt.Sprintf("Exported config to %s", dest))
+	ui.Success(fmt.Sprintf("Exported config to %s (github_token redacted, mode 0600)", dest))
 	return nil
 }
 
-// configImport replaces the global ezstack config file with the contents of the given path.
+// configImport replaces the global ezstack config file with the contents of
+// the given path. The import is validated (valid JSON into Config shape) and
+// the user must confirm a summary of what will change before the replacement
+// takes effect. A redacted github_token in the import is ignored — the
+// existing local token is preserved — so configExport → configImport is a
+// lossless round-trip that never leaks secrets through a backup file.
 func configImport(src string) error {
 	src = helpers.ExpandPath(src)
-	f, err := os.Open(src)
+	data, err := os.ReadFile(src)
 	if err != nil {
-		return fmt.Errorf("failed to open %s: %w", src, err)
+		return fmt.Errorf("failed to read %s: %w", src, err)
 	}
-	defer f.Close()
-	data, err := io.ReadAll(f)
+	// Validate into a throwaway value first so we don't mutate anything on a
+	// malformed file.
+	var imported config.Config
+	dec := json.NewDecoder(strings.NewReader(string(data)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&imported); err != nil {
+		return fmt.Errorf("invalid config file: %w", err)
+	}
+
+	current, err := config.Load()
 	if err != nil {
 		return err
 	}
-	var imported config.Config
-	if err := json.Unmarshal(data, &imported); err != nil {
-		return fmt.Errorf("invalid config file: %w", err)
+
+	// Preserve the existing token when the import has the redacted marker or
+	// is empty (so a backup never blanks out a real token).
+	if imported.GitHubToken == redactedExportMarker || imported.GitHubToken == "" {
+		imported.GitHubToken = current.GitHubToken
 	}
+
+	summarizeConfigDiff(current, &imported)
 	if !ui.ConfirmTUIWithDefault(fmt.Sprintf("Replace global ezstack config with %s?", src), false) {
 		ui.Warn("Cancelled")
 		return nil
@@ -343,6 +372,31 @@ func configImport(src string) error {
 	}
 	ui.Success(fmt.Sprintf("Imported config from %s", src))
 	return nil
+}
+
+// summarizeConfigDiff prints a human-readable diff of the repo-scoped config
+// entries between the current and imported configs. Global fields that
+// differ are also highlighted. This is best-effort: its only job is giving
+// the user enough context to decide whether to confirm the import.
+func summarizeConfigDiff(current, imported *config.Config) {
+	fmt.Fprintf(os.Stderr, "\n%sConfig changes preview:%s\n", ui.Bold, ui.Reset)
+	if current.DefaultBaseBranch != imported.DefaultBaseBranch {
+		fmt.Fprintf(os.Stderr, "  default_base_branch: %q → %q\n",
+			current.DefaultBaseBranch, imported.DefaultBaseBranch)
+	}
+	curRepos := current.Repos
+	impRepos := imported.Repos
+	for path := range curRepos {
+		if _, ok := impRepos[path]; !ok {
+			fmt.Fprintf(os.Stderr, "  %s- repo removed: %s%s\n", ui.Red, path, ui.Reset)
+		}
+	}
+	for path := range impRepos {
+		if _, ok := curRepos[path]; !ok {
+			fmt.Fprintf(os.Stderr, "  %s+ repo added:   %s%s\n", ui.Green, path, ui.Reset)
+		}
+	}
+	fmt.Fprintln(os.Stderr)
 }
 
 // configInteractive walks through config options interactively

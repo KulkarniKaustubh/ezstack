@@ -50,7 +50,7 @@ func Push(args []string) error {
 		return nil
 	}
 
-	if os.Getenv("EZS_AGENT_NO_PUSH") == "1" {
+	if os.Getenv(agentNoPushEnv) == "1" {
 		return fmt.Errorf("push blocked: ezs agent --no-push is in effect")
 	}
 
@@ -59,14 +59,20 @@ func Push(args []string) error {
 		return err
 	}
 
-	if *verifyFlag && !hooks.Exists("pre-push") {
-		return fmt.Errorf("--verify requires an executable hook at ~/.ezstack/hooks/pre-push")
+	// --verify promotes pre-push from "run if present" to "require present and
+	// pass". Without --verify a missing hook is fine; with --verify, a missing
+	// or non-executable hook is a hard error.
+	hookCtx := BuildHookContext()
+	if *verifyFlag {
+		if !hooks.Exists("pre-push") {
+			return fmt.Errorf("--verify requires an executable hook at ~/.ezstack/hooks/pre-push")
+		}
 	}
-	if err := hooks.Run("pre-push", nil); err != nil {
+	if err := hooks.Run("pre-push", hookCtx); err != nil {
 		return err
 	}
 	defer func() {
-		if hookErr := hooks.Run("post-push", nil); hookErr != nil {
+		if hookErr := hooks.Run("post-push", hookCtx); hookErr != nil {
 			ui.Warn(hookErr.Error())
 		}
 	}()
@@ -85,12 +91,9 @@ func Push(args []string) error {
 
 	if *branchFlag != "" {
 		remotes := pushTargets(*allRemotesFlag, getBranchRemote(*branchFlag))
-		for _, r := range remotes {
-			if err := pushSpecificBranch(g, *branchFlag, *force, r); err != nil {
-				return err
-			}
-		}
-		return nil
+		return pushToRemotes(remotes, func(r string) error {
+			return pushSpecificBranch(g, *branchFlag, *force, r)
+		})
 	}
 
 	if !*stackFlag {
@@ -99,12 +102,9 @@ func Push(args []string) error {
 			return pushBranch(g, *force, "origin")
 		}
 		remotes := pushTargets(*allRemotesFlag, getBranchRemote(currentBranch))
-		for _, r := range remotes {
-			if err := pushBranch(g, *force, r); err != nil {
-				return err
-			}
-		}
-		return nil
+		return pushToRemotes(remotes, func(r string) error {
+			return pushBranch(g, *force, r)
+		})
 	}
 
 	mgr, err := stack.NewReadOnlyManager(cwd)
@@ -118,6 +118,24 @@ func Push(args []string) error {
 	}
 
 	return pushStack(g, mgr, currentStack, *force, *allRemotesFlag)
+}
+
+// pushToRemotes runs fn against each remote in order. Failures on earlier
+// remotes do not short-circuit — every remote is attempted so users get a
+// clear picture of what succeeded and what didn't. The returned error is
+// aggregate-style: nil if all succeeded, otherwise a summary count.
+func pushToRemotes(remotes []string, fn func(remote string) error) error {
+	failed := 0
+	for _, r := range remotes {
+		if err := fn(r); err != nil {
+			ui.Warn(err.Error())
+			failed++
+		}
+	}
+	if failed > 0 {
+		return fmt.Errorf("%d of %d push(es) failed", failed, len(remotes))
+	}
+	return nil
 }
 
 // pushTargets returns the list of remotes a single push invocation should fan out to.

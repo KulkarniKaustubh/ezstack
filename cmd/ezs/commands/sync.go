@@ -105,47 +105,30 @@ func Sync(args []string) error {
 		return nil
 	}
 
-	if err := hooks.Run("pre-sync", nil); err != nil {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+
+	// Capture the starting cwd so the --stats defer below uses the directory
+	// sync was invoked from, not whatever worktree we ended up in after
+	// rebase/cd operations.
+	statsCwd := cwd
+
+	hookCtx := BuildHookContext()
+	if err := hooks.Run("pre-sync", hookCtx); err != nil {
 		return err
 	}
 	defer func() {
-		if hookErr := hooks.Run("post-sync", nil); hookErr != nil {
+		if hookErr := hooks.Run("post-sync", hookCtx); hookErr != nil {
 			ui.Warn(hookErr.Error())
 		}
 	}()
 
+	// --stats prints a commits-ahead summary after sync completes. Registered
+	// AFTER the post-sync defer so LIFO fires stats first, post-sync second.
 	if *statsFlag {
-		defer func() {
-			cwd, gerr := os.Getwd()
-			if gerr != nil {
-				return
-			}
-			mgrLocal, mErr := stack.NewReadOnlyManager(cwd)
-			if mErr != nil {
-				return
-			}
-			currentStack, _, csErr := mgrLocal.GetCurrentStack()
-			if csErr != nil || currentStack == nil {
-				return
-			}
-			gLocal := git.New(cwd)
-			fmt.Fprintf(os.Stderr, "\n%sSync stats (commits ahead of parent):%s\n", ui.Bold, ui.Reset)
-			for _, b := range currentStack.Branches {
-				if b.Parent == "" {
-					continue
-				}
-				ahead, err := gLocal.GetCommitsAhead(b.Name, b.Parent)
-				if err != nil {
-					continue
-				}
-				fmt.Fprintf(os.Stderr, "  %s %-30s %s%d commits%s\n", ui.IconBullet, b.Name, ui.Yellow, ahead, ui.Reset)
-			}
-		}()
-	}
-
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
+		defer printSyncStats(statsCwd)
 	}
 
 	g := git.New(cwd)
@@ -274,19 +257,62 @@ func Sync(args []string) error {
 	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal, autostash, useMerge)
 }
 
-// squashStackChildren rewrites every non-root branch in the current stack so it
-// has a single commit relative to its parent. Existing per-branch commits are
-// soft-reset onto the parent and re-committed under one message. Branches with
-// 0 or 1 commit ahead are left alone. Dirty worktrees are skipped with a warning.
+// printSyncStats prints a "commits ahead of parent" summary for each branch
+// in the stack rooted at cwd. It's called from a deferred function in Sync()
+// so the caller can request post-action reporting without forcing a return
+// path through a helper.
+func printSyncStats(cwd string) {
+	mgrLocal, mErr := stack.NewReadOnlyManager(cwd)
+	if mErr != nil {
+		return
+	}
+	currentStack, _, csErr := mgrLocal.GetCurrentStack()
+	if csErr != nil || currentStack == nil {
+		return
+	}
+	gLocal := git.New(cwd)
+	fmt.Fprintf(os.Stderr, "\n%sSync stats (commits ahead of parent):%s\n", ui.Bold, ui.Reset)
+	for _, b := range currentStack.Branches {
+		if b.Parent == "" {
+			continue
+		}
+		ahead, err := gLocal.GetCommitsAhead(b.Name, b.Parent)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(os.Stderr, "  %s %-30s %s%d commits%s\n", ui.IconBullet, b.Name, ui.Yellow, ahead, ui.Reset)
+	}
+}
+
+// squashStackChildren rewrites every branch in the current stack (except the
+// root) so it has a single commit relative to its parent.
+//
+// Algorithm:
+//  1. Walk branches in any order; we only reset the branch itself, never the
+//     parent, so iteration order does not matter for correctness.
+//  2. For each branch with ≥2 commits ahead of its parent: soft-reset onto
+//     the parent and re-commit as a single commit, preserving the most recent
+//     commit message.
+//  3. Dirty worktrees, missing worktrees, or branches <2 commits ahead are
+//     skipped with a warning (for the first two cases) or silently (for the
+//     third — already-squashed).
+//
+// IMPORTANT: rewritten branches will diverge from their remotes and require
+// a force-push. The subsequent sync operation will push them with
+// --force-with-lease. Users must not have unsynced collaborators on these
+// branches when running --squash.
 func squashStackChildren(mgr *stack.Manager) error {
 	currentStack, _, err := mgr.GetCurrentStack()
 	if err != nil {
 		return err
 	}
+	ui.Warn("--squash rewrites branch history; pushed branches will need --force-with-lease")
+	squashed := 0
 	for _, b := range currentStack.Branches {
-		if b.Parent == "" || b.Parent == currentStack.Root {
-			// Roots aren't squashed; their parent is main and we don't want to
-			// collapse history there.
+		// Skip the stack root: it has no parent inside the stack, and its
+		// "parent" in config is typically the base branch (main), which we
+		// must never touch.
+		if b.Parent == "" || b.Name == currentStack.Root {
 			continue
 		}
 		if b.WorktreePath == "" {
@@ -316,6 +342,10 @@ func squashStackChildren(mgr *stack.Manager) error {
 			continue
 		}
 		ui.Success(fmt.Sprintf("Squashed '%s' (%d → 1 commit)", b.Name, ahead))
+		squashed++
+	}
+	if squashed == 0 {
+		ui.Info("--squash: nothing to do (no branches had ≥2 commits)")
 	}
 	return nil
 }

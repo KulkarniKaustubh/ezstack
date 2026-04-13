@@ -747,19 +747,15 @@ func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack,
 		return nil
 	}
 
-	if extras.noPush {
-		os.Setenv(agentNoPushEnv, "1")
-	}
-
 	if branchScoped {
 		workDir := resolveWorkDir(ctx.branchName, ctx.worktreePath, repoPath, targetStack)
 		ui.Info(fmt.Sprintf("Launching %s in %s mode on branch '%s'...", agentCmd, ui.Bold+"branch"+ui.Reset, ctx.branchName))
-		return spawnAgentProcess(agentCmd, workDir, prompt)
+		return spawnAgentProcess(agentCmd, workDir, prompt, extras.noPush)
 	}
 
 	workDir := resolveWorkDir("", "", repoPath, targetStack)
 	ui.Info(fmt.Sprintf("Launching %s in %s mode on stack '%s'...", agentCmd, ui.Bold+"stack"+ui.Reset, targetStack.DisplayName()))
-	return spawnAgentProcess(agentCmd, workDir, prompt)
+	return spawnAgentProcess(agentCmd, workDir, prompt, extras.noPush)
 }
 
 // agentFeature launches the agent in feature builder mode.
@@ -783,12 +779,8 @@ func agentFeature(agentCmd, repoPath, description string, existingStack *config.
 		return nil
 	}
 
-	if extras.noPush {
-		os.Setenv(agentNoPushEnv, "1")
-	}
-
 	ui.Info(fmt.Sprintf("Launching %s in %s mode...", agentCmd, ui.Bold+"feature builder"+ui.Reset))
-	return spawnAgentProcess(agentCmd, repoPath, prompt)
+	return spawnAgentProcess(agentCmd, repoPath, prompt, extras.noPush)
 }
 
 // resolveWorkDir returns the best working directory for the agent.
@@ -1081,8 +1073,11 @@ func expandHome(p string) string {
 }
 
 // spawnAgentProcess launches the agent CLI with the rendered prompt.
-// The full prompt is passed as the first visible user message in the agent's UI.
-func spawnAgentProcess(agentCmd, workDir, prompt string) error {
+// The full prompt is passed as the first visible user message in the agent's
+// UI. When noPush is true the child process receives EZS_AGENT_NO_PUSH=1 in
+// its environment only — the parent's env is never mutated, so the ban does
+// not leak to later commands in the same shell session.
+func spawnAgentProcess(agentCmd, workDir, prompt string, noPush bool) error {
 	fields := strings.Fields(agentCmd)
 	if len(fields) == 0 {
 		return fmt.Errorf("agent_command is empty")
@@ -1093,6 +1088,9 @@ func spawnAgentProcess(agentCmd, workDir, prompt string) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
+	if noPush {
+		cmd.Env = append(os.Environ(), agentNoPushEnv+"=1")
+	}
 
 	if err := cmd.Run(); err != nil {
 		// If the agent exited with a non-zero code, propagate it cleanly

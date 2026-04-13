@@ -130,7 +130,8 @@ func commitInternal(args []string, amend bool) error {
 	}
 	gitArgs = append(gitArgs, gitPassthroughArgs...)
 
-	if err := hooks.Run("pre-commit", nil); err != nil {
+	hookCtx := BuildHookContext()
+	if err := hooks.Run("pre-commit", hookCtx); err != nil {
 		return err
 	}
 
@@ -139,7 +140,7 @@ func commitInternal(args []string, amend bool) error {
 		return fmt.Errorf("git commit failed: %w", err)
 	}
 
-	if err := hooks.Run("post-commit", nil); err != nil {
+	if err := hooks.Run("post-commit", hookCtx); err != nil {
 		ui.Warn(err.Error())
 	}
 

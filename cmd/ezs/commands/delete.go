@@ -182,13 +182,22 @@ func Delete(args []string) error {
 	if *cascadeFlag {
 		descendants := collectDescendants(mgr, branchName)
 		if len(descendants) > 0 {
+			// Guard every descendant worktree for uncommitted work BEFORE
+			// deleting anything. A single dirty worktree aborts the whole
+			// cascade — we won't partially destroy a subtree. --force
+			// overrides this check for users who really know.
+			if !*force {
+				if dirty := dirtyDescendants(mgr, descendants); len(dirty) > 0 {
+					return fmt.Errorf("refusing to cascade-delete: uncommitted changes in %v (use --force to override)", dirty)
+				}
+			}
 			ui.Warn(fmt.Sprintf("Cascade will also delete %d descendant branch(es): %v", len(descendants), descendants))
 			if !ui.ConfirmTUI("Proceed with cascade delete?") {
 				ui.Warn("Cancelled")
 				return nil
 			}
 			for _, d := range descendants {
-				if err := mgr.DeleteBranch(d, true); err != nil {
+				if err := mgr.DeleteBranch(d, *force); err != nil {
 					ui.Warn(fmt.Sprintf("Failed to delete '%s': %v", d, err))
 				} else {
 					ui.Success(fmt.Sprintf("Deleted '%s'", d))
@@ -198,9 +207,10 @@ func Delete(args []string) error {
 	}
 
 	// Try stack-aware delete first; if the branch isn't in any stack,
-	// fall back to direct worktree + branch removal.
-	deleteForce := *force || *cascadeFlag
-	if err := mgr.DeleteBranch(branchName, deleteForce); err != nil {
+	// fall back to direct worktree + branch removal. After cascade removes
+	// the descendants, --cascade implies that the root delete is safe to
+	// proceed without --force — children no longer exist.
+	if err := mgr.DeleteBranch(branchName, *force); err != nil {
 		if mgr.GetBranch(branchName) != nil {
 			return err
 		}
@@ -229,6 +239,27 @@ func collectDescendants(mgr *stack.Manager, branchName string) []string {
 	}
 	walk(branchName)
 	return out
+}
+
+// dirtyDescendants returns the subset of the given branch names whose
+// worktrees have uncommitted changes. Branches without a worktree or whose
+// dirty check errors out are reported as clean — we can't know they're
+// dirty, and the regular delete path will still refuse to remove a branch
+// with attached work.
+func dirtyDescendants(mgr *stack.Manager, names []string) []string {
+	var dirty []string
+	for _, name := range names {
+		b := mgr.GetBranch(name)
+		if b == nil || b.WorktreePath == "" {
+			continue
+		}
+		bg := git.New(b.WorktreePath)
+		hasChanges, err := bg.HasChanges()
+		if err == nil && hasChanges {
+			dirty = append(dirty, name)
+		}
+	}
+	return dirty
 }
 
 // deleteNonStackBranch removes a worktree and branch that aren't tracked in any stack.
