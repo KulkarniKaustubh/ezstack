@@ -4,7 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
@@ -265,6 +268,40 @@ func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusM
 
 // Status shows the status of current stack or all stacks with PR and CI info
 func Status(args []string) error {
+	if HasExamplesFlag("status", args) {
+		return nil
+	}
+	// Pre-extract --watch (and optional integer interval) so the inner Status
+	// invocation never sees it. Supports both "--watch" and "--watch=10".
+	watchInterval := 0
+	var passthrough []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "--watch" {
+			watchInterval = 5
+			if i+1 < len(args) {
+				if n, err := strconv.Atoi(args[i+1]); err == nil && n > 0 {
+					watchInterval = n
+					i++
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(a, "--watch=") {
+			if n, err := strconv.Atoi(strings.TrimPrefix(a, "--watch=")); err == nil && n > 0 {
+				watchInterval = n
+			} else {
+				watchInterval = 5
+			}
+			continue
+		}
+		passthrough = append(passthrough, a)
+	}
+	if watchInterval > 0 {
+		return runStatusWatch(passthrough, watchInterval)
+	}
+	args = passthrough
+
 	fs := pflag.NewFlagSet("status", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sShow status of current stack with PR and CI info%s
@@ -281,6 +318,7 @@ func Status(args []string) error {
     -b, --branch <name>    Show status for a specific branch's stack
     -d, --debug            Show debug output
     --json                 Output as JSON (machine-readable)
+    --watch [seconds]      Auto-refresh every N seconds (default 5)
     -h, --help             Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
@@ -453,6 +491,19 @@ func Status(args []string) error {
 	}
 
 	return nil
+}
+
+// runStatusWatch repeatedly clears the screen and runs status until the user
+// interrupts. The wrapped invocation should not include --watch.
+func runStatusWatch(passthrough []string, intervalSec int) error {
+	for {
+		fmt.Fprint(os.Stderr, "\033[2J\033[H")
+		fmt.Fprintf(os.Stderr, "%sezs status --watch (every %ds, Ctrl-C to exit)%s\n\n", ui.Bold, intervalSec, ui.Reset)
+		if err := Status(passthrough); err != nil {
+			ui.Warn(err.Error())
+		}
+		time.Sleep(time.Duration(intervalSec) * time.Second)
+	}
 }
 
 // offerFullyMergedStackCleanup checks each stack whose branches are all marked merged

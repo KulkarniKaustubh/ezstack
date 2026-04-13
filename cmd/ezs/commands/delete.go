@@ -12,6 +12,9 @@ import (
 
 // Delete deletes a branch and its worktree, or an entire stack by hash
 func Delete(args []string) error {
+	if HasExamplesFlag("delete", args) {
+		return nil
+	}
 	fs := pflag.NewFlagSet("delete", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sDelete a branch and its worktree%s
@@ -24,6 +27,7 @@ func Delete(args []string) error {
 %sOPTIONS%s
     -f, --force    Force delete even if branch has children
     -s, --stack    Treat argument as a stack hash (delete entire stack)
+    --cascade      Also delete all descendant branches
     -h, --help     Show this help message
 
 %sNOTES%s
@@ -33,6 +37,7 @@ func Delete(args []string) error {
 	}
 	force := fs.BoolP("force", "f", false, "Force delete even if branch has children")
 	stackFlag := fs.BoolP("stack", "s", false, "Delete entire stack by hash")
+	cascadeFlag := fs.Bool("cascade", false, "Also delete all descendant branches")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -174,9 +179,28 @@ func Delete(args []string) error {
 		return fmt.Errorf("failed to change to repo root: %w", err)
 	}
 
+	if *cascadeFlag {
+		descendants := collectDescendants(mgr, branchName)
+		if len(descendants) > 0 {
+			ui.Warn(fmt.Sprintf("Cascade will also delete %d descendant branch(es): %v", len(descendants), descendants))
+			if !ui.ConfirmTUI("Proceed with cascade delete?") {
+				ui.Warn("Cancelled")
+				return nil
+			}
+			for _, d := range descendants {
+				if err := mgr.DeleteBranch(d, true); err != nil {
+					ui.Warn(fmt.Sprintf("Failed to delete '%s': %v", d, err))
+				} else {
+					ui.Success(fmt.Sprintf("Deleted '%s'", d))
+				}
+			}
+		}
+	}
+
 	// Try stack-aware delete first; if the branch isn't in any stack,
 	// fall back to direct worktree + branch removal.
-	if err := mgr.DeleteBranch(branchName, *force); err != nil {
+	deleteForce := *force || *cascadeFlag
+	if err := mgr.DeleteBranch(branchName, deleteForce); err != nil {
 		if mgr.GetBranch(branchName) != nil {
 			return err
 		}
@@ -190,6 +214,21 @@ func Delete(args []string) error {
 	EmitCd(repoRoot)
 
 	return nil
+}
+
+// collectDescendants returns all descendant branch names in deepest-first order
+// so they can be safely deleted before their parents.
+func collectDescendants(mgr *stack.Manager, branchName string) []string {
+	var out []string
+	var walk func(name string)
+	walk = func(name string) {
+		for _, c := range mgr.GetChildren(name) {
+			walk(c.Name)
+			out = append(out, c.Name)
+		}
+	}
+	walk(branchName)
+	return out
 }
 
 // deleteNonStackBranch removes a worktree and branch that aren't tracked in any stack.

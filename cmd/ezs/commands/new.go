@@ -2,6 +2,7 @@ package commands
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,9 @@ import (
 
 // New creates a new branch in the stack
 func New(args []string) error {
+	if HasExamplesFlag("new", args) {
+		return nil
+	}
 	fs := pflag.NewFlagSet("new", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sCreate a new branch in the stack%s
@@ -25,6 +29,7 @@ func New(args []string) error {
     ezs new [branch-name] [options]
 
 %sOPTIONS%s
+    --template <name>         Seed worktree from ~/.ezstack/templates/<name>
     -p, --parent <branch>     Parent branch (defaults to current branch)
     -w, --worktree <path>     Worktree path (defaults to configured base dir + branch name)
     -c, --cd                  Change to the new worktree after creation
@@ -51,6 +56,7 @@ func New(args []string) error {
 	}
 	parent := fs.StringP("parent", "p", "", "Parent branch")
 	worktree := fs.StringP("worktree", "w", "", "Worktree path")
+	templateFlag := fs.String("template", "", "Seed the new worktree from ~/.ezstack/templates/<name>")
 	cdFlag := fs.BoolP("cd", "c", false, "Change to worktree")
 	noCdFlag := fs.BoolP("no-cd", "C", false, "Don't change to worktree")
 	fromWorktree := fs.BoolP("from-worktree", "f", false, "Register an existing worktree as a stack root")
@@ -347,6 +353,14 @@ func New(args []string) error {
 		branch, err := mgr.CreateBranch(branchName, parentBranch, worktreePath, targetStack)
 		if err != nil {
 			return err
+		}
+
+		if *templateFlag != "" {
+			if err := applyTemplate(*templateFlag, branch.WorktreePath); err != nil {
+				ui.Warn(fmt.Sprintf("Template seeding failed: %v", err))
+			} else {
+				ui.Success(fmt.Sprintf("Seeded worktree from template '%s'", *templateFlag))
+			}
 		}
 
 		ui.Success(fmt.Sprintf("Created branch '%s' with worktree at '%s'", branch.Name, branch.WorktreePath))
@@ -674,4 +688,56 @@ func showDiffStatsAgainstBase(g *git.Git, branch, baseBranch string) {
 
 	ui.Info(fmt.Sprintf("Diff vs %s: %s+%d%s / %s-%d%s lines",
 		baseBranch, ui.Green, added, ui.Reset, ui.Red, removed, ui.Reset))
+}
+
+// applyTemplate copies the contents of ~/.ezstack/templates/<name>/ into dest.
+// Existing files in dest are overwritten so the template can layer on top of
+// the freshly-created worktree. The .git directory is never touched.
+func applyTemplate(name, dest string) error {
+	cfgDir, err := config.ConfigDir()
+	if err != nil {
+		return err
+	}
+	src := filepath.Join(cfgDir, "templates", name)
+	info, err := os.Stat(src)
+	if err != nil {
+		return fmt.Errorf("template '%s' not found at %s", name, src)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("template '%s' is not a directory", src)
+	}
+	return filepath.Walk(src, func(path string, fi os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, relErr := filepath.Rel(src, path)
+		if relErr != nil {
+			return relErr
+		}
+		if rel == "." {
+			return nil
+		}
+		if rel == ".git" || strings.HasPrefix(rel, ".git"+string(os.PathSeparator)) {
+			return nil
+		}
+		target := filepath.Join(dest, rel)
+		if fi.IsDir() {
+			return os.MkdirAll(target, fi.Mode())
+		}
+		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+			return err
+		}
+		in, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer in.Close()
+		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, fi.Mode())
+		if err != nil {
+			return err
+		}
+		defer out.Close()
+		_, copyErr := io.Copy(out, in)
+		return copyErr
+	})
 }

@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
@@ -12,6 +13,9 @@ import (
 
 // Goto navigates to a branch worktree
 func Goto(args []string) error {
+	if HasExamplesFlag("goto", args) {
+		return nil
+	}
 	fs := pflag.NewFlagSet("goto", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sNavigate to a branch worktree%s
@@ -32,6 +36,7 @@ func Goto(args []string) error {
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
+	searchFlag := fs.String("search", "", "Fuzzy-match a branch name by substring")
 	if err := fs.Parse(args); err != nil {
 		if err == pflag.ErrHelp {
 			return nil
@@ -52,6 +57,38 @@ func Goto(args []string) error {
 	mgr, err := stack.NewReadOnlyManager(cwd)
 	if err != nil {
 		return err
+	}
+
+	if *searchFlag != "" {
+		worktrees, err := g.ListWorktrees()
+		if err != nil {
+			return fmt.Errorf("failed to list worktrees: %w", err)
+		}
+		query := strings.ToLower(*searchFlag)
+		var matches []git.Worktree
+		for _, wt := range worktrees {
+			if strings.Contains(strings.ToLower(wt.Branch), query) {
+				matches = append(matches, wt)
+			}
+		}
+		if len(matches) == 0 {
+			return ui.NewExitError(ui.ExitBranchNotFound, "no branch matched '%s'", *searchFlag)
+		}
+		if len(matches) == 1 {
+			EmitCd(matches[0].Path)
+			return nil
+		}
+		wtInfos := make([]ui.WorktreeInfo, len(matches))
+		for i, wt := range matches {
+			wtInfos[i] = ui.WorktreeInfo{Path: wt.Path, Branch: wt.Branch}
+		}
+		stacks := mgr.ListStacks()
+		selected, err := ui.SelectWorktreeWithStackPreview(wtInfos, stacks, fmt.Sprintf("Branches matching '%s'", *searchFlag))
+		if err != nil {
+			return err
+		}
+		EmitCd(selected.Path)
+		return nil
 	}
 
 	if fs.NArg() > 0 {
