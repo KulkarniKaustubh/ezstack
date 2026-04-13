@@ -39,9 +39,16 @@ func PR(args []string) error {
 	if HasExamplesFlag("pr", args) {
 		return nil
 	}
-	for _, a := range args {
-		if a == "--draft-all" {
-			return prDraftAll()
+	// --draft-all is a top-level shortcut for "create draft PRs across the
+	// whole current stack". It is only recognized when no subcommand is
+	// present — otherwise we'd silently hijack `pr create --draft-all` and
+	// drop its -t/-b flags on the floor. `pr create --draft-all` is handled
+	// inside prCreate itself.
+	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		for _, a := range args {
+			if a == "--draft-all" {
+				return prDraftAll()
+			}
 		}
 	}
 	// Allow --help without requiring auth
@@ -295,6 +302,7 @@ func prCreate(args []string) error {
 
 %sOPTIONS%s
     -s, --stack            Create PRs for all branches in the current stack
+    --draft-all            Create draft PRs across the whole stack (implies --stack --draft)
     -t, --title <title>    PR title (defaults to branch name)
     -b, --body <body>      PR body/description
     -d, --draft            Create as draft PR
@@ -303,6 +311,7 @@ func prCreate(args []string) error {
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	stackFlag := fs.BoolP("stack", "s", false, "Create PRs for all branches in the current stack")
+	draftAll := fs.Bool("draft-all", false, "Create draft PRs across the whole stack")
 	title := fs.StringP("title", "t", "", "PR title")
 	body := fs.StringP("body", "b", "", "PR body")
 	draft := fs.BoolP("draft", "d", false, "Create as draft PR")
@@ -330,6 +339,12 @@ func prCreate(args []string) error {
 		return err
 	}
 
+	if *draftAll {
+		if *title != "" || *body != "" || *branchFlag != "" {
+			ui.Warn("--draft-all creates one PR per branch with auto-generated titles; -t/-b/--branch are ignored")
+		}
+		return prDraftAll()
+	}
 	if *stackFlag {
 		currentStack, _, err := mgr.GetCurrentStack()
 		if err != nil {

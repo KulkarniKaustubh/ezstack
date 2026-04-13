@@ -1054,9 +1054,12 @@ func applyAgentPreset(prompt, presetName string) (string, error) {
 }
 
 // savePromptToFile writes a composed prompt to disk for inspection.
+// Written with 0600 because a composed agent prompt routinely embeds repo
+// context, commit messages, and stack metadata that shouldn't be world-readable
+// on shared hosts. Matches the perms config export uses for the same reason.
 func savePromptToFile(path, prompt string) error {
 	path = expandHome(path)
-	if err := os.WriteFile(path, []byte(prompt), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(prompt), 0600); err != nil {
 		return fmt.Errorf("failed to write prompt to %s: %w", path, err)
 	}
 	ui.Success(fmt.Sprintf("Wrote composed prompt to %s", path))

@@ -115,33 +115,10 @@ func Sync(args []string) error {
 	// rebase/cd operations.
 	statsCwd := cwd
 
-	hookCtx := BuildHookContext()
-	if err := hooks.Run("pre-sync", hookCtx); err != nil {
-		return err
-	}
-	defer func() {
-		if hookErr := hooks.Run("post-sync", hookCtx); hookErr != nil {
-			ui.Warn(hookErr.Error())
-		}
-	}()
-
-	// --stats prints a commits-ahead summary after sync completes. Registered
-	// AFTER the post-sync defer so LIFO fires stats first, post-sync second.
-	if *statsFlag {
-		defer printSyncStats(statsCwd)
-	}
-
 	g := git.New(cwd)
 	mgr, err := stack.NewManager(cwd)
 	if err != nil {
 		return err
-	}
-
-	if *squashFlag {
-		ui.Info("--squash: squashing children before sync")
-		if err := squashStackChildren(mgr); err != nil {
-			return err
-		}
 	}
 
 	gh, _ := newGitHubClient(g)
@@ -165,8 +142,43 @@ func Sync(args []string) error {
 		useMerge = mgr.GetConfig().GetSyncStrategy(mgr.GetRepoDir()) == "merge"
 	}
 
+	hookCtx := BuildHookContext()
+
+	// --continue resumes an in-progress rebase that already fired its pre-sync
+	// hook on the original invocation. Re-running pre-sync here would execute
+	// user-configured tests against an unresolved tree — wrong and slow. We
+	// still fire post-sync on successful completion so "sync is done" hooks
+	// see the terminal state, and --squash must not run again either (the
+	// squash already happened on the original invocation).
 	if *continueFlag {
+		defer func() {
+			if hookErr := hooks.Run("post-sync", hookCtx); hookErr != nil {
+				ui.Warn(hookErr.Error())
+			}
+		}()
 		return syncContinue(mgr, gh, useMerge)
+	}
+
+	if err := hooks.Run("pre-sync", hookCtx); err != nil {
+		return err
+	}
+	defer func() {
+		if hookErr := hooks.Run("post-sync", hookCtx); hookErr != nil {
+			ui.Warn(hookErr.Error())
+		}
+	}()
+
+	// --stats prints a commits-ahead summary after sync completes. Registered
+	// AFTER the post-sync defer so LIFO fires stats first, post-sync second.
+	if *statsFlag {
+		defer printSyncStats(statsCwd)
+	}
+
+	if *squashFlag {
+		ui.Info("--squash: squashing children before sync")
+		if err := squashStackChildren(mgr); err != nil {
+			return err
+		}
 	}
 
 	if jsonOutput && !dryRun {
@@ -301,14 +313,54 @@ func printSyncStats(cwd string) {
 // a force-push. The subsequent sync operation will push them with
 // --force-with-lease. Users must not have unsynced collaborators on these
 // branches when running --squash.
+// topoOrderStackBranches returns the stack's branches in parent-before-child
+// order. Any branch whose parent isn't present in the stack (typically the
+// root, whose parent is the base branch) is emitted first. Branches that form
+// a cycle — which shouldn't happen in a well-formed stack — are appended at
+// the end rather than dropped, so the caller still sees every input.
+func topoOrderStackBranches(s *config.Stack) []*config.Branch {
+	if s == nil || len(s.Branches) == 0 {
+		return nil
+	}
+	byName := make(map[string]*config.Branch, len(s.Branches))
+	for _, b := range s.Branches {
+		byName[b.Name] = b
+	}
+	visited := make(map[string]bool, len(s.Branches))
+	var out []*config.Branch
+	var visit func(b *config.Branch)
+	visit = func(b *config.Branch) {
+		if b == nil || visited[b.Name] {
+			return
+		}
+		visited[b.Name] = true
+		if p, ok := byName[b.Parent]; ok {
+			visit(p)
+		}
+		out = append(out, b)
+	}
+	for _, b := range s.Branches {
+		visit(b)
+	}
+	return out
+}
+
 func squashStackChildren(mgr *stack.Manager) error {
 	currentStack, _, err := mgr.GetCurrentStack()
 	if err != nil {
 		return err
 	}
 	ui.Warn("--squash rewrites branch history; pushed branches will need --force-with-lease")
+
+	// Walk branches parents-before-children. Squashing a child before its
+	// parent would leave the child pointing at the pre-squash parent commit,
+	// so the parent's later squash orphans the child's ancestry and rebase
+	// inherits spurious conflicts. Topological order guarantees each branch
+	// sees its parent's squashed tip as the reset target.
+	ordered := topoOrderStackBranches(currentStack)
+
 	squashed := 0
-	for _, b := range currentStack.Branches {
+	for _, b := range ordered {
 		// Skip the stack root: it has no parent inside the stack, and its
 		// "parent" in config is typically the base branch (main), which we
 		// must never touch.
