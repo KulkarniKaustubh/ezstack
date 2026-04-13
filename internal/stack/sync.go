@@ -501,9 +501,18 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					fmt.Fprintf(os.Stderr, "  Skipping autostash. Run 'git stash pop' in the worktree to restore, or 'git stash drop' to discard.\n")
 					// Don't create another stash on top — the old one already has the user's changes
 				} else if hasChanges, _ := g.HasChanges(); hasChanges {
-					if err := g.StashPush(); err == nil {
-						didStash = true
+					if err := g.StashPush(); err != nil {
+						// Surface the failure instead of silently proceeding —
+						// a failed stash followed by a rebase would clobber
+						// uncommitted changes.
+						result.Error = fmt.Errorf("autostash failed for %s: %w (refusing to rebase over uncommitted changes)", branch.Name, err)
+						results = append(results, result)
+						if !allStacks {
+							return results, nil
+						}
+						continue
 					}
+					didStash = true
 				}
 			}
 			// popStash restores stashed changes after rebase completes.

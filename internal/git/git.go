@@ -549,16 +549,50 @@ func (g *Git) StashPush() error {
 func (g *Git) StashPop() error {
 	branch, _ := g.CurrentBranch()
 	if branch == "" || branch == "HEAD" {
-		// Fallback: can't determine branch (e.g., detached HEAD during rebase)
-		// Use blind pop — same as previous behavior
-		_, err := g.run("stash", "pop")
-		return err
+		// Detached HEAD (e.g. mid-rebase): don't do a blind `git stash pop`
+		// — that would pop the top of the stash stack, which could be an
+		// unrelated user stash or a stash from another worktree. Instead,
+		// look for the most recent ezstack-autostash entry by message only.
+		idx, found := g.FindAnyEzstackStash()
+		if !found {
+			return nil
+		}
+		return g.StashPopIndex(idx)
 	}
 	idx, found := g.FindEzstackStash(branch)
 	if !found {
 		return nil // no ezstack stash to pop
 	}
 	return g.StashPopIndex(idx)
+}
+
+// FindAnyEzstackStash returns the most recent stash entry tagged
+// "ezstack-autostash" regardless of branch. Used only in the detached-HEAD
+// fallback path where the current branch is unknown.
+func (g *Git) FindAnyEzstackStash() (int, bool) {
+	output, err := g.run("stash", "list")
+	if err != nil || output == "" {
+		return -1, false
+	}
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, "ezstack-autostash") {
+			continue
+		}
+		start := strings.Index(line, "stash@{")
+		if start == -1 {
+			continue
+		}
+		end := strings.Index(line[start:], "}")
+		if end == -1 {
+			continue
+		}
+		idx, err := strconv.Atoi(line[start+7 : start+end])
+		if err != nil {
+			continue
+		}
+		return idx, true
+	}
+	return -1, false
 }
 
 // FindEzstackStash finds the stash index of an ezstack autostash entry for a specific branch.
