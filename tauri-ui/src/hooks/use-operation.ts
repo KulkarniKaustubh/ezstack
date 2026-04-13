@@ -1,12 +1,21 @@
 import { useCallback } from "react";
 import { useAppStore } from "../store/app-store";
+import { notify } from "../store/toast-store";
 import type { CommandResult } from "../types/ezstack";
+
+function firstLine(s: string, max = 160): string {
+  const line = s.split("\n").find((l) => l.trim().length > 0) ?? "";
+  return line.length > max ? line.slice(0, max) + "…" : line;
+}
 
 export function useOperation() {
   const { setOperationOutput, setOperationLoading, setOperationSuccess } = useAppStore();
 
   const run = useCallback(
-    async (operation: () => Promise<CommandResult>): Promise<CommandResult | null> => {
+    async (
+      operation: () => Promise<CommandResult>,
+      label?: string,
+    ): Promise<CommandResult | null> => {
       setOperationLoading(true);
       setOperationOutput(null);
       setOperationSuccess(false);
@@ -14,11 +23,23 @@ export function useOperation() {
         const result = await operation();
         const output = [result.stdout, result.stderr].filter(Boolean).join("\n");
         setOperationOutput(output || "Done.");
-        setOperationSuccess(result.exit_code === 0);
+        const ok = result.exit_code === 0;
+        setOperationSuccess(ok);
+        notify({
+          variant: ok ? "success" : "error",
+          title: ok ? `${label ?? "Operation"} succeeded` : `${label ?? "Operation"} failed`,
+          description: firstLine(output) || undefined,
+        });
         return result;
       } catch (e) {
-        setOperationOutput(`Error: ${String(e)}`);
+        const msg = String(e);
+        setOperationOutput(`Error: ${msg}`);
         setOperationSuccess(false);
+        notify({
+          variant: "error",
+          title: `${label ?? "Operation"} failed`,
+          description: firstLine(msg),
+        });
         return null;
       } finally {
         setOperationLoading(false);
