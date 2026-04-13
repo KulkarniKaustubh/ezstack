@@ -995,14 +995,69 @@ var commandExamples = map[string][][2]string{
 	},
 }
 
-// HasExamplesFlag returns true if args contain --examples and prints the registered
-// examples for the given command. Returns true when it handled the flag (caller should return).
+// HasExamplesFlag returns true if args contain --examples in a flag position
+// (not as a value to a preceding flag like -m) and prints the registered examples
+// for the given command. Returns true when it handled the flag (caller should return).
+//
+// The naive "is --examples anywhere in args" check is unsafe: `ezs commit -m
+// "--examples"` would match on the commit-message value and silently print help
+// instead of committing. We walk args left-to-right and skip the argument
+// immediately after a flag that takes a string value, so a --examples token
+// consumed as a value never triggers the handler.
 func HasExamplesFlag(cmdName string, args []string) bool {
+	skipNext := false
 	for _, a := range args {
+		if skipNext {
+			skipNext = false
+			continue
+		}
 		if a == "--examples" {
 			PrintExamples(cmdName)
 			return true
 		}
+		if takesStringValue(a) {
+			skipNext = true
+		}
+	}
+	return false
+}
+
+// takesStringValue reports whether the given arg is a short- or long-form flag
+// that consumes the next positional as its value. It's deliberately liberal:
+// any flag listed here protects subsequent `--examples` tokens from being
+// misread, and the worst case of over-listing is that a legitimate standalone
+// `--examples` gets consumed — which users can always work around with `--`.
+// Covers the union of git commit passthrough flags and ezs's own string flags.
+func takesStringValue(arg string) bool {
+	// `--flag=value` already bundles its value; don't skip the next arg.
+	if strings.HasPrefix(arg, "--") && strings.Contains(arg, "=") {
+		return false
+	}
+	switch arg {
+	// git commit message/body/metadata flags that ezs commit passes through:
+	case "-m", "--message",
+		"-F", "--file",
+		"-c", "--reedit-message",
+		"-C", "--reuse-message",
+		"--fixup", "--squash",
+		"--author", "--date",
+		"--cleanup",
+		"--trailer",
+		"-S", "--gpg-sign":
+		return true
+	// ezs flags across commands that take a string argument:
+	case "-b", "--branch",
+		"-p", "--parent",
+		"-w", "--worktree",
+		"-s", "--stack",
+		"--title",
+		"--body",
+		"--cmd",
+		"--preset",
+		"--save-prompt",
+		"-t", "--template",
+		"--search":
+		return true
 	}
 	return false
 }

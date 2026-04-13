@@ -739,11 +739,15 @@ func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack,
 		return err
 	}
 
+	if extras.savePrompt != "" {
+		if err := savePromptToFile(extras.savePrompt, prompt); err != nil {
+			return fmt.Errorf("save prompt: %w", err)
+		}
+		ui.Info(fmt.Sprintf("Saved composed prompt to %s", extras.savePrompt))
+	}
+
 	if extras.dryRun {
 		printDryRunPrompt("work", prompt)
-		if extras.savePrompt != "" {
-			return savePromptToFile(extras.savePrompt, prompt)
-		}
 		return nil
 	}
 
@@ -771,11 +775,15 @@ func agentFeature(agentCmd, repoPath, description string, existingStack *config.
 		return err
 	}
 
+	if extras.savePrompt != "" {
+		if err := savePromptToFile(extras.savePrompt, prompt); err != nil {
+			return fmt.Errorf("save prompt: %w", err)
+		}
+		ui.Info(fmt.Sprintf("Saved composed prompt to %s", extras.savePrompt))
+	}
+
 	if extras.dryRun {
 		printDryRunPrompt("feature", prompt)
-		if extras.savePrompt != "" {
-			return savePromptToFile(extras.savePrompt, prompt)
-		}
 		return nil
 	}
 
