@@ -97,7 +97,11 @@ end
 
 function M._new_with_parent_pick(name)
   cli.list_stacks(function(err, stacks)
-    local candidates = err and {} or all_branch_names(stacks)
+    if err then
+      vim.notify("ezstack: list stacks failed: " .. tostring(err), vim.log.levels.ERROR)
+      return
+    end
+    local candidates = all_branch_names(stacks)
     if #candidates == 0 then
       cli.new_branch(name, nil, notify_cb("Create branch", 'Created branch "' .. name .. '"'))
       return
