@@ -69,6 +69,8 @@ function M.setup(opts)
     vim.keymap.set("n", "gp", "<cmd>Ezs down<cr>", { desc = "ezstack: down the stack" })
   end
 
+  M._first_run_welcome()
+
   -- Check if ezs is available (async, non-blocking)
   require("ezstack.cli").is_available(function(available)
     if not available then
@@ -77,6 +79,40 @@ function M.setup(opts)
         vim.log.levels.WARN
       )
     end
+  end)
+end
+
+function M._first_run_welcome()
+  local home = vim.env.HOME or ""
+  if home == "" then
+    return
+  end
+  local dir = home .. "/.ezstack"
+  local marker = dir .. "/.nvim_welcomed"
+  if vim.fn.filereadable(marker) == 1 then
+    return
+  end
+  if vim.fn.isdirectory(dir) == 0 then
+    pcall(vim.fn.mkdir, dir, "p")
+  end
+  local ok = pcall(function()
+    local f = assert(io.open(marker, "w"))
+    f:write("welcomed\n")
+    f:close()
+  end)
+  if not ok then
+    return
+  end
+  vim.schedule(function()
+    vim.notify(
+      "Welcome to ezstack.nvim!\n"
+        .. "  :Ezs list      open the stack viewer\n"
+        .. "  :Ezs graph     ASCII tree of all stacks\n"
+        .. "  :Ezs new       create a stacked branch\n"
+        .. "  :EzsActions    quick action menu\n"
+        .. "Run :help ezstack for more.",
+      vim.log.levels.INFO
+    )
   end)
 end
 
