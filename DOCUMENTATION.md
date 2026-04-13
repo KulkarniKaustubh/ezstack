@@ -12,7 +12,9 @@
 
 [Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows) · [Editor & Desktop Integrations](#editor--desktop-integrations)
 
-**Commands:** [agent](#ezs-agent) · [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [push](#ezs-push) · [diff](#ezs-diff) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [config](#ezs-config)
+**Commands:** [agent](#ezs-agent) · [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [push](#ezs-push) · [diff](#ezs-diff) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [config](#ezs-config) · [doctor](#ezs-doctor)
+
+**Extras:** [Hooks](#hooks) · [Discoverability](#discoverability-info---examples-did-you-mean)
 
 ---
 
@@ -110,7 +112,10 @@ These flags work with any command and can appear in any position:
 -h, --help       Show help
 -v, --version    Show version
 --shell-init     Output shell function for cd support
+--info           Print a diagnostic dump (versions, config state) for bug reports
 ```
+
+`ezs --info` prints ezstack version, `go`/`git`/`gh`/`fzf` versions, the config directory path, whether `config.json` is present and loads cleanly, the number of configured repos, and the default base branch. It's safe to paste into bug reports — no secrets are included.
 
 ---
 
@@ -135,7 +140,17 @@ Options:
     -s, --stack <hash>   Stack to work on (hash prefix or "name")
     -b, --branch <name>  Branch to work in (implies stack)
     --dry-run            Print the composed prompt and exit (don't launch agent)
+    --save-prompt <file> Write the composed prompt to <file> (pairs well with --dry-run)
+    --no-push            Set EZS_AGENT_NO_PUSH=1 in the spawned agent's environment
+    --preset <name>      Append ~/.ezstack/agent-presets/<name>.md to the composed prompt
+    --examples           Print example invocations and exit
 ```
+
+**`--no-push` and `EZS_AGENT_NO_PUSH`.** When `--no-push` is passed, the child agent process is launched with `EZS_AGENT_NO_PUSH=1` in its environment. Tooling run inside the agent session (hooks, helper scripts, nested `ezs` calls) can check this variable and skip push steps. The variable is only set when `--no-push` is explicitly used; regular `ezs` commands never see it.
+
+**`--preset <name>`.** Looks up `~/.ezstack/agent-presets/<name>.md` and appends it to the end of the fully composed prompt under a `## Preset: <name>` header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.
+
+**`--save-prompt <file>`.** Writes the fully composed prompt (after all three layers and any `--preset`) to `<file>`. Most useful with `--dry-run` to inspect exactly what the agent would see without spawning it.
 
 #### Prompt Composition
 
@@ -218,6 +233,8 @@ All arguments are passed through to `git commit`. After committing, any child br
 
 Uses the configured `sync_strategy` (default: rebase) for child syncing. Use `--merge` or `--rebase` to override.
 
+**Hooks.** `ezs commit` runs `~/.ezstack/hooks/pre-commit` before the commit (aborting on non-zero exit) and `~/.ezstack/hooks/post-commit` after the commit and the auto-restack complete (warning only). See the [Hooks](#hooks) section below.
+
 ---
 
 ### `ezs config`
@@ -230,6 +247,26 @@ ezs config [subcommand] [options]
 Subcommands:
     set <key> <value>    Set a configuration value
     show                 Show current configuration
+    export <file>        Write the global config to <file> (mode 0600, token redacted)
+    import <file>        Replace the global config from <file>
+```
+
+#### `ezs config export <file>`
+
+Writes the global config to `<file>` in JSON form with mode `0600`. The `github_token` field, if set, is replaced by the literal sentinel `<redacted-by-ezs-export>` so the exported file is safe to commit, share, or back up to untrusted storage. Repo layouts and other fields are preserved as-is.
+
+```bash
+ezs config export ~/ezs-backup.json
+```
+
+#### `ezs config import <file>`
+
+Replaces the current global config with the contents of `<file>`. The import is validated against the `Config` schema before it is applied — unknown fields cause the import to fail, so a stale backup from a future schema version won't silently drop data. A summary of changed fields and per-repo diffs is printed before the replacement is committed.
+
+Token handling is safe by default: if the imported `github_token` is the redaction sentinel or is empty, the existing real token is preserved. Only an explicit, non-sentinel token in the import file will overwrite the token currently on disk, so round-tripping an exported file never leaves you without a token.
+
+```bash
+ezs config import ~/ezs-backup.json
 ```
 
 **Available keys for `set`:**
@@ -256,7 +293,10 @@ ezs delete [stack-hash] [options]
 Options:
     -f, --force            Force delete even if branch has children
     -s, --stack            Treat argument as a stack hash (delete entire stack)
+    --cascade              Also delete all descendant branches
 ```
+
+**`--cascade`.** Recursively deletes all descendants of the target branch before deleting the branch itself. Descendants are computed deepest-first so children are always removed before their parents. Before anything is deleted, ezstack scans every descendant worktree for uncommitted changes — if any descendant is dirty the cascade is aborted with a list of the dirty branches, so a single uncommitted file can never silently shred a subtree. Pass `--force` alongside `--cascade` to override the dirty-worktree check. After the descendants are removed, the root delete proceeds without needing `--force` (children no longer exist).
 
 ---
 
@@ -296,9 +336,12 @@ Navigate to a branch worktree. Aliases: `go`
 
 ```
 ezs goto [branch-name]
+ezs goto --search <query>
 ```
 
 If branch-name is omitted, shows interactive selection. Falls back to `git checkout` when the branch has no worktree.
+
+**`--search <query>`.** Case-insensitive substring fuzzy match against every branch name across every known stack. Exactly one match jumps straight to that worktree; multiple matches open an interactive selector limited to the matching set; zero matches exits with branch-not-found. Useful when you remember part of a branch name but not which stack it lives in.
 
 ---
 
@@ -351,7 +394,17 @@ Options:
     -C, --no-cd               Don't change to the new worktree (overrides config)
     -f, --from-worktree       Register an existing worktree as a stack root
     -r, --from-remote         Create a stack from a remote branch/PR
+    --template <name>         Seed the new worktree from ~/.ezstack/templates/<name>
 ```
+
+**`--template <name>`.** After the worktree is created, ezstack copies the contents of `~/.ezstack/templates/<name>/` into it as an overlay. Existing files in the worktree are overwritten, new directories are created, and file modes (including the executable bit) are preserved. The copy is guarded:
+
+- The template root must be a real directory, never a symlink.
+- The template's own `.git` directory (if any) is skipped — it's an authoring artifact.
+- Every source and destination path is validated so a symlink or `..`-laden entry inside the template can't read or write outside the worktree.
+- Symlinks inside the template are recreated as symlinks in the destination verbatim (not dereferenced), so intentional symlinks survive and accidental escape links stay dangling rather than exfiltrating data.
+
+If any entry fails these checks the whole overlay aborts with an error — partial template overlays are never left behind.
 
 With `origin/<branch>`, creates a local worktree tracking the remote branch and registers it in a stack (root = PR base branch, or `main` by default). The branch is marked as `(remote)` in `ezs ls` output. All commands (sync, push, commit, etc.) work normally on it.
 ```bash
@@ -387,6 +440,7 @@ Manage pull requests.
 
 ```
 ezs pr <subcommand> [options]
+ezs pr --draft-all
 
 Subcommands:
     create    Create a new pull request
@@ -394,7 +448,13 @@ Subcommands:
     merge     Merge a pull request
     stack     Update all PR descriptions with stack info
     update    Push changes and update PR metadata (base branch, descriptions)
+
+Top-level flags:
+    --draft-all    Create draft PRs for every branch in the current stack that
+                   doesn't already have one
 ```
+
+**`--draft-all`.** Walks every branch in the current stack and, for any branch that doesn't already have an associated PR, creates a new draft PR against its parent. Branches that already have a PR are left alone (use `ezs pr draft` to toggle an existing PR into draft state). This is the fastest way to seed a full stack of draft PRs for early-visibility review.
 
 #### `ezs pr create`
 
@@ -430,9 +490,17 @@ Options:
     -s, --stack          Push all branches in the current stack
     -b, --branch <name>  Push a specific branch by name
     -f, --force          Force push
+    --verify             Require ~/.ezstack/hooks/pre-push to exist and pass
+    --all-remotes        Push to origin and the configured fork remote
 ```
 
 Each branch pushes to its configured remote — `origin` by default, or the fork remote for fork-based PR branches. Branches marked as read-only (fork PRs where you don't have push access) are skipped with a warning.
+
+**Hooks.** `ezs push` runs `~/.ezstack/hooks/pre-push` before the push (aborting on non-zero exit) and `~/.ezstack/hooks/post-push` after (warning on non-zero exit, but never failing the command). See the [Hooks](#hooks) section for the environment contract.
+
+**`--verify`.** Promotes the `pre-push` hook from optional ("run if present") to required ("must be installed and must pass"). Without `--verify`, a missing hook is simply a no-op; with `--verify`, ezstack fails fast if the hook file is absent or not executable. Useful in CI or shared dev machines where push-time validation is a hard requirement.
+
+**`--all-remotes`.** Pushes each branch to both `origin` and its configured fork remote (if any). Each remote is treated as best-effort — a failure to push to one remote doesn't block the other, and read-only fork branches are still skipped. Without this flag, each branch pushes only to its single "effective" remote (origin for same-repo branches, the fork remote for fork-tracking branches).
 
 ---
 
@@ -481,7 +549,10 @@ Options:
     -a, --all              Show all stacks
     -b, --branch <name>    Show status for a specific branch's stack
     -d, --debug            Show debug output
+    --watch [seconds]      Auto-refresh every N seconds (default 5, minimum 2)
 ```
+
+**`--watch [seconds]`.** Clears the screen and re-runs status on a fixed interval until you interrupt with Ctrl-C. The interval defaults to 5 seconds and is clamped to a 2-second minimum to avoid hammering `gh`. You can pass the interval either space-separated (`--watch 10`) or with `=` (`--watch=10`); non-numeric or non-positive values fall back to the default. Watch mode cannot be combined with `--json` (watch is fundamentally an interactive TTY mode). A clean Ctrl-C / SIGTERM exits without leaving the terminal in an odd state.
 
 ---
 
@@ -507,7 +578,15 @@ Options:
     --continue             Continue after resolving conflicts
     --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
     --json                 Output dry-run results as JSON (requires --dry-run)
+    --stats                Print a commits-per-branch summary after syncing
+    --squash               Squash each child's commits into one before rebasing onto parent
 ```
+
+**`--stats`.** Prints a post-sync summary listing, for each branch in the synced set, the number of commits ahead of its parent after the sync completes. The summary is registered so it runs after the `post-sync` hook fires (via LIFO-ordered defers), so the numbers you see reflect the final state on disk.
+
+**`--squash`.** Before rebasing each child onto its parent, collapses the child's commits into a single commit. Only branches with ≥2 commits since their parent are affected; branches that are already a single commit are left alone. Because `--squash` rewrites history, any already-pushed branch will need `git push --force-with-lease` afterward — ezstack prints a warning reminding you of this up front.
+
+**Hooks.** `ezs sync` runs `~/.ezstack/hooks/pre-sync` before the sync (aborting on non-zero exit) and `~/.ezstack/hooks/post-sync` after (warning only). See the [Hooks](#hooks) section below.
 
 By default, sync uses git rebase. Use `--merge` to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with `ezs config set sync_strategy merge`. Use `--rebase` or `--merge` to override the configured strategy for a single run.
 
@@ -527,6 +606,111 @@ ezs unstack [branch] [options]
 Options:
     -b, --branch <name>     Branch to untrack
 ```
+
+---
+
+### `ezs doctor`
+
+Check that ezstack's runtime dependencies and on-disk config are healthy.
+
+```
+ezs doctor
+```
+
+`doctor` does not require being inside a git repository — it's designed to be the first thing you run on a fresh machine. It reports:
+
+- Whether `git`, `gh`, and `fzf` are on `PATH` (all three are required; missing ones are flagged as errors).
+- Whether the config directory can be resolved and whether `config.json` loads cleanly.
+- For every configured repo: whether `worktree_base_dir` is set, whether that directory exists, and whether it passes the containment validation used by `ezs new`.
+
+Exit code is `0` when no problems are detected, non-zero with a one-line summary otherwise. Pair with `ezs --info` when filing bug reports.
+
+---
+
+## Hooks
+
+ezstack runs optional user-defined shell hooks around certain commands. Hooks live in `~/.ezstack/hooks/` and follow a strict `{pre,post}-{commit,push,sync}` naming convention.
+
+### Installed hook names
+
+| Hook | Fires for | Contract |
+|------|-----------|----------|
+| `pre-commit`  | `ezs commit` / `ezs amend` | non-zero exit aborts the commit |
+| `post-commit` | `ezs commit` / `ezs amend` | non-zero exit warns only |
+| `pre-push`    | `ezs push`                 | non-zero exit aborts the push |
+| `post-push`   | `ezs push`                 | non-zero exit warns only |
+| `pre-sync`    | `ezs sync`                 | non-zero exit aborts the sync |
+| `post-sync`   | `ezs sync`                 | non-zero exit warns only |
+
+### Install a hook
+
+A hook is simply an executable file at `~/.ezstack/hooks/<name>`. It is executed directly (not through `sh -c`), so it must carry the executable bit and, if it is a script, start with a valid shebang line. Non-existent, non-executable, or directory entries at those paths are treated as "no hook installed" — a no-op, not an error.
+
+```bash
+mkdir -p ~/.ezstack/hooks
+cat > ~/.ezstack/hooks/pre-push <<'SH'
+#!/usr/bin/env bash
+set -e
+echo "pre-push on $EZS_BRANCH in $EZS_REPO_ROOT"
+SH
+chmod +x ~/.ezstack/hooks/pre-push
+```
+
+### Exit-code contract
+
+- `pre-*` hooks abort the action on non-zero exit. ezstack returns an error and the underlying git operation never happens.
+- `post-*` hooks warn on non-zero exit but never abort the command — the underlying action has already succeeded by the time they fire, so a flaky notifier script can't "fail" a successful push.
+
+### Environment
+
+Each hook runs with `stdin`, `stdout`, and `stderr` inherited from `ezs`, so it can prompt the user or stream output normally. The following variables are added to the environment (empty fields are simply not set):
+
+| Variable | Description |
+|----------|-------------|
+| `EZS_HOOK`       | The hook name (e.g. `pre-push`) |
+| `EZS_REPO_ROOT`  | Absolute path to the repo root |
+| `EZS_BRANCH`     | Current branch, if known |
+| `EZS_STACK_HASH` | Current stack hash, if known |
+| `EZS_STACK_NAME` | Current stack name, if set |
+
+When the hook is invoked from an `ezs agent` session that was launched with `--no-push`, the spawned agent process also has `EZS_AGENT_NO_PUSH=1` in its environment — a hook can check this to short-circuit push logic while the agent is driving.
+
+### Requiring a hook
+
+`ezs push --verify` promotes `pre-push` from optional to required: ezstack aborts with an error if the hook file is missing or not executable. This is the knob to use in CI or on shared machines where push-time validation is non-negotiable.
+
+---
+
+## Discoverability: `--info`, `--examples`, "did you mean"
+
+A handful of ergonomics make it easier to discover commands and debug problems.
+
+### `ezs --info`
+
+Prints a diagnostic dump (ezstack version, `go`/`git`/`gh`/`fzf` versions, config directory, whether `config.json` is present and loads cleanly, repo count, default base branch). Designed to be pasted into bug reports — no secrets, no stack contents.
+
+### `ezs <command> --examples`
+
+Most commands accept a `--examples` flag that prints a short list of usage recipes with one-line descriptions and exits. Currently registered for: `commit`, `sync`, `push`, `pr`, `new`, `delete`, `goto`, `agent`, `config`, `status`, `doctor`. Output goes to stdout so it can be piped or grepped. Example:
+
+```bash
+$ ezs sync --examples
+Examples for 'ezs sync'
+
+  # Interactive sync of current stack
+  ezs sync
+
+  # Auto-sync ALL stacks
+  ezs sync -a
+
+  # Show summary of commits rebased per child
+  ezs sync --stats
+  ...
+```
+
+### "Did you mean…?"
+
+When you run an unknown top-level command, ezstack computes a Levenshtein-based suggestion against the known command set and prints a `Did you mean 'X'?` hint. This catches typos like `ezs statsu` → `status` or `ezs comit` → `commit` without hunting through `--help`.
 
 ---
 

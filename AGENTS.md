@@ -87,7 +87,34 @@ ezs agent
 
 # Launch on a specific branch
 ezs agent --branch feature-auth
+
+# Block the child agent from auto-pushing during its run
+ezs agent --no-push
+
+# Append a saved preset (~/.ezstack/agent-presets/<name>.md) to the composed prompt
+ezs agent --preset reviewer
+
+# Dump the composed prompt to a file instead of launching (handy with --dry-run)
+ezs agent --dry-run --save-prompt /tmp/agent-prompt.md
+
+# Show registered examples for the agent command
+ezs agent --examples
 ```
+
+### Agent flags
+
+| Flag | Effect |
+|------|--------|
+| `--cmd <command>` | Override the configured agent CLI |
+| `-s, --stack <hash>` | Target a stack by hash prefix or name |
+| `-b, --branch <name>` | Target a specific branch (implies stack) |
+| `--dry-run` | Print the composed prompt and exit without launching |
+| `--save-prompt <file>` | Write the composed prompt to a file (pairs with `--dry-run`) |
+| `--no-push` | Set `EZS_AGENT_NO_PUSH=1` in the spawned agent's env; downstream `ezs push` / auto-push steps that honor it will be skipped |
+| `--preset <name>` | Append `~/.ezstack/agent-presets/<name>.md` to the end of the composed prompt |
+| `--examples` | Print example invocations and exit |
+
+**`EZS_AGENT_NO_PUSH`** — exported into the child agent process whenever `--no-push` is passed. Hooks and any push-adjacent tooling running under the agent can check this variable to short-circuit pushes; it is never set for normal (non-agent) `ezs` invocations.
 
 The agent is launched in the branch's worktree directory with a prompt containing:
 - Current stack structure (branches, parents, worktree paths)

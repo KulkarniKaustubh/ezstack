@@ -611,6 +611,17 @@
         <li><a href="#ezs-status" class="toc-h3">ezs status</a></li>
         <li><a href="#ezs-sync" class="toc-h3">ezs sync</a></li>
         <li><a href="#ezs-unstack" class="toc-h3">ezs unstack</a></li>
+        <li><a href="#ezs-doctor" class="toc-h3">ezs doctor</a></li>
+        <li><a href="#hooks">Hooks</a></li>
+        <li><a href="#installed-hook-names" class="toc-h3">Installed hook names</a></li>
+        <li><a href="#install-a-hook" class="toc-h3">Install a hook</a></li>
+        <li><a href="#exit-code-contract" class="toc-h3">Exit-code contract</a></li>
+        <li><a href="#environment" class="toc-h3">Environment</a></li>
+        <li><a href="#requiring-a-hook" class="toc-h3">Requiring a hook</a></li>
+        <li><a href="#discoverability---info---examples-did-you-mean">Discoverability: --info, --examples, &#34;did you mean&#34;</a></li>
+        <li><a href="#ezs---info" class="toc-h3">ezs --info</a></li>
+        <li><a href="#ezs-command---examples" class="toc-h3">ezs &lt;command&gt; --examples</a></li>
+        <li><a href="#did-you-mean" class="toc-h3">&#34;Did you mean…?&#34;</a></li>
         <li><a href="#manual-git-operations">Manual Git Operations</a></li>
         <li><a href="#workflows">Workflows</a></li>
         <li><a href="#creating-a-stacked-pr" class="toc-h3">Creating a Stacked PR</a></li>
@@ -701,7 +712,9 @@
 <span class="c-flag">-h,</span> <span class="c-flag">--help</span>       <span class="c-dim">Show help</span>
 <span class="c-flag">-v,</span> <span class="c-flag">--version</span>    <span class="c-dim">Show version</span>
 <span class="c-flag">--shell-init</span>     <span class="c-dim">Output shell function for cd support</span>
+<span class="c-flag">--info</span>           <span class="c-dim">Print a diagnostic dump (versions, config state) for bug reports</span>
 </code></pre>
+      <p><code>ezs --info</code> prints ezstack version, <code>go</code>/<code>git</code>/<code>gh</code>/<code>fzf</code> versions, the config directory path, whether <code>config.json</code> is present and loads cleanly, the number of configured repos, and the default base branch. It's safe to paste into bug reports — no secrets are included.</p>
       </section>
 
       <section class="docs-section" id="commands" data-heading="Commands">
@@ -722,7 +735,14 @@ Options:
     <span class="c-flag">-s,</span> <span class="c-flag">--stack</span> <span class="c-str">&lt;hash&gt;</span>   <span class="c-dim">Stack to work on (hash prefix or &#34;name&#34;)</span>
     <span class="c-flag">-b,</span> <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>  <span class="c-dim">Branch to work in (implies stack)</span>
     <span class="c-flag">--dry-run</span>            <span class="c-dim">Print the composed prompt and exit (don&#39;t launch agent)</span>
+    <span class="c-flag">--save-prompt</span> <span class="c-str">&lt;file&gt;</span> <span class="c-str">Write</span> <span class="c-str">the</span> <span class="c-str">composed</span> <span class="c-str">prompt</span> <span class="c-str">to</span> <span class="c-str">&lt;file&gt;</span> <span class="c-str">(pairs</span> <span class="c-str">well</span> <span class="c-str">with</span> <span class="c-flag">--dry-run)</span>
+    <span class="c-flag">--no-push</span>            <span class="c-dim">Set EZS_AGENT_NO_PUSH=1 in the spawned agent&#39;s environment</span>
+    <span class="c-flag">--preset</span> <span class="c-str">&lt;name&gt;</span>      <span class="c-dim">Append ~/.ezstack/agent-presets/&lt;name&gt;.md to the composed prompt</span>
+    <span class="c-flag">--examples</span>           <span class="c-dim">Print example invocations and exit</span>
 </code></pre>
+      <p><strong><code>--no-push</code> and <code>EZS_AGENT_NO_PUSH</code>.</strong> When <code>--no-push</code> is passed, the child agent process is launched with <code>EZS_AGENT_NO_PUSH=1</code> in its environment. Tooling run inside the agent session (hooks, helper scripts, nested <code>ezs</code> calls) can check this variable and skip push steps. The variable is only set when <code>--no-push</code> is explicitly used; regular <code>ezs</code> commands never see it.</p>
+      <p><strong><code>--preset &lt;name&gt;</code>.</strong> Looks up <code>~/.ezstack/agent-presets/&lt;name&gt;.md</code> and appends it to the end of the fully composed prompt under a <code>## Preset: &lt;name&gt;</code> header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.</p>
+      <p><strong><code>--save-prompt &lt;file&gt;</code>.</strong> Writes the fully composed prompt (after all three layers and any <code>--preset</code>) to <code>&lt;file&gt;</code>. Most useful with <code>--dry-run</code> to inspect exactly what the agent would see without spawning it.</p>
       <h4 id="prompt-composition">Prompt Composition</h4>
       <p>The final agent prompt is composed from three layers:</p>
       <ol>
@@ -817,6 +837,7 @@ Options:
 </code></pre>
       <p>All arguments are passed through to <code>git commit</code>. After committing, any child branches in the stack are automatically synced onto the updated branch.</p>
       <p>Uses the configured <code>sync_strategy</code> (default: rebase) for child syncing. Use <code>--merge</code> or <code>--rebase</code> to override.</p>
+      <p><strong>Hooks.</strong> <code>ezs commit</code> runs <code>~/.ezstack/hooks/pre-commit</code> before the commit (aborting on non-zero exit) and <code>~/.ezstack/hooks/post-commit</code> after the commit and the auto-restack complete (warning only). See the <a href="#hooks">Hooks</a> section below.</p>
       <h3 id="ezs-config"><code>ezs config</code></h3>
       <p>Configure ezstack for the current repository. Aliases: <code>cfg</code></p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">[subcommand]</span> <span class="c-str">[options]</span>
@@ -824,6 +845,17 @@ Options:
 Subcommands:
     <span class="c-cmd">set</span> <span class="c-str">&lt;key&gt;</span> <span class="c-str">&lt;value&gt;</span>    <span class="c-dim">Set a configuration value</span>
     <span class="c-cmd">show</span>                 <span class="c-dim">Show current configuration</span>
+    <span class="c-cmd">export</span> <span class="c-str">&lt;file&gt;</span>        <span class="c-dim">Write the global config to &lt;file&gt; (mode 0600, token redacted)</span>
+    <span class="c-cmd">import</span> <span class="c-str">&lt;file&gt;</span>        <span class="c-dim">Replace the global config from &lt;file&gt;</span>
+</code></pre>
+      <h4 id="ezs-config-export-file"><code>ezs config export &lt;file&gt;</code></h4>
+      <p>Writes the global config to <code>&lt;file&gt;</code> in JSON form with mode <code>0600</code>. The <code>github_token</code> field, if set, is replaced by the literal sentinel <code>&lt;redacted-by-ezs-export&gt;</code> so the exported file is safe to commit, share, or back up to untrusted storage. Repo layouts and other fields are preserved as-is.</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">export</span> <span class="c-str">~/ezs-backup.json</span>
+</code></pre>
+      <h4 id="ezs-config-import-file"><code>ezs config import &lt;file&gt;</code></h4>
+      <p>Replaces the current global config with the contents of <code>&lt;file&gt;</code>. The import is validated against the <code>Config</code> schema before it is applied — unknown fields cause the import to fail, so a stale backup from a future schema version won't silently drop data. A summary of changed fields and per-repo diffs is printed before the replacement is committed.</p>
+      <p>Token handling is safe by default: if the imported <code>github_token</code> is the redaction sentinel or is empty, the existing real token is preserved. Only an explicit, non-sentinel token in the import file will overwrite the token currently on disk, so round-tripping an exported file never leaves you without a token.</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">import</span> <span class="c-str">~/ezs-backup.json</span>
 </code></pre>
       <p><strong>Available keys for <code>set</code>:</strong></p>
       <table>
@@ -875,7 +907,9 @@ Subcommands:
 Options:
     <span class="c-flag">-f,</span> <span class="c-flag">--force</span>            <span class="c-dim">Force delete even if branch has children</span>
     <span class="c-flag">-s,</span> <span class="c-flag">--stack</span>            <span class="c-dim">Treat argument as a stack hash (delete entire stack)</span>
+    <span class="c-flag">--cascade</span>              <span class="c-dim">Also delete all descendant branches</span>
 </code></pre>
+      <p><strong><code>--cascade</code>.</strong> Recursively deletes all descendants of the target branch before deleting the branch itself. Descendants are computed deepest-first so children are always removed before their parents. Before anything is deleted, ezstack scans every descendant worktree for uncommitted changes — if any descendant is dirty the cascade is aborted with a list of the dirty branches, so a single uncommitted file can never silently shred a subtree. Pass <code>--force</code> alongside <code>--cascade</code> to override the dirty-worktree check. After the descendants are removed, the root delete proceeds without needing <code>--force</code> (children no longer exist).</p>
       <h3 id="ezs-diff"><code>ezs diff</code></h3>
       <p>Show diff against parent branch.</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">diff</span> <span class="c-str">[options]</span> <span class="c-str">[--</span> <span class="c-str">git-diff-options]</span>
@@ -895,8 +929,10 @@ Options:
       <h3 id="ezs-goto"><code>ezs goto</code></h3>
       <p>Navigate to a branch worktree. Aliases: <code>go</code></p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">goto</span> <span class="c-str">[branch-name]</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">goto</span> <span class="c-flag">--search</span> <span class="c-str">&lt;query&gt;</span>
 </code></pre>
       <p>If branch-name is omitted, shows interactive selection. Falls back to <code>git checkout</code> when the branch has no worktree.</p>
+      <p><strong><code>--search &lt;query&gt;</code>.</strong> Case-insensitive substring fuzzy match against every branch name across every known stack. Exactly one match jumps straight to that worktree; multiple matches open an interactive selector limited to the matching set; zero matches exits with branch-not-found. Useful when you remember part of a branch name but not which stack it lives in.</p>
       <h3 id="ezs-list"><code>ezs list</code></h3>
       <p>List all stacks and branches. Aliases: <code>ls</code></p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">list</span> <span class="c-str">[options]</span>
@@ -928,7 +964,16 @@ Options:
     <span class="c-flag">-C,</span> <span class="c-flag">--no-cd</span>               <span class="c-dim">Don&#39;t change to the new worktree (overrides config)</span>
     <span class="c-flag">-f,</span> <span class="c-flag">--from-worktree</span>       <span class="c-dim">Register an existing worktree as a stack root</span>
     <span class="c-flag">-r,</span> <span class="c-flag">--from-remote</span>         <span class="c-dim">Create a stack from a remote branch/PR</span>
+    <span class="c-flag">--template</span> <span class="c-str">&lt;name&gt;</span>         <span class="c-dim">Seed the new worktree from ~/.ezstack/templates/&lt;name&gt;</span>
 </code></pre>
+      <p><strong><code>--template &lt;name&gt;</code>.</strong> After the worktree is created, ezstack copies the contents of <code>~/.ezstack/templates/&lt;name&gt;/</code> into it as an overlay. Existing files in the worktree are overwritten, new directories are created, and file modes (including the executable bit) are preserved. The copy is guarded:</p>
+      <ul>
+      <li>The template root must be a real directory, never a symlink.</li>
+      <li>The template's own <code>.git</code> directory (if any) is skipped — it's an authoring artifact.</li>
+      <li>Every source and destination path is validated so a symlink or <code>..</code>-laden entry inside the template can't read or write outside the worktree.</li>
+      <li>Symlinks inside the template are recreated as symlinks in the destination verbatim (not dereferenced), so intentional symlinks survive and accidental escape links stay dangling rather than exfiltrating data.</li>
+      </ul>
+      <p>If any entry fails these checks the whole overlay aborts with an error — partial template overlays are never left behind.</p>
       <p>With <code>origin/&lt;branch&gt;</code>, creates a local worktree tracking the remote branch and registers it in a stack (root = PR base branch, or <code>main</code> by default). The branch is marked as <code>(remote)</code> in <code>ezs ls</code> output. All commands (sync, push, commit, etc.) work normally on it.</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">origin/feature-branch</span>       <span class="c-comment"># Checkout remote branch into a worktree + register stack</span>
 </code></pre>
@@ -952,6 +997,7 @@ Options:
       <h3 id="ezs-pr"><code>ezs pr</code></h3>
       <p>Manage pull requests.</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">&lt;subcommand&gt;</span> <span class="c-str">[options]</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-flag">--draft-all</span>
 
 Subcommands:
     <span class="c-cmd">create</span>    <span class="c-dim">Create a new pull request</span>
@@ -959,7 +1005,12 @@ Subcommands:
     <span class="c-cmd">merge</span>     <span class="c-dim">Merge a pull request</span>
     <span class="c-cmd">stack</span>     <span class="c-dim">Update all PR descriptions with stack info</span>
     <span class="c-cmd">update</span>    <span class="c-dim">Push changes and update PR metadata (base branch, descriptions)</span>
+
+Top-level <span class="c-str">flags:</span>
+    <span class="c-flag">--draft-all</span>    <span class="c-dim">Create draft PRs for every branch in the current stack that</span>
+                   <span class="c-cmd">doesn</span><span class="c-str">&#39;t already have one</span>
 </code></pre>
+      <p><strong><code>--draft-all</code>.</strong> Walks every branch in the current stack and, for any branch that doesn't already have an associated PR, creates a new draft PR against its parent. Branches that already have a PR are left alone (use <code>ezs pr draft</code> to toggle an existing PR into draft state). This is the fastest way to seed a full stack of draft PRs for early-visibility review.</p>
       <h4 id="ezs-pr-create"><code>ezs pr create</code></h4>
       <pre><code>Options:
     <span class="c-flag">-t,</span> <span class="c-flag">--title</span> <span class="c-str">&lt;title&gt;</span>    <span class="c-dim">PR title (defaults to branch name)</span>
@@ -981,8 +1032,13 @@ Options:
     <span class="c-flag">-s,</span> <span class="c-flag">--stack</span>          <span class="c-dim">Push all branches in the current stack</span>
     <span class="c-flag">-b,</span> <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>  <span class="c-dim">Push a specific branch by name</span>
     <span class="c-flag">-f,</span> <span class="c-flag">--force</span>          <span class="c-dim">Force push</span>
+    <span class="c-flag">--verify</span>             <span class="c-dim">Require ~/.ezstack/hooks/pre-push to exist and pass</span>
+    <span class="c-flag">--all-remotes</span>        <span class="c-dim">Push to origin and the configured fork remote</span>
 </code></pre>
       <p>Each branch pushes to its configured remote — <code>origin</code> by default, or the fork remote for fork-based PR branches. Branches marked as read-only (fork PRs where you don't have push access) are skipped with a warning.</p>
+      <p><strong>Hooks.</strong> <code>ezs push</code> runs <code>~/.ezstack/hooks/pre-push</code> before the push (aborting on non-zero exit) and <code>~/.ezstack/hooks/post-push</code> after (warning on non-zero exit, but never failing the command). See the <a href="#hooks">Hooks</a> section for the environment contract.</p>
+      <p><strong><code>--verify</code>.</strong> Promotes the <code>pre-push</code> hook from optional (&quot;run if present&quot;) to required (&quot;must be installed and must pass&quot;). Without <code>--verify</code>, a missing hook is simply a no-op; with <code>--verify</code>, ezstack fails fast if the hook file is absent or not executable. Useful in CI or shared dev machines where push-time validation is a hard requirement.</p>
+      <p><strong><code>--all-remotes</code>.</strong> Pushes each branch to both <code>origin</code> and its configured fork remote (if any). Each remote is treated as best-effort — a failure to push to one remote doesn't block the other, and read-only fork branches are still skipped. Without this flag, each branch pushes only to its single &quot;effective&quot; remote (origin for same-repo branches, the fork remote for fork-tracking branches).</p>
       <h3 id="ezs-reparent"><code>ezs reparent</code></h3>
       <p>Change the parent of a branch and sync commits onto the new parent. Aliases: <code>rp</code></p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">reparent</span> <span class="c-str">[branch]</span> <span class="c-str">[new-parent]</span> <span class="c-str">[options]</span>
@@ -1012,7 +1068,9 @@ Options:
     <span class="c-flag">-a,</span> <span class="c-flag">--all</span>              <span class="c-dim">Show all stacks</span>
     <span class="c-flag">-b,</span> <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>    <span class="c-dim">Show status for a specific branch&#39;s stack</span>
     <span class="c-flag">-d,</span> <span class="c-flag">--debug</span>            <span class="c-dim">Show debug output</span>
+    <span class="c-flag">--watch</span> <span class="c-str">[seconds]</span>      <span class="c-dim">Auto-refresh every N seconds (default 5, minimum 2)</span>
 </code></pre>
+      <p><strong><code>--watch [seconds]</code>.</strong> Clears the screen and re-runs status on a fixed interval until you interrupt with Ctrl-C. The interval defaults to 5 seconds and is clamped to a 2-second minimum to avoid hammering <code>gh</code>. You can pass the interval either space-separated (<code>--watch 10</code>) or with <code>=</code> (<code>--watch=10</code>); non-numeric or non-positive values fall back to the default. Watch mode cannot be combined with <code>--json</code> (watch is fundamentally an interactive TTY mode). A clean Ctrl-C / SIGTERM exits without leaving the terminal in an odd state.</p>
       <h3 id="ezs-sync"><code>ezs sync</code></h3>
       <p>Sync stack with remote. Handles rebasing onto updated parents, cleaning up merged branches, and force pushing after rebase.</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">sync</span> <span class="c-str">[options]</span>
@@ -1032,7 +1090,12 @@ Options:
     <span class="c-flag">--continue</span>             <span class="c-dim">Continue after resolving conflicts</span>
     <span class="c-flag">--no-autostash</span>         <span class="c-dim">Don&#39;t stash uncommitted changes before rebase (autostash is on by default)</span>
     <span class="c-flag">--json</span>                 <span class="c-dim">Output dry-run results as JSON (requires --dry-run)</span>
+    <span class="c-flag">--stats</span>                <span class="c-dim">Print a commits-per-branch summary after syncing</span>
+    <span class="c-flag">--squash</span>               <span class="c-dim">Squash each child&#39;s commits into one before rebasing onto parent</span>
 </code></pre>
+      <p><strong><code>--stats</code>.</strong> Prints a post-sync summary listing, for each branch in the synced set, the number of commits ahead of its parent after the sync completes. The summary is registered so it runs after the <code>post-sync</code> hook fires (via LIFO-ordered defers), so the numbers you see reflect the final state on disk.</p>
+      <p><strong><code>--squash</code>.</strong> Before rebasing each child onto its parent, collapses the child's commits into a single commit. Only branches with ≥2 commits since their parent are affected; branches that are already a single commit are left alone. Because <code>--squash</code> rewrites history, any already-pushed branch will need <code>git push --force-with-lease</code> afterward — ezstack prints a warning reminding you of this up front.</p>
+      <p><strong>Hooks.</strong> <code>ezs sync</code> runs <code>~/.ezstack/hooks/pre-sync</code> before the sync (aborting on non-zero exit) and <code>~/.ezstack/hooks/post-sync</code> after (warning only). See the <a href="#hooks">Hooks</a> section below.</p>
       <p>By default, sync uses git rebase. Use <code>--merge</code> to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with <code>ezs config set sync_strategy merge</code>. Use <code>--rebase</code> or <code>--merge</code> to override the configured strategy for a single run.</p>
       <p>You can sync a specific stack by passing its hash prefix (minimum 3 characters).</p>
       <p><strong>Fork branches:</strong> After syncing, each branch is pushed to its configured remote. For fork-based PR branches, this is the fork's remote (not <code>origin</code>). If you don't have push access to the fork, the push step is skipped automatically — the local rebase/merge still happens so your working copy stays up to date.</p>
@@ -1043,6 +1106,138 @@ Options:
 Options:
     <span class="c-flag">-b,</span> <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>     <span class="c-dim">Branch to untrack</span>
 </code></pre>
+      <h3 id="ezs-doctor"><code>ezs doctor</code></h3>
+      <p>Check that ezstack's runtime dependencies and on-disk config are healthy.</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">doctor</span>
+</code></pre>
+      <p><code>doctor</code> does not require being inside a git repository — it's designed to be the first thing you run on a fresh machine. It reports:</p>
+      <ul>
+      <li>Whether <code>git</code>, <code>gh</code>, and <code>fzf</code> are on <code>PATH</code> (all three are required; missing ones are flagged as errors).</li>
+      <li>Whether the config directory can be resolved and whether <code>config.json</code> loads cleanly.</li>
+      <li>For every configured repo: whether <code>worktree_base_dir</code> is set, whether that directory exists, and whether it passes the containment validation used by <code>ezs new</code>.</li>
+      </ul>
+      <p>Exit code is <code>0</code> when no problems are detected, non-zero with a one-line summary otherwise. Pair with <code>ezs --info</code> when filing bug reports.</p>
+      </section>
+
+      <section class="docs-section" id="hooks" data-heading="Hooks">
+      <h2 id="hooks">Hooks</h2>
+      <p>ezstack runs optional user-defined shell hooks around certain commands. Hooks live in <code>~/.ezstack/hooks/</code> and follow a strict <code>{pre,post}-{commit,push,sync}</code> naming convention.</p>
+      <h3 id="installed-hook-names">Installed hook names</h3>
+      <table>
+      <thead>
+      <tr>
+      <th>Hook</th>
+      <th>Fires for</th>
+      <th>Contract</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td><code>pre-commit</code></td>
+      <td><code>ezs commit</code> / <code>ezs amend</code></td>
+      <td>non-zero exit aborts the commit</td>
+      </tr>
+      <tr>
+      <td><code>post-commit</code></td>
+      <td><code>ezs commit</code> / <code>ezs amend</code></td>
+      <td>non-zero exit warns only</td>
+      </tr>
+      <tr>
+      <td><code>pre-push</code></td>
+      <td><code>ezs push</code></td>
+      <td>non-zero exit aborts the push</td>
+      </tr>
+      <tr>
+      <td><code>post-push</code></td>
+      <td><code>ezs push</code></td>
+      <td>non-zero exit warns only</td>
+      </tr>
+      <tr>
+      <td><code>pre-sync</code></td>
+      <td><code>ezs sync</code></td>
+      <td>non-zero exit aborts the sync</td>
+      </tr>
+      <tr>
+      <td><code>post-sync</code></td>
+      <td><code>ezs sync</code></td>
+      <td>non-zero exit warns only</td>
+      </tr>
+      </tbody>
+      </table>
+      <h3 id="install-a-hook">Install a hook</h3>
+      <p>A hook is simply an executable file at <code>~/.ezstack/hooks/&lt;name&gt;</code>. It is executed directly (not through <code>sh -c</code>), so it must carry the executable bit and, if it is a script, start with a valid shebang line. Non-existent, non-executable, or directory entries at those paths are treated as &quot;no hook installed&quot; — a no-op, not an error.</p>
+      <pre><code><span class="c-cmd">mkdir</span> <span class="c-flag">-p</span> <span class="c-str">~/.ezstack/hooks</span>
+<span class="c-cmd">cat</span> <span class="c-str">&gt;</span> <span class="c-str">~/.ezstack/hooks/pre-push</span> <span class="c-str">&lt;&lt;</span><span class="c-str">&#39;SH&#39;</span>
+<span class="c-comment">#!/usr/bin/env bash</span>
+<span class="c-cmd">set</span> <span class="c-flag">-e</span>
+<span class="c-cmd">echo</span> <span class="c-str">&#34;pre-push on $EZS_BRANCH in $EZS_REPO_ROOT&#34;</span>
+<span class="c-cmd">SH</span>
+<span class="c-cmd">chmod</span> <span class="c-str">+x</span> <span class="c-str">~/.ezstack/hooks/pre-push</span>
+</code></pre>
+      <h3 id="exit-code-contract">Exit-code contract</h3>
+      <ul>
+      <li><code>pre-*</code> hooks abort the action on non-zero exit. ezstack returns an error and the underlying git operation never happens.</li>
+      <li><code>post-*</code> hooks warn on non-zero exit but never abort the command — the underlying action has already succeeded by the time they fire, so a flaky notifier script can't &quot;fail&quot; a successful push.</li>
+      </ul>
+      <h3 id="environment">Environment</h3>
+      <p>Each hook runs with <code>stdin</code>, <code>stdout</code>, and <code>stderr</code> inherited from <code>ezs</code>, so it can prompt the user or stream output normally. The following variables are added to the environment (empty fields are simply not set):</p>
+      <table>
+      <thead>
+      <tr>
+      <th>Variable</th>
+      <th>Description</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td><code>EZS_HOOK</code></td>
+      <td>The hook name (e.g. <code>pre-push</code>)</td>
+      </tr>
+      <tr>
+      <td><code>EZS_REPO_ROOT</code></td>
+      <td>Absolute path to the repo root</td>
+      </tr>
+      <tr>
+      <td><code>EZS_BRANCH</code></td>
+      <td>Current branch, if known</td>
+      </tr>
+      <tr>
+      <td><code>EZS_STACK_HASH</code></td>
+      <td>Current stack hash, if known</td>
+      </tr>
+      <tr>
+      <td><code>EZS_STACK_NAME</code></td>
+      <td>Current stack name, if set</td>
+      </tr>
+      </tbody>
+      </table>
+      <p>When the hook is invoked from an <code>ezs agent</code> session that was launched with <code>--no-push</code>, the spawned agent process also has <code>EZS_AGENT_NO_PUSH=1</code> in its environment — a hook can check this to short-circuit push logic while the agent is driving.</p>
+      <h3 id="requiring-a-hook">Requiring a hook</h3>
+      <p><code>ezs push --verify</code> promotes <code>pre-push</code> from optional to required: ezstack aborts with an error if the hook file is missing or not executable. This is the knob to use in CI or on shared machines where push-time validation is non-negotiable.</p>
+      </section>
+
+      <section class="docs-section" id="discoverability---info---examples-did-you-mean" data-heading="Discoverability: --info, --examples, &#34;did you mean&#34;">
+      <h2 id="discoverability---info---examples-did-you-mean">Discoverability: <code>--info</code>, <code>--examples</code>, &quot;did you mean&quot;</h2>
+      <p>A handful of ergonomics make it easier to discover commands and debug problems.</p>
+      <h3 id="ezs---info"><code>ezs --info</code></h3>
+      <p>Prints a diagnostic dump (ezstack version, <code>go</code>/<code>git</code>/<code>gh</code>/<code>fzf</code> versions, config directory, whether <code>config.json</code> is present and loads cleanly, repo count, default base branch). Designed to be pasted into bug reports — no secrets, no stack contents.</p>
+      <h3 id="ezs-command---examples"><code>ezs &lt;command&gt; --examples</code></h3>
+      <p>Most commands accept a <code>--examples</code> flag that prints a short list of usage recipes with one-line descriptions and exits. Currently registered for: <code>commit</code>, <code>sync</code>, <code>push</code>, <code>pr</code>, <code>new</code>, <code>delete</code>, <code>goto</code>, <code>agent</code>, <code>config</code>, <code>status</code>, <code>doctor</code>. Output goes to stdout so it can be piped or grepped. Example:</p>
+      <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs</span> <span class="c-flag">sync</span> <span class="c-flag">--examples</span>
+<span class="c-cmd">Examples</span> <span class="c-flag">for</span> <span class="c-str">&#39;ezs sync&#39;</span>
+
+  <span class="c-comment"># Interactive sync of current stack</span>
+  <span class="c-cmd">ezs</span> <span class="c-flag">sync</span>
+
+  <span class="c-comment"># Auto-sync ALL stacks</span>
+  <span class="c-cmd">ezs</span> <span class="c-flag">sync</span> <span class="c-flag">-a</span>
+
+  <span class="c-comment"># Show summary of commits rebased per child</span>
+  <span class="c-cmd">ezs</span> <span class="c-flag">sync</span> <span class="c-flag">--stats</span>
+  ...
+</code></pre>
+      <h3 id="did-you-mean">&quot;Did you mean…?&quot;</h3>
+      <p>When you run an unknown top-level command, ezstack computes a Levenshtein-based suggestion against the known command set and prints a <code>Did you mean 'X'?</code> hint. This catches typos like <code>ezs statsu</code> → <code>status</code> or <code>ezs comit</code> → <code>commit</code> without hunting through <code>--help</code>.</p>
       </section>
 
       <section class="docs-section" id="manual-git-operations" data-heading="Manual Git Operations">

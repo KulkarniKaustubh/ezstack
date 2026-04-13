@@ -106,8 +106,9 @@ ezs delete feature-branch
 | `agent prompt` | | View or edit agent prompt templates |
 | `amend` | | Amend last commit and auto-sync children |
 | `commit` | `ci` | Commit and auto-sync child branches |
-| `config` | `cfg` | Configure ezstack |
-| `delete` | `del`, `rm` | Delete a branch and its worktree |
+| `config` | `cfg` | Configure ezstack (supports `export`/`import`) |
+| `delete` | `del`, `rm` | Delete a branch and its worktree (`--cascade` for descendants) |
+| `doctor` | | Check git/gh/fzf and config health |
 | `diff` | | Show diff against parent branch |
 | `down` | | Navigate down the stack (toward children) |
 | `goto` | `go` | Navigate to a branch worktree |
@@ -124,9 +125,20 @@ ezs delete feature-branch
 | `unstack` | | Remove a branch from tracking |
 | `up` | | Navigate up the stack (toward parent) |
 
-**Global flags:** `-y, --yes` auto-confirm prompts · `-h, --help` · `-v, --version`
+**Global flags:** `-y, --yes` auto-confirm prompts · `-h, --help` · `-v, --version` · `--info` (diagnostic dump for bug reports)
 
-Run `ezs <command> --help` for command-specific help.
+Run `ezs <command> --help` for command-specific help, or `ezs <command> --examples` to print a short list of usage recipes (supported on `commit`, `sync`, `push`, `pr`, `new`, `delete`, `goto`, `agent`, `config`, `status`, `doctor`). Unknown commands trigger a "Did you mean …?" suggestion.
+
+A few other flags worth knowing about:
+
+- `ezs status --watch [seconds]` — auto-refreshing status (default 5s, min 2s, Ctrl-C to exit).
+- `ezs new --template <name>` — seed the new worktree from `~/.ezstack/templates/<name>`.
+- `ezs push --verify` / `--all-remotes` — require the pre-push hook, or push to origin and the fork remote.
+- `ezs sync --stats` / `--squash` — print a commits-per-branch summary, or squash each child before rebasing onto its parent.
+- `ezs pr --draft-all` — create draft PRs across every branch in the current stack.
+- `ezs goto --search <query>` — fuzzy-match a branch by substring across all stacks.
+
+ezstack also runs optional user hooks from `~/.ezstack/hooks/` around `commit`, `push`, and `sync`. See [DOCUMENTATION.md](DOCUMENTATION.md#hooks) for the full contract.
 
 ## AI Agent
 
