@@ -120,9 +120,6 @@ pub fn open_agent(
     branch: Option<String>,
 ) -> Result<(), String> {
     let conn = locked_conn(&state)?;
-    if conn.is_some() {
-        return Err("Agent commands run in an interactive terminal and are not supported over SSH. SSH into the remote and run `ezs agent` there.".to_string());
-    }
     let mut args = vec!["agent".to_string()];
     if let Some(ref b) = branch {
         args.push("-b".to_string());
@@ -131,7 +128,10 @@ pub fn open_agent(
         args.push("-s".to_string());
         args.push(s.clone());
     }
-    crate::runner::open_in_terminal(&repo_path, &args)
+    match conn {
+        Some(c) => crate::runner::open_in_remote_terminal(&c, &repo_path, &args),
+        None => crate::runner::open_in_terminal(&repo_path, &args),
+    }
 }
 
 #[tauri::command]
@@ -142,9 +142,6 @@ pub fn open_agent_feature(
     description: String,
 ) -> Result<(), String> {
     let conn = locked_conn(&state)?;
-    if conn.is_some() {
-        return Err("Agent commands run in an interactive terminal and are not supported over SSH. SSH into the remote and run `ezs agent` there.".to_string());
-    }
     let args = vec![
         "agent".to_string(),
         "-s".to_string(),
@@ -152,7 +149,10 @@ pub fn open_agent_feature(
         "feature".to_string(),
         description,
     ];
-    crate::runner::open_in_terminal(&repo_path, &args)
+    match conn {
+        Some(c) => crate::runner::open_in_remote_terminal(&c, &repo_path, &args),
+        None => crate::runner::open_in_terminal(&repo_path, &args),
+    }
 }
 
 /// Get shipped agent prompts for both work and feature modes.

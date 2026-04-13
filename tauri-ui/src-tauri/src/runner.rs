@@ -147,26 +147,82 @@ fn unique_suffix() -> String {
 /// Open an ezs command in an external terminal window.
 /// Used for interactive commands like `agent` that need stdin/stdout.
 pub fn open_in_terminal(repo_path: &str, args: &[String]) -> Result<(), String> {
+    let ezs_path = ezs_binary();
+    let mut body = String::new();
+    body.push_str(&format!("cd '{}'\n", repo_path.replace('\'', "'\\''")));
+    body.push_str(&format!("'{}'", ezs_path.replace('\'', "'\\''")));
+    for arg in args {
+        body.push(' ');
+        body.push('\'');
+        body.push_str(&arg.replace('\'', "'\\''"));
+        body.push('\'');
+    }
+    body.push('\n');
+    launch_terminal_script(&body)
+}
+
+/// Open an interactive ezs command on a *remote* host via SSH in an external
+/// terminal window. Uses `ssh -t` to force a PTY so the agent's interactive
+/// stdin/stdout works over SSH.
+pub fn open_in_remote_terminal(
+    conn: &SshConnection,
+    repo_path: &str,
+    args: &[String],
+) -> Result<(), String> {
+    // Build the remote command: `cd <repo> && ezs <args...>`.
+    // We single-quote each piece; the whole thing is then passed to ssh as a
+    // single argv element so the remote shell sees it as one command.
+    let mut remote_cmd = format!("cd {} && ezs", shell_escape(repo_path));
+    for a in args {
+        remote_cmd.push(' ');
+        remote_cmd.push_str(&shell_escape(a));
+    }
+
+    // Now build the local wrapper script that invokes ssh. We write it to a
+    // temp file (same mechanism as the local case) so the user sees exactly
+    // one Terminal window open and any cleanup happens on exit.
+    //
+    // Options differ from run_ssh_command: we want a PTY and interactive
+    // prompts, so NO BatchMode=yes and we add -t.
+    let mut body = String::from("ssh -tt");
+    body.push_str(" -o StrictHostKeyChecking=accept-new");
+    body.push_str(" -o ConnectTimeout=10");
+    body.push_str(" -o ServerAliveInterval=30");
+    body.push_str(" -o ServerAliveCountMax=3");
+    if !conn.key_path.is_empty() {
+        body.push_str(&format!(" -i {}", shell_escape(&conn.key_path)));
+    }
+    if !conn.jump_host.is_empty() {
+        body.push_str(&format!(" -J {}", shell_escape(&conn.jump_host)));
+    }
+    if conn.port != 22 {
+        body.push_str(&format!(" -p {}", conn.port));
+    }
+    body.push(' ');
+    body.push_str(&shell_escape(&format!("{}@{}", conn.user, conn.host)));
+    // Wrap the remote command in bash -lc so the user's login PATH is loaded
+    // on the remote (ezs is typically installed in ~/.local/bin or similar).
+    body.push(' ');
+    body.push_str(&shell_escape(&format!("bash -lc {}", shell_escape(&remote_cmd))));
+    body.push('\n');
+
+    launch_terminal_script(&body)
+}
+
+/// Write the given shell `body` to a temp script and launch it in the OS's
+/// default terminal emulator. Shared by both the local and remote agent paths.
+fn launch_terminal_script(body: &str) -> Result<(), String> {
     let tmp_dir = std::env::temp_dir();
     let script_name = format!("ezstack-agent-{}.sh", unique_suffix());
     let script_path = tmp_dir.join(script_name);
 
-    let ezs_path = ezs_binary();
     let mut script = String::from("#!/bin/bash\n");
     // Clean up the temp script on exit
     script.push_str(&format!(
         "trap 'rm -f '\\''{}'\\''' EXIT\n",
         script_path.display()
     ));
-    script.push_str(&format!("cd '{}'\n", repo_path.replace('\'', "'\\''")));
-    script.push_str(&format!("'{}'", ezs_path.replace('\'', "'\\''")));
-    for arg in args {
-        script.push(' ');
-        script.push('\'');
-        script.push_str(&arg.replace('\'', "'\\''"));
-        script.push('\'');
-    }
-    script.push('\n');
+    script.push_str(body);
 
     // Create the script with 0o700 from the start (avoid the
     // chmod-after-write TOCTOU window on shared /tmp filesystems) and
