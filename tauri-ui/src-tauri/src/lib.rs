@@ -20,6 +20,7 @@ pub fn run() {
             list::get_stacks_status,
             list::get_repo_path,
             list::get_current_branch,
+            list::get_branch_reflog,
             // Branch operations
             operations::create_branch,
             operations::sync_branch,

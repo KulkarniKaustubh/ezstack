@@ -340,6 +340,7 @@ export default function App() {
                   <ResizeHandle onMouseDown={detail.handleMouseDown} isResizing={detail.isResizing} />
                   <BranchDetail
                     branch={selectedBranch_}
+                    repoPath={selectedRepoPath!}
                     onClose={() => selectBranch(null)}
                     isLoading={operationLoading}
                     width={detail.width}

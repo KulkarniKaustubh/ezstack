@@ -37,6 +37,21 @@ export async function getCurrentBranch(repoPath: string): Promise<string> {
   return invoke<string>("get_current_branch", { repoPath });
 }
 
+export interface ReflogEntry {
+  hash: string;
+  relative: string;
+  action: string;
+  message: string;
+}
+
+export async function getBranchReflog(
+  repoPath: string,
+  branch: string,
+  limit: number = 20,
+): Promise<ReflogEntry[]> {
+  return invoke<ReflogEntry[]>("get_branch_reflog", { repoPath, branch, limit });
+}
+
 export async function createBranch(
   repoPath: string,
   name: string,

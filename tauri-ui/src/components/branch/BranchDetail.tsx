@@ -1,4 +1,5 @@
-import { ExternalLink, GitBranch, Folder, X } from "lucide-react";
+import { ExternalLink, GitBranch, Folder, X, History } from "lucide-react";
+import { useEffect, useState } from "react";
 import { open } from "@tauri-apps/plugin-shell";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
@@ -8,10 +9,12 @@ import { BranchStatusBadge } from "./BranchStatusBadge";
 import { CIStatusBadge } from "./CIStatusBadge";
 import { ReviewBadge } from "./ReviewBadge";
 import { BranchActions } from "./BranchActions";
+import { getBranchReflog, type ReflogEntry } from "../../commands/ezs";
 import type { StatusBranch } from "../../types/ezstack";
 
 interface BranchDetailProps {
   branch: StatusBranch;
+  repoPath: string;
   onClose: () => void;
   onSync: () => void;
   onPush: () => void;
@@ -30,6 +33,7 @@ interface BranchDetailProps {
 
 export function BranchDetail({
   branch,
+  repoPath,
   onClose,
   onSync,
   onPush,
@@ -45,6 +49,25 @@ export function BranchDetail({
   isLoading,
   width,
 }: BranchDetailProps) {
+  const [reflog, setReflog] = useState<ReflogEntry[]>([]);
+  const [reflogError, setReflogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setReflog([]);
+    setReflogError(null);
+    getBranchReflog(repoPath, branch.name, 10)
+      .then((entries) => {
+        if (!cancelled) setReflog(entries);
+      })
+      .catch((e) => {
+        if (!cancelled) setReflogError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [repoPath, branch.name]);
+
   return (
     <div className="flex flex-col h-full border-l bg-surface/30" style={width ? { width } : { width: 320 }}>
       {/* Header */}
@@ -146,6 +169,39 @@ export function BranchDetail({
                   {branch.worktree_path.split("/").pop()}
                 </div>
               </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* History timeline */}
+        <Card>
+          <CardContent className="p-3 space-y-2">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <History className="h-3 w-3" />
+              History
+            </div>
+            {reflogError && (
+              <div className="text-xs text-muted-foreground">No history available</div>
+            )}
+            {!reflogError && reflog.length === 0 && (
+              <div className="text-xs text-muted-foreground">No recent activity</div>
+            )}
+            {reflog.length > 0 && (
+              <ol className="space-y-1.5">
+                {reflog.map((entry, i) => (
+                  <li key={`${entry.hash}-${i}`} className="flex items-start gap-2 text-xs">
+                    <span className="font-mono text-muted-foreground shrink-0 w-14 truncate">
+                      {entry.hash}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate">{entry.action || entry.message}</div>
+                      {entry.action && entry.message !== entry.action && (
+                        <div className="text-muted-foreground truncate">{entry.message}</div>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ol>
             )}
           </CardContent>
         </Card>
