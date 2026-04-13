@@ -1209,12 +1209,23 @@ Options:
 :Ezs <span class="c-flag">pr</span> <span class="c-str">merge</span>        <span class="c-str">&#34; prompts for method</span>
 :Ezs <span class="c-flag">goto</span> <span class="c-str">[branch]</span>   <span class="c-str">&#34; switch worktree (uses :tcd by default)</span>
 :Ezs <span class="c-flag">up</span> <span class="c-str">|</span> <span class="c-str">:Ezs</span> <span class="c-str">down</span>  <span class="c-str">&#34; navigate the stack</span>
+:Ezs <span class="c-flag">diff</span>            <span class="c-str">&#34; parent..HEAD in a scratch split (async)</span>
+:Ezs <span class="c-flag">diff</span> <span class="c-flag">--</span> <span class="c-flag">--stat</span>  <span class="c-str">&#34; forward to `ezs diff` (any git-diff options)</span>
+:Ezs <span class="c-flag">graph</span>           <span class="c-str">&#34; ASCII tree of every stack in a scratch split</span>
+:EzsActions          <span class="c-str">&#34; quick-action menu (also :Ezs actions)</span>
 :Ezs <span class="c-flag">agent</span>           <span class="c-str">&#34; launch the AI agent</span>
 :Ezs <span class="c-flag">agent</span> <span class="c-str">feature</span> <span class="c-str">&#34;description&#34;</span>
 </code></pre>
       <p>The viewer is a non-modifiable buffer with single-key bindings: <code>&lt;CR&gt;</code> goto,
       <code>o</code> open PR, <code>r</code> refresh, <code>n</code> new, <code>d</code> delete, <code>p</code>/<code>P</code> push, <code>s</code> sync, <code>a</code>/<code>A</code>
       agent, <code>?</code> help, <code>q</code> close.</p>
+      <p><strong>Quick action menu (<code>:EzsActions</code>)</strong> — a <code>vim.ui.select</code> dropdown with
+      sync (current / stack / continue), push branch / stack, PR create /
+      update / draft / merge / open / stack, new / delete / goto branch, and
+      graph. Bind it to <code>&lt;leader&gt;ea</code> if you reach for it often.</p>
+      <p><strong>Stack graph (<code>:Ezs graph</code>)</strong> — reads <code>ezs list --json</code> and renders
+      every stack as an ASCII tree. Branches whose parent chain does not reach
+      <code>stack.root</code> are surfaced under an <code>(orphans &amp;mdash; parent not reachable from root)</code> header rather than being silently dropped. Press <code>q</code> to close.</p>
       <p><strong>Telescope pickers</strong> (when telescope.nvim is installed):</p>
       <pre><code>:Telescope <span class="c-flag">ezstack</span> <span class="c-str">branches</span>    <span class="c-str">&#34; fuzzy-find branches across stacks</span>
 :Telescope <span class="c-flag">ezstack</span> <span class="c-str">stacks</span>      <span class="c-str">&#34; fuzzy-find stacks</span>
@@ -1269,11 +1280,33 @@ Options:
       <td><code>true</code></td>
       <td>Open the file explorer at the new worktree root</td>
       </tr>
+      <tr>
+      <td><code>default_keymaps</code></td>
+      <td><code>false</code></td>
+      <td>Install opt-in <code>]s</code> / <code>[s</code> stack-navigation mappings (never clobbers existing user mappings, and deliberately avoids Vim's built-in <code>gn</code> / <code>gp</code>)</td>
+      </tr>
+      <tr>
+      <td><code>statusline_format</code></td>
+      <td><code>&quot;stack&quot;</code></td>
+      <td><code>&quot;stack&quot;</code> → <code> branch | stack [hash]</code>, <code>&quot;pr&quot;</code> → <code> branch | PR#N STATE</code>, <code>&quot;full&quot;</code> → both</td>
+      </tr>
+      <tr>
+      <td><code>welcome</code></td>
+      <td><code>true</code></td>
+      <td>Show a one-time welcome notification on first <code>setup()</code>. The idempotency marker lives under <code>stdpath(&quot;state&quot;)/ezstack/welcomed</code> — never under <code>~/.ezstack</code>, which belongs to the CLI</td>
+      </tr>
       </tbody>
       </table>
-      <p>The plugin fires <code>User EzstackChanged</code> after every CLI mutation and
-      <code>User EzstackGoto</code> after a worktree switch — hook your own logic in via
+      <p><strong>Autocommands</strong> — the plugin fires <code>User EzstackSetup</code> at the end of
+      <code>setup()</code>, <code>User EzstackChanged</code> after every CLI mutation, and
+      <code>User EzstackGoto</code> after a worktree switch. Hook your own logic in via
       <code>autocmd</code>. Run <code>:help ezstack</code> for the bundled vimdoc reference.</p>
+      <p><strong>Tests</strong> — a plenary.nvim busted suite lives in
+      <code>neovim-plugin/tests/</code>. Run it with
+      <code>nvim --headless --noplugin -u neovim-plugin/tests/minimal_init.lua -c &quot;PlenaryBustedDirectory neovim-plugin/tests/ {minimal_init = 'neovim-plugin/tests/minimal_init.lua', sequential = true}&quot;</code>.
+      It covers subcommand-dispatch completeness, statusline formatters, graph
+      rendering (including orphan handling), default-keymap installation, and
+      welcome-marker idempotency.</p>
       <p>Full feature tour: <a href="https://kulkarnikaustubh.github.io/ezstack/nvim.html">https://kulkarnikaustubh.github.io/ezstack/nvim.html</a>.</p>
       <h3 id="desktop-app">Desktop App</h3>
       <p>Located in <code>tauri-ui/</code>. A native desktop app built with <strong>Tauri v2</strong> (Rust
