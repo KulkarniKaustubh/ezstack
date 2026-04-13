@@ -21,26 +21,29 @@ jobs:
           go-version-file: go.mod
 
       - name: Extract release notes from CHANGELOG.md
+        id: notes
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
+          NOTES_FILE="${RUNNER_TEMP}/RELEASE_NOTES.md"
           awk -v ver="$VERSION" '
             /^## \[/ {
               if (found) exit
               if (index($0, "[" ver "]") > 0) { found=1; next }
             }
             found { print }
-          ' CHANGELOG.md | awk 'NF {p=1} p' > RELEASE_NOTES.md
-          if [ ! -s RELEASE_NOTES.md ]; then
+          ' CHANGELOG.md | awk 'NF {p=1} p' > "$NOTES_FILE"
+          if [ ! -s "$NOTES_FILE" ]; then
             echo "::error::No CHANGELOG.md section found for version $VERSION"
             exit 1
           fi
+          echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
           echo "--- Release notes ---"
-          cat RELEASE_NOTES.md
+          cat "$NOTES_FILE"
 
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean --release-notes=RELEASE_NOTES.md
+          args: release --clean --release-notes=${{ steps.notes.outputs.path }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
