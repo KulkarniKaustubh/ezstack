@@ -388,7 +388,11 @@ func makeSyncCallbacks(singleStackMode bool, autostash bool, useMerge bool) *sta
 
 		remote := result.Remote
 		if remote == "" {
-			remote = "origin"
+			if mgr, mErr := stack.NewReadOnlyManager(g.RepoDir); mErr == nil {
+				remote = ResolveBranchRemote(g, mgr, result.Branch)
+			} else {
+				remote = "origin"
+			}
 		}
 
 		if useMerge {
@@ -1111,7 +1115,7 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 		}
 		resultRemote := result.Remote
 		if resultRemote == "" {
-			resultRemote = "origin"
+			resultRemote = ResolveBranchRemote(g, mgr, result.Branch)
 		}
 		if useMerge {
 			OfferPush(result.Branch, result.WorktreePath, resultRemote)

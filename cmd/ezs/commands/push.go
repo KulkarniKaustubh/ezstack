@@ -49,17 +49,14 @@ func Push(args []string) error {
 
 	g := git.New(cwd)
 
-	// Look up the branch's configured remote (if any)
+	// Look up the branch's configured remote (if any), running fork detection lazily
+	// for branches tagged is_remote that don't yet have a fork remote recorded.
 	getBranchRemote := func(branchName string) string {
 		mgr, err := stack.NewReadOnlyManager(cwd)
 		if err != nil {
 			return "origin"
 		}
-		b := mgr.GetBranch(branchName)
-		if b == nil {
-			return "origin"
-		}
-		return b.EffectiveRemote()
+		return ResolveBranchRemote(g, mgr, branchName)
 	}
 
 	if *branchFlag != "" {
@@ -84,7 +81,7 @@ func Push(args []string) error {
 		return err
 	}
 
-	return pushStack(g, currentStack, *force)
+	return pushStack(g, mgr, currentStack, *force)
 }
 
 func pushSpecificBranch(g *git.Git, branch string, force bool, remote string) error {
@@ -123,13 +120,13 @@ func pushBranch(g *git.Git, force bool, remote string) error {
 	return nil
 }
 
-func pushStack(g *git.Git, s *config.Stack, force bool) error {
+func pushStack(g *git.Git, mgr *stack.Manager, s *config.Stack, force bool) error {
 	failed := 0
 	for _, b := range s.Branches {
 		if b.IsMerged {
 			continue
 		}
-		remote := b.EffectiveRemote()
+		remote := ResolveBranchRemote(g, mgr, b.Name)
 		if remote == config.RemoteNoPush {
 			ui.Warn(fmt.Sprintf("Skipping '%s' (fork does not allow maintainer push)", b.Name))
 			continue
