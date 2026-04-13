@@ -76,6 +76,31 @@ func TestApplyAgentPreset_AppendsNewlineBeforeHeader(t *testing.T) {
 	}
 }
 
+func TestSavePromptToFile_Perms(t *testing.T) {
+	// Composed agent prompts embed repo context, commit messages, and stack
+	// metadata. On shared hosts they must not be world-readable — 0600 is the
+	// contract, matching config export.
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "prompt.md")
+	if err := savePromptToFile(path, "sensitive prompt body"); err != nil {
+		t.Fatalf("savePromptToFile: %v", err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if mode := info.Mode().Perm(); mode != 0600 {
+		t.Errorf("prompt file perms = %o, want 0600", mode)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "sensitive prompt body" {
+		t.Errorf("content = %q", string(body))
+	}
+}
+
 func TestExpandHome(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
