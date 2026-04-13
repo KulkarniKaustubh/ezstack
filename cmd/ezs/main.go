@@ -11,7 +11,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
-const version = "4.2.0"
+const version = "4.3.0"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
@@ -83,18 +83,6 @@ func main() {
 	case "-v", "--version":
 		fmt.Printf("ezstack version %s\n", version)
 		return
-	case "--info":
-		commands.Info(version)
-		return
-	case "doctor":
-		// doctor runs outside a git repo on purpose: most of what it
-		// checks (required binaries, global config) has nothing to do
-		// with the current directory. Route it before the repo guard.
-		if err := commands.Doctor(args); err != nil {
-			ui.Error(err.Error())
-			os.Exit(ui.GetExitCode(err))
-		}
-		return
 	}
 
 	// Check if we're in a git repo for all other commands
@@ -165,11 +153,8 @@ func main() {
 	case "menu":
 		err = runInteractiveMenu()
 	default:
-		ui.Error(fmt.Sprintf("Unknown command: %s", cmd))
-		if suggestion := ui.SuggestCommand(cmd, topLevelCommands); suggestion != "" {
-			fmt.Fprintf(os.Stderr, "%sDid you mean '%s'?%s\n", ui.Yellow, suggestion, ui.Reset)
-		}
-		fmt.Fprintf(os.Stderr, "Run 'ezs --help' for usage.\n")
+		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
+		printUsage()
 		os.Exit(ui.ExitUsage)
 	}
 
@@ -334,7 +319,7 @@ fi
 }
 
 var topLevelCommands = []string{
-	"agent", "amend", "commit", "config", "delete", "diff", "doctor", "down",
+	"agent", "amend", "commit", "config", "delete", "diff", "down",
 	"goto", "list", "log", "menu", "new", "pr", "push",
 	"reparent", "stack", "status", "sync", "unstack", "up",
 }

@@ -892,6 +892,10 @@ stack viewer buffer, Telescope pickers, and a statusline component.
 :Ezs pr merge        " prompts for method
 :Ezs goto [branch]   " switch worktree (uses :tcd by default)
 :Ezs up | :Ezs down  " navigate the stack
+:Ezs diff            " parent..HEAD in a scratch split (async)
+:Ezs diff -- --stat  " forward to `ezs diff` (any git-diff options)
+:Ezs graph           " ASCII tree of every stack in a scratch split
+:EzsActions          " quick-action menu (also :Ezs actions)
 :Ezs agent           " launch the AI agent
 :Ezs agent feature "description"
 ```
@@ -899,6 +903,16 @@ stack viewer buffer, Telescope pickers, and a statusline component.
 The viewer is a non-modifiable buffer with single-key bindings: `<CR>` goto,
 `o` open PR, `r` refresh, `n` new, `d` delete, `p`/`P` push, `s` sync, `a`/`A`
 agent, `?` help, `q` close.
+
+**Quick action menu (`:EzsActions`)** &mdash; a `vim.ui.select` dropdown with
+sync (current / stack / continue), push branch / stack, PR create /
+update / draft / merge / open / stack, new / delete / goto branch, and
+graph. Bind it to `<leader>ea` if you reach for it often.
+
+**Stack graph (`:Ezs graph`)** &mdash; reads `ezs list --json` and renders
+every stack as an ASCII tree. Branches whose parent chain does not reach
+`stack.root` are surfaced under an `(orphans &mdash; parent not reachable
+from root)` header rather than being silently dropped. Press `q` to close.
 
 **Telescope pickers** (when telescope.nvim is installed):
 
@@ -919,10 +933,21 @@ agent, `?` help, `q` close.
 | `goto_strategy` | `"tcd"` | `"tcd"` (tab-local), `"cd"` (global), or `"lcd"` (window) |
 | `goto_close_buffers` | `false` | Close unmodified buffers from the previous worktree on goto |
 | `goto_open_explorer` | `true` | Open the file explorer at the new worktree root |
+| `default_keymaps` | `false` | Install opt-in `]s` / `[s` stack-navigation mappings (never clobbers existing user mappings, and deliberately avoids Vim's built-in `gn` / `gp`) |
+| `statusline_format` | `"stack"` | `"stack"` → ` branch \| stack [hash]`, `"pr"` → ` branch \| PR#N STATE`, `"full"` → both |
+| `welcome` | `true` | Show a one-time welcome notification on first `setup()`. The idempotency marker lives under `stdpath("state")/ezstack/welcomed` &mdash; never under `~/.ezstack`, which belongs to the CLI |
 
-The plugin fires `User EzstackChanged` after every CLI mutation and
-`User EzstackGoto` after a worktree switch &mdash; hook your own logic in via
+**Autocommands** &mdash; the plugin fires `User EzstackSetup` at the end of
+`setup()`, `User EzstackChanged` after every CLI mutation, and
+`User EzstackGoto` after a worktree switch. Hook your own logic in via
 `autocmd`. Run `:help ezstack` for the bundled vimdoc reference.
+
+**Tests** &mdash; a plenary.nvim busted suite lives in
+`neovim-plugin/tests/`. Run it with
+`nvim --headless --noplugin -u neovim-plugin/tests/minimal_init.lua -c "PlenaryBustedDirectory neovim-plugin/tests/ {minimal_init = 'neovim-plugin/tests/minimal_init.lua', sequential = true}"`.
+It covers subcommand-dispatch completeness, statusline formatters, graph
+rendering (including orphan handling), default-keymap installation, and
+welcome-marker idempotency.
 
 Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/nvim.html>.
 
@@ -953,11 +978,20 @@ Or grab a prebuilt installer from the
 
 **Layout** &mdash; three panels:
 
-1. **Stacks sidebar** &mdash; every stack in the repo, with branch counts
-2. **Stack graph** &mdash; visual tree, color-coded by health, current branch
-   highlighted
+1. **Repositories sidebar** &mdash; every repo tracked in `~/.ezstack/config.json`,
+   with a filter box at the top (type to narrow by name or full path, `Esc`
+   or the ✕ button clears it). The currently selected repo stays visible
+   even when it doesn't match the filter, so the UI can never drift into a
+   state where the selection is hidden and unreachable.
+2. **Stack graph** &mdash; visual tree of every stack in the repo, color-coded
+   by health with the current branch highlighted. Branch nodes are
+   **drag-and-drop reparentable**: drag a node onto another branch and the
+   desktop app runs `ezs reparent` with the configured sync strategy. Drops
+   that would create a cycle (onto a descendant), onto the branch itself, or
+   onto the current parent are blocked with an inline toast.
 3. **Branch detail** &mdash; PR state, CI checks, review status, mergeable
-   state, and action buttons
+   state, a **History** panel showing the most recent reflog entries for
+   the branch (hash, action, timestamp), and action buttons.
 
 The status bar shows repo path, current branch, and last refresh time. The
 title bar has a theme toggle (dark / light / system) and a connection pill
@@ -966,13 +1000,19 @@ that turns green / yellow / red based on health.
 **Operations** are exposed as dialogs: new branch, sync, push, delete,
 reparent, PR create/update/merge, toggle draft, update stack tables, agent
 (branch- or stack-scoped), agent feature, and agent prompt management
-(view/edit/reset across the shipped, custom, and repo layers). The CLI output
-of every operation lands in a terminal-like panel below the main view.
+(view/edit/reset across the shipped, custom, and repo layers). Every
+operation surfaces a **toast notification** in the bottom-right: success
+toasts auto-dismiss after five seconds, error toasts stay until dismissed so
+the CLI output stays available to copy. The full raw CLI output still lands
+in a terminal-like panel below the main view.
 
 **Polling** &mdash; every 30 seconds (paused when the window loses focus).
 Failures back off exponentially (30s → 60s → 120s → 240s → 300s).
 
-**Keyboard shortcuts**: `Cmd+R` refresh, `Cmd+N` new branch.
+**Keyboard shortcuts**: `Cmd+R` refresh, `Cmd+N` new branch, `Esc` clears the
+branch selection (or clears the sidebar filter when the filter input is
+focused), `↑/↓` moves between branches in the selected stack, `←/→` or `[`/`]`
+moves between stacks.
 
 **Remote (SSH) mode** &mdash; the desktop app can drive an `ezs` install on a
 remote machine. Click the **Connect** pill in the title bar, fill in

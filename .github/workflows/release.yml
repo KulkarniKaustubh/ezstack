@@ -20,10 +20,22 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Generate release notes with git-cliff
+        id: notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: ${{ runner.temp }}/RELEASE_NOTES.md
+
+      - name: Preview release notes
+        run: cat "${{ steps.notes.outputs.changelog }}"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes=${{ steps.notes.outputs.changelog }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
