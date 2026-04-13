@@ -506,11 +506,19 @@ subcommands["commit"] = function(args)
   cli.run_in_terminal(cli_args)
 end
 
---- `:Ezs amend [args]`
-subcommands["amend"] = function(args)
-  local cli_args = { "amend" }
-  vim.list_extend(cli_args, args)
-  cli.run_in_terminal(cli_args)
+--- `:Ezs amend` — amend last commit then run `ezs sync` to update children.
+subcommands["amend"] = function()
+  local result = vim.system(
+    { "git", "commit", "--amend", "--no-edit" },
+    { text = true, cwd = vim.fn.getcwd() }
+  ):wait()
+  if result.code ~= 0 then
+    local err = vim.trim(result.stderr or "")
+    vim.notify("git amend failed: " .. (err ~= "" and err or "code " .. result.code), vim.log.levels.ERROR)
+    return
+  end
+  vim.notify("Amended; syncing children...", vim.log.levels.INFO)
+  cli.run_in_terminal({ "sync" })
 end
 
 --- `:Ezs stack [branch] [parent]`
