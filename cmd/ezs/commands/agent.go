@@ -125,9 +125,13 @@ func Agent(args []string) error {
 		agentCmd = repoCfg.GetAgentCommand()
 	}
 
-	// Verify agent CLI exists
-	if _, err := exec.LookPath(agentCmd); err != nil {
-		return fmt.Errorf("agent CLI '%s' not found in PATH.\nInstall it or configure a different agent: ezs config set agent_command <command>", agentCmd)
+	// Verify agent CLI exists (check only the binary, not its args)
+	agentFields := strings.Fields(agentCmd)
+	if len(agentFields) == 0 {
+		return fmt.Errorf("agent_command is empty.\nConfigure one: ezs config set agent_command <command>")
+	}
+	if _, err := exec.LookPath(agentFields[0]); err != nil {
+		return fmt.Errorf("agent CLI '%s' not found in PATH.\nInstall it or configure a different agent: ezs config set agent_command <command>", agentFields[0])
 	}
 
 	// Agent requires worktree mode — each branch needs its own working directory
@@ -923,7 +927,12 @@ func printDryRunPrompt(mode, prompt string) {
 // spawnAgentProcess launches the agent CLI with the rendered prompt.
 // The full prompt is passed as the first visible user message in the agent's UI.
 func spawnAgentProcess(agentCmd, workDir, prompt string) error {
-	cmd := exec.Command(agentCmd, prompt)
+	fields := strings.Fields(agentCmd)
+	if len(fields) == 0 {
+		return fmt.Errorf("agent_command is empty")
+	}
+	args := append(fields[1:], prompt)
+	cmd := exec.Command(fields[0], args...)
 	cmd.Dir = workDir
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
