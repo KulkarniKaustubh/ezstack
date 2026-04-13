@@ -12,6 +12,7 @@ import { StacksBoard } from "./components/stack/StacksBoard";
 import { BranchDetail } from "./components/branch/BranchDetail";
 import { EmptyState } from "./components/shared/EmptyState";
 import { OperationOutput } from "./components/shared/OperationOutput";
+import { Toaster } from "./components/shared/Toaster";
 import { NewBranchDialog } from "./components/operations/NewBranchDialog";
 import { SyncDialog } from "./components/operations/SyncDialog";
 import { DeleteDialog } from "./components/operations/DeleteDialog";
@@ -170,8 +171,8 @@ export default function App() {
   }, [refresh, stacks, selectedStack, selectedStackHash, focusedBranchIndex, selectStack, selectBranch, setFocusedBranchIndex, dialog.type]);
 
   const runAndRefresh = useCallback(
-    async (op: () => Promise<ezs.CommandResult>) => {
-      await run(op);
+    async (op: () => Promise<ezs.CommandResult>, label?: string) => {
+      await run(op, label);
       refresh();
     },
     [run, refresh],
@@ -195,10 +196,10 @@ export default function App() {
   const branchActions = selectedBranch_ && selectedRepoPath
     ? {
         onSync: () => setDialog({ type: "sync", branch: selectedBranch_.name }),
-        onPush: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath)),
-        onPushStack: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath, true)),
+        onPush: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath), "Push"),
+        onPushStack: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath, true), "Push stack"),
         onCreatePR: () => setDialog({ type: "pr-create", branch: selectedBranch_.name }),
-        onUpdatePR: () => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, selectedBranch_.name)),
+        onUpdatePR: () => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, selectedBranch_.name), "Update PR"),
         onMergePR: () =>
           selectedBranch_.pr_number
             ? setDialog({ type: "pr-merge", branch: selectedBranch_.name, prNumber: selectedBranch_.pr_number })
@@ -374,7 +375,7 @@ export default function App() {
             branchName={dialog.type === "sync" ? dialog.branch : undefined}
             isLoading={operationLoading}
             onSubmit={async (scope) => {
-              await runAndRefresh(() => ezs.syncBranch(selectedRepoPath, scope));
+              await runAndRefresh(() => ezs.syncBranch(selectedRepoPath, scope), "Sync");
               setDialog({ type: "none" });
             }}
           />
@@ -535,6 +536,8 @@ export default function App() {
         repos={repos}
         selectedRepoPath={selectedRepoPath}
       />
+
+      <Toaster />
     </div>
   );
 }
