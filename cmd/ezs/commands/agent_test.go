@@ -555,9 +555,9 @@ func TestBuildRenderedWorkPromptBranchScoped(t *testing.T) {
 	if !strings.Contains(prompt, "main") {
 		t.Error("expected prompt to contain parent name")
 	}
-	// Should contain branch-scoped constraint
-	if !strings.Contains(prompt, "THIS BRANCH ONLY") {
-		t.Error("expected branch-scoped constraint")
+	// Should contain branch-scoped write constraint
+	if !strings.Contains(prompt, "only WRITE to files inside") {
+		t.Error("expected branch-scoped write constraint")
 	}
 	// Should not have instruction headings when no files exist
 	if strings.Contains(prompt, "## Custom Instructions") {
@@ -587,12 +587,12 @@ func TestBuildRenderedWorkPromptStackScoped(t *testing.T) {
 	}
 
 	// Should contain stack-scoped language
-	if !strings.Contains(prompt, "ENTIRE STACK") {
-		t.Error("expected stack-scoped prompt to mention ENTIRE STACK")
+	if !strings.Contains(prompt, "Work across any branch in this stack") {
+		t.Error("expected stack-scoped prompt to mention working across the stack")
 	}
-	// Should NOT contain branch-scoped constraint
-	if strings.Contains(prompt, "THIS BRANCH ONLY") {
-		t.Error("stack-scoped prompt should not contain branch-only constraint")
+	// Should NOT contain branch-scoped write constraint
+	if strings.Contains(prompt, "only WRITE to files inside") {
+		t.Error("stack-scoped prompt should not contain branch-only write constraint")
 	}
 }
 
@@ -611,12 +611,12 @@ func TestBuildRenderedFeaturePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "Add JWT authentication") {
 		t.Error("expected prompt to contain feature description")
 	}
-	// Feature prompt should mention creating branches, not scoping to one
-	if !strings.Contains(prompt, "Plan and implement") {
-		t.Error("expected feature prompt to describe building process")
+	// Feature prompt should mention the plan-first process
+	if !strings.Contains(prompt, "Present a detailed plan of stacked branches") {
+		t.Error("expected feature prompt to describe plan-first process")
 	}
-	// Feature prompt should not have branch-scoped constraint
-	if strings.Contains(prompt, "THIS BRANCH ONLY") {
+	// Feature prompt should not have branch-scoped write constraint
+	if strings.Contains(prompt, "only WRITE to files inside") {
 		t.Error("feature prompt should not be branch-scoped")
 	}
 	// Without an existing stack, the feature template should not contain "Existing Stack" section
@@ -671,9 +671,9 @@ func TestBuildRenderedFeaturePromptWithExistingStack(t *testing.T) {
 	if !strings.Contains(prompt, "additional branches are needed") {
 		t.Error("expected process to mention creating additional branches if needed")
 	}
-	// Should still have all standard sections
-	if !strings.Contains(prompt, "Plan and implement") {
-		t.Error("expected feature prompt to describe building process")
+	// Should still have the plan-first process
+	if !strings.Contains(prompt, "Present a detailed plan of stacked branches") {
+		t.Error("expected feature prompt to describe plan-first process")
 	}
 }
 
