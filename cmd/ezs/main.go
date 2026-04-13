@@ -83,6 +83,9 @@ func main() {
 	case "-v", "--version":
 		fmt.Printf("ezstack version %s\n", version)
 		return
+	case "--info":
+		commands.Info(version)
+		return
 	}
 
 	// Check if we're in a git repo for all other commands
@@ -150,11 +153,16 @@ func main() {
 		err = commands.Down(args)
 	case "agent":
 		err = commands.Agent(args)
+	case "doctor":
+		err = commands.Doctor(args)
 	case "menu":
 		err = runInteractiveMenu()
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
-		printUsage()
+		ui.Error(fmt.Sprintf("Unknown command: %s", cmd))
+		if suggestion := ui.SuggestCommand(cmd, topLevelCommands); suggestion != "" {
+			fmt.Fprintf(os.Stderr, "%sDid you mean '%s'?%s\n", ui.Yellow, suggestion, ui.Reset)
+		}
+		fmt.Fprintf(os.Stderr, "Run 'ezs --help' for usage.\n")
 		os.Exit(ui.ExitUsage)
 	}
 
@@ -319,7 +327,7 @@ fi
 }
 
 var topLevelCommands = []string{
-	"agent", "amend", "commit", "config", "delete", "diff", "down",
+	"agent", "amend", "commit", "config", "delete", "diff", "doctor", "down",
 	"goto", "list", "log", "menu", "new", "pr", "push",
 	"reparent", "stack", "status", "sync", "unstack", "up",
 }
