@@ -708,6 +708,10 @@ stack viewer buffer, Telescope pickers, and a statusline component.
 :Ezs pr merge        " prompts for method
 :Ezs goto [branch]   " switch worktree (uses :tcd by default)
 :Ezs up | :Ezs down  " navigate the stack
+:Ezs diff            " parent..HEAD in a scratch split (async)
+:Ezs diff -- --stat  " forward to `ezs diff` (any git-diff options)
+:Ezs graph           " ASCII tree of every stack in a scratch split
+:EzsActions          " quick-action menu (also :Ezs actions)
 :Ezs agent           " launch the AI agent
 :Ezs agent feature "description"
 ```
@@ -715,6 +719,16 @@ stack viewer buffer, Telescope pickers, and a statusline component.
 The viewer is a non-modifiable buffer with single-key bindings: `<CR>` goto,
 `o` open PR, `r` refresh, `n` new, `d` delete, `p`/`P` push, `s` sync, `a`/`A`
 agent, `?` help, `q` close.
+
+**Quick action menu (`:EzsActions`)** &mdash; a `vim.ui.select` dropdown with
+sync (current / stack / continue), push branch / stack, PR create /
+update / draft / merge / open / stack, new / delete / goto branch, and
+graph. Bind it to `<leader>ea` if you reach for it often.
+
+**Stack graph (`:Ezs graph`)** &mdash; reads `ezs list --json` and renders
+every stack as an ASCII tree. Branches whose parent chain does not reach
+`stack.root` are surfaced under an `(orphans &mdash; parent not reachable
+from root)` header rather than being silently dropped. Press `q` to close.
 
 **Telescope pickers** (when telescope.nvim is installed):
 
@@ -735,10 +749,21 @@ agent, `?` help, `q` close.
 | `goto_strategy` | `"tcd"` | `"tcd"` (tab-local), `"cd"` (global), or `"lcd"` (window) |
 | `goto_close_buffers` | `false` | Close unmodified buffers from the previous worktree on goto |
 | `goto_open_explorer` | `true` | Open the file explorer at the new worktree root |
+| `default_keymaps` | `false` | Install opt-in `]s` / `[s` stack-navigation mappings (never clobbers existing user mappings, and deliberately avoids Vim's built-in `gn` / `gp`) |
+| `statusline_format` | `"stack"` | `"stack"` → ` branch \| stack [hash]`, `"pr"` → ` branch \| PR#N STATE`, `"full"` → both |
+| `welcome` | `true` | Show a one-time welcome notification on first `setup()`. The idempotency marker lives under `stdpath("state")/ezstack/welcomed` &mdash; never under `~/.ezstack`, which belongs to the CLI |
 
-The plugin fires `User EzstackChanged` after every CLI mutation and
-`User EzstackGoto` after a worktree switch &mdash; hook your own logic in via
+**Autocommands** &mdash; the plugin fires `User EzstackSetup` at the end of
+`setup()`, `User EzstackChanged` after every CLI mutation, and
+`User EzstackGoto` after a worktree switch. Hook your own logic in via
 `autocmd`. Run `:help ezstack` for the bundled vimdoc reference.
+
+**Tests** &mdash; a plenary.nvim busted suite lives in
+`neovim-plugin/tests/`. Run it with
+`nvim --headless --noplugin -u neovim-plugin/tests/minimal_init.lua -c "PlenaryBustedDirectory neovim-plugin/tests/ {minimal_init = 'neovim-plugin/tests/minimal_init.lua', sequential = true}"`.
+It covers subcommand-dispatch completeness, statusline formatters, graph
+rendering (including orphan handling), default-keymap installation, and
+welcome-marker idempotency.
 
 Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/nvim.html>.
 
