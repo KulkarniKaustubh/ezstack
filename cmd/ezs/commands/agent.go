@@ -18,6 +18,9 @@ import (
 
 // Agent launches an AI agent with stack context
 func Agent(args []string) error {
+	if HasExamplesFlag("agent", args) {
+		return nil
+	}
 	fs := pflag.NewFlagSet("agent", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sLaunch AI agent with stack context%s
@@ -87,6 +90,9 @@ func Agent(args []string) error {
 	stackFlag := fs.StringP("stack", "s", "", "Stack hash prefix or name")
 	branchFlag := fs.StringP("branch", "b", "", "Branch to work in")
 	dryRunFlag := fs.Bool("dry-run", false, "Print the composed prompt and exit without launching the agent")
+	savePromptFlag := fs.String("save-prompt", "", "Write composed prompt to file (use with --dry-run)")
+	noPushFlag := fs.Bool("no-push", false, "Block auto-push during the agent run (sets EZS_AGENT_NO_PUSH=1)")
+	presetFlag := fs.String("preset", "", "Append ~/.ezstack/agent-presets/<name>.md to the composed prompt")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -136,6 +142,13 @@ func Agent(args []string) error {
 		return fmt.Errorf("ezs agent requires worktree mode.\nThe agent needs separate working directories for each branch to work in isolation.\nEnable worktrees: ezs config set use_worktrees true")
 	}
 
+	extras := agentExtras{
+		dryRun:     *dryRunFlag,
+		savePrompt: *savePromptFlag,
+		noPush:     *noPushFlag,
+		preset:     *presetFlag,
+	}
+
 	// Feature mode — optionally uses an existing stack if one is available
 	if fs.NArg() > 0 && (fs.Arg(0) == "feature" || fs.Arg(0) == "feat") {
 		description := strings.Join(fs.Args()[1:], " ")
@@ -150,7 +163,7 @@ func Agent(args []string) error {
 				return err
 			}
 		}
-		return agentFeature(agentCmd, repoPath, description, featureStack, *dryRunFlag)
+		return agentFeature(agentCmd, repoPath, description, featureStack, extras)
 	}
 
 	// Reject unknown subcommands (e.g. "ezs agent new" or "ezs agent foo")
@@ -170,7 +183,15 @@ func Agent(args []string) error {
 	}
 
 	branchScoped := *branchFlag != ""
-	return agentWork(g, agentCmd, repoPath, targetStack, *branchFlag, branchScoped, *dryRunFlag)
+	return agentWork(g, agentCmd, repoPath, targetStack, *branchFlag, branchScoped, extras)
+}
+
+// agentExtras carries the assorted optional flags for an agent invocation.
+type agentExtras struct {
+	dryRun     bool
+	savePrompt string
+	noPush     bool
+	preset     string
 }
 
 // ── Prompt subcommand ──────────────────────────────────────────────────────────
@@ -642,7 +663,7 @@ func resolveStackByRef(mgr *stack.Manager, stacks []*config.Stack, ref string) (
 // agentWork launches the agent in work session mode.
 // If branchScoped is true (--branch was explicitly set), the agent is scoped to that single branch.
 // Otherwise, the agent works on the entire stack.
-func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack, branchName string, branchScoped, dryRun bool) error {
+func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack, branchName string, branchScoped bool, extras agentExtras) error {
 	ctx := buildAgentContext(g, repoPath, targetStack, branchName)
 	ctx.branchScoped = branchScoped
 
@@ -650,10 +671,21 @@ func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack,
 	if err != nil {
 		return err
 	}
+	prompt, err = applyAgentPreset(prompt, extras.preset)
+	if err != nil {
+		return err
+	}
 
-	if dryRun {
+	if extras.dryRun {
 		printDryRunPrompt("work", prompt)
+		if extras.savePrompt != "" {
+			return savePromptToFile(extras.savePrompt, prompt)
+		}
 		return nil
+	}
+
+	if extras.noPush {
+		os.Setenv(agentNoPushEnv, "1")
 	}
 
 	if branchScoped {
@@ -670,15 +702,26 @@ func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack,
 // agentFeature launches the agent in feature builder mode.
 // If existingStack is non-nil, its branches are provided as context so the agent
 // can build on an already-created (but possibly empty) stack instead of starting from scratch.
-func agentFeature(agentCmd, repoPath, description string, existingStack *config.Stack, dryRun bool) error {
+func agentFeature(agentCmd, repoPath, description string, existingStack *config.Stack, extras agentExtras) error {
 	prompt, err := buildRenderedFeaturePrompt(repoPath, description, existingStack)
 	if err != nil {
 		return err
 	}
+	prompt, err = applyAgentPreset(prompt, extras.preset)
+	if err != nil {
+		return err
+	}
 
-	if dryRun {
+	if extras.dryRun {
 		printDryRunPrompt("feature", prompt)
+		if extras.savePrompt != "" {
+			return savePromptToFile(extras.savePrompt, prompt)
+		}
 		return nil
+	}
+
+	if extras.noPush {
+		os.Setenv(agentNoPushEnv, "1")
 	}
 
 	ui.Info(fmt.Sprintf("Launching %s in %s mode...", agentCmd, ui.Bold+"feature builder"+ui.Reset))
@@ -918,6 +961,60 @@ func printDryRunPrompt(mode, prompt string) {
 	if !strings.HasSuffix(prompt, "\n") {
 		fmt.Println()
 	}
+}
+
+// agentNoPushEnv, when set, signals downstream `ezs push` invocations from the
+// agent process to refuse to push. It is exported as an environment variable
+// when --no-push is passed.
+const agentNoPushEnv = "EZS_AGENT_NO_PUSH"
+
+// loadAgentPreset returns the contents of ~/.ezstack/agent-presets/<name>.md or
+// an error if the preset is missing.
+func loadAgentPreset(name string) (string, error) {
+	dir, err := config.ConfigDir()
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, "agent-presets", name+".md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("preset '%s' not found at %s: %w", name, path, err)
+	}
+	return string(data), nil
+}
+
+// applyAgentPreset appends a named preset to a composed prompt. Empty name is a no-op.
+func applyAgentPreset(prompt, presetName string) (string, error) {
+	if presetName == "" {
+		return prompt, nil
+	}
+	preset, err := loadAgentPreset(presetName)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasSuffix(prompt, "\n") {
+		prompt += "\n"
+	}
+	return prompt + "\n## Preset: " + presetName + "\n" + preset, nil
+}
+
+// savePromptToFile writes a composed prompt to disk for inspection.
+func savePromptToFile(path, prompt string) error {
+	path = expandHome(path)
+	if err := os.WriteFile(path, []byte(prompt), 0644); err != nil {
+		return fmt.Errorf("failed to write prompt to %s: %w", path, err)
+	}
+	ui.Success(fmt.Sprintf("Wrote composed prompt to %s", path))
+	return nil
+}
+
+func expandHome(p string) string {
+	if strings.HasPrefix(p, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, p[2:])
+		}
+	}
+	return p
 }
 
 // spawnAgentProcess launches the agent CLI with the rendered prompt.
