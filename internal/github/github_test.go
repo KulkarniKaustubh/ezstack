@@ -294,3 +294,50 @@ func TestGetPRChecksParser(t *testing.T) {
 		})
 	}
 }
+
+func TestPRForkInfo_IsFork(t *testing.T) {
+	tests := []struct {
+		name       string
+		owner      string
+		repoOwner  string
+		wantIsFork bool
+	}{
+		{"same owner is not fork", "owner", "owner", false},
+		{"different owner is fork", "owner", "forkowner", true},
+		{"empty owner is not fork", "owner", "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			info := &PRForkInfo{
+				HeadRepoOwner: tt.repoOwner,
+				IsFork:        tt.repoOwner != "" && tt.repoOwner != tt.owner,
+			}
+			if info.IsFork != tt.wantIsFork {
+				t.Errorf("IsFork = %v, want %v", info.IsFork, tt.wantIsFork)
+			}
+		})
+	}
+}
+
+func TestPRForkInfo_Struct(t *testing.T) {
+	info := &PRForkInfo{
+		HeadRepoOwner:       "jason-nexthop",
+		HeadRepoName:        "ezstack",
+		MaintainerCanModify: true,
+		IsFork:              true,
+	}
+
+	if info.HeadRepoOwner != "jason-nexthop" {
+		t.Errorf("HeadRepoOwner = %q, want %q", info.HeadRepoOwner, "jason-nexthop")
+	}
+	if info.HeadRepoName != "ezstack" {
+		t.Errorf("HeadRepoName = %q, want %q", info.HeadRepoName, "ezstack")
+	}
+	if !info.MaintainerCanModify {
+		t.Error("MaintainerCanModify should be true")
+	}
+	if !info.IsFork {
+		t.Error("IsFork should be true")
+	}
+}

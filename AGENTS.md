@@ -73,11 +73,104 @@ ezs sync --dry-run --json
 ezs -y sync -a
 ```
 
+## Built-in Agent Command
+
+ezstack can launch an AI agent with full stack context injected automatically.
+
+> **Requires worktree mode** (`use_worktrees: true`, which is the default). The agent needs separate working directories for each branch to work in isolation without disrupting your workspace. If worktrees are disabled, `ezs agent` will show an error with instructions to enable them.
+
+### Work Session — Agent scoped to current branch
+
+```bash
+# Launch agent on current branch with stack context
+ezs agent
+
+# Launch on a specific branch
+ezs agent --branch feature-auth
+```
+
+The agent is launched in the branch's worktree directory with a prompt containing:
+- Current stack structure (branches, parents, worktree paths)
+- Current branch and parent info
+- Available ezs commands with `-y` flag for non-interactive use
+
+### Feature Builder — Agent creates stacked branches
+
+```bash
+# Agent plans and implements a feature as incremental stacked branches
+ezs agent feature "Add user authentication with JWT tokens"
+```
+
+The agent will:
+1. Explore the codebase
+2. Present a plan of stacked branches for approval
+3. Create each branch with `ezs -y new`, implement changes, commit, and push
+4. Each branch is one small, reviewable unit of work
+
+### Customizing Agent Prompts
+
+Agent prompts are composed from three layers:
+
+1. **Shipped prompt** — built into ezstack, updated with releases
+2. **Custom instructions** — `~/.ezstack/agent-{work,feature}-prompt.md` (personal, all repos)
+3. **Repo instructions** — `<repo>/.ezstack/agent-{work,feature}-prompt.md` (per-repo, committable)
+
+Custom and repo instructions are injected into the shipped prompt automatically. To fully override the shipped prompt, add `override: full` as the first line of your custom instructions file.
+
+#### Template Variables
+
+Prompts support the following template variables, replaced at runtime:
+
+| Variable | Description |
+|----------|-------------|
+| `{{STACK_JSON}}` | Current stack structure as JSON |
+| `{{BRANCH_NAME}}` | Current branch name |
+| `{{PARENT_NAME}}` | Parent branch name |
+| `{{WORKTREE_PATH}}` | Path to the current worktree |
+| `{{EZS_COMMANDS}}` | Available ezs commands reference |
+| `{{EZS_DOCS}}` | Full ezstack documentation for AI agents |
+| `{{FEATURE_DESCRIPTION}}` | Feature description (feature mode only) |
+| `{{CUSTOM_INSTRUCTIONS}}` | Custom instructions slot |
+| `{{REPO_INSTRUCTIONS}}` | Repository instructions slot |
+
+#### Managing Prompts
+
+All prompt commands require a positional argument: `work` or `feature`.
+
+```bash
+# View the shipped work prompt
+ezs agent prompt --shipped work
+
+# View your custom work instructions
+ezs agent prompt --custom work
+
+# Edit custom work instructions in your $EDITOR
+ezs agent prompt --edit work
+
+# Edit repo-specific work instructions
+ezs agent prompt --edit --repo work
+
+# Reset custom work instructions
+ezs agent prompt --reset work
+
+# Reset repo-specific feature instructions
+ezs agent prompt --reset --repo feature
+```
+
+In the VS Code extension, right-click a stack and select **Edit Agent Prompt** to open the prompt file directly in the editor.
+
+### Configuration
+
+```bash
+# Set the agent CLI (default: claude)
+ezs config set agent_command claude
+```
+
 ## Architecture Notes
 
 - **Config location:** `~/.ezstack/config.json` (global), `~/.ezstack/stacks.json` (stack state + branch cache)
 - **PR data:** PR numbers are derived from PR URLs at runtime, not stored separately. The URL is the source of truth.
-- **Worktrees:** Optional, controlled by `use_worktrees` config. When disabled, branches use `git checkout`
+- **Worktrees:** Optional for core commands, controlled by `use_worktrees` config. When disabled, branches use `git checkout`. **Required for `ezs agent`** — the agent needs separate working directories per branch
 - **Shell integration:** `eval "$(ezs --shell-init)"` enables cd support. Without it, commands print paths instead
 - **GitHub integration:** Requires `gh` CLI authenticated via `gh auth login`
 - **Stack identity:** Each stack has a unique hash. Use 3+ character prefixes to reference stacks by hash

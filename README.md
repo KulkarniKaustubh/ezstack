@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/logo.png" alt="ezstack logo" width="120">
+
 # ezstack
 
 **Manage stacked PRs with git worktrees**
@@ -79,39 +81,77 @@ ezs commit -m "Add feature"
 ezs sync -a
 ```
 
+## PR Review
+
+Quickly check out a teammate's branch into its own worktree for review or collaboration:
+
+```bash
+# Creates a local worktree tracking the remote branch
+# Registers it as a stack (root = PR base branch or main)
+# Shows as (remote) in ezs ls
+ezs new origin/feature-branch
+
+# Shows PR info, review status, and line diff automatically
+# You can work on it, push, sync — all commands work normally
+# Fork PRs are auto-detected: adds the fork remote and pushes there
+# When done, clean up with:
+ezs delete feature-branch
+```
+
 ## Commands
 
 | Command | Aliases | Description |
 |---------|---------|-------------|
-| `new` | `n` | Create a new branch in the stack |
-| `list` | `ls` | List all stacks and branches |
-| `status` | `st` | Show status with PR and CI info |
-| `sync` | `rebase`, `rb` | Sync stack with remote (rebase or merge) |
-| `goto` | `go` | Navigate to a branch worktree |
-| `up` | | Navigate up the stack (toward parent) |
+| `agent` | | Launch AI agent with stack context (work session or feature builder) |
+| `agent prompt` | | View or edit agent prompt templates |
+| `amend` | | Amend last commit and auto-sync children |
+| `commit` | `ci` | Commit and auto-sync child branches |
+| `config` | `cfg` | Configure ezstack |
+| `delete` | `del`, `rm` | Delete a branch and its worktree |
+| `diff` | | Show diff against parent branch |
 | `down` | | Navigate down the stack (toward children) |
+| `goto` | `go` | Navigate to a branch worktree |
+| `list` | `ls` | List all stacks and branches |
+| `log` | | Show commits in a branch since its parent |
+| `menu` | | Interactive command menu |
+| `new` | `n` | Create a new branch in the stack |
+| `pr` | | Manage pull requests (create, update, merge, draft, stack) |
+| `push` | | Push current branch or entire stack |
 | `reparent` | `rp` | Change the parent of a branch |
 | `stack` | | Add a branch to a stack |
+| `status` | `st` | Show status with PR and CI info |
+| `sync` | | Sync stack with remote (rebase or merge) |
 | `unstack` | | Remove a branch from tracking |
-| `delete` | `del`, `rm` | Delete a branch and its worktree |
-| `commit` | `ci` | Commit and auto-sync child branches |
-| `amend` | | Amend last commit and auto-sync children |
-| `push` | | Push current branch or entire stack |
-| `diff` | | Show diff against parent branch |
-| `pr` | | Manage pull requests (create, update, merge, draft, stack) |
-| `config` | `cfg` | Configure ezstack |
-| `menu` | | Interactive command menu |
+| `up` | | Navigate up the stack (toward parent) |
 
 **Global flags:** `-y, --yes` auto-confirm prompts · `-h, --help` · `-v, --version`
 
 Run `ezs <command> --help` for command-specific help.
 
+## AI Agent
+
+ezstack can launch an AI coding agent (Claude, Cursor, etc.) with full stack context injected automatically. The agent is scoped to a single stack and knows about all branches, worktree paths, and available commands. **Requires worktree mode** (`use_worktrees: true`, which is the default) — the agent needs separate working directories for each branch to operate in isolation.
+
+```bash
+# Launch agent on current stack
+ezs agent
+
+# Build a feature as stacked branches
+ezs agent feature "Add user authentication with JWT tokens"
+
+# View or edit the agent's prompt templates
+ezs agent prompt --shipped work
+ezs agent prompt --edit work
+```
+
+Agent prompts are composed from three layers: a shipped prompt (updated with releases), custom instructions (`~/.ezstack/`), and repo-specific instructions (`<repo>/.ezstack/`). See [AGENTS.md](AGENTS.md) for full details.
+
 ## Configuration
 
 ezstack supports both worktree-based and checkout-based workflows:
 
-- **Worktrees (default):** Each branch gets its own worktree directory for parallel work
-- **No worktrees:** Branches use `git checkout` for a simpler, single-directory workflow
+- **Worktrees (default, recommended):** Each branch gets its own worktree directory for parallel work. Required for `ezs agent`.
+- **No worktrees:** Branches use `git checkout` for a simpler, single-directory workflow. All core commands (`sync`, `commit`, `push`, `pr`, `reparent`) work fully. Note: `ezs agent` is not available in this mode.
 
 Configure with `ezs config set use_worktrees true/false`.
 
@@ -146,6 +186,57 @@ The `--merge` and `--rebase` flags work with `sync`, `commit`, `amend`, and `rep
 | 7 | Branch not found |
 | 8 | Network/remote error |
 | 10 | User cancelled |
+
+## Editor & Desktop Integrations
+
+ezstack ships with first-party clients so you can drive the same `ezs` CLI from
+your editor or a native GUI:
+
+| Integration | Description | Docs |
+|---|---|---|
+| **VS Code Extension** (`vscode-extension/`) | Sidebar stack tree, per-branch file browser, PR & CI status, command palette, agent integration | [vscode.html](https://kulkarnikaustubh.github.io/ezstack/vscode.html) · [README](vscode-extension/README.md) |
+| **Neovim Plugin** (`neovim-plugin/`) | Native Lua plugin with `:Ezs` command suite, styled stack viewer, Telescope pickers, statusline component, fugitive auto-refresh | [nvim.html](https://kulkarnikaustubh.github.io/ezstack/nvim.html) · [README](neovim-plugin/README.md) |
+| **Desktop App** (`tauri-ui/`) | Tauri v2 + React 19 desktop GUI. Three-panel layout, visual stack graph, every operation as a dialog, remote SSH mode | [desktop.html](https://kulkarnikaustubh.github.io/ezstack/desktop.html) · [README](tauri-ui/README.md) |
+
+### VS Code
+
+```bash
+# Install from a pre-built VSIX (download from the Releases page)
+code --install-extension ezstack-4.0.0.vsix
+```
+
+Then open the **ezstack** panel in the activity bar. Auto-refreshes on
+`~/.ezstack/stacks.json` changes. Configure with `ezstack.cliPath`,
+`ezstack.autoRefresh`, and `ezstack.ticketPattern`.
+
+### Neovim
+
+```lua
+-- lazy.nvim
+{
+  "KulkarniKaustubh/ezstack",
+  subdir = "neovim-plugin",
+  cmd    = { "Ezs" },
+  config = function() require("ezstack").setup() end,
+}
+```
+
+Requires Neovim 0.10+ and the `ezs` CLI on `$PATH`. Run `:Ezs` to open the
+stack viewer or `:Telescope ezstack branches` for fuzzy picking. See
+`:help ezstack` for the full reference.
+
+### Desktop App
+
+```bash
+cd tauri-ui
+npm install
+npm run tauri dev      # development
+npm run tauri build    # production bundle in src-tauri/target/release/bundle/
+```
+
+Or grab a prebuilt installer from the
+[Releases page](https://github.com/KulkarniKaustubh/ezstack/releases).
+Supports Remote (SSH) mode for driving `ezs` on a dev VM.
 
 ## Documentation
 

@@ -607,8 +607,31 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 		}
 	}
 
-	// Print root branch name
-	fmt.Fprintf(os.Stderr, "  %s%s%s\n", Gray, stack.Root, Reset)
+	// Print root branch name with optional PR info and diff stats
+	rootLine := fmt.Sprintf("  %s%s%s", Gray, stack.Root, Reset)
+	if stack.RootPRNumber > 0 {
+		prText := fmt.Sprintf("[PR #%d", stack.RootPRNumber)
+		if stack.RootBase != "" {
+			prText += " \u2192 " + stack.RootBase // → arrow
+		}
+		prText += "]"
+		if stack.RootPRUrl != "" {
+			rootLine += "  " + Yellow + Hyperlink(stack.RootPRUrl, prText) + Reset
+		} else {
+			rootLine += "  " + Yellow + prText + Reset
+		}
+	} else if stack.RootBase != "" {
+		// No PR but we know the base branch (e.g. inferred main/master)
+		rootLine += "  " + Gray + "[\u2192 " + stack.RootBase + "]" + Reset
+	}
+	if statusMap != nil {
+		if rootStatus, ok := statusMap[stack.Root]; ok && rootStatus != nil {
+			if rootStatus.Additions > 0 || rootStatus.Deletions > 0 {
+				rootLine += fmt.Sprintf(" %s+%d%s %s-%d%s", Green, rootStatus.Additions, Reset, Red, rootStatus.Deletions, Reset)
+			}
+		}
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", rootLine)
 
 	// Recursive tree walker
 	var walkTree func(nodes []*config.Branch, prefix string)
@@ -653,6 +676,11 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 				statusInfo = getStatusIcons(branch, statusMap)
 			}
 
+			remoteTag := ""
+			if branch.IsRemote {
+				remoteTag = " " + Gray + "(remote)" + Reset
+			}
+
 			if shouldStrike {
 				prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
 				diffWithStrike := ""
@@ -663,13 +691,13 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 				if statusInfo != "" {
 					statusWithStrike = strings.ReplaceAll(statusInfo, Reset, Reset+Strikethrough)
 				}
-				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s  %s%s%s%s\n",
+				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s  %s%s%s%s\n",
 					pointer, color, prefix, connector, Strikethrough+Bold, name, Reset+Strikethrough,
-					prWithStrike, diffWithStrike, statusWithStrike, Reset)
+					remoteTag, prWithStrike, diffWithStrike, statusWithStrike, Reset)
 			} else {
-				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s  %s%s%s%s\n",
+				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s  %s%s%s%s\n",
 					pointer, color, prefix, connector, Bold, name, Reset,
-					prFormatted, diffInfo, statusInfo, Reset)
+					remoteTag, prFormatted, diffInfo, statusInfo, Reset)
 			}
 
 			if children, ok := childrenMap[branch.Name]; ok {

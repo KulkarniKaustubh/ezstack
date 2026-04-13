@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
@@ -28,6 +29,7 @@ func printConfigUsage() {
     cd_after_new          Auto-cd to new worktree (true/false, per-repo)
     use_worktrees         Use git worktrees for new branches (true/false, per-repo)
     sync_strategy         Sync method: "rebase" or "merge" (per-repo)
+    agent_command         AI agent CLI command (default: "claude", per-repo)
 
 %sOPTIONS%s
     -h, --help    Show this help message
@@ -56,7 +58,7 @@ func Config(args []string) error {
 		if len(args) < 3 {
 			return fmt.Errorf("usage: ezs config set <key> <value>")
 		}
-		return configSet(args[1], args[2])
+		return configSet(args[1], strings.Join(args[2:], " "))
 	case "show":
 		return configShow()
 	default:
@@ -92,10 +94,9 @@ func configSet(key, value string) error {
 		return err
 	}
 
-	value = helpers.ExpandPath(value)
-
 	switch key {
 	case "worktree_base_dir":
+		value = helpers.ExpandPath(value)
 		repoPath, err := getCurrentRepoPath()
 		if err != nil {
 			return fmt.Errorf("worktree_base_dir is a per-repo setting: %w", err)
@@ -167,8 +168,23 @@ func configSet(key, value string) error {
 		repoCfg.SyncStrategy = value
 		cfg.SetRepoConfig(repoPath, repoCfg)
 		ui.Info(fmt.Sprintf("Setting sync_strategy for repo: %s", repoPath))
+	case "agent_command":
+		repoPath, err := getCurrentRepoPath()
+		if err != nil {
+			return fmt.Errorf("agent_command is a per-repo setting: %w", err)
+		}
+		if value == "" {
+			return fmt.Errorf("agent_command must not be empty")
+		}
+		repoCfg := cfg.GetRepoConfig(repoPath)
+		if repoCfg == nil {
+			repoCfg = &config.RepoConfig{}
+		}
+		repoCfg.AgentCommand = value
+		cfg.SetRepoConfig(repoPath, repoCfg)
+		ui.Info(fmt.Sprintf("Setting agent_command for repo: %s", repoPath))
 	default:
-		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, sync_strategy", key)
+		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, sync_strategy, agent_command", key)
 	}
 
 	if err := cfg.Save(); err != nil {
@@ -234,6 +250,11 @@ func configShow() error {
 			} else {
 				fmt.Fprintf(os.Stderr, "  sync_strategy: rebase (default)\n")
 			}
+			if repoCfg.AgentCommand != "" {
+				fmt.Fprintf(os.Stderr, "  agent_command: %s\n", repoCfg.AgentCommand)
+			} else {
+				fmt.Fprintf(os.Stderr, "  agent_command: claude (default)\n")
+			}
 		} else {
 			fmt.Fprintf(os.Stderr, "  worktree_base_dir: %s(not configured for this repo)%s\n", ui.Yellow, ui.Reset)
 			fmt.Fprintf(os.Stderr, "  Run: ezs config set worktree_base_dir <path>\n")
@@ -291,15 +312,12 @@ func configInteractive() error {
 		}
 	}
 
-	configChanged := false
-
 	if repoCfg == nil {
 		repoCfg = &config.RepoConfig{}
 	}
 
 	useWorktrees := ui.ConfirmTUIWithDefault("Use git worktrees for new branches (recommended)", currentUseWorktrees)
 	repoCfg.UseWorktrees = &useWorktrees
-	configChanged = true
 	ui.Success(fmt.Sprintf("Set use_worktrees = %v", useWorktrees))
 
 	if useWorktrees {
@@ -331,7 +349,6 @@ func configInteractive() error {
 				}
 
 				repoCfg.WorktreeBaseDir = worktreeBaseDir
-				configChanged = true
 				ui.Success(fmt.Sprintf("Set worktree_base_dir = %s", worktreeBaseDir))
 			}
 			break
@@ -340,28 +357,24 @@ func configInteractive() error {
 
 	cdAfterNew := ui.ConfirmTUIWithDefault("Auto-cd into new worktrees after creation", currentCdAfterNew)
 	repoCfg.CdAfterNew = &cdAfterNew
-	configChanged = true
 	ui.Success(fmt.Sprintf("Set cd_after_new = %v", cdAfterNew))
 
 	// Sync strategy: rebase or merge
 	options := []string{"merge", "rebase"}
 	defaultIdx := 0
 	syncStrategyIdx := ui.SelectTUI(options, "Select your sync strategy (merge is recommended since rebase will force push)", defaultIdx)
-	if syncStrategyIdx == 0 {
-		repoCfg.SyncStrategy = "merge"
-	} else {
-		repoCfg.SyncStrategy = "rebase"
-	}
-	configChanged = true
-	ui.Success(fmt.Sprintf("Set sync_strategy = %s", repoCfg.SyncStrategy))
-
-	if configChanged {
-		cfg.SetRepoConfig(repoPath, repoCfg)
-		if err := cfg.Save(); err != nil {
-			return err
+	if syncStrategyIdx >= 0 {
+		if syncStrategyIdx == 0 {
+			repoCfg.SyncStrategy = "merge"
+		} else {
+			repoCfg.SyncStrategy = "rebase"
 		}
-	} else {
-		ui.Info("No changes made to configuration")
+		ui.Success(fmt.Sprintf("Set sync_strategy = %s", repoCfg.SyncStrategy))
+	}
+
+	cfg.SetRepoConfig(repoPath, repoCfg)
+	if err := cfg.Save(); err != nil {
+		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "\n%sNote:%s For 'ezs goto' and 'ezs new --cd' to change directories, add this to your shell config (if not already done):\n", ui.Bold, ui.Reset)

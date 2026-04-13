@@ -267,11 +267,16 @@ func IsDescendantOf(mgr *stack.Manager, branchName, ancestorName string) bool {
 		return false
 	}
 
+	visited := make(map[string]bool)
 	current := branch.Parent
 	for {
 		if current == ancestorName {
 			return true
 		}
+		if visited[current] {
+			return false
+		}
+		visited[current] = true
 		parentBranch := mgr.GetBranch(current)
 		if parentBranch == nil {
 			return false
@@ -368,10 +373,10 @@ func doReparentCore(mgr *stack.Manager, branchName, newParent string, rebase boo
 		}
 		if useMerge {
 			ui.Info("Branch was merged. Push to update the PR.")
-			pushSucceeded = OfferPush(branchName, worktreePath)
+			pushSucceeded = OfferPush(branchName, worktreePath, branch.EffectiveRemote())
 		} else {
 			ui.Info("Branch was rebased. Force-push required to update the PR.")
-			pushSucceeded = OfferForcePush(branchName, worktreePath)
+			pushSucceeded = OfferForcePush(branchName, worktreePath, branch.EffectiveRemote())
 		}
 	}
 
