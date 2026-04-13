@@ -895,19 +895,34 @@ func (m *Manager) moveBranchToStack(branchName, fromStackName, toStackName, newP
 
 	cache := m.stackConfig.Cache
 
+	// Validate the target can accept the subtree BEFORE mutating the source
+	// stack. If we extracted first and AddSubtree then failed, the children
+	// would be silently dropped from the source stack with no rollback path.
+	targetAccepts := newParentName == toStack.Root || newParentName == "" || toStack.HasBranch(newParentName)
+	if !targetAccepts {
+		return fmt.Errorf("parent '%s' not found in target stack", newParentName)
+	}
+
+	if !fromStack.HasBranch(branchName) {
+		return fmt.Errorf("branch '%s' not found in source stack", branchName)
+	}
+
 	subtree := fromStack.ExtractSubtree(branchName)
 	if subtree == nil {
 		return fmt.Errorf("branch '%s' not found in source stack", branchName)
 	}
 
-	fromStack.PopulateBranchesWithCache(cache)
-
-	if len(fromStack.Tree) == 0 {
-		delete(m.stackConfig.Stacks, fromStackName)
+	if !toStack.AddSubtree(branchName, subtree, newParentName) {
+		// Should be unreachable because we pre-validated, but roll back
+		// defensively rather than orphan the subtree.
+		fromStack.AddSubtree(branchName, subtree, "")
+		fromStack.PopulateBranchesWithCache(cache)
+		return fmt.Errorf("parent '%s' not found in target stack", newParentName)
 	}
 
-	if !toStack.AddSubtree(branchName, subtree, newParentName) {
-		return fmt.Errorf("parent '%s' not found in target stack", newParentName)
+	fromStack.PopulateBranchesWithCache(cache)
+	if len(fromStack.Tree) == 0 {
+		delete(m.stackConfig.Stacks, fromStackName)
 	}
 	toStack.PopulateBranchesWithCache(cache)
 

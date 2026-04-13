@@ -941,6 +941,17 @@ func (sc *StackConfig) Save(repoDir string) error {
 
 	stackPath := filepath.Join(configDir, "stacks.json")
 
+	// Serialize concurrent load-modify-save sequences from multiple ezstack
+	// processes (e.g. `ezs sync` running in two terminals on different stacks
+	// in the same repo). atomicWriteFile makes the write atomic, but without
+	// this lock the RMW window is racy and one process's updates can
+	// silently overwrite another's.
+	lock, lockErr := acquireFileLock(stackPath + ".lock")
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.release()
+
 	// Load existing file first to preserve other repos' data
 	var file stackConfigFile
 	data, err := os.ReadFile(stackPath)
