@@ -62,6 +62,11 @@ function M.branches()
               table.insert(parts, "[" .. b.pr_state .. "]")
             end
           end
+          if b.ci_summary and b.ci_summary ~= "" then
+            table.insert(parts, "CI:" .. b.ci_summary)
+          elseif b.ci_state and b.ci_state ~= "" and b.ci_state ~= "none" then
+            table.insert(parts, "CI:" .. b.ci_state)
+          end
           if b.additions or b.deletions then
             local adds = b.additions or 0
             local dels = b.deletions or 0
