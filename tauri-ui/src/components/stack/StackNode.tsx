@@ -16,6 +16,12 @@ export interface StackNodeActions {
   onUpdatePR?: (branchName: string) => void;
   onReparent?: (branchName: string) => void;
   onReparentTo?: (branchName: string, newParent: string) => void;
+  /**
+   * Optional predicate consulted during dragover to decide whether the drop
+   * would be valid. Invalid drops still receive drop events (so callers can
+   * surface feedback) but the visual highlight is suppressed.
+   */
+  canReparentTo?: (branchName: string, newParent: string) => boolean;
   onOpenAgent?: (branchName: string) => void;
   onDelete?: (branchName: string) => void;
 }
@@ -31,28 +37,42 @@ export function StackNode({ branch, isSelected, onClick, actions }: StackNodePro
   const { position, onContextMenu, onClose } = useContextMenu();
   const [dragOver, setDragOver] = useState(false);
 
+  const canReceiveDrop = !!actions?.onReparentTo;
+
   const handleDragStart = (e: DragEvent<HTMLButtonElement>) => {
     e.dataTransfer.setData(DND_MIME, branch.name);
     e.dataTransfer.effectAllowed = "move";
   };
 
   const handleDragOver = (e: DragEvent<HTMLButtonElement>) => {
-    if (!actions?.onReparentTo) return;
+    if (!canReceiveDrop) return;
     if (!e.dataTransfer.types.includes(DND_MIME)) return;
     e.preventDefault();
+    // dataTransfer.getData() is empty during dragover for security reasons,
+    // so we can't consult canReparentTo here with the dragged name. We always
+    // show the highlight and validate on drop.
     e.dataTransfer.dropEffect = "move";
     if (!dragOver) setDragOver(true);
   };
 
-  const handleDragLeave = () => setDragOver(false);
+  // dragleave fires when the cursor crosses into a child element; ignore
+  // those so the highlight doesn't flicker as the user moves over badges.
+  const handleDragLeave = (e: DragEvent<HTMLButtonElement>) => {
+    const related = e.relatedTarget as Node | null;
+    if (related && e.currentTarget.contains(related)) return;
+    setDragOver(false);
+  };
 
   const handleDrop = (e: DragEvent<HTMLButtonElement>) => {
     setDragOver(false);
-    if (!actions?.onReparentTo) return;
+    if (!canReceiveDrop) return;
     const dragged = e.dataTransfer.getData(DND_MIME);
-    if (!dragged || dragged === branch.name) return;
+    if (!dragged) return;
     e.preventDefault();
-    actions.onReparentTo(dragged, branch.name);
+    // Defer cycle / self-drop / same-parent validation to the caller so it
+    // can surface a toast with repo-wide context. The caller is responsible
+    // for invoking onReparentTo only when the drop is actually valid.
+    actions!.onReparentTo!(dragged, branch.name);
   };
 
   const isMerged = branch.is_merged || branch.pr_state === "MERGED" || branch.pr_state === "CLOSED";
@@ -88,7 +108,7 @@ export function StackNode({ branch, isSelected, onClick, actions }: StackNodePro
       <button
         onClick={onClick}
         onContextMenu={actions && menuItems.length > 0 ? onContextMenu : undefined}
-        draggable
+        draggable={canReceiveDrop}
         onDragStart={handleDragStart}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}

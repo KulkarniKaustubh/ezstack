@@ -769,11 +769,20 @@ Or grab a prebuilt installer from the
 
 **Layout** &mdash; three panels:
 
-1. **Stacks sidebar** &mdash; every stack in the repo, with branch counts
-2. **Stack graph** &mdash; visual tree, color-coded by health, current branch
-   highlighted
+1. **Repositories sidebar** &mdash; every repo tracked in `~/.ezstack/config.json`,
+   with a filter box at the top (type to narrow by name or full path, `Esc`
+   or the ✕ button clears it). The currently selected repo stays visible
+   even when it doesn't match the filter, so the UI can never drift into a
+   state where the selection is hidden and unreachable.
+2. **Stack graph** &mdash; visual tree of every stack in the repo, color-coded
+   by health with the current branch highlighted. Branch nodes are
+   **drag-and-drop reparentable**: drag a node onto another branch and the
+   desktop app runs `ezs reparent` with the configured sync strategy. Drops
+   that would create a cycle (onto a descendant), onto the branch itself, or
+   onto the current parent are blocked with an inline toast.
 3. **Branch detail** &mdash; PR state, CI checks, review status, mergeable
-   state, and action buttons
+   state, a **History** panel showing the most recent reflog entries for
+   the branch (hash, action, timestamp), and action buttons.
 
 The status bar shows repo path, current branch, and last refresh time. The
 title bar has a theme toggle (dark / light / system) and a connection pill
@@ -782,13 +791,19 @@ that turns green / yellow / red based on health.
 **Operations** are exposed as dialogs: new branch, sync, push, delete,
 reparent, PR create/update/merge, toggle draft, update stack tables, agent
 (branch- or stack-scoped), agent feature, and agent prompt management
-(view/edit/reset across the shipped, custom, and repo layers). The CLI output
-of every operation lands in a terminal-like panel below the main view.
+(view/edit/reset across the shipped, custom, and repo layers). Every
+operation surfaces a **toast notification** in the bottom-right: success
+toasts auto-dismiss after five seconds, error toasts stay until dismissed so
+the CLI output stays available to copy. The full raw CLI output still lands
+in a terminal-like panel below the main view.
 
 **Polling** &mdash; every 30 seconds (paused when the window loses focus).
 Failures back off exponentially (30s → 60s → 120s → 240s → 300s).
 
-**Keyboard shortcuts**: `Cmd+R` refresh, `Cmd+N` new branch.
+**Keyboard shortcuts**: `Cmd+R` refresh, `Cmd+N` new branch, `Esc` clears the
+branch selection (or clears the sidebar filter when the filter input is
+focused), `↑/↓` moves between branches in the selected stack, `←/→` or `[`/`]`
+moves between stacks.
 
 **Remote (SSH) mode** &mdash; the desktop app can drive an `ezs` install on a
 remote machine. Click the **Connect** pill in the title bar, fill in

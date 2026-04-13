@@ -1,7 +1,8 @@
-import { Folder, ChevronRight, Search } from "lucide-react";
-import { useState } from "react";
+import { Folder, ChevronRight, Search, X } from "lucide-react";
+import { useState, type KeyboardEvent } from "react";
 import { cn } from "../../lib/utils";
 import { Input } from "../ui/input";
+import { filterRepos, repoDisplayName } from "../../lib/repo-filter";
 import type { RepoConfig } from "../../types/ezstack";
 
 interface SidebarProps {
@@ -11,10 +12,6 @@ interface SidebarProps {
   width?: number;
 }
 
-function repoDisplayName(path: string): string {
-  return path.split("/").pop() || path;
-}
-
 export function Sidebar({
   repos,
   selectedRepoPath,
@@ -22,14 +19,16 @@ export function Sidebar({
   width,
 }: SidebarProps) {
   const [filter, setFilter] = useState("");
-  const needle = filter.trim().toLowerCase();
-  const visibleRepos = needle
-    ? repos.filter(
-        (r) =>
-          repoDisplayName(r.repo_path).toLowerCase().includes(needle) ||
-          r.repo_path.toLowerCase().includes(needle),
-      )
-    : repos;
+  const visibleRepos = filterRepos(repos, filter, selectedRepoPath);
+  const hiddenCount = repos.length - visibleRepos.length;
+
+  const handleKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Escape" && filter.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      setFilter("");
+    }
+  };
 
   return (
     <div className="flex flex-col h-full border-r bg-surface/50" style={width ? { width } : { width: 192 }}>
@@ -44,10 +43,27 @@ export function Sidebar({
             type="text"
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={handleKeyDown}
             placeholder="Filter…"
-            className="h-7 pl-7 text-xs"
+            aria-label="Filter repositories"
+            className={cn("h-7 pl-7 text-xs", filter.length > 0 && "pr-6")}
           />
+          {filter.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setFilter("")}
+              aria-label="Clear filter"
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
         </div>
+        {filter.length > 0 && hiddenCount > 0 && (
+          <div className="mt-1 px-1 text-[10px] text-muted-foreground">
+            {hiddenCount} hidden by filter
+          </div>
+        )}
       </div>
       <div className="flex-1 overflow-y-auto py-1 px-1">
         {visibleRepos.length === 0 && (

@@ -22,6 +22,8 @@ function ToastItem({ toast }: { toast: Toast }) {
   const Icon = ICONS[toast.variant];
 
   useEffect(() => {
+    // Errors stay on screen until the user dismisses them — they usually
+    // contain CLI output the user may need to copy.
     if (toast.variant === "error") return;
     const timer = setTimeout(() => dismiss(toast.id), AUTO_DISMISS_MS);
     return () => clearTimeout(timer);
@@ -33,7 +35,7 @@ function ToastItem({ toast }: { toast: Toast }) {
         "pointer-events-auto flex items-start gap-2 rounded-md border px-3 py-2 shadow-md min-w-[260px] max-w-sm text-sm",
         STYLES[toast.variant],
       )}
-      role="status"
+      role={toast.variant === "error" ? "alert" : "status"}
     >
       <Icon className="h-4 w-4 mt-0.5 shrink-0" />
       <div className="flex-1 min-w-0">
@@ -45,9 +47,10 @@ function ToastItem({ toast }: { toast: Toast }) {
         )}
       </div>
       <button
+        type="button"
         onClick={() => dismiss(toast.id)}
         className="text-muted-foreground hover:text-foreground shrink-0"
-        aria-label="Dismiss"
+        aria-label="Dismiss notification"
       >
         <X className="h-3.5 w-3.5" />
       </button>
@@ -59,7 +62,12 @@ export function Toaster() {
   const toasts = useToastStore((s) => s.toasts);
   if (toasts.length === 0) return null;
   return (
-    <div className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2">
+    <div
+      className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2"
+      aria-live="polite"
+      aria-atomic="false"
+      aria-label="Notifications"
+    >
       {toasts.map((t) => (
         <ToastItem key={t.id} toast={t} />
       ))}
