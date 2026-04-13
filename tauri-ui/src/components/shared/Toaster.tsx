@@ -60,10 +60,13 @@ function ToastItem({ toast }: { toast: Toast }) {
 
 export function Toaster() {
   const toasts = useToastStore((s) => s.toasts);
-  if (toasts.length === 0) return null;
+  // The live region must exist in the DOM *before* content is added, or
+  // screen readers won't announce the first toast — so render the container
+  // unconditionally and only toggle pointer events when it's empty.
   return (
     <div
       className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2"
+      role="region"
       aria-live="polite"
       aria-atomic="false"
       aria-label="Notifications"

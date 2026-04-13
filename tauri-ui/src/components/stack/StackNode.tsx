@@ -9,6 +9,12 @@ import type { StatusBranch } from "../../types/ezstack";
 
 const DND_MIME = "application/x-ezstack-branch";
 
+// Module-level ref for the branch currently being dragged. Needed because
+// the HTML Drag-and-Drop spec blanks dataTransfer.getData() during dragover
+// for security, so dropzones can't read the payload until drop fires. We
+// fall back to this ref to decide whether to show the highlight.
+let currentDragSource: string | null = null;
+
 export interface StackNodeActions {
   onSync?: (branchName: string) => void;
   onPush?: (branchName: string) => void;
@@ -42,15 +48,29 @@ export function StackNode({ branch, isSelected, onClick, actions }: StackNodePro
   const handleDragStart = (e: DragEvent<HTMLButtonElement>) => {
     e.dataTransfer.setData(DND_MIME, branch.name);
     e.dataTransfer.effectAllowed = "move";
+    currentDragSource = branch.name;
+  };
+
+  const handleDragEnd = () => {
+    currentDragSource = null;
   };
 
   const handleDragOver = (e: DragEvent<HTMLButtonElement>) => {
     if (!canReceiveDrop) return;
     if (!e.dataTransfer.types.includes(DND_MIME)) return;
+    // If we know the source branch (same-window drag), pre-validate so
+    // invalid targets never light up — the user gets immediate feedback
+    // instead of a rejection toast on drop.
+    if (
+      currentDragSource &&
+      actions?.canReparentTo &&
+      !actions.canReparentTo(currentDragSource, branch.name)
+    ) {
+      e.dataTransfer.dropEffect = "none";
+      if (dragOver) setDragOver(false);
+      return;
+    }
     e.preventDefault();
-    // dataTransfer.getData() is empty during dragover for security reasons,
-    // so we can't consult canReparentTo here with the dragged name. We always
-    // show the highlight and validate on drop.
     e.dataTransfer.dropEffect = "move";
     if (!dragOver) setDragOver(true);
   };
@@ -69,9 +89,9 @@ export function StackNode({ branch, isSelected, onClick, actions }: StackNodePro
     const dragged = e.dataTransfer.getData(DND_MIME);
     if (!dragged) return;
     e.preventDefault();
-    // Defer cycle / self-drop / same-parent validation to the caller so it
-    // can surface a toast with repo-wide context. The caller is responsible
-    // for invoking onReparentTo only when the drop is actually valid.
+    // The dragover handler suppresses highlight on invalid drops, but the
+    // drop event can still fire (e.g. if canReparentTo was absent). The
+    // caller is still responsible for final validation and user feedback.
     actions!.onReparentTo!(dragged, branch.name);
   };
 
@@ -110,6 +130,7 @@ export function StackNode({ branch, isSelected, onClick, actions }: StackNodePro
         onContextMenu={actions && menuItems.length > 0 ? onContextMenu : undefined}
         draggable={canReceiveDrop}
         onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
