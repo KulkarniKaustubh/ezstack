@@ -55,6 +55,10 @@ function M.setup(opts)
   -- without the plugin/ directory on rtp.
   require("ezstack.commands").register()
 
+  vim.api.nvim_create_user_command("EzsActions", function()
+    M.actions_menu()
+  end, { desc = "ezstack: quick action menu" })
+
   -- Setup fugitive / EzstackChanged auto-refresh integration
   if M.config.auto_refresh then
     require("ezstack.fugitive").setup()
@@ -116,13 +120,61 @@ function M.statusline()
   for _, stack in ipairs(stacks) do
     for _, branch in ipairs(stack.branches or {}) do
       if branch.is_current then
-        local stack_label = stack.name or ("Stack " .. (stack.hash or ""):sub(1, 7))
-        return string.format(" %s | %s", branch.name, stack_label)
+        local pr = ""
+        if branch.pr_number and branch.pr_number > 0 then
+          local state = branch.pr_state and branch.pr_state ~= "" and (" " .. branch.pr_state) or ""
+          pr = string.format(" PR#%d%s", branch.pr_number, state)
+        end
+        return string.format(" %s%s", branch.name, pr)
       end
     end
   end
 
   return ""
+end
+
+--- `:EzsActions` — quick action menu (sync/push/pr) via vim.ui.select.
+function M.actions_menu()
+  local items = { "sync", "push", "push --stack", "pr create", "pr update", "pr open" }
+  vim.ui.select(items, { prompt = "ezstack action:" }, function(choice)
+    if not choice then
+      return
+    end
+    local cli = require("ezstack.cli")
+    if choice == "sync" then
+      cli.run_in_terminal({ "sync" })
+    elseif choice == "push" then
+      vim.notify("Pushing branch...", vim.log.levels.INFO)
+      cli.push({}, function(err)
+        if err then
+          vim.notify("Push failed: " .. err, vim.log.levels.ERROR)
+        else
+          vim.notify("Branch pushed", vim.log.levels.INFO)
+        end
+      end)
+    elseif choice == "push --stack" then
+      vim.notify("Pushing stack...", vim.log.levels.INFO)
+      cli.push_stack({}, function(err)
+        if err then
+          vim.notify("Push failed: " .. err, vim.log.levels.ERROR)
+        else
+          vim.notify("Stack pushed", vim.log.levels.INFO)
+        end
+      end)
+    elseif choice == "pr create" then
+      vim.cmd("Ezs pr create")
+    elseif choice == "pr update" then
+      cli.pr_update(nil, function(err)
+        if err then
+          vim.notify("PR update failed: " .. err, vim.log.levels.ERROR)
+        else
+          vim.notify("PR updated", vim.log.levels.INFO)
+        end
+      end)
+    elseif choice == "pr open" then
+      vim.cmd("Ezs pr open")
+    end
+  end)
 end
 
 --- Navigate to a worktree path using the configured goto strategy.
