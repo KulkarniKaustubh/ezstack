@@ -20,30 +20,22 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Extract release notes from CHANGELOG.md
+      - name: Generate release notes with git-cliff
         id: notes
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          NOTES_FILE="${RUNNER_TEMP}/RELEASE_NOTES.md"
-          awk -v ver="$VERSION" '
-            /^## \[/ {
-              if (found) exit
-              if (index($0, "[" ver "]") > 0) { found=1; next }
-            }
-            found { print }
-          ' CHANGELOG.md | awk 'NF {p=1} p' > "$NOTES_FILE"
-          if [ ! -s "$NOTES_FILE" ]; then
-            echo "::error::No CHANGELOG.md section found for version $VERSION"
-            exit 1
-          fi
-          echo "path=$NOTES_FILE" >> "$GITHUB_OUTPUT"
-          echo "--- Release notes ---"
-          cat "$NOTES_FILE"
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: ${{ runner.temp }}/RELEASE_NOTES.md
+
+      - name: Preview release notes
+        run: cat "${{ steps.notes.outputs.changelog }}"
 
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean --release-notes=${{ steps.notes.outputs.path }}
+          args: release --clean --release-notes=${{ steps.notes.outputs.changelog }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
