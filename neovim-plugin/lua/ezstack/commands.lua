@@ -15,6 +15,13 @@ local SUBCOMMAND_NAMES = {
 ---@type table<string, fun(args: string[], raw_args: string)>
 local subcommands = {}
 
+--- Exposed for tests: read-only access to the dispatch table and the
+--- canonical list of subcommand names. The invariant enforced by
+--- `tests/commands_spec.lua` is that every name in `SUBCOMMAND_NAMES` has a
+--- handler in `subcommands`.
+M._subcommands = subcommands
+M._subcommand_names = SUBCOMMAND_NAMES
+
 -- ── Helpers ──
 
 --- Notify on async result with a friendly label.
@@ -465,16 +472,42 @@ subcommands["goto"] = function(args)
   end, { force = true, all = true })
 end
 
---- `:Ezs diff [branch]` — show diff vs parent (or named branch) in a split.
-subcommands["diff"] = function(args)
-  local target = args[1]
-  local function show(base)
-    ui.show_diff(base)
+--- Returns true if any arg looks like a git-diff flag or an explicit `--`
+--- terminator. Used by `:Ezs diff` to decide between the in-buffer viewer
+--- and raw CLI passthrough.
+---@param args string[]
+---@return boolean
+local function looks_like_diff_passthrough(args)
+  for _, a in ipairs(args) do
+    if a == "--" or (type(a) == "string" and a:sub(1, 1) == "-") then
+      return true
+    end
   end
-  if target then
-    show(target)
+  return false
+end
+M._looks_like_diff_passthrough = looks_like_diff_passthrough
+
+--- `:Ezs diff [branch] [-- git-diff-options]`
+---
+--- Three calling conventions:
+---   1. No args          — show `parent...HEAD` in a scratch split.
+---   2. `[branch]`       — show `<branch>...HEAD` in a scratch split.
+---   3. Any `-flag`/`--` — forward the raw arg list to `ezs diff` in a
+---                         terminal (preserves `--stat`, `--json`, etc.).
+subcommands["diff"] = function(args)
+  if looks_like_diff_passthrough(args) then
+    local cli_args = { "diff" }
+    vim.list_extend(cli_args, args)
+    cli.run_in_terminal(cli_args)
     return
   end
+
+  local target = args[1]
+  if target then
+    ui.show_diff(target)
+    return
+  end
+
   cli.list_stacks(function(err, stacks)
     if err then
       vim.notify("Failed to list stacks: " .. err, vim.log.levels.ERROR)
@@ -494,13 +527,19 @@ subcommands["diff"] = function(args)
       vim.notify("No parent branch found for current branch", vim.log.levels.WARN)
       return
     end
-    show(parent)
+    ui.show_diff(parent)
   end, { force = true, all = true })
 end
 
 --- `:Ezs graph` — render the stack as an ASCII tree.
 subcommands["graph"] = function()
   ui.show_graph()
+end
+
+--- `:Ezs actions` — open the quick-action menu. Mirror of `:EzsActions`
+--- so the subcommand advertised in completion actually dispatches.
+subcommands["actions"] = function()
+  ezstack.actions_menu()
 end
 
 --- `:Ezs commit [args]`
@@ -510,19 +549,15 @@ subcommands["commit"] = function(args)
   cli.run_in_terminal(cli_args)
 end
 
---- `:Ezs amend` — amend last commit then run `ezs sync` to update children.
-subcommands["amend"] = function()
-  local result = vim.system(
-    { "git", "commit", "--amend", "--no-edit" },
-    { text = true, cwd = vim.fn.getcwd() }
-  ):wait()
-  if result.code ~= 0 then
-    local err = vim.trim(result.stderr or "")
-    vim.notify("git amend failed: " .. (err ~= "" and err or "code " .. result.code), vim.log.levels.ERROR)
-    return
-  end
-  vim.notify("Amended; syncing children...", vim.log.levels.INFO)
-  cli.run_in_terminal({ "sync" })
+--- `:Ezs amend [args]` — amend HEAD and auto-sync children.
+---
+--- Thin passthrough to `ezs amend`, which already handles the amend +
+--- child rebase in-process. Forwarding `args` preserves `-m "msg"`,
+--- `--no-edit`, `--merge`, `--rebase`, and any other git-commit flag.
+subcommands["amend"] = function(args)
+  local cli_args = { "amend" }
+  vim.list_extend(cli_args, args)
+  cli.run_in_terminal(cli_args)
 end
 
 --- `:Ezs stack [branch] [parent]`

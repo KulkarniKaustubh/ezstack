@@ -57,7 +57,7 @@ set runtimepath+=/path/to/ezstack/neovim-plugin
 
 ```lua
 require("ezstack").setup({
-  cli_path = "ezs",            -- path to ezs binary (auto-discovered)
+  cli_path = "ezs",             -- path to ezs binary (auto-discovered)
   auto_refresh = true,          -- refresh viewer on FugitiveChanged / EzstackChanged
   viewer_position = "botright", -- split position for viewer
   viewer_height = 15,           -- viewer window height
@@ -65,6 +65,9 @@ require("ezstack").setup({
   goto_strategy = "tcd",        -- "tcd" (tab-local), "cd" (global), "lcd" (window-local)
   goto_close_buffers = false,   -- close unmodified buffers from old worktree on goto
   goto_open_explorer = true,    -- open file explorer at new worktree root
+  default_keymaps = false,      -- install ]s/[s for stack nav (opt-in, never clobbers)
+  statusline_format = "stack",  -- "stack" | "pr" | "full"
+  welcome = true,               -- show one-time welcome notification on first setup
 })
 ```
 
@@ -91,9 +94,13 @@ All commands are exposed under `:Ezs`. Tab completion is available for subcomman
 | `:Ezs pr draft` | Toggle PR draft status |
 | `:Ezs pr stack` | Update stack info in all PRs |
 | `:Ezs pr open` | Open the current branch's PR in the browser |
-| `:Ezs diff [-- opts]` | Show diff against parent branch (terminal) |
+| `:Ezs diff` | Show diff vs parent branch in a scratch split (async) |
+| `:Ezs diff <branch>` | Show `<branch>...HEAD` in a scratch split |
+| `:Ezs diff -- <opts>` | Forward to `ezs diff` (supports `--stat`, `--json`, ...) |
+| `:Ezs graph` | ASCII tree of all stacks in a scratch split |
+| `:Ezs actions` / `:EzsActions` | Quick-action menu (sync, push, PR ops, ...) |
 | `:Ezs commit [opts]` | Commit and auto-sync child branches (terminal) |
-| `:Ezs amend [opts]` | Amend last commit and auto-sync children (terminal) |
+| `:Ezs amend [opts]` | Amend last commit and auto-sync children (args forwarded to `ezs amend`) |
 | `:Ezs delete [branch]` | Delete a branch and worktree |
 | `:Ezs reparent [branch] [parent]` | Change branch parent |
 | `:Ezs rename [hash] [name]` | Name or rename a stack |
@@ -164,6 +171,7 @@ require("telescope").load_extension("ezstack")
 ### Telescope Keymaps
 
 **Branches picker:**
+- Each entry shows branch name, PR number/state, CI summary (when available from `ezs list --json`), and `+adds/-dels` vs parent.
 - `<CR>` — go to worktree
 - `<C-o>` — open PR in browser
 - `<C-d>` — delete branch
@@ -183,6 +191,38 @@ When Telescope is not installed, `:Ezs goto` falls back to `vim.ui.select`.
 - Fires `User EzstackGoto` autocommand for custom hooks
 - Integrates with `nvim-tree`, `neo-tree`, and `oil` file explorers
 
+## Quick Action Menu
+
+`:EzsActions` (also `:Ezs actions`) opens a `vim.ui.select` menu with the most common operations: sync current branch / stack, `sync --continue`, push branch / stack, PR create/update/draft/merge/open/stack, new/delete/goto branch, and `graph`. Bind it if you use it a lot:
+
+```lua
+vim.keymap.set("n", "<leader>ea", "<cmd>EzsActions<cr>", { desc = "ezstack actions" })
+```
+
+## Stack Graph
+
+`:Ezs graph` renders every stack as an ASCII tree in a scratch split. Use it when you want a quick mental model of the stack without the full viewer UI. Press `q` to close.
+
+```
+Stack: my-feat [a1b2c3d]  root: main
+├──   feat-1  PR #100 [OPEN]
+│   └── * feat-2  PR #101 [DRAFT]
+└──   feat-3  PR #102 [OPEN]
+```
+
+Branches whose `parent` chain does not reach `stack.root` are surfaced under an `(orphans — parent not reachable from root)` subheader rather than silently dropped.
+
+## Default Keymaps
+
+When `default_keymaps = true`, the plugin installs two opt-in normal-mode mappings:
+
+| Key | Action |
+|-----|--------|
+| `]s` | `:Ezs down` — navigate toward children |
+| `[s` | `:Ezs up` — navigate toward the parent |
+
+We deliberately use `]s`/`[s` (Vim's "next/prev spell error" motions, inert unless `spell` is on) and **never** the built-in motions `gn`/`gp`. The installer checks `maparg()` and refuses to overwrite any mapping you already have, so it is safe to turn on even if you bind `]s` to something else.
+
 ## Statusline
 
 ```lua
@@ -197,7 +237,19 @@ require("lualine").setup({
 })
 ```
 
-Returns a string like ` feature-1 | my-feature [a1b2c3d]` or `""`. Results are cached (default: 5s) to avoid hammering the CLI.
+The `statusline_format` setup option picks what the component returns:
+
+| Value | Output |
+|-------|--------|
+| `"stack"` *(default)* | ` feature-1 \| my-feature [a1b2c3d]` |
+| `"pr"` | ` feature-1 \| PR#42 OPEN` (PR section omitted when there is no PR) |
+| `"full"` | ` feature-1 \| my-feature [a1b2c3d] \| PR#42 OPEN` |
+
+Returns `""` when the current buffer is not inside any stack. Results are cached for `statusline_cache_ttl` ms (default 5s) to avoid hammering the CLI.
+
+## Welcome Notification
+
+On the first call to `setup()`, the plugin emits a one-time `vim.notify` pointing at `:Ezs`, `:Ezs graph`, `:Ezs new`, and `:EzsActions`. The idempotency marker lives under `stdpath("state")/ezstack/welcomed` — never under `~/.ezstack` (that directory belongs to the `ezs` CLI). Set `welcome = false` in `setup()` to suppress it entirely.
 
 ## Fugitive Integration
 
@@ -209,8 +261,21 @@ The plugin also fires its own `User EzstackChanged` autocommand after every CLI 
 
 | Event | Pattern | Description |
 |-------|---------|-------------|
+| `User` | `EzstackSetup` | Fired at the end of `setup()` (useful for test harnesses and deferred wiring) |
 | `User` | `EzstackGoto` | Fired after switching worktrees via `:Ezs goto` |
 | `User` | `EzstackChanged` | Fired after CLI mutations (sync, delete, etc.) |
+
+## Tests
+
+The plugin ships with a [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) test suite under `neovim-plugin/tests/`. Run it from the repo root:
+
+```bash
+nvim --headless --noplugin \
+  -u neovim-plugin/tests/minimal_init.lua \
+  -c "PlenaryBustedDirectory neovim-plugin/tests/ {minimal_init = 'neovim-plugin/tests/minimal_init.lua', sequential = true}"
+```
+
+`minimal_init.lua` auto-discovers `plenary.nvim` from `vendor/plenary.nvim`, `$EZSTACK_PLENARY`, or common package-manager install paths. The suite covers subcommand-dispatch completeness (every advertised `:Ezs` name has a handler), statusline formatters, graph rendering (including orphans), default-keymap installation, and welcome-marker idempotency.
 
 ## Help
 

@@ -733,32 +733,151 @@ function M._show_help()
   vim.keymap.set("n", "<Esc>", "<cmd>close<cr>", { buffer = bufnr, silent = true })
 end
 
---- Open a scratch split with `git diff <base>...HEAD` output.
----@param base string
-function M.show_diff(base)
-  local result = vim.system(
-    { "git", "diff", base .. "...HEAD" },
-    { text = true, cwd = vim.fn.getcwd() }
-  ):wait()
-  if result.code ~= 0 then
-    local err = vim.trim(result.stderr or "")
-    vim.notify("git diff failed: " .. (err ~= "" and err or "code " .. result.code), vim.log.levels.ERROR)
-    return
-  end
-  local lines = vim.split(result.stdout or "", "\n")
-  if #lines == 1 and lines[1] == "" then
-    lines = { "(no diff vs " .. base .. ")" }
-  end
+--- Open a read-only scratch buffer in a split. Used by both `show_diff`
+--- and `show_graph` to share one consistent UI pattern (bottom split,
+--- nofile, wipe-on-hide, `q` to close).
+---@param opts { name: string, filetype: string, split: "split"|"vsplit", lines: string[] }
+---@return integer bufnr
+local function open_scratch(opts)
   local bufnr = vim.api.nvim_create_buf(false, true)
-  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, opts.lines)
   vim.bo[bufnr].modifiable = false
   vim.bo[bufnr].buftype = "nofile"
   vim.bo[bufnr].bufhidden = "wipe"
-  vim.bo[bufnr].filetype = "diff"
-  pcall(vim.api.nvim_buf_set_name, bufnr, "ezstack://diff/" .. base)
-  vim.cmd("botright vsplit")
+  if opts.filetype and opts.filetype ~= "" then
+    vim.bo[bufnr].filetype = opts.filetype
+  end
+  pcall(vim.api.nvim_buf_set_name, bufnr, opts.name)
+  vim.cmd("botright " .. opts.split)
   vim.api.nvim_win_set_buf(0, bufnr)
   vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = bufnr, silent = true, desc = "Close" })
+  return bufnr
+end
+
+--- Open a scratch split with `git diff <base>...HEAD` output. Runs git
+--- asynchronously via `vim.system` so the UI thread never blocks on large
+--- diffs. Falls back to a short placeholder when the diff is empty.
+---@param base string
+function M.show_diff(base)
+  vim.system(
+    { "git", "diff", base .. "...HEAD" },
+    { text = true, cwd = vim.fn.getcwd() },
+    function(result)
+      vim.schedule(function()
+        if result.code ~= 0 then
+          local err = vim.trim(result.stderr or "")
+          vim.notify(
+            "git diff failed: " .. (err ~= "" and err or "code " .. result.code),
+            vim.log.levels.ERROR
+          )
+          return
+        end
+        local lines = vim.split(result.stdout or "", "\n", { plain = true })
+        -- Drop the single trailing empty line that `vim.split` adds when
+        -- the stdout ends with "\n"; keep the "empty diff" placeholder.
+        if #lines > 0 and lines[#lines] == "" then
+          table.remove(lines)
+        end
+        if #lines == 0 then
+          lines = { "(no diff vs " .. base .. ")" }
+        end
+        open_scratch({
+          name = "ezstack://diff/" .. base,
+          filetype = "diff",
+          split = "vsplit",
+          lines = lines,
+        })
+      end)
+    end
+  )
+end
+
+--- Render a list of stacks as ASCII-tree lines, one stack per block with
+--- a blank separator between blocks. Exposed (as `M._render_graph_lines`)
+--- so tests can exercise the pure rendering logic without touching Neovim
+--- buffers or the CLI.
+---
+--- Orphan handling: any branch whose `parent` chain does not terminate at
+--- `stack.root` is rendered under an `(orphans)` subheader rather than
+--- being silently dropped. This can happen when config is mid-migration.
+---
+---@param stacks table[] As returned by `ezs list --json`
+---@return string[] lines
+function M._render_graph_lines(stacks)
+  local lines = {}
+  for idx, stack in ipairs(stacks) do
+    if idx > 1 then
+      table.insert(lines, "")
+    end
+    local hash = stack.hash or ""
+    local label = stack.name and (stack.name .. " [" .. hash .. "]") or hash
+    table.insert(lines, "Stack: " .. label .. "  root: " .. (stack.root or "?"))
+    local branches = stack.branches or {}
+    if #branches == 0 then
+      table.insert(lines, "  (empty)")
+    else
+      -- Build parent -> [child] adjacency.
+      local children = {}
+      for _, b in ipairs(branches) do
+        children[b.parent] = children[b.parent] or {}
+        table.insert(children[b.parent], b)
+      end
+
+      -- Track which branches are reachable from the stack root so we can
+      -- surface the rest as orphans.
+      local reachable = {}
+      local function format_pr(b)
+        if not b.pr_number or b.pr_number <= 0 then
+          return ""
+        end
+        local pr = string.format("  PR #%d", b.pr_number)
+        if b.pr_state and b.pr_state ~= "" then
+          pr = pr .. " [" .. b.pr_state .. "]"
+        end
+        return pr
+      end
+      local function walk(parent_name, prefix)
+        local kids = children[parent_name] or {}
+        for i, b in ipairs(kids) do
+          if reachable[b.name] then
+            -- Defensive: avoid infinite recursion on cycles.
+            goto continue
+          end
+          reachable[b.name] = true
+          local is_last = (i == #kids)
+          local connector = is_last and "└── " or "├── "
+          local marker = b.is_current and "* " or "  "
+          table.insert(lines, prefix .. connector .. marker .. b.name .. format_pr(b))
+          walk(b.name, prefix .. (is_last and "    " or "│   "))
+          ::continue::
+        end
+      end
+      walk(stack.root, "")
+
+      -- Collect orphans (branches not reached from root) and render them
+      -- under a labelled block with `?` as their pseudo-parent marker.
+      local orphans = {}
+      for _, b in ipairs(branches) do
+        if not reachable[b.name] then
+          table.insert(orphans, b)
+        end
+      end
+      if #orphans > 0 then
+        table.insert(lines, "  (orphans — parent not reachable from root)")
+        for i, b in ipairs(orphans) do
+          local is_last = (i == #orphans)
+          local connector = is_last and "  └── " or "  ├── "
+          local marker = b.is_current and "* " or "  "
+          local parent = b.parent and (" (parent: " .. b.parent .. ")") or ""
+          table.insert(
+            lines,
+            connector .. marker .. b.name .. format_pr(b) .. parent
+          )
+        end
+      end
+    end
+  end
+  return lines
 end
 
 --- Render the stack list as an ASCII tree in a scratch buffer.
@@ -768,56 +887,16 @@ function M.show_graph()
       vim.notify("ezstack: " .. err, vim.log.levels.ERROR)
       return
     end
-    if #stacks == 0 then
+    if not stacks or #stacks == 0 then
       vim.notify("No stacks found", vim.log.levels.INFO)
       return
     end
-    local lines = {}
-    for idx, stack in ipairs(stacks) do
-      if idx > 1 then
-        table.insert(lines, "")
-      end
-      local label = stack.name and (stack.name .. " [" .. stack.hash .. "]") or stack.hash
-      table.insert(lines, "Stack: " .. label .. "  root: " .. stack.root)
-      local branches = stack.branches or {}
-      if #branches == 0 then
-        table.insert(lines, "  (empty)")
-      else
-        local sorted = sort_branches(branches, stack.root)
-        local children = {}
-        for _, b in ipairs(sorted) do
-          children[b.parent] = children[b.parent] or {}
-          table.insert(children[b.parent], b)
-        end
-        local function walk(parent_name, prefix)
-          local kids = children[parent_name] or {}
-          for i, b in ipairs(kids) do
-            local is_last = (i == #kids)
-            local connector = is_last and "└── " or "├── "
-            local marker = b.is_current and "* " or "  "
-            local pr = ""
-            if b.pr_number and b.pr_number > 0 then
-              pr = string.format("  PR #%d", b.pr_number)
-              if b.pr_state and b.pr_state ~= "" then
-                pr = pr .. " [" .. b.pr_state .. "]"
-              end
-            end
-            table.insert(lines, prefix .. connector .. marker .. b.name .. pr)
-            walk(b.name, prefix .. (is_last and "    " or "│   "))
-          end
-        end
-        walk(stack.root, "")
-      end
-    end
-    local bufnr = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
-    vim.bo[bufnr].modifiable = false
-    vim.bo[bufnr].buftype = "nofile"
-    vim.bo[bufnr].bufhidden = "wipe"
-    pcall(vim.api.nvim_buf_set_name, bufnr, "ezstack://graph")
-    vim.cmd("botright split")
-    vim.api.nvim_win_set_buf(0, bufnr)
-    vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = bufnr, silent = true, desc = "Close" })
+    open_scratch({
+      name = "ezstack://graph",
+      filetype = "",
+      split = "split",
+      lines = M._render_graph_lines(stacks),
+    })
   end, { force = true, all = true })
 end
 
