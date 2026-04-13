@@ -25,6 +25,8 @@ import { AgentFeatureDialog } from "./components/operations/AgentFeatureDialog";
 import { ConnectRemoteDialog } from "./components/operations/ConnectRemoteDialog";
 import type { StackNodeActions } from "./components/stack/StackNode";
 import type { SshConnection, RepoConfig } from "./types/ezstack";
+import { checkReparent, describeRejection } from "./lib/reparent";
+import { notify } from "./store/toast-store";
 import * as ezs from "./commands/ezs";
 
 type DialogState =
@@ -221,19 +223,31 @@ export default function App() {
   const stackNodeActions: StackNodeActions | undefined = selectedRepoPath
     ? {
         onSync: (branchName) => setDialog({ type: "sync", branch: branchName }),
-        onPush: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath)),
+        onPush: (branchName) => runAndRefresh(() => ezs.pushBranch(selectedRepoPath), `Push ${branchName}`),
         onCreatePR: (branchName) => setDialog({ type: "pr-create", branch: branchName }),
-        onUpdatePR: (branchName) => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, branchName)),
+        onUpdatePR: (branchName) => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, branchName), `Update PR ${branchName}`),
         onOpenAgent: (branchName) => {
           const stack = stacks.find((s) => s.branches.some((b) => b.name === branchName));
           if (stack) ezs.openAgent(selectedRepoPath, stack.hash, branchName);
         },
         onReparent: (branchName) => setDialog({ type: "reparent", branch: branchName }),
-        onReparentTo: (branchName, newParent) =>
+        canReparentTo: (branchName, newParent) =>
+          checkReparent(stacks, branchName, newParent).ok,
+        onReparentTo: (branchName, newParent) => {
+          const check = checkReparent(stacks, branchName, newParent);
+          if (!check.ok) {
+            notify({
+              variant: "info",
+              title: "Reparent skipped",
+              description: describeRejection(check.reason, branchName, newParent),
+            });
+            return;
+          }
           runAndRefresh(
             () => ezs.reparentBranch(selectedRepoPath, branchName, newParent),
-            `Reparent ${branchName}`,
-          ),
+            `Reparent ${branchName} onto ${newParent}`,
+          );
+        },
         onDelete: (branchName) => setDialog({ type: "delete", branch: branchName }),
       }
     : undefined;
@@ -249,7 +263,7 @@ export default function App() {
   const handleSyncStack = useCallback(
     (_stackHash: string) => {
       if (!selectedRepoPath) return;
-      runAndRefresh(() => ezs.syncBranch(selectedRepoPath, "stack"));
+      runAndRefresh(() => ezs.syncBranch(selectedRepoPath, "stack"), "Sync stack");
     },
     [selectedRepoPath, runAndRefresh],
   );
@@ -370,7 +384,7 @@ export default function App() {
             forStack={forStack}
             isLoading={operationLoading}
             onSubmit={async (name, parent) => {
-              await runAndRefresh(() => ezs.createBranch(selectedRepoPath, name, parent));
+              await runAndRefresh(() => ezs.createBranch(selectedRepoPath, name, parent), `Create ${name}`);
               setDialog({ type: "none" });
             }}
           />
@@ -393,7 +407,7 @@ export default function App() {
               branchName={dialog.branch}
               isLoading={operationLoading}
               onSubmit={async (force) => {
-                await runAndRefresh(() => ezs.deleteBranch(selectedRepoPath, dialog.branch, force));
+                await runAndRefresh(() => ezs.deleteBranch(selectedRepoPath, dialog.branch, force), `Delete ${dialog.branch}`);
                 selectBranch(null);
                 setDialog({ type: "none" });
               }}
@@ -407,7 +421,7 @@ export default function App() {
               branchName={dialog.branch}
               isLoading={operationLoading}
               onSubmit={async (title, body, draft) => {
-                await runAndRefresh(() => ezs.prCreate(selectedRepoPath, title, body || undefined, draft, dialog.branch));
+                await runAndRefresh(() => ezs.prCreate(selectedRepoPath, title, body || undefined, draft, dialog.branch), `Create PR for ${dialog.branch}`);
                 setDialog({ type: "none" });
               }}
             />
@@ -421,7 +435,7 @@ export default function App() {
               prNumber={dialog.prNumber}
               isLoading={operationLoading}
               onSubmit={async (method) => {
-                await runAndRefresh(() => ezs.prMerge(selectedRepoPath, method, dialog.branch));
+                await runAndRefresh(() => ezs.prMerge(selectedRepoPath, method, dialog.branch), `Merge PR for ${dialog.branch}`);
                 setDialog({ type: "none" });
               }}
             />
@@ -435,7 +449,7 @@ export default function App() {
               stacks={stacks}
               isLoading={operationLoading}
               onSubmit={async (newParent) => {
-                await runAndRefresh(() => ezs.reparentBranch(selectedRepoPath, dialog.branch, newParent));
+                await runAndRefresh(() => ezs.reparentBranch(selectedRepoPath, dialog.branch, newParent), `Reparent ${dialog.branch} onto ${newParent}`);
                 setDialog({ type: "none" });
               }}
             />
@@ -460,7 +474,7 @@ export default function App() {
               currentName={stacks.find((s) => s.hash === dialog.stackHash)?.name || ""}
               isLoading={operationLoading}
               onSubmit={async (name) => {
-                await runAndRefresh(() => ezs.renameStack(selectedRepoPath, dialog.stackHash, name));
+                await runAndRefresh(() => ezs.renameStack(selectedRepoPath, dialog.stackHash, name), "Rename stack");
                 setDialog({ type: "none" });
               }}
             />

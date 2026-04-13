@@ -128,12 +128,32 @@
         <div class="workflow-connector"></div>
         <div class="workflow-step" data-animate>
           <div class="workflow-step-number workflow-step-number-blue">3</div>
-          <h3>Repo picker &amp; theme</h3>
-          <p>Open any git repository through the native file picker. The app remembers recent repos. Toggle dark, light, or system theme from the title bar. Status bar shows repo path, current branch, and last refresh time.</p>
+          <h3>Repo picker, filter &amp; theme</h3>
+          <p>Every repo tracked in <code>~/.ezstack/config.json</code> shows up in the left sidebar. Type in the <strong>Filter</strong> box to narrow the list by name or full path &mdash; useful when a single config tracks dozens of repos. The currently selected repo stays visible even if it doesn't match the filter, so the main panel can never show a repo you can't click back to. Toggle dark, light, or system theme from the title bar.</p>
           <div class="step-code">
             <pre><code><span class="c-comment"># Keyboard shortcuts:</span>
-<span class="c-dim">Cmd+R</span>   <span class="c-comment"># refresh</span>
-<span class="c-dim">Cmd+N</span>   <span class="c-comment"># new branch</span></code></pre>
+<span class="c-dim">Cmd+R</span>    <span class="c-comment"># refresh</span>
+<span class="c-dim">Cmd+N</span>    <span class="c-comment"># new branch</span>
+<span class="c-dim">Esc</span>      <span class="c-comment"># clear selection / clear sidebar filter</span>
+<span class="c-dim">↑ / ↓</span>    <span class="c-comment"># move between branches in the selected stack</span>
+<span class="c-dim">← / →</span>    <span class="c-comment"># move between stacks (also [ and ])</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">4</div>
+          <h3>Reflog history &amp; drag-to-reparent</h3>
+          <p>The branch detail panel shows a <strong>History</strong> timeline with the most recent reflog entries for the selected branch &mdash; short hash, action (<code>checkout</code>, <code>rebase</code>, <code>commit</code>…), and the full message &mdash; so you can spot a bad rebase or an unexpected reset without dropping to a terminal. Over in the stack graph, branch nodes are <strong>drag-and-drop reparentable</strong>: drag a node onto another branch and the app runs <code>ezs reparent</code> with the configured sync strategy. Drops that would form a cycle (onto a descendant), drops onto the branch itself, and drops onto the current parent are blocked with an inline toast so you can't accidentally corrupt the stack graph.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Branch detail → History:</span>
+<span class="c-dim">abc1234  HEAD@{0}  checkout: moving from main to feat/b</span>
+<span class="c-dim">def5678  HEAD@{1}  rebase (start): checkout origin/main</span>
+<span class="c-dim">9ab0011  HEAD@{2}  commit: wire up the cycle check</span>
+
+<span class="c-comment"># Drag-to-reparent (valid vs. blocked):</span>
+<span class="c-green">feat/b  →  feat/x</span>          <span class="c-comment"># ok: same stack, new parent</span>
+<span class="c-red">feat/a  →  feat/c</span>          <span class="c-comment"># blocked: would create a cycle</span>
+<span class="c-red">feat/b  →  feat/b</span>          <span class="c-comment"># blocked: dropped on self</span></code></pre>
           </div>
         </div>
       </div>
@@ -184,6 +204,19 @@
             <pre><code><span class="c-dim">Agent</span>           <span class="c-comment"># branch- or stack-scoped</span>
 <span class="c-dim">Agent Feature</span>   <span class="c-comment"># describe the feature, get stacked PRs</span>
 <span class="c-dim">Agent Prompts</span>   <span class="c-comment"># view / edit / reset across all 3 layers</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">4</div>
+          <h3>Toast notifications</h3>
+          <p>Every mutation surfaces a toast in the bottom-right corner with a labelled title (<code>Push feat/auth succeeded</code>, <code>Reparent feat/b onto main failed</code>) and the first line of CLI output. Success toasts auto-dismiss after five seconds; error toasts stay until you dismiss them so you can copy the failure message. Toasts expose the right ARIA live-region roles so screen readers announce them, and the list is capped so a burst of operations can't flood the screen.</p>
+          <div class="step-code">
+            <pre><code><span class="c-green">✓ Sync stack succeeded</span>
+<span class="c-dim">  Rebased 3 branches onto main.</span>
+
+<span class="c-red">✗ Reparent feat/b onto feat/c failed</span>
+<span class="c-dim">  error: would create a cycle</span></code></pre>
           </div>
         </div>
       </div>

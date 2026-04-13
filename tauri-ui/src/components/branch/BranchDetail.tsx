@@ -188,8 +188,8 @@ export function BranchDetail({
             )}
             {reflog.length > 0 && (
               <ol className="space-y-1.5">
-                {reflog.map((entry, i) => (
-                  <li key={`${entry.hash}-${i}`} className="flex items-start gap-2 text-xs">
+                {reflog.map((entry) => (
+                  <li key={entry.relative} className="flex items-start gap-2 text-xs">
                     <span className="font-mono text-muted-foreground shrink-0 w-14 truncate">
                       {entry.hash}
                     </span>
