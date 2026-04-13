@@ -6,12 +6,16 @@ import (
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/hooks"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 	"github.com/spf13/pflag"
 )
 
 func Push(args []string) error {
+	if HasExamplesFlag("push", args) {
+		return nil
+	}
 	fs := pflag.NewFlagSet("push", pflag.ContinueOnError)
 	fs.Usage = func() {
 		fmt.Fprintf(os.Stderr, `%sPush current branch or entire stack%s
@@ -23,12 +27,16 @@ func Push(args []string) error {
     -s, --stack          Push all branches in the current stack
     -b, --branch <name>  Push a specific branch by name
     -f, --force          Force push
+    --verify             Require ~/.ezstack/hooks/pre-push to exist and pass
+    --all-remotes        Push to origin and the configured fork remote
     -h, --help           Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	stackFlag := fs.BoolP("stack", "s", false, "Push all branches in the current stack")
 	branchFlag := fs.StringP("branch", "b", "", "Push a specific branch by name")
 	force := fs.BoolP("force", "f", false, "Force push")
+	verifyFlag := fs.Bool("verify", false, "Require ~/.ezstack/hooks/pre-push to exist and pass")
+	allRemotesFlag := fs.Bool("all-remotes", false, "Push to origin and the configured fork remote")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -42,10 +50,26 @@ func Push(args []string) error {
 		return nil
 	}
 
+	if os.Getenv("EZS_AGENT_NO_PUSH") == "1" {
+		return fmt.Errorf("push blocked: ezs agent --no-push is in effect")
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
+
+	if *verifyFlag && !hooks.Exists("pre-push") {
+		return fmt.Errorf("--verify requires an executable hook at ~/.ezstack/hooks/pre-push")
+	}
+	if err := hooks.Run("pre-push", nil); err != nil {
+		return err
+	}
+	defer func() {
+		if hookErr := hooks.Run("post-push", nil); hookErr != nil {
+			ui.Warn(hookErr.Error())
+		}
+	}()
 
 	g := git.New(cwd)
 
@@ -60,7 +84,13 @@ func Push(args []string) error {
 	}
 
 	if *branchFlag != "" {
-		return pushSpecificBranch(g, *branchFlag, *force, getBranchRemote(*branchFlag))
+		remotes := pushTargets(*allRemotesFlag, getBranchRemote(*branchFlag))
+		for _, r := range remotes {
+			if err := pushSpecificBranch(g, *branchFlag, *force, r); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	if !*stackFlag {
@@ -68,7 +98,13 @@ func Push(args []string) error {
 		if err != nil {
 			return pushBranch(g, *force, "origin")
 		}
-		return pushBranch(g, *force, getBranchRemote(currentBranch))
+		remotes := pushTargets(*allRemotesFlag, getBranchRemote(currentBranch))
+		for _, r := range remotes {
+			if err := pushBranch(g, *force, r); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 
 	mgr, err := stack.NewReadOnlyManager(cwd)
@@ -81,7 +117,30 @@ func Push(args []string) error {
 		return err
 	}
 
-	return pushStack(g, mgr, currentStack, *force)
+	return pushStack(g, mgr, currentStack, *force, *allRemotesFlag)
+}
+
+// pushTargets returns the list of remotes a single push invocation should fan out to.
+// When allRemotes is true and the branch has a non-origin primary remote, both
+// "origin" and the primary remote are returned; the RemoteNoPush sentinel is
+// dropped so callers don't try to push a forbidden fork.
+func pushTargets(allRemotes bool, primary string) []string {
+	if !allRemotes {
+		return []string{primary}
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range []string{"origin", primary} {
+		if r == "" || r == config.RemoteNoPush || seen[r] {
+			continue
+		}
+		seen[r] = true
+		out = append(out, r)
+	}
+	if len(out) == 0 {
+		return []string{primary}
+	}
+	return out
 }
 
 func pushSpecificBranch(g *git.Git, branch string, force bool, remote string) error {
@@ -120,30 +179,36 @@ func pushBranch(g *git.Git, force bool, remote string) error {
 	return nil
 }
 
-func pushStack(g *git.Git, mgr *stack.Manager, s *config.Stack, force bool) error {
+func pushStack(g *git.Git, mgr *stack.Manager, s *config.Stack, force bool, allRemotes bool) error {
 	failed := 0
 	for _, b := range s.Branches {
 		if b.IsMerged {
 			continue
 		}
-		remote := ResolveBranchRemote(g, mgr, b.Name)
-		if remote == config.RemoteNoPush {
+		primary := ResolveBranchRemote(g, mgr, b.Name)
+		if primary == config.RemoteNoPush && !allRemotes {
 			ui.Warn(fmt.Sprintf("Skipping '%s' (fork does not allow maintainer push)", b.Name))
 			continue
 		}
-		args := []string{"push", "-u", remote, b.Name}
-		if force {
-			args = []string{"push", "-u", "--force-with-lease", remote, b.Name}
+		for _, remote := range pushTargets(allRemotes, primary) {
+			if remote == config.RemoteNoPush {
+				ui.Warn(fmt.Sprintf("Skipping '%s' on disallowed fork remote", b.Name))
+				continue
+			}
+			args := []string{"push", "-u", remote, b.Name}
+			if force {
+				args = []string{"push", "-u", "--force-with-lease", remote, b.Name}
+			}
+			if err := g.RunInteractive(args...); err != nil {
+				ui.Warn(fmt.Sprintf("Failed to push '%s' to %s: %v", b.Name, remote, err))
+				failed++
+				continue
+			}
+			ui.Success(fmt.Sprintf("Pushed '%s' to %s", b.Name, remote))
 		}
-		if err := g.RunInteractive(args...); err != nil {
-			ui.Warn(fmt.Sprintf("Failed to push '%s': %v", b.Name, err))
-			failed++
-			continue
-		}
-		ui.Success(fmt.Sprintf("Pushed '%s'", b.Name))
 	}
 	if failed > 0 {
-		return fmt.Errorf("%d branch(es) failed to push", failed)
+		return fmt.Errorf("%d push(es) failed", failed)
 	}
 	return nil
 }
