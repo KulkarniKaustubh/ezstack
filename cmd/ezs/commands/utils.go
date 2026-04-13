@@ -799,11 +799,12 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 				if bc == nil {
 					bc = &config.BranchCache{}
 				}
-				if bc.PRState != branch.PRState || (branch.IsMerged && !bc.IsMerged) {
+				// Reconcile cached IsMerged with live PR state. Without this,
+				// once a branch was cached as merged it stayed merged forever
+				// (e.g., a force-pushed-and-reopened PR would never sync again).
+				if bc.PRState != branch.PRState || bc.IsMerged != branch.IsMerged {
 					bc.PRState = branch.PRState
-					if branch.IsMerged {
-						bc.IsMerged = true
-					}
+					bc.IsMerged = branch.IsMerged
 					cache.SetBranchCache(branch.Name, bc)
 					changed = true
 				}
