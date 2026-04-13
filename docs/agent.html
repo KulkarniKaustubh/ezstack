@@ -42,6 +42,7 @@
         <a href="#work-session">Work Session</a>
         <a href="#feature-builder">Feature Builder</a>
         <a href="#prompts">Prompts</a>
+        <a href="#flags">Flags</a>
         <div class="nav-dropdown">
           <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
           <div class="nav-dropdown-menu">
@@ -326,6 +327,53 @@
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
             <span class="copy-label">Copy</span>
           </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Flags & Options -->
+  <section class="workflow-section" id="flags">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <h2>Flags &amp; options</h2>
+        <p>A few flags on <code>ezs agent</code> let you shape what the agent can do and see before it ever launches.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <h3><code>--no-push</code> &mdash; sandbox the agent</h3>
+          <p>Blocks the spawned agent from pushing by setting <code>EZS_AGENT_NO_PUSH=1</code> in the child process environment only &mdash; your parent shell is untouched. Use it when you want the agent to commit locally and leave the push decision to you.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--no-push</span>
+<span class="c-dim">Launching claude with EZS_AGENT_NO_PUSH=1 in child env...</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-step" data-animate>
+          <h3><code>--save-prompt &lt;path&gt;</code> &mdash; inspect the composed prompt</h3>
+          <p>Writes the fully composed prompt (shipped + custom + repo instructions, with all template variables resolved) to disk at <code>&lt;path&gt;</code> with <code>0600</code> permissions. Pairs well with <code>--dry-run</code> for audit and debugging workflows.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--dry-run</span> <span class="c-flag">--save-prompt</span> /tmp/prompt.md
+<span class="c-dim">Composed prompt written to /tmp/prompt.md (0600)</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-step" data-animate>
+          <h3><code>--preset &lt;name&gt;</code> &mdash; reusable instruction blocks</h3>
+          <p>Appends <code>~/.ezstack/agent-presets/&lt;name&gt;.md</code> to the composed prompt as an additional instruction block. Keep a library of per-task presets ("tdd", "refactor-only", "security-review") and opt in from the CLI without touching your base prompt files.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Launch with a preset</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--preset</span> tdd
+
+<span class="c-comment"># Stack multiple flags together</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent feature</span> <span class="c-flag">--preset</span> tdd <span class="c-flag">--no-push</span> <span class="c-str">"Add rate limiting"</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-step" data-animate>
+          <h3><code>--examples</code> &mdash; built-in cheatsheet</h3>
+          <p>Prints a focused set of <code>ezs agent</code> invocation examples covering the common shapes &mdash; work session, feature builder, dry-run, presets, sandboxed runs &mdash; so you don't have to leave the terminal to look them up.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--examples</span></code></pre>
+          </div>
         </div>
       </div>
     </div>

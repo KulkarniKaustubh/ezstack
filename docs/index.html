@@ -266,6 +266,48 @@
           <h3>Rich Stack Visualization</h3>
           <p>Tree-style branch display shows parent-child relationships at a glance. <code>ezs ls</code> includes <code>+/-</code> diff stats per branch and strikes through merged PRs.</p>
         </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+          </div>
+          <h3>Health Checks &amp; Live Status</h3>
+          <p><code>ezs doctor</code> validates your environment &mdash; git, <code>gh</code>, <code>fzf</code>, and config &mdash; in one pass. Run <code>ezs status --watch</code> for an auto-refreshing view of your stack as PRs and CI move.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+          </div>
+          <h3>Worktree Templates</h3>
+          <p><code>ezs new --template &lt;name&gt;</code> seeds fresh worktrees from <code>~/.ezstack/templates/&lt;name&gt;</code> &mdash; scaffold files, scratch notes, or env stubs on every new branch.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/></svg>
+          </div>
+          <h3>Cascade Delete</h3>
+          <p><code>ezs delete --cascade</code> removes a branch and every descendant in one shot &mdash; no more clicking through children to clean up an abandoned subtree.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><path d="M6 21V9a9 9 0 009 9"/></svg>
+          </div>
+          <h3>Draft the Whole Stack</h3>
+          <p><code>ezs pr --draft-all</code> opens draft PRs across every branch in your stack in a single command &mdash; perfect for kicking off a feature where you want everything visible but not yet ready.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+          </div>
+          <h3>Pre/Post Hooks</h3>
+          <p>Drop shell scripts into <code>~/.ezstack/hooks/</code> as <code>pre-commit</code>, <code>post-commit</code>, <code>pre-push</code>, <code>post-push</code>, <code>pre-sync</code>, or <code>post-sync</code>. Each hook gets rich env-var context and a defined exit-code contract to abort or continue the operation.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+          </div>
+          <h3>Discoverable CLI</h3>
+          <p>Every major command accepts <code>--examples</code> to print a focused cheatsheet, and unknown subcommands get did-you-mean suggestions so typos land you on the right command fast.</p>
+        </div>
       </div>
     </div>
   </section>
