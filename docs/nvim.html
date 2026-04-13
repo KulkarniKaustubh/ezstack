@@ -101,11 +101,11 @@
           <p>The viewer is a normal Neovim buffer &mdash; cursor position is preserved on refresh, and it plays nicely with windows, tabs, and your colorscheme.</p>
           <div class="step-code">
             <pre><code><span class="c-comment">" :Ezs opens the viewer</span>
-<span class="c-dim">Stack: my-feature [a1b2c3d]                          root: main</span>
-<span class="c-dim">-----------------------------------------------------------------</span>
-  <span class="c-green">> ├──</span> <span class="c-green">feature-1</span>     <span class="c-dim">PR #100</span> <span class="c-green">[OPEN]</span>    <span class="c-dim">CI: 3/3</span>     <span class="c-dim">+120 -8</span>
-    <span class="c-dim">├──</span> <span class="c-green">feature-2</span>     <span class="c-dim">PR #101</span> <span class="c-yellow">[DRAFT]</span>   <span class="c-dim">CI: pending</span> <span class="c-dim">+50 -2</span>
-    <span class="c-dim">└──</span> <span class="c-green">feature-3</span>     <span class="c-dim">[no PR]</span></code></pre>
+ <span class="c-dim">Stack: my-feature [a1b2c3d]                      root: main</span>
+ <span class="c-dim">─────────────────────────────────────────────────────────────────</span>
+ <span class="c-green">></span> <span class="c-dim">├──</span> <span class="c-green">feature-1</span>     <span class="c-dim">PR #100</span> <span class="c-green">[OPEN]</span>    <span class="c-dim">CI: 3/3</span>     <span class="c-dim">+120 -8</span>   <span class="c-dim">(→ main)</span>
+   <span class="c-dim">├──</span> <span class="c-green">feature-2</span>     <span class="c-dim">PR #101</span> <span class="c-yellow">[DRAFT]</span>   <span class="c-dim">CI: pending</span> <span class="c-dim">+50 -2</span>    <span class="c-dim">(→ feature-1)</span>
+   <span class="c-dim">└──</span> <span class="c-green">feature-3</span>     <span class="c-dim">[no PR]</span>                                  <span class="c-dim">(→ feature-1)</span></code></pre>
           </div>
         </div>
         <div class="workflow-connector"></div>
