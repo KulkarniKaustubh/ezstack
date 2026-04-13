@@ -20,6 +20,7 @@ local defaults = {
   goto_strategy = "tcd",
   goto_close_buffers = false,
   goto_open_explorer = true,
+  default_keymaps = false,
 }
 
 ---@type EzstackConfig
@@ -57,6 +58,11 @@ function M.setup(opts)
   -- Setup fugitive / EzstackChanged auto-refresh integration
   if M.config.auto_refresh then
     require("ezstack.fugitive").setup()
+  end
+
+  if M.config.default_keymaps then
+    vim.keymap.set("n", "gn", "<cmd>Ezs up<cr>", { desc = "ezstack: up the stack" })
+    vim.keymap.set("n", "gp", "<cmd>Ezs down<cr>", { desc = "ezstack: down the stack" })
   end
 
   -- Check if ezs is available (async, non-blocking)
