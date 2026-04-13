@@ -587,6 +587,86 @@ func TestStashPop_Targeted(t *testing.T) {
 	}
 }
 
+// TestStashPop_DetachedHEAD_DoesNotPopUserStash verifies the fix for
+// blind `git stash pop` fallback: when HEAD is detached and a user stash
+// sits on top of the ezstack autostash, StashPop must NOT pop the user
+// stash. It must scan for an ezstack-autostash entry by message.
+func TestStashPop_DetachedHEAD_DoesNotPopUserStash(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// Create ezstack stash first (at index 0 initially).
+	filePath := filepath.Join(dir, "file.txt")
+	os.WriteFile(filePath, []byte("ezstack data"), 0644)
+	exec.Command("git", "-C", dir, "add", "file.txt").Run()
+	if err := g.StashPush(); err != nil {
+		t.Fatalf("StashPush: %v", err)
+	}
+
+	// Create a user stash on top of the ezstack stash. Now:
+	//   stash@{0} = user stash
+	//   stash@{1} = ezstack-autostash
+	os.WriteFile(filePath, []byte("user data"), 0644)
+	exec.Command("git", "-C", dir, "add", "file.txt").Run()
+	exec.Command("git", "-C", dir, "stash", "push", "-m", "user stash").Run()
+
+	// Detach HEAD so StashPop can't determine branch.
+	head, _ := g.run("rev-parse", "HEAD")
+	if err := exec.Command("git", "-C", dir, "checkout", strings.TrimSpace(head)).Run(); err != nil {
+		t.Fatalf("failed to detach HEAD: %v", err)
+	}
+
+	if cur, _ := g.CurrentBranch(); cur != "" && cur != "HEAD" {
+		t.Fatalf("expected detached HEAD, got %q", cur)
+	}
+
+	if err := g.StashPop(); err != nil {
+		t.Fatalf("StashPop (detached): %v", err)
+	}
+
+	// User stash must still be present.
+	out, _ := g.run("stash", "list")
+	if !strings.Contains(out, "user stash") {
+		t.Errorf("user stash was popped by detached-HEAD fallback; stash list:\n%s", out)
+	}
+	if strings.Contains(out, "ezstack-autostash") {
+		t.Errorf("ezstack-autostash should have been popped, got:\n%s", out)
+	}
+}
+
+func TestFindAnyEzstackStash(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// No stashes → not found.
+	if _, found := g.FindAnyEzstackStash(); found {
+		t.Error("expected not found on empty stash list")
+	}
+
+	// Create a user stash — still should not match.
+	filePath := filepath.Join(dir, "a.txt")
+	os.WriteFile(filePath, []byte("x"), 0644)
+	exec.Command("git", "-C", dir, "add", "a.txt").Run()
+	exec.Command("git", "-C", dir, "stash", "push", "-m", "user only").Run()
+	if _, found := g.FindAnyEzstackStash(); found {
+		t.Error("expected not found when only user stashes exist")
+	}
+
+	// Add an ezstack stash — must be found.
+	os.WriteFile(filePath, []byte("y"), 0644)
+	exec.Command("git", "-C", dir, "add", "a.txt").Run()
+	if err := g.StashPush(); err != nil {
+		t.Fatalf("StashPush: %v", err)
+	}
+	if _, found := g.FindAnyEzstackStash(); !found {
+		t.Error("expected to find ezstack stash")
+	}
+}
+
 func TestIsLocalAheadOfRemote(t *testing.T) {
 	dir, cleanup := setupTestRepo(t)
 	defer cleanup()
