@@ -461,11 +461,37 @@ subcommands["goto"] = function(args)
   end, { force = true, all = true })
 end
 
---- `:Ezs diff [-- git-diff-options]`
+--- `:Ezs diff [branch]` — show diff vs parent (or named branch) in a split.
 subcommands["diff"] = function(args)
-  local cli_args = { "diff" }
-  vim.list_extend(cli_args, args)
-  cli.run_in_terminal(cli_args)
+  local target = args[1]
+  local function show(base)
+    ui.show_diff(base)
+  end
+  if target then
+    show(target)
+    return
+  end
+  cli.list_stacks(function(err, stacks)
+    if err then
+      vim.notify("Failed to list stacks: " .. err, vim.log.levels.ERROR)
+      return
+    end
+    local parent
+    for _, s in ipairs(stacks) do
+      for _, b in ipairs(s.branches or {}) do
+        if b.is_current then
+          parent = b.parent
+          break
+        end
+      end
+      if parent then break end
+    end
+    if not parent or parent == "" then
+      vim.notify("No parent branch found for current branch", vim.log.levels.WARN)
+      return
+    end
+    show(parent)
+  end, { force = true, all = true })
 end
 
 --- `:Ezs commit [args]`
