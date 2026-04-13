@@ -229,6 +229,11 @@ export default function App() {
           if (stack) ezs.openAgent(selectedRepoPath, stack.hash, branchName);
         },
         onReparent: (branchName) => setDialog({ type: "reparent", branch: branchName }),
+        onReparentTo: (branchName, newParent) =>
+          runAndRefresh(
+            () => ezs.reparentBranch(selectedRepoPath, branchName, newParent),
+            `Reparent ${branchName}`,
+          ),
         onDelete: (branchName) => setDialog({ type: "delete", branch: branchName }),
       }
     : undefined;
