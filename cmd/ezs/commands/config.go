@@ -1,7 +1,9 @@
 package commands
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,6 +23,8 @@ func printConfigUsage() {
 %sSUBCOMMANDS%s
     set <key> <value>    Set a configuration value
     show                 Show current configuration
+    export <file>        Write the global config to <file>
+    import <file>        Replace the global config from <file>
 
 %sKEYS FOR 'set'%s
     worktree_base_dir     Base directory for worktrees (per-repo)
@@ -41,6 +45,9 @@ func printConfigUsage() {
 
 // Config handles configuration commands
 func Config(args []string) error {
+	if HasExamplesFlag("config", args) {
+		return nil
+	}
 	_, err := getCurrentRepoPath()
 	if err != nil {
 		return fmt.Errorf("ezs config must be run inside a git repository")
@@ -61,6 +68,16 @@ func Config(args []string) error {
 		return configSet(args[1], strings.Join(args[2:], " "))
 	case "show":
 		return configShow()
+	case "export":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: ezs config export <file>")
+		}
+		return configExport(args[1])
+	case "import":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: ezs config import <file>")
+		}
+		return configImport(args[1])
 	default:
 		return fmt.Errorf("unknown config command: %s", args[0])
 	}
@@ -281,6 +298,51 @@ func valueOrDefault(val, def string) string {
 		return def
 	}
 	return val
+}
+
+// configExport writes the global ezstack config file to the given path.
+func configExport(dest string) error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	dest = helpers.ExpandPath(dest)
+	if err := os.WriteFile(dest, data, 0644); err != nil {
+		return fmt.Errorf("failed to write %s: %w", dest, err)
+	}
+	ui.Success(fmt.Sprintf("Exported config to %s", dest))
+	return nil
+}
+
+// configImport replaces the global ezstack config file with the contents of the given path.
+func configImport(src string) error {
+	src = helpers.ExpandPath(src)
+	f, err := os.Open(src)
+	if err != nil {
+		return fmt.Errorf("failed to open %s: %w", src, err)
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		return err
+	}
+	var imported config.Config
+	if err := json.Unmarshal(data, &imported); err != nil {
+		return fmt.Errorf("invalid config file: %w", err)
+	}
+	if !ui.ConfirmTUIWithDefault(fmt.Sprintf("Replace global ezstack config with %s?", src), false) {
+		ui.Warn("Cancelled")
+		return nil
+	}
+	if err := imported.Save(); err != nil {
+		return err
+	}
+	ui.Success(fmt.Sprintf("Imported config from %s", src))
+	return nil
 }
 
 // configInteractive walks through config options interactively
