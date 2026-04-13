@@ -3,7 +3,7 @@ package itests
 import (
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
 )
 
 // TestDeleteBranch tests deleting a branch
