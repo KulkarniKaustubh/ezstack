@@ -14,7 +14,6 @@ import (
 	"github.com/spf13/pflag"
 )
 
-
 // List lists all stacks and branches
 func List(args []string) error {
 	fs := pflag.NewFlagSet("list", pflag.ContinueOnError)
@@ -94,14 +93,14 @@ func List(args []string) error {
 		stacksToShow = []*config.Stack{currentStack}
 	}
 
-	if *jsonFlag {
-		return printStacksJSON(stacksToShow, currentBranch)
-	}
-
 	// Fetch diff stats in parallel (local git ops, fast)
 	diffMaps := make([]map[string]*ui.BranchStatus, len(stacksToShow))
 	for i, s := range stacksToShow {
 		diffMaps[i] = fetchDiffStats(g, s)
+	}
+
+	if *jsonFlag {
+		return printStacksJSON(stacksToShow, currentBranch, diffMaps)
 	}
 
 	for i, s := range stacksToShow {
@@ -112,10 +111,15 @@ func List(args []string) error {
 
 // stackJSON represents a stack in JSON output
 type stackJSON struct {
-	Hash     string       `json:"hash"`
-	Name     string       `json:"name,omitempty"`
-	Root     string       `json:"root"`
-	Branches []branchJSON `json:"branches"`
+	Hash         string       `json:"hash"`
+	Name         string       `json:"name,omitempty"`
+	Root         string       `json:"root"`
+	RootBase     string       `json:"root_base,omitempty"`
+	RootPRNumber int          `json:"root_pr_number,omitempty"`
+	RootPRUrl    string       `json:"root_pr_url,omitempty"`
+	RootAdds     int          `json:"root_additions,omitempty"`
+	RootDels     int          `json:"root_deletions,omitempty"`
+	Branches     []branchJSON `json:"branches"`
 }
 
 // branchJSON represents a branch in JSON output
@@ -127,14 +131,21 @@ type branchJSON struct {
 	PRNumber     int    `json:"pr_number,omitempty"`
 	PRUrl        string `json:"pr_url,omitempty"`
 	WorktreePath string `json:"worktree_path,omitempty"`
+	Additions    int    `json:"additions"`
+	Deletions    int    `json:"deletions"`
 }
 
 // statusStackJSON represents a stack in JSON status output (with PR/CI info)
 type statusStackJSON struct {
-	Hash     string             `json:"hash"`
-	Name     string             `json:"name,omitempty"`
-	Root     string             `json:"root"`
-	Branches []statusBranchJSON `json:"branches"`
+	Hash         string             `json:"hash"`
+	Name         string             `json:"name,omitempty"`
+	Root         string             `json:"root"`
+	RootBase     string             `json:"root_base,omitempty"`
+	RootPRNumber int                `json:"root_pr_number,omitempty"`
+	RootPRUrl    string             `json:"root_pr_url,omitempty"`
+	RootAdds     int                `json:"root_additions,omitempty"`
+	RootDels     int                `json:"root_deletions,omitempty"`
+	Branches     []statusBranchJSON `json:"branches"`
 }
 
 // statusBranchJSON extends branchJSON with PR and CI status fields
@@ -150,17 +161,30 @@ type statusBranchJSON struct {
 }
 
 // printStacksJSON outputs stacks as JSON to stdout
-func printStacksJSON(stacks []*config.Stack, currentBranch string) error {
+func printStacksJSON(stacks []*config.Stack, currentBranch string, diffMaps []map[string]*ui.BranchStatus) error {
 	result := make([]stackJSON, 0, len(stacks))
-	for _, s := range stacks {
+	for i, s := range stacks {
 		sj := stackJSON{
-			Hash:     s.Hash,
-			Name:     s.Name,
-			Root:     s.Root,
-			Branches: make([]branchJSON, 0, len(s.Branches)),
+			Hash:         s.Hash,
+			Name:         s.Name,
+			Root:         s.Root,
+			RootBase:     s.RootBase,
+			RootPRNumber: s.RootPRNumber,
+			RootPRUrl:    s.RootPRUrl,
+			Branches:     make([]branchJSON, 0, len(s.Branches)),
+		}
+		var dm map[string]*ui.BranchStatus
+		if i < len(diffMaps) {
+			dm = diffMaps[i]
+		}
+		if dm != nil {
+			if rs, ok := dm[s.Root]; ok {
+				sj.RootAdds = rs.Additions
+				sj.RootDels = rs.Deletions
+			}
 		}
 		for _, b := range s.Branches {
-			sj.Branches = append(sj.Branches, branchJSON{
+			bj := branchJSON{
 				Name:         b.Name,
 				Parent:       b.Parent,
 				IsMerged:     b.IsMerged,
@@ -168,7 +192,14 @@ func printStacksJSON(stacks []*config.Stack, currentBranch string) error {
 				PRNumber:     b.PRNumber,
 				PRUrl:        b.PRUrl,
 				WorktreePath: b.WorktreePath,
-			})
+			}
+			if dm != nil {
+				if bs, ok := dm[b.Name]; ok {
+					bj.Additions = bs.Additions
+					bj.Deletions = bs.Deletions
+				}
+			}
+			sj.Branches = append(sj.Branches, bj)
 		}
 		result = append(result, sj)
 	}
@@ -182,14 +213,23 @@ func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusM
 	result := make([]statusStackJSON, 0, len(stacks))
 	for i, s := range stacks {
 		sj := statusStackJSON{
-			Hash:     s.Hash,
-			Name:     s.Name,
-			Root:     s.Root,
-			Branches: make([]statusBranchJSON, 0, len(s.Branches)),
+			Hash:         s.Hash,
+			Name:         s.Name,
+			Root:         s.Root,
+			RootBase:     s.RootBase,
+			RootPRNumber: s.RootPRNumber,
+			RootPRUrl:    s.RootPRUrl,
+			Branches:     make([]statusBranchJSON, 0, len(s.Branches)),
 		}
 		var sm map[string]*ui.BranchStatus
 		if i < len(statusMaps) {
 			sm = statusMaps[i]
+		}
+		if sm != nil {
+			if rs, ok := sm[s.Root]; ok {
+				sj.RootAdds = rs.Additions
+				sj.RootDels = rs.Deletions
+			}
 		}
 		for _, b := range s.Branches {
 			sbj := statusBranchJSON{
@@ -237,14 +277,16 @@ func Status(args []string) error {
     When not in a stack, shows a message. Use -a to see all stacks.
 
 %sOPTIONS%s
-    -a, --all     Show all stacks
-    -d, --debug   Show debug output
-    --json        Output as JSON (machine-readable)
-    -h, --help    Show this help message
+    -a, --all              Show all stacks
+    -b, --branch <name>    Show status for a specific branch's stack
+    -d, --debug            Show debug output
+    --json                 Output as JSON (machine-readable)
+    -h, --help             Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 	all := fs.BoolP("all", "a", false, "Show all stacks")
+	branchFlag := fs.StringP("branch", "b", "", "Show status for a specific branch's stack")
 	debug := fs.BoolP("debug", "d", false, "Show debug output")
 	jsonFlag := fs.Bool("json", false, "Output as JSON")
 	if err := fs.Parse(args); err != nil {
@@ -327,6 +369,20 @@ func Status(args []string) error {
 			ui.Warn("GitHub CLI not authenticated. Run 'gh auth login' for PR/CI status.")
 		}
 		return nil
+	}
+
+	// Handle --branch flag: show status for a specific branch's stack
+	if *branchFlag != "" {
+		targetStack := mgr.FindStackForBranch(*branchFlag)
+		if targetStack == nil {
+			if *jsonFlag {
+				fmt.Fprintln(os.Stdout, "[]")
+				return nil
+			}
+			return fmt.Errorf("branch %q not found in any stack", *branchFlag)
+		}
+		statusMaps := fetchStatusMaps([]*config.Stack{targetStack})
+		return printOrJSON([]*config.Stack{targetStack}, statusMaps)
 	}
 
 	currentStack, branch, err := mgr.GetCurrentStack()

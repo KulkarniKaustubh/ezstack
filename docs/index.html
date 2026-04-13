@@ -48,6 +48,7 @@
   </script>
 
   <!-- Favicon -->
+  <link rel="icon" href="img/favicon.png" type="image/png">
   <link rel="icon" href="img/favicon.svg" type="image/svg+xml">
 
   <!-- Fonts -->
@@ -62,7 +63,7 @@
   <!-- Navigation -->
   <nav class="nav" id="nav">
     <div class="nav-inner">
-      <a href="#" class="nav-brand">ezstack</a>
+      <a href="#" class="nav-brand"><img src="img/logo.png" alt="ezstack" width="24" height="24" class="nav-logo">ezstack</a>
       <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation">
         <span></span>
         <span></span>
@@ -72,7 +73,16 @@
         <a href="#features">Features</a>
         <a href="#how-it-works">How It Works</a>
         <a href="#commands">Commands</a>
-        <a href="#ecosystem">Ecosystem</a>
+        <a href="documentation.html">Docs</a>
+        <div class="nav-dropdown">
+          <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
+          <div class="nav-dropdown-menu">
+            <a href="agent.html">AI Agent</a>
+            <a href="vscode.html">VS Code Extension</a>
+            <a href="desktop.html">Desktop App</a>
+            <a href="nvim.html">Neovim Plugin</a>
+          </div>
+        </div>
         <a href="#install">Install</a>
         <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener" class="nav-github">GitHub</a>
       </div>
@@ -84,7 +94,7 @@
     <div class="hero-glow"></div>
     <div class="container">
       <div class="hero-content">
-        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v1.11.0 &mdash; Latest Release</a>
+        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v4.0.0 &mdash; Latest Release</a>
         <h1>Stacked PRs.<br>Zero friction.</h1>
         <p class="hero-sub">Manage stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs &mdash; all from one CLI.</p>
         <div class="hero-actions">
@@ -197,6 +207,16 @@
       <h2 class="section-title" data-animate>Everything you need to ship faster</h2>
       <p class="section-sub" data-animate>Stop waiting on code reviews. Stack your PRs and develop in parallel.</p>
       <div class="features-grid">
+        <div class="feature-card feature-card-featured" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 014 4c0 1.95-1.4 3.57-3.25 3.92L12 10l-.75-.08A4.001 4.001 0 0112 2z"/><path d="M8 14h8"/><path d="M9 18h6"/><path d="M10 22h4"/><path d="M7 10.5C4.79 11.15 3 13.12 3 16h18c0-2.88-1.79-4.85-4-5.5"/></svg>
+          </div>
+          <h3>Built-in AI Agent</h3>
+          <p>Launch an AI coding agent scoped to your stack with full context injected &mdash; branches, worktrees, commands, docs. Describe a feature and the agent builds it as incremental stacked branches. Fully customizable prompt templates. Requires worktree mode (the default).</p>
+          <div class="feature-cta">
+            <a href="agent.html">Learn more &rarr;</a>
+          </div>
+        </div>
         <div class="feature-card" data-animate>
           <div class="feature-icon">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
@@ -237,7 +257,14 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <h3>Smart Conflict Handling</h3>
-          <p>Rebase conflicts pause with clear recovery instructions. Autostash is on by default. <code>--dry-run</code> lets you preview before committing.</p>
+          <p>Rebase conflicts pause with clear recovery instructions. Run <code>ezs sync --continue</code> to resume, push, and re-sync children. Autostash and <code>--dry-run</code> included.</p>
+        </div>
+        <div class="feature-card" data-animate>
+          <div class="feature-icon">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+          </div>
+          <h3>Rich Stack Visualization</h3>
+          <p>Tree-style branch display shows parent-child relationships at a glance. <code>ezs ls</code> includes <code>+/-</code> diff stats per branch and strikes through merged PRs.</p>
         </div>
       </div>
     </div>
@@ -289,11 +316,85 @@
     </div>
   </section>
 
+  <!-- PR Review -->
+  <section class="how-it-works" id="pr-review" style="padding-top: 2rem;">
+    <div class="container">
+      <h2 class="section-title" data-animate>Review PRs in seconds</h2>
+      <p class="section-sub" data-animate>Check out any remote branch into its own worktree and stack. See PR info, review status, and line diffs instantly. Work on it, push, sync &mdash; everything just works.</p>
+      <div class="steps">
+        <div class="step" data-animate>
+          <div class="step-number" style="background: linear-gradient(135deg, #6366f1, #8b5cf6);">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+          </div>
+          <h3>One command checkout</h3>
+          <p>Fetch, create a tracking branch, and open a worktree &mdash; all in one step. PR metadata and diff stats are shown automatically.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs new</span> origin/add-jwt-auth
+<span class="c-dim">Creating worktree for remote branch 'add-jwt-auth'...</span>
+<span class="c-green">Created worktree for 'add-jwt-auth' at ~/worktrees/add-jwt-auth</span>
+
+<span class="c-dim">PR #42: Add JWT authentication</span>
+<span class="c-dim">State: OPEN  Base: main  Review: REVIEW_REQUIRED</span>
+<span class="c-dim">Diff vs main:</span> <span class="c-green">+320</span> / <span class="c-red">-45</span> <span class="c-dim">lines</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Agent Showcase -->
+  <section class="agent-showcase" id="agent">
+    <div class="container">
+      <div class="agent-showcase-inner">
+        <h2 class="section-title" data-animate>Let AI build your stack</h2>
+        <p class="section-sub" data-animate>Launch an AI agent with full stack context injected. Work on a branch or describe a feature and let the agent build it as stacked PRs.</p>
+
+        <div class="agent-modes" data-animate>
+          <div class="agent-mode-card">
+            <span class="mode-label mode-label-work">Work Session</span>
+            <h3>Agent scoped to your stack</h3>
+            <p>The agent sees your stack structure, worktree paths, and all ezstack commands. It works within a single branch.</p>
+            <div class="step-code">
+              <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span>
+<span class="c-dim">Launching claude in ~/worktrees/auth-service...</span>
+<span class="c-dim">Stack context injected (3 branches, 2 PRs)</span>
+
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--branch</span> auth-middleware
+<span class="c-dim">Launching claude in ~/worktrees/auth-middleware...</span></code></pre>
+            </div>
+          </div>
+          <div class="agent-mode-card">
+            <span class="mode-label mode-label-feature">Feature Builder</span>
+            <h3>Describe it, agent builds it</h3>
+            <p>The agent explores your codebase, plans a series of stacked branches, and implements each one with commits and PRs.</p>
+            <div class="step-code">
+              <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs agent feature</span> <span class="c-str">"Add JWT auth"</span>
+<span class="c-dim">Agent will plan and implement as stacked branches...</span>
+
+<span class="c-comment"># Agent creates:</span>
+<span class="c-dim">  main</span>
+<span class="c-dim">  └── jwt-types        </span><span class="c-green">PR #44</span>
+<span class="c-dim">      └── jwt-middleware</span> <span class="c-green">PR #45</span>
+<span class="c-dim">          └── jwt-routes </span><span class="c-green">PR #46</span></code></pre>
+            </div>
+          </div>
+        </div>
+
+        <div class="agent-cta" data-animate>
+          <a href="agent.html" class="btn btn-primary">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a4 4 0 014 4c0 1.95-1.4 3.57-3.25 3.92L12 10l-.75-.08A4.001 4.001 0 0112 2z"/><path d="M8 14h8"/><path d="M9 18h6"/><path d="M10 22h4"/><path d="M7 10.5C4.79 11.15 3 13.12 3 16h18c0-2.88-1.79-4.85-4-5.5"/></svg>
+            See full agent workflow
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- Commands -->
   <section class="commands" id="commands">
     <div class="container">
       <h2 class="section-title" data-animate>Command reference</h2>
-      <p class="section-sub" data-animate>24 commands. Everything aliased for speed. Run <code>ezs &lt;command&gt; --help</code> for details.</p>
+      <p class="section-sub" data-animate>26 commands. Everything aliased for speed. Run <code>ezs &lt;command&gt; --help</code> for details.</p>
       <div class="accordion" data-animate>
 
         <div class="accordion-item">
@@ -305,13 +406,13 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>new</code> <span class="cmd-alias">n</span></td><td>Create a new branch in the stack</td></tr>
-                <tr><td class="cmd-name"><code>list</code> <span class="cmd-alias">ls</span></td><td>List all stacks and branches</td></tr>
-                <tr><td class="cmd-name"><code>status</code> <span class="cmd-alias">st</span></td><td>Show status with PR and CI info</td></tr>
-                <tr><td class="cmd-name"><code>stack</code></td><td>Add a branch to a stack or start a new stack</td></tr>
-                <tr><td class="cmd-name"><code>unstack</code></td><td>Remove a branch from tracking</td></tr>
-                <tr><td class="cmd-name"><code>delete</code> <span class="cmd-alias">del, rm</span></td><td>Delete a branch and its worktree</td></tr>
-                <tr><td class="cmd-name"><code>reparent</code> <span class="cmd-alias">rp</span></td><td>Change the parent of a branch</td></tr>
+                <tr><td class="cmd-name"><code>new</code> <span class="cmd-alias">n</span></td><td>Create a new branch in the stack.</td></tr>
+                <tr><td class="cmd-name"><code>list</code> <span class="cmd-alias">ls</span></td><td>List all stacks and branches.</td></tr>
+                <tr><td class="cmd-name"><code>status</code> <span class="cmd-alias">st</span></td><td>Show status of current stack with PR and CI info.</td></tr>
+                <tr><td class="cmd-name"><code>stack</code></td><td>Add an untracked branch/worktree to an existing stack, start a new stack, or rename a stack.</td></tr>
+                <tr><td class="cmd-name"><code>unstack</code></td><td>Remove a branch from stack tracking without deleting the git branch or worktree.</td></tr>
+                <tr><td class="cmd-name"><code>delete</code> <span class="cmd-alias">del, rm</span></td><td>Delete a branch and its worktree.</td></tr>
+                <tr><td class="cmd-name"><code>reparent</code> <span class="cmd-alias">rp</span></td><td>Change the parent of a branch and sync commits onto the new parent.</td></tr>
               </tbody>
             </table>
           </div>
@@ -326,7 +427,7 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>goto</code> <span class="cmd-alias">go</span></td><td>Navigate to a branch worktree (fzf selection if no args)</td></tr>
+                <tr><td class="cmd-name"><code>goto</code> <span class="cmd-alias">go</span></td><td>Navigate to a branch worktree.</td></tr>
                 <tr><td class="cmd-name"><code>up</code></td><td>Navigate up the stack toward parent</td></tr>
                 <tr><td class="cmd-name"><code>down</code></td><td>Navigate down the stack toward children</td></tr>
               </tbody>
@@ -343,11 +444,11 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>sync</code> <span class="cmd-alias">rebase, rb</span></td><td>Sync stack with remote (rebase or merge)</td></tr>
+                <tr><td class="cmd-name"><code>sync</code></td><td>Sync stack with remote.</td></tr>
                 <tr><td class="cmd-name"><code>commit</code> <span class="cmd-alias">ci</span></td><td>Commit and auto-sync child branches</td></tr>
                 <tr><td class="cmd-name"><code>amend</code></td><td>Amend last commit and auto-sync children</td></tr>
-                <tr><td class="cmd-name"><code>push</code></td><td>Push current branch or entire stack</td></tr>
-                <tr><td class="cmd-name"><code>diff</code></td><td>Show diff against parent branch</td></tr>
+                <tr><td class="cmd-name"><code>push</code></td><td>Push current branch or entire stack to remote.</td></tr>
+                <tr><td class="cmd-name"><code>diff</code></td><td>Show diff against parent branch.</td></tr>
               </tbody>
             </table>
           </div>
@@ -390,6 +491,32 @@
           </div>
         </div>
 
+        <div class="accordion-item">
+          <button class="accordion-header" aria-expanded="false">
+            <span class="accordion-label">AI Agent</span>
+            <span class="accordion-count">3 commands</span>
+            <svg class="accordion-chevron" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 8 10 12 14 8"/></svg>
+          </button>
+          <div class="accordion-body">
+            <table class="cmd-table">
+              <tbody>
+                <tr><td class="cmd-name"><code>agent</code></td><td>Launch AI agent scoped to a stack with full context</td></tr>
+                <tr><td class="cmd-name"><code>agent feature</code></td><td>Break a feature into stacked branches via AI</td></tr>
+                <tr><td class="cmd-name"><code>agent prompt</code></td><td>View or edit agent prompt templates</td></tr>
+              </tbody>
+            </table>
+            <div class="cmd-detail">
+              <h4>Prompt Templates</h4>
+              <p>Agent prompts are stored as editable Markdown files in <code>~/.ezstack/</code>:</p>
+              <ul>
+                <li><code>agent-work-prompt.md</code> &mdash; Work session prompt</li>
+                <li><code>agent-feature-prompt.md</code> &mdash; Feature builder prompt</li>
+              </ul>
+              <p>Prompts use template variables replaced at runtime: <code>{{STACK_JSON}}</code>, <code>{{BRANCH_NAME}}</code>, <code>{{PARENT_NAME}}</code>, <code>{{WORKTREE_PATH}}</code>, <code>{{EZS_COMMANDS}}</code>, <code>{{EZS_DOCS}}</code>, <code>{{FEATURE_DESCRIPTION}}</code>.</p>
+            </div>
+          </div>
+        </div>
+
       </div>
     </div>
   </section>
@@ -407,21 +534,21 @@
             <div class="eco-icon">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
             </div>
-            <span class="eco-badge eco-badge-beta">Beta</span>
+            <span class="eco-badge eco-badge-new">New</span>
           </div>
           <h3>Desktop App</h3>
-          <p>Visual stacks board powered by Tauri. See all your stacks as columns, manage branches, sync, and create PRs &mdash; all from a native UI.</p>
+          <p>Visual stacks board powered by Tauri. See all your stacks as a tree, manage branches, sync, create PRs, and even drive a remote <code>ezs</code> install over SSH &mdash; all from a native UI.</p>
           <div class="eco-install">
-            <h4>Try the beta</h4>
+            <h4>Install</h4>
             <ol>
-              <li>Download the latest <code>.dmg</code> (macOS) or <code>.msi</code> (Windows) from the release page</li>
+              <li>Download the installer for your platform from the <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener">release page</a> &mdash; <code>.dmg</code> (macOS), <code>.msi</code>/<code>.exe</code> (Windows), or <code>.AppImage</code>/<code>.deb</code>/<code>.rpm</code> (Linux)</li>
               <li>Install and open &mdash; it auto-discovers your repos</li>
               <li>Requires <code>ezs</code> CLI installed and on your PATH</li>
             </ol>
           </div>
-          <a href="https://github.com/KulkarniKaustubh/ezstack/releases/tag/v2.0.0-tauri-beta.4" target="_blank" rel="noopener" class="btn btn-secondary eco-btn">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Download v2.0.0-tauri-beta.4
+          <a href="desktop.html" class="btn btn-secondary eco-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            Learn More &amp; Download
           </a>
         </div>
 
@@ -431,21 +558,21 @@
             <div class="eco-icon">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
             </div>
-            <span class="eco-badge eco-badge-beta">Beta</span>
+            <span class="eco-badge eco-badge-new">New</span>
           </div>
           <h3>VS Code Extension</h3>
-          <p>Stack viewer panel in your sidebar. Browse branches, see PR status, and run commands without leaving the editor.</p>
+          <p>Stack viewer panel in your sidebar. Browse branches, explore file trees per branch, see PR status, and open any branch in a new window &mdash; all without leaving the editor.</p>
           <div class="eco-install">
-            <h4>Try the beta</h4>
+            <h4>Install</h4>
             <ol>
-              <li>Download <code>ezstack-2.0.0-beta.9.vsix</code> from the release page</li>
+              <li>Download <code>ezstack-4.0.0.vsix</code> from the release page</li>
               <li>In VS Code: <code>Cmd+Shift+P</code> &rarr; "Install from VSIX" &rarr; select the file</li>
               <li>Open a repo with ezstack configured &mdash; the panel appears in the sidebar</li>
             </ol>
           </div>
-          <a href="https://github.com/KulkarniKaustubh/ezstack/releases/tag/v2.0.0-beta.9" target="_blank" rel="noopener" class="btn btn-secondary eco-btn">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-            Download v2.0.0-beta.9 VSIX
+          <a href="vscode.html" class="btn btn-secondary eco-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+            Learn More &amp; Download
           </a>
         </div>
 
@@ -455,21 +582,21 @@
             <div class="eco-icon">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
             </div>
-            <span class="eco-badge eco-badge-beta">Beta</span>
+            <span class="eco-badge eco-badge-new">New</span>
           </div>
           <h3>Neovim Plugin</h3>
           <p>Native Lua plugin with Telescope integration, stack viewer, statusline component, and fugitive auto-refresh. Manage your entire stack without leaving Neovim.</p>
           <div class="eco-install">
-            <h4>Try the beta</h4>
+            <h4>Install</h4>
             <ol>
-              <li>Install with lazy.nvim: <code>{ "KulkarniKaustubh/ezstack", subdir = "neovim-extension" }</code></li>
+              <li>Install with lazy.nvim: <code>{ "KulkarniKaustubh/ezstack", subdir = "neovim-plugin" }</code></li>
               <li>Run <code>:Ezs</code> to open the stack viewer, or <code>:Telescope ezstack branches</code> for fuzzy picking</li>
               <li>Requires <code>ezs</code> CLI installed, Neovim 0.10+, and optionally telescope.nvim</li>
             </ol>
           </div>
-          <a href="https://github.com/KulkarniKaustubh/ezstack/tree/feat/neovim-extension/neovim-extension" target="_blank" rel="noopener" class="btn btn-secondary eco-btn">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/></svg>
-            View on GitHub
+          <a href="nvim.html" class="btn btn-secondary eco-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 013 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+            Learn More &amp; Install
           </a>
         </div>
 
@@ -483,11 +610,11 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v1.11.0</span>
+          <span class="footer-meta">MIT License &middot; v4.0.0</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
-          <a href="https://github.com/KulkarniKaustubh/ezstack/blob/main/DOCUMENTATION.md" target="_blank" rel="noopener">Docs</a>
+          <a href="documentation.html">Docs</a>
           <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener">Releases</a>
           <a href="https://github.com/KulkarniKaustubh/ezstack/issues" target="_blank" rel="noopener">Issues</a>
         </div>

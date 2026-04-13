@@ -37,6 +37,23 @@
     });
   }
 
+  // Nav dropdown toggle
+  var dropdowns = document.querySelectorAll('.nav-dropdown');
+  dropdowns.forEach(function (dd) {
+    var toggle = dd.querySelector('.nav-dropdown-toggle');
+    toggle.addEventListener('click', function (e) {
+      e.stopPropagation();
+      var wasOpen = dd.classList.contains('open');
+      // Close all dropdowns first
+      dropdowns.forEach(function (d) { d.classList.remove('open'); });
+      if (!wasOpen) dd.classList.add('open');
+    });
+  });
+  // Close dropdown on outside click
+  document.addEventListener('click', function () {
+    dropdowns.forEach(function (d) { d.classList.remove('open'); });
+  });
+
   // Smooth scroll for internal links
   document.addEventListener('click', function (e) {
     var target = e.target.closest('a[href^="#"]');
@@ -145,11 +162,11 @@
       '<span class="t-dim">Created branch \'auth-middleware\' with worktree at ~/worktrees/auth-middleware</span>'
     ]},
     { type: 'pause', duration: 600 },
-    { type: 'command', prompt: '$ ', text: 'ezs status' },
+    { type: 'command', prompt: '$ ', text: 'ezs ls' },
     { type: 'output', lines: [
       '  <span class="t-dim">main</span>',
-      '  <span class="t-dim">\u2514\u2500\u2500</span> <span class="t-branch">auth-service</span>        <span class="t-info">PR #42</span> <span class="t-success">\u2713 2 approved</span>',
-      '  <span class="t-dim">    \u2514\u2500\u2500</span> <span class="t-branch">auth-middleware</span>  <span class="t-info">PR #43</span> <span class="t-dim">\u25cf CI running</span>'
+      '  <span class="t-dim">\u2514\u2500\u2500</span> <span class="t-branch">auth-service</span>        <span class="t-info">PR #42</span> <span class="t-success">\u2713 2 approved</span>  <span class="t-success">+120</span> <span class="t-error">-14</span>',
+      '  <span class="t-dim">    \u2514\u2500\u2500</span> <span class="t-branch">auth-middleware</span>  <span class="t-info">PR #43</span> <span class="t-dim">\u25cf CI running</span>   <span class="t-success">+45</span> <span class="t-error">-3</span>'
     ]},
     { type: 'pause', duration: 800 },
     { type: 'command', prompt: '$ ', text: 'ezs commit -m "Add middleware validation"' },

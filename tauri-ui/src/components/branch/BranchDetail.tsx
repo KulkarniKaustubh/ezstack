@@ -15,6 +15,7 @@ interface BranchDetailProps {
   onClose: () => void;
   onSync: () => void;
   onPush: () => void;
+  onPushStack: () => void;
   onCreatePR: () => void;
   onUpdatePR: () => void;
   onMergePR: () => void;
@@ -22,7 +23,9 @@ interface BranchDetailProps {
   onDelete: () => void;
   onReparent: () => void;
   onUpdateStack: () => void;
+  onOpenAgent: () => void;
   isLoading: boolean;
+  width?: number;
 }
 
 export function BranchDetail({
@@ -30,6 +33,7 @@ export function BranchDetail({
   onClose,
   onSync,
   onPush,
+  onPushStack,
   onCreatePR,
   onUpdatePR,
   onMergePR,
@@ -37,10 +41,12 @@ export function BranchDetail({
   onDelete,
   onReparent,
   onUpdateStack,
+  onOpenAgent,
   isLoading,
+  width,
 }: BranchDetailProps) {
   return (
-    <div className="flex flex-col h-full w-80 border-l bg-surface/30">
+    <div className="flex flex-col h-full border-l bg-surface/30" style={width ? { width } : { width: 320 }}>
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b">
         <div className="flex items-center gap-2 min-w-0">
@@ -94,6 +100,18 @@ export function BranchDetail({
               </div>
             )}
 
+            {(branch.additions !== undefined || branch.deletions !== undefined) && (
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-muted-foreground">Code Changes</span>
+                <span className="text-xs font-mono">
+                  {branch.additions ? <span className="text-success">+{branch.additions}</span> : null}
+                  {branch.additions && branch.deletions ? " " : null}
+                  {branch.deletions ? <span className="text-destructive">-{branch.deletions}</span> : null}
+                  {!branch.additions && !branch.deletions && <span className="text-muted-foreground">no changes</span>}
+                </span>
+              </div>
+            )}
+
             {branch.mergeable && (
               <div className="flex items-center justify-between">
                 <span className="text-xs text-muted-foreground">Merge</span>
@@ -137,6 +155,7 @@ export function BranchDetail({
           branch={branch}
           onSync={onSync}
           onPush={onPush}
+          onPushStack={onPushStack}
           onCreatePR={onCreatePR}
           onUpdatePR={onUpdatePR}
           onMergePR={onMergePR}
@@ -144,6 +163,7 @@ export function BranchDetail({
           onDelete={onDelete}
           onReparent={onReparent}
           onUpdateStack={onUpdateStack}
+          onOpenAgent={onOpenAgent}
           isLoading={isLoading}
         />
       </ScrollArea>

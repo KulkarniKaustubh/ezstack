@@ -10,9 +10,9 @@
 
 **Table of Contents**
 
-[Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows)
+[Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows) · [Editor & Desktop Integrations](#editor--desktop-integrations)
 
-**Commands:** [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [push](#ezs-push) · [diff](#ezs-diff) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [config](#ezs-config)
+**Commands:** [agent](#ezs-agent) · [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [push](#ezs-push) · [diff](#ezs-diff) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [config](#ezs-config)
 
 ---
 
@@ -74,7 +74,7 @@ echo 'eval "$(ezs --shell-init)"' >> ~/.bashrc
 echo 'eval "$(ezs --shell-init)"' >> ~/.zshrc
 ```
 
-This enables automatic directory changes for `goto`, `new`, `delete`, `sync` (and aliases `rebase`, `rb`), `up`, and `down` commands.
+This enables automatic directory changes for `goto`, `new`, `delete`, `sync`, `up`, and `down` commands.
 
 Without shell integration, commands that would change your directory will instead print a helpful message with the path to `cd` to manually.
 
@@ -116,37 +116,189 @@ These flags work with any command and can appear in any position:
 
 ## Commands
 
-### `ezs new`
+### `ezs agent`
 
-Create a new branch in the stack. Aliases: `n`
+Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically. **Requires worktree mode** (`use_worktrees: true`) — the agent needs separate working directories for each branch to work in isolation without disrupting your workspace.
 
 ```
-ezs new [branch-name] [options]
+ezs agent [options]
+ezs agent feature "description"
+ezs agent prompt <flag> <work|feature>
+
+Modes:
+    (default)   Work session — agent scoped to a stack with full context
+    feature     Feature builder — agent breaks a feature into stacked branches
+    prompt      View or edit the prompt templates used by the agent
 
 Options:
-    -p, --parent <branch>     Parent branch (defaults to current branch)
-    -w, --worktree <path>     Worktree path (defaults to configured base dir + branch name)
-    -c, --cd                  Change to the new worktree after creation
-    -C, --no-cd               Don't change to the new worktree (overrides config)
-    -f, --from-worktree       Register an existing worktree as a stack root
-    -r, --from-remote         Create a stack from a remote branch
+    --cmd <command>      Agent CLI to use (default: configured or "claude")
+    -s, --stack <hash>   Stack to work on (hash prefix or "name")
+    -b, --branch <name>  Branch to work in (implies stack)
+    --dry-run            Print the composed prompt and exit (don't launch agent)
 ```
 
-When `use_worktrees` is disabled, creates a git branch without a worktree and optionally checks it out.
+#### Prompt Composition
+
+The final agent prompt is composed from three layers:
+
+1. **Shipped prompt** — built into ezstack, updated with releases
+2. **Custom instructions** — `~/.ezstack/agent-{work,feature}-prompt.md` (personal, all repos)
+3. **Repo instructions** — `<repo>/.ezstack/agent-{work,feature}-prompt.md` (per-repo, committable)
+
+Custom and repo instructions are injected into the shipped prompt. To fully override the shipped prompt, add `override: full` as the first line of your custom instructions file. Repo instructions are still injected.
+
+These files use template variables that are replaced at runtime:
+
+| Variable | Description |
+|----------|-------------|
+| `{{STACK_JSON}}` | Current stack structure as JSON |
+| `{{BRANCH_NAME}}` | Current branch name |
+| `{{PARENT_NAME}}` | Parent branch name |
+| `{{WORKTREE_PATH}}` | Path to the current worktree |
+| `{{EZS_COMMANDS}}` | Available ezs commands reference |
+| `{{EZS_DOCS}}` | Full ezstack documentation for AI agents |
+| `{{FEATURE_DESCRIPTION}}` | Feature description (feature mode only) |
+| `{{CUSTOM_INSTRUCTIONS}}` | Custom instructions slot |
+| `{{REPO_INSTRUCTIONS}}` | Repository instructions slot |
+
+#### `ezs agent prompt`
+
+View or edit the prompt templates. Requires a positional argument: `work` or `feature`.
+
+```
+Flags:
+    --shipped            View the shipped (built-in) prompt template
+    --custom             View your custom instructions (~/.ezstack/)
+    --repo               View or target repo-specific instructions (<repo>/.ezstack/)
+    --edit               Edit custom instructions (combine with --repo for repo-specific)
+    --reset              Delete custom instructions (combine with --repo for repo-specific)
+```
+
+**Examples:**
+
+```bash
+# View the shipped work prompt
+ezs agent prompt --shipped work
+
+# View your custom work instructions
+ezs agent prompt --custom work
+
+# Edit custom work instructions
+ezs agent prompt --edit work
+
+# Edit repo-specific work instructions
+ezs agent prompt --edit --repo work
+
+# Reset custom work instructions
+ezs agent prompt --reset work
+
+# Reset repo-specific feature instructions
+ezs agent prompt --reset --repo feature
+```
+
+#### Configuration
+
+```bash
+# Set the agent CLI (default: claude)
+ezs config set agent_command claude
+```
 
 ---
 
-### `ezs status`
+### `ezs commit` / `ezs amend`
 
-Show status of current stack with PR and CI info. Aliases: `st`
+Wrap `git commit` / `git commit --amend` and auto-sync child branches. Aliases: `ci`
 
 ```
-ezs status [options]
+ezs commit [git-commit-options] [--merge|--rebase]
+ezs amend [git-commit-options] [--merge|--rebase]
+```
+
+All arguments are passed through to `git commit`. After committing, any child branches in the stack are automatically synced onto the updated branch.
+
+Uses the configured `sync_strategy` (default: rebase) for child syncing. Use `--merge` or `--rebase` to override.
+
+---
+
+### `ezs config`
+
+Configure ezstack for the current repository. Aliases: `cfg`
+
+```
+ezs config [subcommand] [options]
+
+Subcommands:
+    set <key> <value>    Set a configuration value
+    show                 Show current configuration
+```
+
+**Available keys for `set`:**
+
+| Key | Description | Values |
+|-----|-------------|--------|
+| `worktree_base_dir` | Base directory for worktrees | Path (per-repo) |
+| `default_base_branch` | Default base branch | e.g. `main`, `master` |
+| `cd_after_new` | Auto-cd to new worktree | `true` / `false` (per-repo) |
+| `use_worktrees` | Use git worktrees for new branches (required for `ezs agent`) | `true` / `false` (per-repo) |
+| `sync_strategy` | Sync method for rebase/merge | `rebase` / `merge` (per-repo) |
+| `github_token` | GitHub token for API access | Token string |
+
+---
+
+### `ezs delete`
+
+Delete a branch and its worktree. Aliases: `del`, `rm`
+
+```
+ezs delete [branch-name] [options]
+ezs delete [stack-hash] [options]
 
 Options:
-    -a, --all     Show all stacks
-    -d, --debug   Show debug output
+    -f, --force            Force delete even if branch has children
+    -s, --stack            Treat argument as a stack hash (delete entire stack)
 ```
+
+---
+
+### `ezs diff`
+
+Show diff against parent branch.
+
+```
+ezs diff [options] [-- git-diff-options]
+
+Options:
+    -b, --branch <name>  Show diff for a specific branch (default: current)
+    --stat               Show diffstat only
+    --json               Output file-level diff stats as JSON
+```
+
+Shows the diff between a branch and its parent in the stack. Any arguments after `--` are passed directly to `git diff`. Use `--branch` to diff any branch without switching to it. Use `--json` for machine-readable output with per-file additions/deletions.
+
+---
+
+### `ezs down` / `ezs up`
+
+Navigate down (toward children/leaves) or up (toward parent/base) in the stack.
+
+```
+ezs down [n]    Navigate n levels toward children (default: 1)
+ezs up [n]      Navigate n levels toward parent (default: 1)
+```
+
+When navigating down with multiple children, shows an interactive selector.
+
+---
+
+### `ezs goto`
+
+Navigate to a branch worktree. Aliases: `go`
+
+```
+ezs goto [branch-name]
+```
+
+If branch-name is omitted, shows interactive selection. Falls back to `git checkout` when the branch has no worktree.
 
 ---
 
@@ -169,57 +321,63 @@ The list view also shows diff stats (+/-) for each branch relative to its parent
 
 ---
 
-### `ezs sync`
+### `ezs log`
 
-Sync stack with remote. Handles rebasing onto updated parents, cleaning up merged branches, and force pushing after rebase. Aliases: `rebase`, `rb`
+Show commits in a branch since its parent.
 
 ```
-ezs sync [options]
-ezs sync <hash-prefix>
+ezs log [options]
 
 Options:
-    -s, --stack            Sync current stack (auto-detect what needs syncing)
-    -a, --all              Sync ALL stacks
-    -c, --current          Sync current branch only (auto-detect what it needs)
-    -p, --parent           Rebase current branch onto its parent
-    -C, --children         Rebase child branches onto current branch
-    --merge                Use git merge instead of git rebase
-    --rebase               Use git rebase (overrides sync_strategy config)
-    --no-delete-local      Don't delete local branches after their PRs are merged
-    --dry-run              Preview what would be synced without making changes
-    --continue             Continue after resolving conflicts
-    --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
-    --json                 Output dry-run results as JSON (requires --dry-run)
+    -b, --branch <name>  Show log for a specific branch (default: current)
+    --json               Output as JSON
 ```
 
-By default, sync uses git rebase. Use `--merge` to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with `ezs config set sync_strategy merge`. Use `--rebase` or `--merge` to override the configured strategy for a single run.
-
-You can sync a specific stack by passing its hash prefix (minimum 3 characters).
+Shows the commits that exist in a branch but not in its parent branch. Use `--branch` to view commits for any branch without switching to it. The `--json` flag outputs structured commit data (hash, message, author, date) for editor integrations.
 
 ---
 
-### `ezs goto`
+### `ezs new`
 
-Navigate to a branch worktree. Aliases: `go`
-
-```
-ezs goto [branch-name]
-```
-
-If branch-name is omitted, shows interactive selection. Falls back to `git checkout` when the branch has no worktree.
-
----
-
-### `ezs up` / `ezs down`
-
-Navigate up (toward parent/base) or down (toward children/leaves) in the stack.
+Create a new branch in the stack. Aliases: `n`
 
 ```
-ezs up [n]      Navigate n levels toward parent (default: 1)
-ezs down [n]    Navigate n levels toward children (default: 1)
+ezs new [branch-name] [options]
+
+Options:
+    -p, --parent <branch>     Parent branch (defaults to current branch)
+    -w, --worktree <path>     Worktree path (defaults to configured base dir + branch name)
+    -c, --cd                  Change to the new worktree after creation
+    -C, --no-cd               Don't change to the new worktree (overrides config)
+    -f, --from-worktree       Register an existing worktree as a stack root
+    -r, --from-remote         Create a stack from a remote branch/PR
 ```
 
-When navigating down with multiple children, shows an interactive selector.
+With `origin/<branch>`, creates a local worktree tracking the remote branch and registers it in a stack (root = PR base branch, or `main` by default). The branch is marked as `(remote)` in `ezs ls` output. All commands (sync, push, commit, etc.) work normally on it.
+```bash
+ezs new origin/feature-branch       # Checkout remote branch into a worktree + register stack
+```
+
+This fetches the latest remote refs, creates a local tracking branch, sets up a worktree, and registers the branch in ezstack's config. If the branch has an associated PR, it displays PR info (title, state, review status) and a line diff summary against the base branch.
+
+**Fork PR handling:** When the PR comes from a fork, ezstack automatically:
+- Detects the fork repository via the GitHub API
+- Checks if "Allow edits from maintainers" is enabled on the PR
+- Verifies that you have push access to the fork repo
+- Adds a git remote for the fork (named after the fork owner) and fetches it
+- All subsequent push/sync operations target the fork remote instead of `origin`
+
+If the fork doesn't allow maintainer edits, or you don't have push access, the branch is marked as read-only — sync will still rebase/merge locally, but push is skipped with a warning.
+
+With `--from-remote`, positional args are `[pr-number-or-branch] [new-branch-name]`:
+```bash
+ezs new -r                          # Interactive PR selection + branch name prompt
+ezs new -r 42                       # Use PR #42, prompt for branch name
+ezs new -r feature-branch           # Use PR for that branch, prompt for branch name
+ezs new -r 42 my-feature            # Use PR #42, create branch "my-feature" (no prompts)
+```
+
+When `use_worktrees` is disabled, creates a git branch without a worktree and optionally checks it out. All core commands (`sync`, `commit`, `reparent`, `push`, `pr`) work fully in this mode via checkout-based sync. Note: `ezs agent` requires worktree mode.
 
 ---
 
@@ -232,10 +390,10 @@ ezs pr <subcommand> [options]
 
 Subcommands:
     create    Create a new pull request
-    update    Push changes and update PR metadata (base branch, descriptions)
-    merge     Merge a pull request
     draft     Toggle PR between draft and ready
+    merge     Merge a pull request
     stack     Update all PR descriptions with stack info
+    update    Push changes and update PR metadata (base branch, descriptions)
 ```
 
 #### `ezs pr create`
@@ -247,6 +405,10 @@ Options:
     -d, --draft            Create as draft PR
 ```
 
+#### `ezs pr draft`
+
+Toggles the current branch's PR between draft and ready-for-review state.
+
 #### `ezs pr merge`
 
 ```
@@ -254,25 +416,6 @@ Options:
     -m, --method <method>      Merge method: merge, squash, rebase (default: interactive)
     --no-delete-branch         Don't delete the remote branch after merge
 ```
-
-#### `ezs pr draft`
-
-Toggles the current branch's PR between draft and ready-for-review state.
-
----
-
-### `ezs commit` / `ezs amend`
-
-Wrap `git commit` / `git commit --amend` and auto-sync child branches. Aliases: `ci`
-
-```
-ezs commit [git-commit-options] [--merge|--rebase]
-ezs amend [git-commit-options] [--merge|--rebase]
-```
-
-All arguments are passed through to `git commit`. After committing, any child branches in the stack are automatically synced onto the updated branch.
-
-Uses the configured `sync_strategy` (default: rebase) for child syncing. Use `--merge` or `--rebase` to override.
 
 ---
 
@@ -284,39 +427,12 @@ Push current branch or entire stack to remote.
 ezs push [options]
 
 Options:
-    -s, --stack    Push all branches in the current stack
-    -f, --force    Force push
+    -s, --stack          Push all branches in the current stack
+    -b, --branch <name>  Push a specific branch by name
+    -f, --force          Force push
 ```
 
----
-
-### `ezs diff`
-
-Show diff against parent branch.
-
-```
-ezs diff [options] [-- git-diff-options]
-
-Options:
-    --stat         Show diffstat only
-```
-
-Shows the diff between the current branch and its parent in the stack. Any arguments after `--` are passed directly to `git diff`.
-
----
-
-### `ezs delete`
-
-Delete a branch and its worktree. Aliases: `del`, `rm`
-
-```
-ezs delete [branch-name] [options]
-ezs delete [stack-hash] [options]
-
-Options:
-    -f, --force            Force delete even if branch has children
-    -s, --stack            Treat argument as a stack hash (delete entire stack)
-```
+Each branch pushes to its configured remote — `origin` by default, or the fork remote for fork-based PR branches. Branches marked as read-only (fork PRs where you don't have push access) are skipped with a warning.
 
 ---
 
@@ -354,6 +470,53 @@ Options:
 
 ---
 
+### `ezs status`
+
+Show status of current stack with PR and CI info. Aliases: `st`
+
+```
+ezs status [options]
+
+Options:
+    -a, --all              Show all stacks
+    -b, --branch <name>    Show status for a specific branch's stack
+    -d, --debug            Show debug output
+```
+
+---
+
+### `ezs sync`
+
+Sync stack with remote. Handles rebasing onto updated parents, cleaning up merged branches, and force pushing after rebase.
+
+```
+ezs sync [options]
+ezs sync <hash-prefix>
+
+Options:
+    -s, --stack            Sync current stack (auto-detect what needs syncing)
+    -a, --all              Sync ALL stacks
+    -c, --current          Sync current branch only (auto-detect what it needs)
+    -b, --branch <name>    Sync a specific branch by name (rebase onto parent + cascade to children)
+    -p, --parent           Rebase current branch onto its parent
+    -C, --children         Rebase child branches onto current branch
+    --merge                Use git merge instead of git rebase
+    --rebase               Use git rebase (overrides sync_strategy config)
+    --no-delete-local      Don't delete local branches after their PRs are merged
+    --dry-run              Preview what would be synced without making changes
+    --continue             Continue after resolving conflicts
+    --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
+    --json                 Output dry-run results as JSON (requires --dry-run)
+```
+
+By default, sync uses git rebase. Use `--merge` to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with `ezs config set sync_strategy merge`. Use `--rebase` or `--merge` to override the configured strategy for a single run.
+
+You can sync a specific stack by passing its hash prefix (minimum 3 characters).
+
+**Fork branches:** After syncing, each branch is pushed to its configured remote. For fork-based PR branches, this is the fork's remote (not `origin`). If you don't have push access to the fork, the push step is skipped automatically — the local rebase/merge still happens so your working copy stays up to date.
+
+---
+
 ### `ezs unstack`
 
 Remove a branch from stack tracking without deleting the git branch or worktree.
@@ -364,31 +527,6 @@ ezs unstack [branch] [options]
 Options:
     -b, --branch <name>     Branch to untrack
 ```
-
----
-
-### `ezs config`
-
-Configure ezstack for the current repository. Aliases: `cfg`
-
-```
-ezs config [subcommand] [options]
-
-Subcommands:
-    set <key> <value>    Set a configuration value
-    show                 Show current configuration
-```
-
-**Available keys for `set`:**
-
-| Key | Description | Values |
-|-----|-------------|--------|
-| `worktree_base_dir` | Base directory for worktrees | Path (per-repo) |
-| `default_base_branch` | Default base branch | e.g. `main`, `master` |
-| `cd_after_new` | Auto-cd to new worktree | `true` / `false` (per-repo) |
-| `use_worktrees` | Use git worktrees for new branches | `true` / `false` (per-repo) |
-| `sync_strategy` | Sync method for rebase/merge | `rebase` / `merge` (per-repo) |
-| `github_token` | GitHub token for API access | Token string |
 
 ---
 
@@ -449,6 +587,31 @@ ezs up 2      # go up two levels
 ezs goto feature-1   # jump to a specific branch
 ```
 
+### Reviewing a Remote PR
+
+```bash
+# Checkout a teammate's branch into its own worktree
+# Registers a stack with the PR's base branch as root
+ezs new origin/feature-branch
+
+# ezstack fetches, creates a tracking worktree, and shows:
+#   PR #42: Add user authentication
+#   URL: https://github.com/you/repo/pull/42
+#   State: OPEN  Base: main
+#   Review: REVIEW_REQUIRED
+#   Diff vs main: +320 / -45 lines
+
+# The branch shows up in ezs ls with a (remote) tag
+# You can work on it, push changes, sync — all commands work
+
+# For fork PRs, ezstack auto-detects the fork remote:
+#   - If maintainer push is enabled AND you have access → adds fork remote, pushes there
+#   - Otherwise → marks branch read-only, skips push during sync
+
+# When you're done, clean up
+ezs delete feature-branch
+```
+
 ### Stacking on a Remote PR
 
 ```bash
@@ -456,3 +619,198 @@ ezs stack
 # Select "Start a new stack from a remote PR"
 # Pick the PR, then pick your branch to stack on top
 ```
+
+---
+
+## Editor & Desktop Integrations
+
+ezstack ships with three first-party clients that wrap the `ezs` CLI. They all
+read and write the same on-disk state (`~/.ezstack/stacks.json` and per-repo
+config), so you can mix and match them freely &mdash; the CLI, your editor, and
+the desktop app all stay in sync.
+
+### VS Code Extension
+
+Located in `vscode-extension/`. Adds an **ezstack** panel to the activity bar
+with two views: a stack tree (branches grouped by stack, with PR state, CI
+checks, and review status) and a per-branch file browser. Auto-refreshes when
+`~/.ezstack/stacks.json` changes.
+
+**Install**
+
+```bash
+# Pre-built (from the Releases page)
+code --install-extension ezstack-4.0.0.vsix
+
+# From source
+cd vscode-extension
+npm install
+npm run compile
+npx vsce package
+code --install-extension ezstack-4.0.0.vsix
+```
+
+**Commands** are available under the `ezstack:` prefix in the command palette
+(`Cmd+Shift+P`):
+
+- **Branch ops**: `New Branch`, `Sync`, `Sync Branch`, `Push Branch`,
+  `Push Stack`, `Delete Branch`, `Reparent Branch`
+- **PR ops**: `Create PR`, `Update PR`, `Merge PR`, `Toggle PR Draft`,
+  `Update Stack Info in PRs`
+- **Agent**: `Open Agent`, `Build Feature with Agent`, `Edit Agent Prompt`
+- **File navigation**: `Cmd+Alt+Up` / `Cmd+Alt+Down` jump to the same file in
+  the parent / child PR; right-click to compare against the previous PR
+
+**Settings**
+
+| Setting | Default | Description |
+|---|---|---|
+| `ezstack.cliPath` | `"ezs"` | Path to the `ezs` binary |
+| `ezstack.autoRefresh` | `true` | Refresh tree view when config files change |
+| `ezstack.ticketPattern` | `""` | Regex to extract ticket IDs from branch names (e.g. `PROJ-\d+`). Shown in the status bar and folder badges |
+
+Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/vscode.html>.
+
+### Neovim Plugin
+
+Located in `neovim-plugin/`. Native Lua plugin for Neovim 0.10+. Exposes a
+single `:Ezs` user command with subcommand and flag completion, plus a styled
+stack viewer buffer, Telescope pickers, and a statusline component.
+
+**Install (lazy.nvim)**
+
+```lua
+{
+  "KulkarniKaustubh/ezstack",
+  subdir = "neovim-plugin",
+  cmd    = { "Ezs" },
+  keys   = { { "<leader>ez", "<cmd>Ezs<cr>", desc = "Ezstack viewer" } },
+  config = function()
+    require("ezstack").setup()
+    require("telescope").load_extension("ezstack")  -- optional
+  end,
+}
+```
+
+`packer.nvim` and a manual `runtimepath+=...` install also work &mdash; see
+`neovim-plugin/README.md` for the alternatives.
+
+**Key commands** (every `ezs` subcommand has a `:Ezs` mirror):
+
+```vim
+:Ezs                 " open the stack viewer
+:Ezs status          " viewer with PR/CI info
+:Ezs new <name> [parent]
+:Ezs sync -s         " sync entire stack
+:Ezs sync --continue " resume after conflicts
+:Ezs push -s         " push entire stack
+:Ezs pr create [title]
+:Ezs pr merge        " prompts for method
+:Ezs goto [branch]   " switch worktree (uses :tcd by default)
+:Ezs up | :Ezs down  " navigate the stack
+:Ezs agent           " launch the AI agent
+:Ezs agent feature "description"
+```
+
+The viewer is a non-modifiable buffer with single-key bindings: `<CR>` goto,
+`o` open PR, `r` refresh, `n` new, `d` delete, `p`/`P` push, `s` sync, `a`/`A`
+agent, `?` help, `q` close.
+
+**Telescope pickers** (when telescope.nvim is installed):
+
+```vim
+:Telescope ezstack branches    " fuzzy-find branches across stacks
+:Telescope ezstack stacks      " fuzzy-find stacks
+```
+
+**Setup options**
+
+| Option | Default | Description |
+|---|---|---|
+| `cli_path` | `"ezs"` | Path to the `ezs` binary (auto-discovered) |
+| `auto_refresh` | `true` | Refresh on `FugitiveChanged` / `EzstackChanged` |
+| `viewer_position` | `"botright"` | Split position for the viewer |
+| `viewer_height` | `15` | Viewer window height |
+| `statusline_cache_ttl` | `5000` | Statusline cache TTL (ms) |
+| `goto_strategy` | `"tcd"` | `"tcd"` (tab-local), `"cd"` (global), or `"lcd"` (window) |
+| `goto_close_buffers` | `false` | Close unmodified buffers from the previous worktree on goto |
+| `goto_open_explorer` | `true` | Open the file explorer at the new worktree root |
+
+The plugin fires `User EzstackChanged` after every CLI mutation and
+`User EzstackGoto` after a worktree switch &mdash; hook your own logic in via
+`autocmd`. Run `:help ezstack` for the bundled vimdoc reference.
+
+Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/nvim.html>.
+
+### Desktop App
+
+Located in `tauri-ui/`. A native desktop app built with **Tauri v2** (Rust
+backend) and **React 19 + TypeScript** on the frontend. The Rust backend is a
+thin wrapper that runs `ezs status --json --all` for queries and `ezs -y
+<command>` for mutations &mdash; the desktop app shows its own confirmation
+dialogs.
+
+**Install / build**
+
+```bash
+cd tauri-ui
+npm install
+
+# Development (hot reload via Vite + Tauri window)
+npm run tauri dev
+
+# Production bundle
+npm run tauri build
+# → src-tauri/target/release/bundle/
+```
+
+Or grab a prebuilt installer from the
+[Releases page](https://github.com/KulkarniKaustubh/ezstack/releases).
+
+**Layout** &mdash; three panels:
+
+1. **Stacks sidebar** &mdash; every stack in the repo, with branch counts
+2. **Stack graph** &mdash; visual tree, color-coded by health, current branch
+   highlighted
+3. **Branch detail** &mdash; PR state, CI checks, review status, mergeable
+   state, and action buttons
+
+The status bar shows repo path, current branch, and last refresh time. The
+title bar has a theme toggle (dark / light / system) and a connection pill
+that turns green / yellow / red based on health.
+
+**Operations** are exposed as dialogs: new branch, sync, push, delete,
+reparent, PR create/update/merge, toggle draft, update stack tables, agent
+(branch- or stack-scoped), agent feature, and agent prompt management
+(view/edit/reset across the shipped, custom, and repo layers). The CLI output
+of every operation lands in a terminal-like panel below the main view.
+
+**Polling** &mdash; every 30 seconds (paused when the window loses focus).
+Failures back off exponentially (30s → 60s → 120s → 240s → 300s).
+
+**Keyboard shortcuts**: `Cmd+R` refresh, `Cmd+N` new branch.
+
+**Remote (SSH) mode** &mdash; the desktop app can drive an `ezs` install on a
+remote machine. Click the **Connect** pill in the title bar, fill in
+host/user/port/key (and optionally a jump host), and pick a repo from the
+remote `~/.ezstack/config.json`. Profiles are saved to
+`~/.ezstack/desktop/connections.json` (mode `0600`); override with the
+`EZSTACK_DESKTOP_HOME` environment variable.
+
+The connect dialog has a **Diagnose** button that runs a 6-step health check
+(SSH connectivity + latency, login `PATH`, `ezs` present, `git` present, `gh`
+authenticated, `~/.ezstack/config.json` readable) and reports per-step pass /
+warn / fail with timings. Once connected, the app pings the remote every 30
+seconds and the title-bar pill reflects the result.
+
+**Known limitations of remote mode:**
+
+- The agent prompt **editor** is local-only &mdash; opening `$EDITOR` over SSH
+  from a GUI is fragile, so the desktop app blocks `agent prompts edit` while
+  connected. View and reset still work.
+- First connections use `StrictHostKeyChecking=accept-new`; existing host keys
+  are still verified strictly.
+- Every operation is at least one SSH round-trip &mdash; expect a beat of
+  added latency on refreshes.
+
+Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/desktop.html>.

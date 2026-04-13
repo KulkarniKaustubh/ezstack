@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
@@ -184,22 +185,12 @@ func (m *Manager) RegisterExistingBranch(branchName, worktreePath, baseBranch st
 // RegisterRemoteBranch creates a new stack with a remote branch as its root/base.
 // The remote branch is NOT added to the tree — it is the stack root.
 // PR info is stored on the Stack struct for display in stack descriptions.
-func (m *Manager) RegisterRemoteBranch(branchName string, prNumber int, prURL string) error {
-	// If a stack with this root already exists, just update its PR info
-	if key := m.findStackByRoot(branchName); key != "" {
-		existing := m.stackConfig.Stacks[key]
-		existing.RootPRNumber = prNumber
-		existing.RootPRUrl = prURL
-		if err := m.stackConfig.Save(m.repoDir); err != nil {
-			return fmt.Errorf("failed to save stack config: %w", err)
-		}
-		return nil
-	}
-
+func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber int, prURL string) (string, error) {
 	hash := m.generateUniqueHash(branchName)
 	stack := &config.Stack{
 		Hash:         hash,
 		Root:         branchName,
+		RootBase:     baseBranch,
 		RootPRNumber: prNumber,
 		RootPRUrl:    prURL,
 		Tree:         config.BranchTree{},
@@ -208,18 +199,23 @@ func (m *Manager) RegisterRemoteBranch(branchName string, prNumber int, prURL st
 	stack.PopulateBranchesWithCache(m.stackConfig.Cache)
 
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
-		return fmt.Errorf("failed to save stack config: %w", err)
+		return "", fmt.Errorf("failed to save stack config: %w", err)
 	}
-	return nil
+	return hash, nil
 }
 
 // AddBranchToStack adds an existing branch to a stack (worktree should already exist)
 // This is used when the worktree was created externally (e.g., from a remote branch)
-func (m *Manager) AddBranchToStack(name, parentBranch, worktreeDir string) (*config.Branch, error) {
-	// Find the stack for the parent (check tree branches first, then roots)
-	stackKey := m.findStackForBranch(parentBranch)
+// If targetStackHash is non-empty, the branch is added to that specific stack.
+// Otherwise, the stack is found by looking up the parent branch.
+func (m *Manager) AddBranchToStack(name, parentBranch, worktreeDir, targetStackHash string) (*config.Branch, error) {
+	stackKey := targetStackHash
 	if stackKey == "" {
-		stackKey = m.findStackByRoot(parentBranch)
+		// Find the stack for the parent (check tree branches first, then roots)
+		stackKey = m.findStackForBranch(parentBranch)
+		if stackKey == "" {
+			stackKey = m.findStackByRoot(parentBranch)
+		}
 	}
 	if stackKey == "" {
 		return nil, fmt.Errorf("parent branch '%s' not found in any stack", parentBranch)
@@ -389,11 +385,17 @@ func (m *Manager) GetCurrentStack() (*config.Stack, *config.Branch, error) {
 	return nil, nil, fmt.Errorf("current branch %s is not part of any stack", currentBranch)
 }
 
-// ListStacks returns all stacks
+// ListStacks returns all stacks sorted by name for deterministic ordering
 func (m *Manager) ListStacks() []*config.Stack {
-	var stacks []*config.Stack
-	for _, stack := range m.stackConfig.Stacks {
-		stacks = append(stacks, stack)
+	names := make([]string, 0, len(m.stackConfig.Stacks))
+	for name := range m.stackConfig.Stacks {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	stacks := make([]*config.Stack, 0, len(names))
+	for _, name := range names {
+		stacks = append(stacks, m.stackConfig.Stacks[name])
 	}
 	return stacks
 }
@@ -454,7 +456,6 @@ func (m *Manager) GetStackForBranch(branchName string) *config.Stack {
 	}
 	return m.stackConfig.Stacks[key]
 }
-
 
 // GetStackByHash finds a stack by hash prefix (minimum 3 characters). Returns error if 0 or >1 stacks match.
 func (m *Manager) GetStackByHash(prefix string) (*config.Stack, error) {
@@ -703,32 +704,55 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 	result := &ReparentResult{Branch: m.GetBranch(branch.Name)}
 
 	// Perform git rebase/merge if requested (after config is saved)
-	if doRebase && branch.WorktreePath != "" {
-		g := git.New(branch.WorktreePath)
+	if doRebase {
 		newParentRef := m.getParentRef(newParentName)
+		workDir := branch.WorktreePath
+		if workDir == "" {
+			workDir = m.repoDir
+		}
 
-		if useMerge {
-			syncResult := g.MergeNonInteractive(newParentRef)
-			if syncResult.HasConflict {
-				result.HasConflict = true
-				result.ConflictDir = branch.WorktreePath
-			} else if syncResult.Error != nil {
-				return result, fmt.Errorf("merge failed: %w", syncResult.Error)
+		if branch.WorktreePath != "" {
+			g := git.New(branch.WorktreePath)
+			if useMerge {
+				syncResult := g.MergeNonInteractive(newParentRef)
+				if syncResult.HasConflict {
+					result.HasConflict = true
+					result.ConflictDir = branch.WorktreePath
+				} else if syncResult.Error != nil {
+					return result, fmt.Errorf("merge failed: %w", syncResult.Error)
+				}
+			} else {
+				oldParentRef := m.getParentRef(oldParent)
+				mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
+				if err != nil {
+					mergeBase = oldParentRef
+				}
+				rebaseResult := g.RebaseOntoNonInteractive(newParentRef, mergeBase)
+				if rebaseResult.HasConflict {
+					result.HasConflict = true
+					result.ConflictDir = branch.WorktreePath
+				} else if rebaseResult.Error != nil {
+					return result, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
+				}
 			}
 		} else {
-			// Get the merge-base between current branch and old parent
-			oldParentRef := m.getParentRef(oldParent)
-			mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
-			if err != nil {
-				mergeBase = oldParentRef
-			}
-
-			rebaseResult := g.RebaseOntoNonInteractive(newParentRef, mergeBase)
-			if rebaseResult.HasConflict {
+			// No worktree — use checkout-based sync in the main repo
+			syncResult := syncViaCheckout(m.git, branch.Name, func(g *git.Git) git.RebaseResult {
+				if useMerge {
+					return g.MergeNonInteractive(newParentRef)
+				}
+				oldParentRef := m.getParentRef(oldParent)
+				mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
+				if err != nil {
+					mergeBase = oldParentRef
+				}
+				return g.RebaseOntoNonInteractive(newParentRef, mergeBase)
+			})
+			if syncResult.HasConflict {
 				result.HasConflict = true
-				result.ConflictDir = branch.WorktreePath
-			} else if rebaseResult.Error != nil {
-				return result, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
+				result.ConflictDir = workDir
+			} else if syncResult.Error != nil {
+				return result, fmt.Errorf("sync failed: %w", syncResult.Error)
 			}
 		}
 	}
@@ -795,26 +819,42 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 
 	result := &ReparentResult{Branch: m.GetBranch(branchName)}
 
-	// Perform git rebase/merge if requested and we have a worktree (after config is saved)
-	if doRebase && worktreePath != "" {
-		g := git.New(worktreePath)
+	// Perform git rebase/merge if requested (after config is saved)
+	if doRebase {
 		newParentRef := m.getParentRef(newParentName)
 
-		if useMerge {
-			syncResult := g.MergeNonInteractive(newParentRef)
-			if syncResult.HasConflict {
-				result.HasConflict = true
-				result.ConflictDir = worktreePath
-			} else if syncResult.Error != nil {
-				return result, fmt.Errorf("merge failed: %w", syncResult.Error)
+		if worktreePath != "" {
+			g := git.New(worktreePath)
+			if useMerge {
+				syncResult := g.MergeNonInteractive(newParentRef)
+				if syncResult.HasConflict {
+					result.HasConflict = true
+					result.ConflictDir = worktreePath
+				} else if syncResult.Error != nil {
+					return result, fmt.Errorf("merge failed: %w", syncResult.Error)
+				}
+			} else {
+				rebaseResult := g.RebaseNonInteractive(newParentRef)
+				if rebaseResult.HasConflict {
+					result.HasConflict = true
+					result.ConflictDir = worktreePath
+				} else if rebaseResult.Error != nil {
+					return result, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
+				}
 			}
 		} else {
-			rebaseResult := g.RebaseNonInteractive(newParentRef)
-			if rebaseResult.HasConflict {
+			// No worktree — use checkout-based sync in the main repo
+			syncResult := syncViaCheckout(m.git, branchName, func(g *git.Git) git.RebaseResult {
+				if useMerge {
+					return g.MergeNonInteractive(newParentRef)
+				}
+				return g.RebaseNonInteractive(newParentRef)
+			})
+			if syncResult.HasConflict {
 				result.HasConflict = true
-				result.ConflictDir = worktreePath
-			} else if rebaseResult.Error != nil {
-				return result, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
+				result.ConflictDir = m.repoDir
+			} else if syncResult.Error != nil {
+				return result, fmt.Errorf("sync failed: %w", syncResult.Error)
 			}
 		}
 	}
@@ -935,7 +975,7 @@ func (m *Manager) HasStackWithRoot(rootName string) bool {
 // GetStacksWithRoot returns all stacks that use rootName as their root
 func (m *Manager) GetStacksWithRoot(rootName string) []*config.Stack {
 	var result []*config.Stack
-	for _, s := range m.stackConfig.Stacks {
+	for _, s := range m.ListStacks() {
 		if s.Root == rootName {
 			result = append(result, s)
 		}
@@ -971,7 +1011,7 @@ func (m *Manager) findUniqueStackByRoot(rootName string) string {
 // GetAllBranchesInAllStacks returns all branches across all stacks
 func (m *Manager) GetAllBranchesInAllStacks() []*config.Branch {
 	var allBranches []*config.Branch
-	for _, stack := range m.stackConfig.Stacks {
+	for _, stack := range m.ListStacks() {
 		allBranches = append(allBranches, stack.Branches...)
 	}
 	return allBranches
@@ -1396,4 +1436,33 @@ func (m *Manager) MarkBranchMerged(branchName string) error {
 	}
 
 	return nil
+}
+
+// MarkBranchRemote marks a branch as belonging to another contributor.
+// Remote branches are not rebased during sync. Optionally sets PR URL.
+// If remote is non-empty, it specifies the git remote to push to (for fork PRs).
+func (m *Manager) MarkBranchRemote(branchName, prURL, remote string) error {
+	cache := m.stackConfig.Cache
+	bc := cache.GetBranchCache(branchName)
+	if bc == nil {
+		bc = &config.BranchCache{}
+	}
+	bc.IsRemote = true
+	if prURL != "" {
+		bc.PRUrl = prURL
+	}
+	if remote != "" {
+		bc.Remote = remote
+	}
+	cache.SetBranchCache(branchName, bc)
+
+	// Update runtime branch objects
+	for _, stack := range m.stackConfig.Stacks {
+		if stack.HasBranch(branchName) {
+			stack.PopulateBranchesWithCache(cache)
+			break
+		}
+	}
+
+	return m.stackConfig.Save(m.repoDir)
 }

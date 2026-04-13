@@ -23,6 +23,11 @@ func New(repoDir string) *Git {
 }
 
 // run executes a git command and returns the output
+// RunCapture executes a git command and returns stdout.
+func (g *Git) RunCapture(args ...string) (string, error) {
+	return g.run(args...)
+}
+
 func (g *Git) run(args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = g.RepoDir
@@ -132,6 +137,34 @@ func (g *Git) CreateWorktree(branchName, worktreePath, baseBranch string) error 
 	}
 	// Create the worktree
 	_, err := g.runWithSpinner(fmt.Sprintf("Creating worktree for %s...", branchName), "worktree", "add", worktreePath, branchName)
+	return err
+}
+
+// CreateWorktreeFromRemoteBranch creates a worktree for a remote branch with tracking.
+// If the local branch already exists (and has no worktree), it is force-updated to match the remote.
+// The resulting local branch tracks origin/<localBranch>.
+func (g *Git) CreateWorktreeFromRemoteBranch(localBranch, worktreePath string) error {
+	remoteBranch := "origin/" + localBranch
+
+	if g.BranchExists(localBranch) {
+		// Force-update existing local branch to match remote
+		if _, err := g.run("branch", "-f", localBranch, remoteBranch); err != nil {
+			return fmt.Errorf("failed to update local branch '%s' to match remote: %w", localBranch, err)
+		}
+		// Ensure tracking is set up. Non-fatal: worktree creation still
+		// succeeds without upstream tracking; the user can set it later.
+		if _, err := g.run("branch", "--set-upstream-to="+remoteBranch, localBranch); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: failed to set upstream for %s: %v\n", localBranch, err)
+		}
+	} else {
+		// Create new branch tracking remote
+		if _, err := g.run("branch", "--track", localBranch, remoteBranch); err != nil {
+			return fmt.Errorf("failed to create tracking branch '%s': %w", localBranch, err)
+		}
+	}
+
+	// Create the worktree
+	_, err := g.runWithSpinner(fmt.Sprintf("Creating worktree for %s...", localBranch), "worktree", "add", worktreePath, localBranch)
 	return err
 }
 
@@ -274,8 +307,10 @@ func (g *Git) GetCommitsAhead(branch, target string) (int, error) {
 }
 
 // GetDiffStat returns the total lines added and removed between base and head.
+// Uses three-dot diff (merge-base) to show only changes introduced by head,
+// not changes on base that head doesn't have.
 func (g *Git) GetDiffStat(base, head string) (added int, removed int, err error) {
-	output, err := g.run("diff", "--shortstat", base, head)
+	output, err := g.run("diff", "--shortstat", base+"..."+head)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -287,29 +322,43 @@ func (g *Git) GetDiffStat(base, head string) (added int, removed int, err error)
 	for _, part := range strings.Split(output, ",") {
 		part = strings.TrimSpace(part)
 		if strings.Contains(part, "insertion") {
-			fmt.Sscanf(part, "%d", &added)
+			if n, parseErr := strconv.Atoi(strings.Fields(part)[0]); parseErr == nil {
+				added = n
+			}
 		} else if strings.Contains(part, "deletion") {
-			fmt.Sscanf(part, "%d", &removed)
+			if n, parseErr := strconv.Atoi(strings.Fields(part)[0]); parseErr == nil {
+				removed = n
+			}
 		}
 	}
 	return added, removed, nil
 }
 
-// IsLocalAheadOfOrigin checks if the local branch has commits not in origin
-// Returns true if local is ahead (needs push), false if in sync or behind
-func (g *Git) IsLocalAheadOfOrigin(branch string) (bool, error) {
-	originBranch := "origin/" + branch
-	// Check if origin branch exists
-	_, err := g.run("rev-parse", "--verify", originBranch)
+// IsLocalAheadOfRemote checks if the local branch has commits not in the remote.
+// If remote is empty, defaults to "origin".
+// Returns true if local is ahead (needs push), false if in sync or behind.
+func (g *Git) IsLocalAheadOfRemote(branch string, remote string) (bool, error) {
+	if remote == "" {
+		remote = "origin"
+	}
+	remoteBranch := remote + "/" + branch
+	// Check if remote branch exists
+	_, err := g.run("rev-parse", "--verify", remoteBranch)
 	if err != nil {
-		// Origin branch doesn't exist - local is ahead (needs first push)
+		// Remote branch doesn't exist - local is ahead (needs first push)
 		return true, nil
 	}
-	ahead, err := g.GetCommitsAhead(branch, originBranch)
+	ahead, err := g.GetCommitsAhead(branch, remoteBranch)
 	if err != nil {
 		return false, err
 	}
 	return ahead > 0, nil
+}
+
+// IsLocalAheadOfOrigin checks if the local branch has commits not in origin.
+// Deprecated: Use IsLocalAheadOfRemote instead.
+func (g *Git) IsLocalAheadOfOrigin(branch string) (bool, error) {
+	return g.IsLocalAheadOfRemote(branch, "origin")
 }
 
 // RemoteBranchExists checks if a remote branch exists
@@ -572,14 +621,57 @@ func (g *Git) GetRemote(name string) (string, error) {
 	return g.run("remote", "get-url", name)
 }
 
-// PushForce force pushes the current branch with lease (safer than --force)
-// Explicitly specifies origin and branch name to handle branches without upstream
-func (g *Git) PushForce() error {
+// FindRemoteByOwner finds a git remote that points to a repo owned by the given GitHub owner.
+// Returns the remote name and URL, or empty strings if not found.
+func (g *Git) FindRemoteByOwner(owner string) (string, string, error) {
+	output, err := g.run("remote", "-v")
+	if err != nil {
+		return "", "", err
+	}
+	lowerOwner := strings.ToLower(owner)
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		remoteName := fields[0]
+		remoteURL := fields[1]
+		// Match owner in SSH (git@github.com:owner/) or HTTPS (github.com/owner/)
+		lowerURL := strings.ToLower(remoteURL)
+		if strings.Contains(lowerURL, ":"+lowerOwner+"/") || strings.Contains(lowerURL, "/"+lowerOwner+"/") {
+			return remoteName, remoteURL, nil
+		}
+	}
+	return "", "", nil
+}
+
+// AddRemote adds a new git remote
+func (g *Git) AddRemote(name, url string) error {
+	_, err := g.run("remote", "add", name, url)
+	return err
+}
+
+// FetchRemote fetches from a specific remote
+func (g *Git) FetchRemote(remote string) error {
+	_, err := g.run("fetch", remote)
+	return err
+}
+
+// PushForce force pushes the current branch with lease (safer than --force).
+// If remote is empty, defaults to "origin".
+func (g *Git) PushForce(remote ...string) error {
+	r := "origin"
+	if len(remote) > 0 && remote[0] != "" {
+		r = remote[0]
+	}
 	branch, err := g.CurrentBranch()
 	if err != nil {
 		return fmt.Errorf("failed to get current branch: %w", err)
 	}
-	return g.RunInteractive("push", "--force-with-lease", "origin", branch)
+	return g.RunInteractive("push", "--force-with-lease", r, branch)
 }
 
 // PruneWorktrees prunes stale worktree metadata from git
@@ -601,9 +693,17 @@ func (g *Git) DeleteBranch(branchName string, force bool) error {
 // RemoveWorktree removes a worktree and optionally deletes the branch
 func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName string) error {
 	// Check if the worktree directory exists
-	if _, err := os.Stat(worktreePath); os.IsNotExist(err) {
+	_, statErr := os.Stat(worktreePath)
+	if statErr != nil && !os.IsNotExist(statErr) {
+		// Non-ENOENT error (permission denied, broken symlink, etc.)
+		return fmt.Errorf("failed to access worktree path '%s': %w", worktreePath, statErr)
+	}
+
+	if os.IsNotExist(statErr) {
 		// Worktree directory doesn't exist - just prune stale worktrees and delete branch
-		g.run("worktree", "prune")
+		if _, err := g.run("worktree", "prune"); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to prune worktrees: %v\n", err)
+		}
 	} else {
 		// First remove the worktree
 		_, err := g.run("worktree", "remove", worktreePath)
@@ -614,7 +714,9 @@ func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName 
 				// Check if the error is because it's not a working tree (already removed)
 				if strings.Contains(err.Error(), "is not a working tree") {
 					// Worktree already removed, just prune
-					g.run("worktree", "prune")
+					if _, pruneErr := g.run("worktree", "prune"); pruneErr != nil {
+						fmt.Fprintf(os.Stderr, "Warning: failed to prune worktrees: %v\n", pruneErr)
+					}
 				} else {
 					return fmt.Errorf("failed to remove worktree: %w", err)
 				}
@@ -622,9 +724,15 @@ func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName 
 		}
 	}
 
-	// Optionally delete the branch
+	// Optionally delete the branch.
+	// Use the main worktree for this command since g.RepoDir may point to
+	// the worktree we just deleted (causing chdir errors).
 	if deleteBranch && branchName != "" {
-		_, err := g.run("branch", "-D", branchName)
+		branchGit := g
+		if mainWT, err := g.GetMainWorktree(); err == nil && mainWT != "" && mainWT != g.RepoDir {
+			branchGit = New(mainWT)
+		}
+		_, err := branchGit.run("branch", "-D", branchName)
 		if err != nil {
 			// Branch might already be deleted or not exist
 			if !strings.Contains(err.Error(), "not found") {

@@ -10,10 +10,12 @@ export interface Branch {
 
 export interface StatusBranch extends Branch {
   pr_state?: "OPEN" | "DRAFT" | "MERGED" | "CLOSED";
-  ci_state?: "success" | "failure" | "pending";
+  ci_state?: "success" | "failure" | "pending" | "error" | "none" | "unknown";
   ci_summary?: string;
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   review_state?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
+  additions?: number;
+  deletions?: number;
 }
 
 export interface StatusStack {
@@ -21,6 +23,13 @@ export interface StatusStack {
   name?: string;
   root: string;
   branches: StatusBranch[];
+}
+
+export interface RepoConfig {
+  repo_path: string;
+  worktree_base_dir: string;
+  default_base_branch?: string;
+  sync_strategy?: string;
 }
 
 export interface CommandResult {
@@ -34,7 +43,48 @@ export interface SshConnection {
   user: string;
   port: number;
   key_path: string;
+  jump_host: string;
   remote_repo_path: string;
+  label: string;
+}
+
+export interface ConnectionProfile {
+  id: string;
+  name: string;
+  host: string;
+  user: string;
+  port: number;
+  key_path: string;
+  jump_host: string;
+  last_repo_path: string;
+}
+
+export interface RemoteRepoSummary {
+  repo_path: string;
+  worktree_base_dir?: string;
+  default_base_branch?: string;
+  exists: boolean;
+}
+
+export type DiagnosticStatus = "ok" | "warn" | "fail" | "skip";
+
+export interface DiagnosticStep {
+  name: string;
+  status: DiagnosticStatus;
+  message: string;
+  duration_ms?: number;
+}
+
+export interface ConnectionHealth {
+  ok: boolean;
+  latency_ms: number;
+  message?: string;
+}
+
+export interface HostFingerprint {
+  key_type: string;
+  bits: number;
+  fingerprint: string;
 }
 
 export interface TreeNode {

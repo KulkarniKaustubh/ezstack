@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VS Code Extension - ezstack</title>
+  <meta name="description" content="Manage stacked pull requests from the VS Code sidebar. Stack tree view, file browser, PR status, CI checks, and keyboard navigation — all powered by the ezs CLI.">
+  <meta name="theme-color" content="#09090b">
+  <link rel="canonical" href="https://kulkarnikaustubh.github.io/ezstack/vscode.html">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="VS Code Extension - ezstack">
+  <meta property="og:description" content="Manage stacked pull requests from the VS Code sidebar. Stack tree view, file browser, PR status, CI checks, and keyboard navigation.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://kulkarnikaustubh.github.io/ezstack/vscode.html">
+
+  <!-- Favicon -->
+  <link rel="icon" href="img/favicon.png" type="image/png">
+  <link rel="icon" href="img/favicon.svg" type="image/svg+xml">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-brand"><img src="img/logo.png" alt="ezstack" width="24" height="24" class="nav-logo">ezstack</a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="nav-links" id="nav-links">
+        <a href="index.html#features">Features</a>
+        <a href="documentation.html">Docs</a>
+        <a href="#stack-tree">Stack Tree</a>
+        <a href="#commands">Commands</a>
+        <a href="#file-navigation">File Navigation</a>
+        <div class="nav-dropdown">
+          <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
+          <div class="nav-dropdown-menu">
+            <a href="agent.html">AI Agent</a>
+            <a href="vscode.html">VS Code Extension</a>
+            <a href="desktop.html">Desktop App</a>
+            <a href="nvim.html">Neovim Plugin</a>
+          </div>
+        </div>
+        <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener" class="nav-github">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="agent-hero" id="hero">
+    <div class="hero-glow"></div>
+    <div class="container">
+      <div class="hero-content">
+        <a href="index.html" class="back-link">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+          Back to ezstack
+        </a>
+        <h1>VS Code<br>Extension</h1>
+        <p class="hero-sub">Manage stacked pull requests from the VS Code sidebar. See your full stack tree, browse files per branch, check PR and CI status, and navigate between branches &mdash; all without leaving the editor.</p>
+        <div class="hero-actions">
+          <div class="install-cmd" id="hero-install">
+            <span class="install-prompt">$</span>
+            <span class="install-text">code --install-extension ezstack-4.0.0.vsix</span>
+            <button class="copy-btn" data-copy="code --install-extension ezstack-4.0.0.vsix" aria-label="Copy to clipboard">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="btn btn-secondary" style="margin-top: 1rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download VSIX from Releases
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Stack Tree View -->
+  <section class="workflow-section" id="stack-tree">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <span class="mode-label mode-label-work">Sidebar Panel</span>
+        <h2>Your stacks at a glance</h2>
+        <p>The extension adds an <strong>ezstack</strong> panel in the activity bar. It displays every stack as a tree with branches, PR state, CI status, and review state &mdash; all updated in real time.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">1</div>
+          <h3>Stack tree view</h3>
+          <p>See all your stacks organized as trees. Each branch shows its PR number, state (open, draft, merged, closed), CI check summary, and review status. The current branch is highlighted.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># What you see in the sidebar:</span>
+<span class="c-dim">Stack: my-feature [a1b2c]</span>
+  <span class="c-dim">├──</span> <span class="c-green">feature-part1</span>  <span class="c-dim">PR #42</span> <span class="c-green">[OPEN]</span>  <span class="c-dim">CI: 3/3 passed</span>  <span class="c-green">APPROVED</span>
+  <span class="c-dim">│   └──</span> <span class="c-green">feature-part2</span>  <span class="c-dim">PR #43</span> <span class="c-yellow">[DRAFT]</span> <span class="c-dim">CI: pending</span>
+  <span class="c-dim">│       └──</span> <span class="c-green">feature-part3</span>  <span class="c-dim">(no PR)</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">2</div>
+          <h3>Auto-refresh</h3>
+          <p>The tree watches <code>~/.ezstack/stacks.json</code> for changes. Whether you use the CLI or the extension, the view stays in sync automatically. No manual refresh needed.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Use the CLI in a terminal...</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs new</span> my-new-branch
+
+<span class="c-comment"># ...the sidebar updates instantly</span>
+<span class="c-green">✓ Tree view refreshed automatically</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">3</div>
+          <h3>Status bar</h3>
+          <p>The status bar shows your current branch and stack name at all times. Click it to quickly jump to any branch in your stacks.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Status bar shows:</span>
+<span class="c-dim">$(git-branch) feature-part2  •  my-feature [a1b2c]</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Commands -->
+  <section class="workflow-section" id="commands">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <span class="mode-label mode-label-feature">Command Palette</span>
+        <h2>Full stack control from the palette</h2>
+        <p>All operations are available via <code>Cmd+Shift+P</code> (or <code>Ctrl+Shift+P</code>) under the <strong>ezstack</strong> category. Right-click branches in the tree for context menus too.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">1</div>
+          <h3>Branch operations</h3>
+          <p>Create, delete, reparent, sync, and push branches directly from VS Code. Right-click any branch in the sidebar to sync or push it headlessly.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Available commands:</span>
+<span class="c-dim">ezstack: New Branch</span>       <span class="c-comment"># Create a new stacked branch</span>
+<span class="c-dim">ezstack: Sync</span>             <span class="c-comment"># Sync rebases (opens terminal)</span>
+<span class="c-dim">ezstack: Sync Branch</span>     <span class="c-comment"># Sync a specific branch (headless)</span>
+<span class="c-dim">ezstack: Push Branch</span>     <span class="c-comment"># Push current or specific branch</span>
+<span class="c-dim">ezstack: Push Stack</span>      <span class="c-comment"># Push all branches in stack</span>
+<span class="c-dim">ezstack: Delete Branch</span>   <span class="c-comment"># Delete branch and worktree</span>
+<span class="c-dim">ezstack: Reparent Branch</span> <span class="c-comment"># Move to a different parent</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">2</div>
+          <h3>Pull request operations</h3>
+          <p>Create PRs, toggle draft status, merge, and update the stack navigation table in all PR descriptions &mdash; without switching to the browser.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># PR commands:</span>
+<span class="c-dim">ezstack: Create PR</span>                 <span class="c-comment"># Prompts for title and draft/ready</span>
+<span class="c-dim">ezstack: Update PR</span>                 <span class="c-comment"># Update PR base branch</span>
+<span class="c-dim">ezstack: Merge PR</span>                  <span class="c-comment"># Squash, merge, or rebase</span>
+<span class="c-dim">ezstack: Toggle PR Draft</span>           <span class="c-comment"># Switch draft status</span>
+<span class="c-dim">ezstack: Update Stack Info in PRs</span>  <span class="c-comment"># Update navigation tables</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">3</div>
+          <h3>AI agent integration</h3>
+          <p>Launch the ezstack AI agent or the feature builder directly from the sidebar. Edit agent prompts without leaving the editor. Requires worktree mode (<code>use_worktrees: true</code>).</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Agent commands:</span>
+<span class="c-dim">ezstack: Open Agent</span>             <span class="c-comment"># Launch agent on current branch</span>
+<span class="c-dim">ezstack: Build Feature with Agent</span> <span class="c-comment"># Describe a feature, get stacked PRs</span>
+<span class="c-dim">ezstack: Edit Agent Prompt</span>      <span class="c-comment"># Customize agent prompts</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- File Navigation -->
+  <section class="workflow-section" id="file-navigation">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <span class="mode-label mode-label-work">File Browser</span>
+        <h2>Navigate files across your stack</h2>
+        <p>Browse the file tree of any branch's worktree. Jump between the same file in different PRs with keyboard shortcuts, or diff against the parent branch.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">1</div>
+          <h3>Per-branch file tree</h3>
+          <p>The Files panel shows the worktree of whichever branch you're on. Browse, open files, and favorite frequently accessed paths. Filter by favorites to cut through the noise.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Files panel in the sidebar:</span>
+<span class="c-dim">📁 src/</span>
+<span class="c-dim">  📁 auth/</span>
+<span class="c-dim">    📄 middleware.go</span>  <span class="c-yellow">★</span>
+<span class="c-dim">    📄 types.go</span>
+<span class="c-dim">  📁 routes/</span>
+<span class="c-dim">    📄 auth.go</span>        <span class="c-yellow">★</span>
+<span class="c-dim">📄 go.mod</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">2</div>
+          <h3>Jump between PRs</h3>
+          <p>Use <code>Cmd+Alt+Up</code> and <code>Cmd+Alt+Down</code> to open the same file in the parent or child branch. Compare changes across the stack without manually switching worktrees.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Keyboard shortcuts:</span>
+<span class="c-dim">Cmd+Alt+Up</span>    <span class="c-comment"># Open file in previous (parent) PR</span>
+<span class="c-dim">Cmd+Alt+Down</span>  <span class="c-comment"># Open file in next (child) PR</span>
+
+<span class="c-comment"># Also available from right-click menu:</span>
+<span class="c-dim">Compare File with Previous PR</span>  <span class="c-comment"># Side-by-side diff</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">3</div>
+          <h3>Context menus everywhere</h3>
+          <p>Right-click any branch in the tree to push, create PRs, open in a new VS Code window, merge, toggle draft, delete, or reparent. Right-click files to copy paths, reveal in Finder, or open in terminal.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Right-click a branch:</span>
+<span class="c-dim">Open in New Window</span>       <span class="c-comment"># Opens worktree folder</span>
+<span class="c-dim">Open PR in Browser</span>       <span class="c-comment"># Jump to GitHub PR</span>
+<span class="c-dim">Push Branch</span>              <span class="c-comment"># Git push</span>
+<span class="c-dim">Create PR / Merge PR</span>     <span class="c-comment"># PR actions</span>
+<span class="c-dim">Open in Terminal</span>         <span class="c-comment"># Integrated terminal in worktree</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Installation -->
+  <section class="prompt-section" id="install">
+    <div class="container">
+      <h2 class="section-title" data-animate>Installation</h2>
+      <p class="section-sub" data-animate>Download the VSIX and install it in under a minute. Requires the <code>ezs</code> CLI, Git 2.20+, and <code>gh</code> (GitHub CLI) for PR features.</p>
+
+      <div class="prompt-grid" data-animate>
+        <div class="prompt-card">
+          <h3>From pre-built VSIX</h3>
+          <p>Download the <code>.vsix</code> file from the latest release and install via the command line or the VS Code UI.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Install from terminal</span>
+<span class="c-prompt">$</span> <span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> ezstack-4.0.0.vsix
+
+<span class="c-comment"># Or in VS Code:</span>
+<span class="c-dim">Cmd+Shift+P → "Install from VSIX"</span>
+<span class="c-dim">→ select the downloaded .vsix file</span></code></pre>
+          </div>
+        </div>
+        <div class="prompt-card">
+          <h3>From source</h3>
+          <p>Clone the repo, build the extension, and install the generated VSIX.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">cd</span> vscode-extension
+<span class="c-prompt">$</span> <span class="c-cmd">npm install</span>
+<span class="c-prompt">$</span> <span class="c-cmd">npm run compile</span>
+<span class="c-prompt">$</span> <span class="c-cmd">npx vsce package</span>
+<span class="c-dim">  → produces ezstack-4.0.0.vsix</span>
+<span class="c-prompt">$</span> <span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> ezstack-4.0.0.vsix</code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="template-vars" data-animate>
+        <h3>Configuration</h3>
+        <p style="text-align: center; color: var(--text-secondary); font-size: 0.9375rem; margin-bottom: 1.5rem;">Customize the extension behavior in VS Code settings.</p>
+        <table class="var-table">
+          <thead>
+            <tr>
+              <th>Setting</th>
+              <th>Default</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ezstack.cliPath</code></td>
+              <td><code>"ezs"</code></td>
+              <td>Path to the <code>ezs</code> CLI binary</td>
+            </tr>
+            <tr>
+              <td><code>ezstack.autoRefresh</code></td>
+              <td><code>true</code></td>
+              <td>Auto-refresh tree view when config files change</td>
+            </tr>
+            <tr>
+              <td><code>ezstack.ticketPattern</code></td>
+              <td><code>""</code></td>
+              <td>Regex to extract ticket IDs from branch names (e.g. <code>PROJ-\d+</code>). Shown in status bar and folder badges</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="text-align: center; margin-top: 2.5rem;" data-animate>
+        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="btn btn-secondary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download v4.0.0 VSIX
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <span class="footer-name">ezstack</span>
+          <span class="footer-meta">MIT License &middot; v4.0.0</span>
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
+          <a href="documentation.html">Docs</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/issues" target="_blank" rel="noopener">Issues</a>
+        </div>
+        <div class="footer-credit">
+          Made by <a href="https://github.com/KulkarniKaustubh" target="_blank" rel="noopener">Kaustubh Kulkarni</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

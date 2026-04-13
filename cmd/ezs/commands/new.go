@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/internal/github"
 	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
@@ -28,11 +30,20 @@ func New(args []string) error {
     -c, --cd                  Change to the new worktree after creation
     -C, --no-cd               Don't change to the new worktree (overrides config)
     -f, --from-worktree       Register an existing worktree as a stack root
-    -r, --from-remote         Create a stack from a remote branch
+    -r, --from-remote         Create a stack from a remote branch/PR
     -h, --help                Show this help message
 
 %sNOTES%s
     If no arguments are provided, interactive mode will prompt for options.
+
+    With origin/<branch>, creates a local worktree tracking the remote branch:
+      ezs new origin/feature-branch       Checkout remote branch into a worktree (for PR reviews, etc.)
+
+    With --from-remote, positional args are: [pr-number-or-branch] [new-branch-name]
+      ezs new -r                          Interactive PR selection + branch name prompt
+      ezs new -r 42                       Use PR #42, prompt for branch name
+      ezs new -r feature-branch           Use PR for that branch, prompt for branch name
+      ezs new -r 42 my-feature            Use PR #42, create branch "my-feature" (no prompts)
 
     For cd to work, add this to your ~/.bashrc or ~/.zshrc:
         eval "$(ezs --shell-init)"
@@ -68,6 +79,13 @@ func New(args []string) error {
 	useFromWorktree := *fromWorktree
 	useFromRemote := *fromRemote
 	chooseParent := false
+
+	// Check if the first arg is a remote branch reference (origin/...)
+	// This creates a local worktree tracking the remote branch directly,
+	// without creating a new branch on top or registering a stack.
+	if fs.NArg() >= 1 && strings.HasPrefix(fs.Arg(0), "origin/") {
+		return newFromRemoteRef(g, cwd, fs.Arg(0), *worktree, *cdFlag, *noCdFlag)
+	}
 
 	if fs.NArg() == 0 && !useFromWorktree && !useFromRemote && *parent == "" {
 		choice, err := ui.SelectOptionWithBack([]string{
@@ -169,12 +187,24 @@ func New(args []string) error {
 			return err
 		}
 
-		selectedPR, err := selectAndRegisterRemotePR(g, mgr)
+		// First positional arg is the PR identifier (number or branch name)
+		prIdentifier := ""
+		if fs.NArg() >= 1 {
+			prIdentifier = fs.Arg(0)
+		}
+
+		remote, err := selectAndRegisterRemoteBranch(g, mgr, prIdentifier)
 		if err != nil {
 			return err
 		}
 
-		newBranchName := ui.PromptRequired("Enter name for your new branch (stacked on " + selectedPR.Branch + ")")
+		// Second positional arg is the new branch name
+		var newBranchName string
+		if fs.NArg() >= 2 {
+			newBranchName = fs.Arg(1)
+		} else {
+			newBranchName = ui.PromptRequired("Enter name for your new branch (stacked on " + remote.Branch + ")")
+		}
 
 		cfg := mgr.GetConfig()
 
@@ -194,14 +224,14 @@ func New(args []string) error {
 		}
 
 		// Create the user's branch based on the remote branch
-		ui.Info(fmt.Sprintf("Creating branch '%s' based on remote '%s'", newBranchName, selectedPR.Branch))
+		ui.Info(fmt.Sprintf("Creating branch '%s' based on remote '%s'", newBranchName, remote.Branch))
 		ui.Info(fmt.Sprintf("Worktree path: %s", worktreePath))
 
-		if err := g.CreateWorktree(newBranchName, worktreePath, "origin/"+selectedPR.Branch); err != nil {
+		if err := g.CreateWorktree(newBranchName, worktreePath, "origin/"+remote.Branch); err != nil {
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
 
-		userBranch, err := mgr.AddBranchToStack(newBranchName, selectedPR.Branch, worktreePath)
+		userBranch, err := mgr.AddBranchToStack(newBranchName, remote.Branch, worktreePath, remote.StackHash)
 		if err != nil {
 			return fmt.Errorf("failed to add branch to stack: %w", err)
 		}
@@ -209,8 +239,12 @@ func New(args []string) error {
 		// Prompt for stack name (new stack was just created)
 		promptStackName(mgr, userBranch.Name)
 
-		ui.Success(fmt.Sprintf("Created stack from PR #%d (%s)", selectedPR.Number, selectedPR.Branch))
-		ui.Success(fmt.Sprintf("Created your branch '%s' at %s", userBranch.Name, worktreePath))
+		if remote.PRNumber > 0 {
+			ui.Success(fmt.Sprintf("Created stack from PR #%d (%s)", remote.PRNumber, remote.Branch))
+		} else {
+			ui.Success(fmt.Sprintf("Created stack from remote branch '%s'", remote.Branch))
+		}
+		ui.Success(fmt.Sprintf("Created your branch '%s' at %s", newBranchName, worktreePath))
 		if getCdAfterNew(cfg, mgr.GetRepoDir(), *cdFlag, *noCdFlag) {
 			EmitCd(worktreePath)
 		}
@@ -480,4 +514,205 @@ func promptWorktreeBaseDir(repoDir string, cfg *config.Config) (string, error) {
 
 		return worktreeBaseDir, nil
 	}
+}
+
+// newFromRemoteRef handles `ezs new origin/<branch>` — creates a local worktree
+// that tracks the remote branch directly and registers it in a stack.
+func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noCdFlag bool) error {
+	remoteBranch := strings.TrimPrefix(ref, "origin/")
+	if remoteBranch == "" {
+		return fmt.Errorf("branch name cannot be empty (got %q)", ref)
+	}
+
+	mgr, err := stack.NewManager(cwd)
+	if err != nil {
+		return err
+	}
+	cfg := mgr.GetConfig()
+	repoDir := mgr.GetRepoDir()
+
+	// Fetch latest remote refs
+	if err := g.Fetch(); err != nil {
+		return fmt.Errorf("failed to fetch: %w", err)
+	}
+
+	// Verify the remote branch exists
+	if !g.RemoteBranchExists(remoteBranch) {
+		return fmt.Errorf("remote branch '%s' not found on origin", remoteBranch)
+	}
+
+	// Check if the branch already has a worktree — if so, just navigate there
+	if g.BranchExists(remoteBranch) {
+		worktrees, _ := g.ListWorktrees()
+		for _, wt := range worktrees {
+			if wt.Branch == remoteBranch {
+				ui.Info(fmt.Sprintf("Branch '%s' already has a worktree at %s", remoteBranch, wt.Path))
+				if getCdAfterNew(cfg, repoDir, cdFlag, noCdFlag) {
+					EmitCd(wt.Path)
+				}
+				return nil
+			}
+		}
+	}
+
+	// Determine worktree path
+	worktreePath := worktreeOverride
+	if worktreePath == "" {
+		worktreeBaseDir := cfg.GetWorktreeBaseDir(repoDir)
+		if worktreeBaseDir == "" {
+			var err error
+			worktreeBaseDir, err = promptWorktreeBaseDir(repoDir, cfg)
+			if err != nil {
+				return err
+			}
+		}
+		// Replace slashes in branch name for the directory name (e.g., "user/feature" → "user-feature")
+		dirName := strings.ReplaceAll(remoteBranch, "/", "-")
+		worktreePath = filepath.Join(worktreeBaseDir, dirName)
+	}
+
+	ui.Info(fmt.Sprintf("Creating worktree for remote branch '%s'...", remoteBranch))
+
+	if err := g.CreateWorktreeFromRemoteBranch(remoteBranch, worktreePath); err != nil {
+		return fmt.Errorf("failed to create worktree: %w", err)
+	}
+
+	ui.Success(fmt.Sprintf("Created worktree for '%s' at %s", remoteBranch, worktreePath))
+
+	// Look up PR info for registration and display
+	var pr *github.PR
+	gh, ghErr := newGitHubClient(g)
+	if ghErr == nil {
+		pr, _ = gh.GetPRByBranch(remoteBranch)
+	}
+
+	// Register the remote branch in a stack so it shows up in ezs ls
+	baseBranch := ""
+	var prURL string
+	if pr != nil {
+		baseBranch = pr.Base
+		prURL = pr.URL
+	}
+	if baseBranch == "" {
+		for _, candidate := range []string{"main", "master"} {
+			if g.BranchExists(candidate) || g.RemoteBranchExists(candidate) {
+				baseBranch = candidate
+				break
+			}
+		}
+	}
+	if _, regErr := mgr.RegisterExistingBranch(remoteBranch, worktreePath, baseBranch); regErr == nil {
+		// Detect fork remote for the PR
+		forkRemote := ""
+		if gh != nil && pr != nil {
+			forkInfo, forkErr := gh.GetPRForkInfo(pr.Number)
+			if forkErr == nil && forkInfo.IsFork {
+				if !forkInfo.MaintainerCanModify {
+					ui.Warn(fmt.Sprintf("PR #%d is from a fork (%s) but maintainer push is not allowed — push will be skipped during sync", pr.Number, forkInfo.HeadRepoOwner))
+					forkRemote = config.RemoteNoPush
+				} else {
+					// Check if the current user actually has push access to the fork repo
+					currentUser, userErr := github.GetCurrentUser()
+					canPush := false
+					if userErr == nil {
+						canPush = github.CanPushToRepo(forkInfo.HeadRepoOwner, forkInfo.HeadRepoName, currentUser)
+					}
+					if !canPush {
+						ui.Warn(fmt.Sprintf("PR #%d is from a fork (%s) — you don't have push access to the fork, push will be skipped during sync", pr.Number, forkInfo.HeadRepoOwner))
+						forkRemote = config.RemoteNoPush
+					} else {
+						// Find or add a git remote for the fork owner
+						remoteName, _, _ := g.FindRemoteByOwner(forkInfo.HeadRepoOwner)
+						if remoteName != "" {
+							forkRemote = remoteName
+						} else {
+							// Add a remote for the fork so we can push to it
+							remoteName = forkInfo.HeadRepoOwner
+							forkURL := fmt.Sprintf("https://github.com/%s/%s.git", forkInfo.HeadRepoOwner, forkInfo.HeadRepoName)
+							if addErr := g.AddRemote(remoteName, forkURL); addErr != nil {
+								ui.Warn(fmt.Sprintf("Could not add git remote '%s': %v — push will be skipped during sync", remoteName, addErr))
+								forkRemote = config.RemoteNoPush
+							} else {
+								ui.Info(fmt.Sprintf("Added git remote '%s' for fork (%s)", remoteName, forkURL))
+								forkRemote = remoteName
+								if fetchErr := g.FetchRemote(remoteName); fetchErr != nil {
+									ui.Warn(fmt.Sprintf("Failed to fetch from '%s': %v", remoteName, fetchErr))
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+		mgr.MarkBranchRemote(remoteBranch, prURL, forkRemote)
+	}
+
+	// Show PR info and diff stats
+	showRemoteBranchInfoWithPR(g, remoteBranch, pr)
+
+	if getCdAfterNew(cfg, repoDir, cdFlag, noCdFlag) {
+		EmitCd(worktreePath)
+	} else {
+		ui.Info(fmt.Sprintf("To start working: cd %s", worktreePath))
+	}
+	return nil
+}
+
+// showRemoteBranchInfoWithPR displays PR info and diff stats for a remote branch.
+// If pr is nil, only diff stats against an inferred base are shown.
+func showRemoteBranchInfoWithPR(g *git.Git, remoteBranch string, pr *github.PR) {
+	if pr == nil {
+		showDiffStatsAgainstBase(g, remoteBranch, "")
+		return
+	}
+
+	fmt.Fprintln(os.Stderr)
+	ui.Info(fmt.Sprintf("PR #%d: %s", pr.Number, pr.Title))
+	ui.Info(fmt.Sprintf("URL: %s", pr.URL))
+
+	state := pr.State
+	if pr.IsDraft {
+		state = "DRAFT"
+	}
+	if pr.Merged {
+		state = "MERGED"
+	}
+	ui.Info(fmt.Sprintf("State: %s  Base: %s", state, pr.Base))
+
+	if pr.ReviewState != "" {
+		ui.Info(fmt.Sprintf("Review: %s", pr.ReviewState))
+	}
+
+	showDiffStatsAgainstBase(g, remoteBranch, pr.Base)
+}
+
+// showDiffStatsAgainstBase displays line additions/deletions for a branch relative to a base.
+// If baseBranch is empty, it tries to infer one from common defaults (main, master).
+func showDiffStatsAgainstBase(g *git.Git, branch, baseBranch string) {
+	if baseBranch == "" {
+		for _, candidate := range []string{"main", "master"} {
+			if g.RemoteBranchExists(candidate) {
+				baseBranch = candidate
+				break
+			}
+		}
+	}
+	if baseBranch == "" {
+		return
+	}
+
+	// Use origin/ refs for accurate stats matching what PRs show
+	baseRef := baseBranch
+	if g.RemoteBranchExists(baseBranch) {
+		baseRef = "origin/" + baseBranch
+	}
+	branchRef := "origin/" + branch
+
+	added, removed, err := g.GetDiffStat(baseRef, branchRef)
+	if err != nil {
+		return
+	}
+
+	ui.Info(fmt.Sprintf("Diff vs %s: %s+%d%s / %s-%d%s lines",
+		baseBranch, ui.Green, added, ui.Reset, ui.Red, removed, ui.Reset))
 }

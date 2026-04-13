@@ -365,9 +365,9 @@ func TestStackConfig_MultiRepo(t *testing.T) {
 
 func TestStack_DisplayName(t *testing.T) {
 	tests := []struct {
-		name string
+		name  string
 		stack Stack
-		want string
+		want  string
 	}{
 		{
 			name:  "with name",
@@ -523,6 +523,155 @@ func TestBranch_Fields(t *testing.T) {
 	}
 	if branch.IsMerged {
 		t.Error("IsMerged should be false")
+	}
+}
+
+func TestBranch_EffectiveRemote(t *testing.T) {
+	tests := []struct {
+		name     string
+		remote   string
+		expected string
+	}{
+		{"empty defaults to origin", "", "origin"},
+		{"custom remote", "upstream", "upstream"},
+		{"fork remote", "jason-nexthop", "jason-nexthop"},
+		{"nopush sentinel", RemoteNoPush, RemoteNoPush},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &Branch{Name: "test", Remote: tt.remote}
+			if got := b.EffectiveRemote(); got != tt.expected {
+				t.Errorf("EffectiveRemote() = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBranch_CanPush(t *testing.T) {
+	tests := []struct {
+		name     string
+		remote   string
+		expected bool
+	}{
+		{"empty remote can push", "", true},
+		{"origin can push", "origin", true},
+		{"custom remote can push", "upstream", true},
+		{"nopush cannot push", RemoteNoPush, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := &Branch{Name: "test", Remote: tt.remote}
+			if got := b.CanPush(); got != tt.expected {
+				t.Errorf("CanPush() = %v, want %v", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBranchCache_Remote_Persistence(t *testing.T) {
+	// Verify Remote field is correctly stored and retrieved from BranchCache
+	bc := &BranchCache{
+		WorktreePath: "/tmp/wt",
+		IsRemote:     true,
+		Remote:       "jason-nexthop",
+	}
+
+	if bc.Remote != "jason-nexthop" {
+		t.Errorf("Remote = %q, want %q", bc.Remote, "jason-nexthop")
+	}
+
+	// Verify _nopush sentinel
+	bc2 := &BranchCache{
+		IsRemote: true,
+		Remote:   RemoteNoPush,
+	}
+	if bc2.Remote != RemoteNoPush {
+		t.Errorf("Remote = %q, want %q", bc2.Remote, RemoteNoPush)
+	}
+}
+
+func TestRemoteField_PopulatedFromCache(t *testing.T) {
+	// Create a stack with cache that has Remote set
+	cache := &CacheConfig{
+		Branches: map[string]*BranchCache{
+			"feature": {
+				WorktreePath: "/tmp/wt/feature",
+				IsRemote:     true,
+				Remote:       "fork-remote",
+				PRUrl:        "https://github.com/org/repo/pull/1",
+			},
+			"local-branch": {
+				WorktreePath: "/tmp/wt/local",
+			},
+		},
+	}
+
+	stack := &Stack{
+		Root: "main",
+		Tree: BranchTree{
+			"feature":      {},
+			"local-branch": {},
+		},
+	}
+
+	branches := stack.GetBranches(cache)
+
+	for _, b := range branches {
+		switch b.Name {
+		case "feature":
+			if b.Remote != "fork-remote" {
+				t.Errorf("feature.Remote = %q, want %q", b.Remote, "fork-remote")
+			}
+			if !b.IsRemote {
+				t.Error("feature.IsRemote should be true")
+			}
+			if b.EffectiveRemote() != "fork-remote" {
+				t.Errorf("feature.EffectiveRemote() = %q, want %q", b.EffectiveRemote(), "fork-remote")
+			}
+		case "local-branch":
+			if b.Remote != "" {
+				t.Errorf("local-branch.Remote = %q, want empty", b.Remote)
+			}
+			if b.EffectiveRemote() != "origin" {
+				t.Errorf("local-branch.EffectiveRemote() = %q, want %q", b.EffectiveRemote(), "origin")
+			}
+		}
+	}
+}
+
+func TestRemoteNoPush_PopulatedFromCache(t *testing.T) {
+	cache := &CacheConfig{
+		Branches: map[string]*BranchCache{
+			"nopush-branch": {
+				IsRemote: true,
+				Remote:   RemoteNoPush,
+			},
+		},
+	}
+
+	stack := &Stack{
+		Root: "main",
+		Tree: BranchTree{
+			"nopush-branch": {},
+		},
+	}
+
+	branches := stack.GetBranches(cache)
+	if len(branches) != 1 {
+		t.Fatalf("expected 1 branch, got %d", len(branches))
+	}
+
+	b := branches[0]
+	if b.Remote != RemoteNoPush {
+		t.Errorf("Remote = %q, want %q", b.Remote, RemoteNoPush)
+	}
+	if b.CanPush() {
+		t.Error("CanPush() should be false for _nopush branch")
+	}
+	if b.EffectiveRemote() != RemoteNoPush {
+		t.Errorf("EffectiveRemote() = %q, want %q", b.EffectiveRemote(), RemoteNoPush)
 	}
 }
 

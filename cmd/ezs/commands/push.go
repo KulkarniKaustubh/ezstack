@@ -20,12 +20,14 @@ func Push(args []string) error {
     ezs push [options]
 
 %sOPTIONS%s
-    -s, --stack    Push all branches in the current stack
-    -f, --force    Force push
-    -h, --help     Show this help message
+    -s, --stack          Push all branches in the current stack
+    -b, --branch <name>  Push a specific branch by name
+    -f, --force          Force push
+    -h, --help           Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	stackFlag := fs.BoolP("stack", "s", false, "Push all branches in the current stack")
+	branchFlag := fs.StringP("branch", "b", "", "Push a specific branch by name")
 	force := fs.BoolP("force", "f", false, "Force push")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
@@ -47,8 +49,29 @@ func Push(args []string) error {
 
 	g := git.New(cwd)
 
+	// Look up the branch's configured remote (if any)
+	getBranchRemote := func(branchName string) string {
+		mgr, err := stack.NewReadOnlyManager(cwd)
+		if err != nil {
+			return "origin"
+		}
+		b := mgr.GetBranch(branchName)
+		if b == nil {
+			return "origin"
+		}
+		return b.EffectiveRemote()
+	}
+
+	if *branchFlag != "" {
+		return pushSpecificBranch(g, *branchFlag, *force, getBranchRemote(*branchFlag))
+	}
+
 	if !*stackFlag {
-		return pushBranch(g, *force)
+		currentBranch, err := g.CurrentBranch()
+		if err != nil {
+			return pushBranch(g, *force, "origin")
+		}
+		return pushBranch(g, *force, getBranchRemote(currentBranch))
 	}
 
 	mgr, err := stack.NewReadOnlyManager(cwd)
@@ -64,12 +87,36 @@ func Push(args []string) error {
 	return pushStack(g, currentStack, *force)
 }
 
-func pushBranch(g *git.Git, force bool) error {
+func pushSpecificBranch(g *git.Git, branch string, force bool, remote string) error {
+	if remote == config.RemoteNoPush {
+		return fmt.Errorf("push not allowed for '%s' (fork does not allow maintainer push)", branch)
+	}
+	if remote == "" {
+		remote = "origin"
+	}
+	args := []string{"push", "-u", remote, branch}
 	if force {
-		if err := g.PushForce(); err != nil {
+		args = []string{"push", "-u", "--force-with-lease", remote, branch}
+	}
+	if err := g.RunInteractive(args...); err != nil {
+		return fmt.Errorf("push failed for '%s': %w", branch, err)
+	}
+	ui.Success(fmt.Sprintf("Pushed '%s' to %s", branch, remote))
+	return nil
+}
+
+func pushBranch(g *git.Git, force bool, remote string) error {
+	if remote == config.RemoteNoPush {
+		return fmt.Errorf("push not allowed (fork does not allow maintainer push)")
+	}
+	if remote == "" {
+		remote = "origin"
+	}
+	if force {
+		if err := g.PushForce(remote); err != nil {
 			return fmt.Errorf("force push failed: %w", err)
 		}
-	} else if err := g.Push(false); err != nil {
+	} else if err := g.Push(false, remote); err != nil {
 		return fmt.Errorf("push failed: %w", err)
 	}
 	ui.Success("Pushed to remote")
@@ -82,9 +129,14 @@ func pushStack(g *git.Git, s *config.Stack, force bool) error {
 		if b.IsMerged {
 			continue
 		}
-		args := []string{"push", "-u", "origin", b.Name}
+		remote := b.EffectiveRemote()
+		if remote == config.RemoteNoPush {
+			ui.Warn(fmt.Sprintf("Skipping '%s' (fork does not allow maintainer push)", b.Name))
+			continue
+		}
+		args := []string{"push", "-u", remote, b.Name}
 		if force {
-			args = []string{"push", "-u", "--force-with-lease", "origin", b.Name}
+			args = []string{"push", "-u", "--force-with-lease", remote, b.Name}
 		}
 		if err := g.RunInteractive(args...); err != nil {
 			ui.Warn(fmt.Sprintf("Failed to push '%s': %v", b.Name, err))

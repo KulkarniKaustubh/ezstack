@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Desktop App - ezstack</title>
+  <meta name="description" content="A native desktop GUI for managing stacked PRs. Three-panel layout, visual stack graph, branch operations, PR management, and remote SSH mode — built with Tauri.">
+  <meta name="theme-color" content="#09090b">
+  <link rel="canonical" href="https://kulkarnikaustubh.github.io/ezstack/desktop.html">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="Desktop App - ezstack">
+  <meta property="og:description" content="A native desktop GUI for managing stacked PRs. Visual stack graph, branch operations, and remote SSH mode — built with Tauri.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://kulkarnikaustubh.github.io/ezstack/desktop.html">
+
+  <!-- Favicon -->
+  <link rel="icon" href="img/favicon.png" type="image/png">
+  <link rel="icon" href="img/favicon.svg" type="image/svg+xml">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-brand"><img src="img/logo.png" alt="ezstack" width="24" height="24" class="nav-logo">ezstack</a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="nav-links" id="nav-links">
+        <a href="index.html#features">Features</a>
+        <a href="documentation.html">Docs</a>
+        <a href="#layout">Layout</a>
+        <a href="#operations">Operations</a>
+        <a href="#remote">Remote SSH</a>
+        <div class="nav-dropdown">
+          <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
+          <div class="nav-dropdown-menu">
+            <a href="agent.html">AI Agent</a>
+            <a href="vscode.html">VS Code Extension</a>
+            <a href="desktop.html">Desktop App</a>
+            <a href="nvim.html">Neovim Plugin</a>
+          </div>
+        </div>
+        <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener" class="nav-github">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="agent-hero" id="hero">
+    <div class="hero-glow"></div>
+    <div class="container">
+      <div class="hero-content">
+        <a href="index.html" class="back-link">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+          Back to ezstack
+        </a>
+        <h1>Desktop<br>App</h1>
+        <p class="hero-sub">A native desktop GUI for ezstack, built with Tauri. See your stacks as a visual graph, run every operation through dialogs, and even drive an <code>ezs</code> install on a remote machine over SSH &mdash; all without touching the terminal.</p>
+        <div class="hero-actions">
+          <div class="install-cmd" id="hero-install">
+            <span class="install-prompt">$</span>
+            <span class="install-text">cd tauri-ui && npm install && npm run tauri build</span>
+            <button class="copy-btn" data-copy="cd tauri-ui && npm install && npm run tauri build" aria-label="Copy to clipboard">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="btn btn-secondary" style="margin-top: 1rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Download from Releases
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Layout -->
+  <section class="workflow-section" id="layout">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <span class="mode-label mode-label-work">Three-Panel Layout</span>
+        <h2>Your stacks at a glance</h2>
+        <p>The desktop app uses a three-panel layout: stacks sidebar on the left, the visual stack graph in the middle, and a detail view on the right for the selected branch.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">1</div>
+          <h3>Visual stack graph</h3>
+          <p>The middle panel renders your stacks as a tree of branches, color-coded by health and with the current branch highlighted. Click any node to see PR state, CI checks, review status, and mergeable state in the detail panel.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># What you see in the desktop window:</span>
+<span class="c-dim">┌──────────┬──────────────────────┬───────────────────┐</span>
+<span class="c-dim">│ Stacks   │   main (base)        │</span>  <span class="c-green">feat/auth</span>
+<span class="c-dim">│          │    └─</span> <span class="c-green">feat/auth</span>      <span class="c-dim">│  PR: #42</span> <span class="c-green">[OPEN]</span>   <span class="c-dim">↗</span>
+<span class="c-dim">│ ●</span> <span class="c-green">myapp</span>  <span class="c-dim">│        └─</span> <span class="c-green">feat/login</span> <span class="c-dim">│  CI: 3/3 passed  ✓</span>
+<span class="c-dim">│   2 br   │                      │  Review:</span> <span class="c-green">Approved</span>
+<span class="c-dim">│          │                      │  [Sync] [Push]    │</span>
+<span class="c-dim">└──────────┴──────────────────────┴───────────────────┘</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">2</div>
+          <h3>Live status, polled every 30s</h3>
+          <p>The app polls <code>ezs status</code> in the background and refreshes after every operation. Polling pauses when the window loses focus and uses exponential backoff on failures so it never gets in your way.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Title bar shows live connection health:</span>
+<span class="c-green">●</span> <span class="c-dim">Connected</span>   <span class="c-comment"># green: latency ≤ 800 ms</span>
+<span class="c-yellow">●</span> <span class="c-dim">Slow</span>        <span class="c-comment"># yellow: latency &gt; 800 ms</span>
+<span class="c-red">●</span> <span class="c-dim">Error</span>       <span class="c-comment"># red: last ping failed (hover for details)</span>
+
+<span class="c-comment"># Backoff schedule on failure:</span>
+<span class="c-dim">30s → 60s → 120s → 240s → 300s</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">3</div>
+          <h3>Repo picker &amp; theme</h3>
+          <p>Open any git repository through the native file picker. The app remembers recent repos. Toggle dark, light, or system theme from the title bar. Status bar shows repo path, current branch, and last refresh time.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Keyboard shortcuts:</span>
+<span class="c-dim">Cmd+R</span>   <span class="c-comment"># refresh</span>
+<span class="c-dim">Cmd+N</span>   <span class="c-comment"># new branch</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Operations -->
+  <section class="workflow-section" id="operations">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <span class="mode-label mode-label-feature">Operations</span>
+        <h2>Every CLI operation, as a dialog</h2>
+        <p>The Rust backend is a thin wrapper around the <code>ezs</code> CLI. The frontend exposes every operation through typed forms with confirmation dialogs &mdash; and shows the raw CLI output in a terminal-like panel below.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">1</div>
+          <h3>Branch operations</h3>
+          <p>Create, sync, push, delete, and reparent branches without ever touching a terminal.</p>
+          <div class="step-code">
+            <pre><code><span class="c-dim">New branch</span>      <span class="c-comment"># pick parent from a dropdown</span>
+<span class="c-dim">Sync</span>            <span class="c-comment"># current branch, stack, or all stacks</span>
+<span class="c-dim">Push</span>            <span class="c-comment"># current branch or full stack</span>
+<span class="c-dim">Delete</span>          <span class="c-comment"># with force toggle</span>
+<span class="c-dim">Reparent</span>        <span class="c-comment"># pick a new parent branch</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">2</div>
+          <h3>Pull request operations</h3>
+          <p>Create, update, merge, and toggle draft for PRs. Refresh the stack navigation table in every PR description in one click.</p>
+          <div class="step-code">
+            <pre><code><span class="c-dim">PR Create</span>       <span class="c-comment"># title, description, draft toggle</span>
+<span class="c-dim">PR Update</span>       <span class="c-comment"># push and refresh</span>
+<span class="c-dim">PR Merge</span>        <span class="c-comment"># squash, merge, or rebase</span>
+<span class="c-dim">Toggle Draft</span>    <span class="c-comment"># draft ↔ ready</span>
+<span class="c-dim">Update Stack</span>    <span class="c-comment"># refresh PR descriptions in the stack</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">3</div>
+          <h3>AI agent integration</h3>
+          <p>Launch the ezstack agent on the current branch or stack, build a feature from a description, and edit prompts across all three layers (shipped, custom, repo) directly from the GUI.</p>
+          <div class="step-code">
+            <pre><code><span class="c-dim">Agent</span>           <span class="c-comment"># branch- or stack-scoped</span>
+<span class="c-dim">Agent Feature</span>   <span class="c-comment"># describe the feature, get stacked PRs</span>
+<span class="c-dim">Agent Prompts</span>   <span class="c-comment"># view / edit / reset across all 3 layers</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Remote SSH -->
+  <section class="workflow-section" id="remote">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <span class="mode-label mode-label-work">Remote (SSH) Mode</span>
+        <h2>Drive ezstack on a remote machine</h2>
+        <p>The desktop app can become a thin client for an <code>ezs</code> install on a remote host. Every <code>ezs</code>, <code>git</code>, and <code>gh</code> invocation runs on the remote &mdash; useful for repos that live on a dev VM, build server, or beefy workstation.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">1</div>
+          <h3>Connect with saved profiles</h3>
+          <p>Click the <strong>Connect</strong> pill in the title bar, fill in host / user / port / key, and optionally a jump host (passed through as <code>ssh -J</code>). Profiles are saved to <code>~/.ezstack/desktop/connections.json</code> &mdash; no secrets stored, auth runs through your SSH agent or key file.</p>
+          <div class="step-code">
+            <pre><code><span class="c-dim">Host</span>:        dev-box.internal
+<span class="c-dim">User</span>:        kk
+<span class="c-dim">Port</span>:        22
+<span class="c-dim">Key</span>:         ~/.ssh/id_ed25519
+<span class="c-dim">Jump host</span>:   bastion.internal     <span class="c-comment"># optional</span>
+<span class="c-dim">Label</span>:       "dev box"            <span class="c-comment"># optional</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">2</div>
+          <h3>Diagnose health in 6 steps</h3>
+          <p>The connect dialog has a <strong>Diagnose</strong> button that runs a six-step probe and reports pass / warn / fail with a per-step duration so you can see exactly where things break.</p>
+          <div class="step-code">
+            <pre><code><span class="c-green">✓</span> <span class="c-dim">SSH connectivity + latency           42ms</span>
+<span class="c-green">✓</span> <span class="c-dim">Login shell PATH                     12ms</span>
+<span class="c-green">✓</span> <span class="c-dim">ezs binary present and runnable      88ms</span>
+<span class="c-green">✓</span> <span class="c-dim">git present                          15ms</span>
+<span class="c-green">✓</span> <span class="c-dim">gh authenticated                    160ms</span>
+<span class="c-green">✓</span> <span class="c-dim">~/.ezstack/config.json readable      11ms</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">3</div>
+          <h3>Live health pings</h3>
+          <p>Once connected, the app pings the remote every 30 seconds. The title-bar pill turns green (healthy), yellow (slow), or red (failed). Hover for the latency or the last error.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Known limitations:</span>
+<span class="c-dim">- Agent prompt EDIT is local-only over SSH (view/reset still work)</span>
+<span class="c-dim">- First connect uses StrictHostKeyChecking=accept-new</span>
+<span class="c-dim">- Every op is at least one SSH round-trip — expect a beat of latency</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Installation -->
+  <section class="prompt-section" id="install">
+    <div class="container">
+      <h2 class="section-title" data-animate>Installation</h2>
+      <p class="section-sub" data-animate>Requires Node.js 18+, the Rust toolchain (for building), and the <code>ezs</code> CLI on <code>$PATH</code>. <code>gh</code> (GitHub CLI) is required for PR features.</p>
+
+      <div class="prompt-grid" data-animate>
+        <div class="prompt-card">
+          <h3>From the release page</h3>
+          <p>Grab the prebuilt installer for your platform from the GitHub releases page and run it. The app auto-discovers your repos.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Download from:</span>
+<span class="c-dim">github.com/KulkarniKaustubh/ezstack/releases</span>
+
+<span class="c-comment"># macOS (universal)</span>
+<span class="c-prompt">$</span> <span class="c-cmd">open</span> ezstack_4.0.0_universal.dmg
+
+<span class="c-comment"># Windows (.msi or .exe installer)</span>
+<span class="c-prompt">$</span> <span class="c-cmd">msiexec</span> <span class="c-flag">/i</span> ezstack_4.0.0_x64_en-US.msi
+
+<span class="c-comment"># Linux (.AppImage / .deb / .rpm)</span>
+<span class="c-prompt">$</span> <span class="c-cmd">chmod</span> +x ezstack_4.0.0_amd64.AppImage</code></pre>
+          </div>
+        </div>
+        <div class="prompt-card">
+          <h3>From source</h3>
+          <p>Clone the repo, install dependencies, and run the dev build (Vite hot reload + Tauri window) or produce a release bundle.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">cd</span> tauri-ui
+<span class="c-prompt">$</span> <span class="c-cmd">npm install</span>
+
+<span class="c-comment"># Dev (hot reload)</span>
+<span class="c-prompt">$</span> <span class="c-cmd">npm run tauri dev</span>
+
+<span class="c-comment"># Production bundle</span>
+<span class="c-prompt">$</span> <span class="c-cmd">npm run tauri build</span>
+<span class="c-dim">  → src-tauri/target/release/bundle/</span></code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="template-vars" data-animate>
+        <h3>Tech stack</h3>
+        <p style="text-align: center; color: var(--text-secondary); font-size: 0.9375rem; margin-bottom: 1.5rem;">Built on a small set of well-known tools.</p>
+        <table class="var-table">
+          <thead>
+            <tr>
+              <th>Layer</th>
+              <th>Technology</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Framework</td>
+              <td><a href="https://v2.tauri.app/" target="_blank" rel="noopener">Tauri v2</a></td>
+            </tr>
+            <tr>
+              <td>Frontend</td>
+              <td><a href="https://react.dev/" target="_blank" rel="noopener">React 19</a> + <a href="https://www.typescriptlang.org/" target="_blank" rel="noopener">TypeScript 5.7</a></td>
+            </tr>
+            <tr>
+              <td>Styling</td>
+              <td><a href="https://tailwindcss.com/" target="_blank" rel="noopener">Tailwind CSS v4</a></td>
+            </tr>
+            <tr>
+              <td>State</td>
+              <td><a href="https://zustand.docs.pmnd.rs/" target="_blank" rel="noopener">Zustand 5</a></td>
+            </tr>
+            <tr>
+              <td>Icons</td>
+              <td><a href="https://lucide.dev/" target="_blank" rel="noopener">Lucide React</a></td>
+            </tr>
+            <tr>
+              <td>Build</td>
+              <td><a href="https://vite.dev/" target="_blank" rel="noopener">Vite 6</a></td>
+            </tr>
+            <tr>
+              <td>Backend</td>
+              <td>Rust &mdash; thin wrapper around <code>ezs</code> via <code>std::process::Command</code></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div style="text-align: center; margin-top: 2.5rem;" data-animate>
+        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="btn btn-secondary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download from Releases
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <span class="footer-name">ezstack</span>
+          <span class="footer-meta">MIT License &middot; v4.0.0</span>
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
+          <a href="documentation.html">Docs</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/issues" target="_blank" rel="noopener">Issues</a>
+        </div>
+        <div class="footer-credit">
+          Made by <a href="https://github.com/KulkarniKaustubh" target="_blank" rel="noopener">Kaustubh Kulkarni</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

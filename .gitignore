@@ -1,5 +1,6 @@
 # Binaries
 /ezs
+/docsgen
 /bin/
 *.exe
 *.exe~
@@ -14,6 +15,13 @@ test/testrepo_update/
 test/worktrees/
 test/worktrees_reparent/
 test/worktrees_update/
+test/**/.ezstack-test/
+
+# sed backup files
+*.bak
+
+# GoReleaser output
+dist/
 
 # Go build cache
 *.test

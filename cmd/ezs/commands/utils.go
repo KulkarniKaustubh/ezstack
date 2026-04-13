@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -121,12 +122,20 @@ func updatePRMetadata(gh *github.Client, s *config.Stack, currentBranch *config.
 	}
 }
 
-// OfferForcePush prompts the user to force push a branch with --force-with-lease
-// Returns true if push was successful, false otherwise
-func OfferForcePush(branchName, worktreePath string) bool {
+// OfferForcePush prompts the user to force push a branch with --force-with-lease.
+// remote specifies which git remote to push to (empty defaults to "origin").
+// Returns true if push was successful, false otherwise.
+func OfferForcePush(branchName, worktreePath, remote string) bool {
+	if remote == config.RemoteNoPush {
+		ui.Warn(fmt.Sprintf("Skipping push for %s (fork does not allow maintainer push)", branchName))
+		return true // Don't block sync continuation
+	}
+	if remote == "" {
+		remote = "origin"
+	}
 	g := git.New(worktreePath)
 
-	needsPush, err := g.IsLocalAheadOfOrigin(branchName)
+	needsPush, err := g.IsLocalAheadOfRemote(branchName, remote)
 	if err != nil {
 		ui.Warn(fmt.Sprintf("Could not check if push is needed: %v", err))
 		needsPush = true
@@ -138,9 +147,9 @@ func OfferForcePush(branchName, worktreePath string) bool {
 
 	fmt.Fprintln(os.Stderr)
 	ui.Warn("Force push required to update remote branch")
-	if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease)", branchName)) {
+	if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
 		ui.Info("Pushing...")
-		if err := g.PushForce(); err != nil {
+		if err := g.PushForce(remote); err != nil {
 			ui.Error(fmt.Sprintf("Push failed: %v. Check your network connection and remote access", err))
 			return false
 		}
@@ -151,9 +160,10 @@ func OfferForcePush(branchName, worktreePath string) bool {
 	return false
 }
 
-// OfferForcePushMultiple prompts the user to force push multiple branches
-// Returns the number of successfully pushed branches
-func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) string) int {
+// OfferForcePushMultiple prompts the user to force push multiple branches.
+// getBranchRemote returns the git remote for a given branch (empty defaults to "origin").
+// Returns the number of successfully pushed branches.
+func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) string, getBranchRemote func(string) string) int {
 	if len(branches) == 0 {
 		return 0
 	}
@@ -168,15 +178,27 @@ func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) st
 			continue
 		}
 
+		remote := ""
+		if getBranchRemote != nil {
+			remote = getBranchRemote(branchName)
+		}
+		if remote == config.RemoteNoPush {
+			ui.Warn(fmt.Sprintf("Skipping push for %s (fork does not allow maintainer push)", branchName))
+			continue
+		}
+		if remote == "" {
+			remote = "origin"
+		}
+
 		g := git.New(worktreePath)
-		needsPush, err := g.IsLocalAheadOfOrigin(branchName)
-		if err != nil || !needsPush {
+		needsPush, err := g.IsLocalAheadOfRemote(branchName, remote)
+		if err == nil && !needsPush {
 			continue
 		}
 
-		if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease)", branchName)) {
+		if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
 			ui.Info(fmt.Sprintf("Pushing %s...", branchName))
-			if err := g.PushForce(); err != nil {
+			if err := g.PushForce(remote); err != nil {
 				ui.Error(fmt.Sprintf("Push failed for %s: %v. Check remote access or try: git push --force-with-lease", branchName, err))
 			} else {
 				ui.Success(fmt.Sprintf("Pushed %s successfully", branchName))
@@ -189,12 +211,20 @@ func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) st
 }
 
 // OfferPush prompts the user to push a branch (regular push, not force).
+// remote specifies which git remote to push to (empty defaults to "origin").
 // Used after merge operations where history is not rewritten.
 // Returns true if push was successful or not needed, false if declined.
-func OfferPush(branchName, worktreePath string) bool {
+func OfferPush(branchName, worktreePath, remote string) bool {
+	if remote == config.RemoteNoPush {
+		ui.Warn(fmt.Sprintf("Skipping push for %s (fork does not allow maintainer push)", branchName))
+		return true // Don't block sync continuation
+	}
+	if remote == "" {
+		remote = "origin"
+	}
 	g := git.New(worktreePath)
 
-	needsPush, err := g.IsLocalAheadOfOrigin(branchName)
+	needsPush, err := g.IsLocalAheadOfRemote(branchName, remote)
 	if err != nil {
 		ui.Warn(fmt.Sprintf("Could not check if push is needed: %v", err))
 		needsPush = true
@@ -205,13 +235,13 @@ func OfferPush(branchName, worktreePath string) bool {
 	}
 
 	fmt.Fprintln(os.Stderr)
-	if ui.ConfirmTUI(fmt.Sprintf("Push %s to remote", branchName)) {
+	if ui.ConfirmTUI(fmt.Sprintf("Push %s to %s", branchName, remote)) {
 		ui.Info("Pushing...")
-		if err := g.Push(false); err != nil {
+		if err := g.Push(false, remote); err != nil {
 			// If regular push fails (e.g., diverged history from prior rebase), offer force push
 			ui.Warn(fmt.Sprintf("Push failed: %v", err))
-			if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease)", branchName)) {
-				if err := g.PushForce(); err != nil {
+			if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
+				if err := g.PushForce(remote); err != nil {
 					ui.Error(fmt.Sprintf("Force push failed: %v", err))
 					return false
 				}
@@ -228,9 +258,10 @@ func OfferPush(branchName, worktreePath string) bool {
 }
 
 // OfferPushMultiple prompts the user to push multiple branches (regular push, not force).
+// getBranchRemote returns the git remote for a given branch (empty defaults to "origin").
 // Used after merge operations where history is not rewritten.
 // Returns the number of successfully pushed branches.
-func OfferPushMultiple(branches []string, getBranchWorktree func(string) string) int {
+func OfferPushMultiple(branches []string, getBranchWorktree func(string) string, getBranchRemote func(string) string) int {
 	if len(branches) == 0 {
 		return 0
 	}
@@ -244,18 +275,30 @@ func OfferPushMultiple(branches []string, getBranchWorktree func(string) string)
 			continue
 		}
 
+		remote := ""
+		if getBranchRemote != nil {
+			remote = getBranchRemote(branchName)
+		}
+		if remote == config.RemoteNoPush {
+			ui.Warn(fmt.Sprintf("Skipping push for %s (fork does not allow maintainer push)", branchName))
+			continue
+		}
+		if remote == "" {
+			remote = "origin"
+		}
+
 		g := git.New(worktreePath)
-		needsPush, err := g.IsLocalAheadOfOrigin(branchName)
-		if err != nil || !needsPush {
+		needsPush, err := g.IsLocalAheadOfRemote(branchName, remote)
+		if err == nil && !needsPush {
 			continue
 		}
 
-		if ui.ConfirmTUI(fmt.Sprintf("Push %s to remote", branchName)) {
+		if ui.ConfirmTUI(fmt.Sprintf("Push %s to %s", branchName, remote)) {
 			ui.Info(fmt.Sprintf("Pushing %s...", branchName))
-			if err := g.Push(false); err != nil {
+			if err := g.Push(false, remote); err != nil {
 				// Fall back to force push if regular push fails
 				ui.Warn(fmt.Sprintf("Push failed: %v. Trying force push...", err))
-				if err := g.PushForce(); err != nil {
+				if err := g.PushForce(remote); err != nil {
 					ui.Error(fmt.Sprintf("Force push failed for %s: %v", branchName, err))
 				} else {
 					ui.Success(fmt.Sprintf("Pushed %s successfully (force)", branchName))
@@ -293,46 +336,117 @@ func newGitHubClient(g *git.Git) (*github.Client, error) {
 
 // selectAndRegisterRemotePR fetches open PRs, shows a selection UI,
 // prints the remote branch warning, fetches the remote, and registers it as a stack root.
+// If identifier is non-empty, it is used to look up the PR directly (by number or branch name)
+// instead of showing the interactive selection menu.
 // Returns the selected PR info.
-func selectAndRegisterRemotePR(g *git.Git, mgr *stack.Manager) (github.OpenPR, error) {
-	gh, err := newGitHubClient(g)
-	if err != nil {
-		return github.OpenPR{}, err
+// remoteBranchResult holds the resolved remote branch info after selection/lookup.
+type remoteBranchResult struct {
+	Branch    string // Remote branch name (head)
+	Base      string // PR base branch (empty if no PR)
+	PRNumber  int    // 0 if no PR
+	PRURL     string // empty if no PR
+	StackHash string // Hash of the stack this branch was registered to
+}
+
+func selectAndRegisterRemoteBranch(g *git.Git, mgr *stack.Manager, identifier string) (remoteBranchResult, error) {
+	ui.Info("Fetching remote branch...")
+	if err := g.Fetch(); err != nil {
+		return remoteBranchResult{}, fmt.Errorf("failed to fetch: %w", err)
 	}
 
-	ui.Info("Fetching open PRs...")
-	openPRs, err := gh.ListOpenPRs()
-	if err != nil {
-		return github.OpenPR{}, fmt.Errorf("failed to list open PRs: %w", err)
+	var result remoteBranchResult
+
+	if identifier != "" {
+		// Strip "origin/" prefix if the user passed it
+		identifier = strings.TrimPrefix(identifier, "origin/")
+
+		if num, parseErr := strconv.Atoi(identifier); parseErr == nil {
+			// Numeric identifier — must be a PR number
+			gh, err := newGitHubClient(g)
+			if err != nil {
+				return remoteBranchResult{}, err
+			}
+			ui.Info(fmt.Sprintf("Looking up PR #%d...", num))
+			pr, err := gh.GetPR(num)
+			if err != nil {
+				return remoteBranchResult{}, fmt.Errorf("failed to find PR #%d: %w", num, err)
+			}
+			result = remoteBranchResult{Branch: pr.Head, Base: pr.Base, PRNumber: pr.Number, PRURL: pr.URL}
+		} else {
+			// String identifier — could be a branch with or without a PR
+			if !g.RemoteBranchExists(identifier) {
+				return remoteBranchResult{}, fmt.Errorf("remote branch '%s' not found (no origin/%s)", identifier, identifier)
+			}
+			result = remoteBranchResult{Branch: identifier}
+			// Try to find a PR for this branch (non-fatal if it fails)
+			gh, ghErr := newGitHubClient(g)
+			if ghErr == nil {
+				pr, prErr := gh.GetPRByBranch(identifier)
+				if prErr == nil && pr != nil {
+					result.Base = pr.Base
+					result.PRNumber = pr.Number
+					result.PRURL = pr.URL
+				}
+			}
+		}
+	} else {
+		// Interactive: show open PRs picker
+		gh, err := newGitHubClient(g)
+		if err != nil {
+			return remoteBranchResult{}, err
+		}
+		ui.Info("Fetching open PRs...")
+		openPRs, err := gh.ListOpenPRs()
+		if err != nil {
+			return remoteBranchResult{}, fmt.Errorf("failed to list open PRs: %w", err)
+		}
+		if len(openPRs) == 0 {
+			return remoteBranchResult{}, fmt.Errorf("no open PRs found in this repository")
+		}
+
+		prOptions := make([]string, len(openPRs))
+		for i, pr := range openPRs {
+			prOptions[i] = fmt.Sprintf("#%d %s - %s (%s)", pr.Number, pr.Branch, pr.Title, pr.Author)
+		}
+
+		selectedIdx, err := ui.SelectOption(prOptions, "Select PR to use as stack base")
+		if err != nil {
+			return remoteBranchResult{}, err
+		}
+		selected := openPRs[selectedIdx]
+		// Look up full PR to get base branch
+		pr, prErr := gh.GetPR(selected.Number)
+		if prErr == nil && pr != nil {
+			result = remoteBranchResult{Branch: pr.Head, Base: pr.Base, PRNumber: pr.Number, PRURL: pr.URL}
+		} else {
+			result = remoteBranchResult{Branch: selected.Branch, PRNumber: selected.Number, PRURL: selected.URL}
+		}
 	}
 
-	if len(openPRs) == 0 {
-		return github.OpenPR{}, fmt.Errorf("no open PRs found in this repository")
+	// Verify the remote branch actually exists
+	if !g.RemoteBranchExists(result.Branch) {
+		return remoteBranchResult{}, fmt.Errorf("remote branch '%s' not found after fetch", result.Branch)
 	}
 
-	prOptions := make([]string, len(openPRs))
-	for i, pr := range openPRs {
-		prOptions[i] = fmt.Sprintf("#%d %s - %s (%s)", pr.Number, pr.Branch, pr.Title, pr.Author)
+	// If no PR base was found, infer from common base branches
+	if result.Base == "" {
+		for _, candidate := range []string{"main", "master"} {
+			if g.RemoteBranchExists(candidate) {
+				result.Base = candidate
+				break
+			}
+		}
 	}
-
-	selectedIdx, err := ui.SelectOption(prOptions, "Select PR to use as stack base")
-	if err != nil {
-		return github.OpenPR{}, err
-	}
-	selectedPR := openPRs[selectedIdx]
 
 	printRemoteBranchWarning()
 
-	ui.Info("Fetching remote branch...")
-	if err := g.Fetch(); err != nil {
-		return github.OpenPR{}, fmt.Errorf("failed to fetch: %w", err)
+	hash, err := mgr.RegisterRemoteBranch(result.Branch, result.Base, result.PRNumber, result.PRURL)
+	if err != nil {
+		return remoteBranchResult{}, fmt.Errorf("failed to register remote branch: %w", err)
 	}
+	result.StackHash = hash
 
-	if err := mgr.RegisterRemoteBranch(selectedPR.Branch, selectedPR.Number, selectedPR.URL); err != nil {
-		return github.OpenPR{}, fmt.Errorf("failed to register remote branch: %w", err)
-	}
-
-	return selectedPR, nil
+	return result, nil
 }
 
 // printRemoteBranchWarning prints the warning about remote branches not being rebased.
@@ -346,6 +460,7 @@ func printRemoteBranchWarning() {
 
 // discoverAndCachePRs discovers PRs from GitHub for branches that don't have PR numbers cached
 // and saves them to the config. Returns a GitHub client for further use (or nil if unavailable).
+// Also discovers root PR info if missing (for remote base branches).
 func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client {
 	remoteURL, err := g.GetRemote("origin")
 	if err != nil {
@@ -365,6 +480,39 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 			fmt.Fprintf(os.Stderr, "[DEBUG] discoverAndCachePRs: NewClient error: %v\n", err)
 		}
 		return nil
+	}
+
+	// Discover root PR if the root is a remote feature branch without PR info
+	needsRootDiscovery := s.RootPRNumber == 0 && s.Root != "main" && s.Root != "master"
+	if needsRootDiscovery {
+		if debug {
+			fmt.Fprintf(os.Stderr, "[DEBUG] Discovering root PR for %s\n", s.Root)
+		}
+		pr, prErr := gh.GetPRByBranch(s.Root)
+		if prErr == nil && pr != nil {
+			if debug {
+				fmt.Fprintf(os.Stderr, "[DEBUG] Found root PR #%d for %s\n", pr.Number, s.Root)
+			}
+			s.RootPRNumber = pr.Number
+			s.RootPRUrl = pr.URL
+			if s.RootBase == "" {
+				s.RootBase = pr.Base
+			}
+			// Save root PR info to config
+			mainWorktree := getMainWorktreePath(g)
+			sc, scErr := config.LoadStackConfig(mainWorktree)
+			if scErr == nil {
+				if existing, ok := sc.Stacks[s.Hash]; ok {
+					existing.RootPRUrl = pr.URL
+					if existing.RootBase == "" {
+						existing.RootBase = pr.Base
+					}
+					if err := sc.Save(mainWorktree); err != nil {
+						fmt.Fprintf(os.Stderr, "  Warning: failed to save stack config after root PR discovery: %v\n", err)
+					}
+				}
+			}
+		}
 	}
 
 	// Collect branches that need PR discovery
@@ -433,19 +581,23 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 
 	if discoveredPRs {
 		mainWorktree := getMainWorktreePath(g)
-		cache, _ := config.LoadCacheConfig(mainWorktree)
-		for _, branch := range s.Branches {
-			if branch.PRNumber > 0 {
-				bc := cache.GetBranchCache(branch.Name)
-				if bc == nil {
-					bc = &config.BranchCache{}
+		cache, err := config.LoadCacheConfig(mainWorktree)
+		if err == nil {
+			for _, branch := range s.Branches {
+				if branch.PRNumber > 0 {
+					bc := cache.GetBranchCache(branch.Name)
+					if bc == nil {
+						bc = &config.BranchCache{}
+					}
+					bc.PRNumber = branch.PRNumber
+					bc.PRUrl = branch.PRUrl
+					cache.SetBranchCache(branch.Name, bc)
 				}
-				bc.PRNumber = branch.PRNumber
-				bc.PRUrl = branch.PRUrl
-				cache.SetBranchCache(branch.Name, bc)
+			}
+			if err := cache.Save(mainWorktree); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to save PR cache: %v\n", err)
 			}
 		}
-		cache.Save(mainWorktree)
 	}
 
 	return gh
@@ -458,6 +610,43 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
+	// Compute diff for the root branch against its base.
+	// Use RootBase if stored, otherwise infer from common base branches
+	// when the root is a remote feature branch (not main/master itself).
+	rootBase := s.RootBase
+	if rootBase == "" && s.Root != "main" && s.Root != "master" {
+		for _, candidate := range []string{"main", "master"} {
+			if g.RemoteBranchExists(candidate) {
+				rootBase = candidate
+				break
+			}
+		}
+	}
+	if rootBase != "" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			parentRef := rootBase
+			if g.RemoteBranchExists(rootBase) {
+				parentRef = "origin/" + rootBase
+			}
+			branchRef := s.Root
+			if g.RemoteBranchExists(s.Root) {
+				branchRef = "origin/" + s.Root
+			}
+			added, removed, err := g.GetDiffStat(parentRef, branchRef)
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			statusMap[s.Root] = &ui.BranchStatus{
+				Additions: added,
+				Deletions: removed,
+			}
+			mu.Unlock()
+		}()
+	}
+
 	for _, branch := range s.Branches {
 		wg.Add(1)
 		go func(b *config.Branch) {
@@ -465,12 +654,12 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 			if b.IsMerged {
 				return
 			}
-			// Always use origin/root for the stack root parent
+			// Use origin/ refs when available for both parent and branch
+			// to get accurate stats matching what PRs show
 			parentRef := b.Parent
-			if b.Parent == s.Root && g.RemoteBranchExists(b.Parent) {
+			if g.RemoteBranchExists(b.Parent) {
 				parentRef = "origin/" + b.Parent
 			}
-			// Use origin/<branch> if it exists, fallback to local branch
 			branchRef := b.Name
 			if g.RemoteBranchExists(b.Name) {
 				branchRef = "origin/" + b.Name
@@ -620,7 +809,9 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 				}
 			}
 			if changed {
-				cache.Save(mainWorktree)
+				if err := cache.Save(mainWorktree); err != nil {
+					fmt.Fprintf(os.Stderr, "  Warning: failed to save status cache: %v\n", err)
+				}
 			}
 		}
 	}

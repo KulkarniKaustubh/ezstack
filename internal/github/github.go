@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/internal/config"
@@ -58,6 +59,12 @@ type PR struct {
 	Mergeable   string `json:"mergeable"`
 	IsDraft     bool   `json:"isDraft"`
 	ReviewState string `json:"reviewDecision"`
+
+	// Fork-related fields
+	HeadRepoOwner       string `json:"headRepositoryOwner_login"` // set via custom parsing
+	HeadRepoName        string `json:"headRepository_name"`       // set via custom parsing
+	MaintainerCanModify bool   // whether the repo maintainer can push to the fork's PR branch
+	IsFork              bool   // computed: true if head repo owner differs from base repo owner
 }
 
 // CheckStatus represents CI check status
@@ -95,15 +102,37 @@ func (c *Client) GetPRByBranch(branch string) (*PR, error) {
 	output, err := c.runGH("pr", "view", branch,
 		"--json", "number,url,title,body,state,baseRefName,headRefName,mergedAt,mergeable,isDraft,reviewDecision")
 	if err != nil {
-		return nil, err
+		// gh pr view <branch> doesn't find PRs from forks.
+		// Fall back to gh pr list --head <branch> which does.
+		return c.getPRByHeadBranch(branch)
 	}
 
 	var pr PR
 	if err := json.Unmarshal([]byte(output), &pr); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse PR response for branch %q: %w", branch, err)
 	}
 	pr.Merged = pr.MergedAt != ""
 	return &pr, nil
+}
+
+// getPRByHeadBranch finds a PR by head branch name using gh pr list.
+// This works for fork PRs where gh pr view <branch> fails.
+func (c *Client) getPRByHeadBranch(branch string) (*PR, error) {
+	output, err := c.runGH("pr", "list", "--head", branch, "--state", "all", "--limit", "1",
+		"--json", "number,url,title,body,state,baseRefName,headRefName,mergedAt,mergeable,isDraft,reviewDecision")
+	if err != nil {
+		return nil, err
+	}
+
+	var prs []PR
+	if err := json.Unmarshal([]byte(output), &prs); err != nil {
+		return nil, fmt.Errorf("failed to parse PR list response for branch %q: %w", branch, err)
+	}
+	if len(prs) == 0 {
+		return nil, fmt.Errorf("no pull requests found for branch %q", branch)
+	}
+	prs[0].Merged = prs[0].MergedAt != ""
+	return &prs[0], nil
 }
 
 // GetPR gets a PR by number
@@ -116,19 +145,89 @@ func (c *Client) GetPR(number int) (*PR, error) {
 
 	var pr PR
 	if err := json.Unmarshal([]byte(output), &pr); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse PR response for #%d: %w", number, err)
 	}
 	// Set Merged based on whether mergedAt is present
 	pr.Merged = pr.MergedAt != ""
 	return &pr, nil
 }
 
+// PRForkInfo contains fork-related information for a PR
+type PRForkInfo struct {
+	HeadRepoOwner       string // GitHub username/org that owns the head (source) repo
+	HeadRepoName        string // Name of the head repo
+	MaintainerCanModify bool   // Whether the repo maintainer can push to the fork branch
+	IsFork              bool   // True if the PR is from a fork (head owner != base repo owner)
+}
+
+// GetPRForkInfo fetches fork-related metadata for a PR.
+// Returns info about whether the PR is from a fork and whether maintainers can push.
+func (c *Client) GetPRForkInfo(number int) (*PRForkInfo, error) {
+	output, err := c.runGH("pr", "view", fmt.Sprintf("%d", number),
+		"--json", "headRepositoryOwner,headRepository,maintainerCanModify")
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch PR fork info for #%d: %w", number, err)
+	}
+
+	var raw struct {
+		HeadRepoOwner struct {
+			Login string `json:"login"`
+		} `json:"headRepositoryOwner"`
+		HeadRepo struct {
+			Name string `json:"name"`
+		} `json:"headRepository"`
+		MaintainerCanModify bool `json:"maintainerCanModify"`
+	}
+	if err := json.Unmarshal([]byte(output), &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse PR fork info for #%d: %w", number, err)
+	}
+
+	info := &PRForkInfo{
+		HeadRepoOwner:       raw.HeadRepoOwner.Login,
+		HeadRepoName:        raw.HeadRepo.Name,
+		MaintainerCanModify: raw.MaintainerCanModify,
+		IsFork:              raw.HeadRepoOwner.Login != "" && raw.HeadRepoOwner.Login != c.owner,
+	}
+	return info, nil
+}
+
+// GetCurrentUser returns the GitHub username of the currently authenticated user.
+func GetCurrentUser() (string, error) {
+	cmd := exec.Command("gh", "api", "user", "--jq", ".login")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("failed to get current user: %s", strings.TrimSpace(stderr.String()))
+	}
+	return strings.TrimSpace(stdout.String()), nil
+}
+
+// CanPushToRepo checks whether the given GitHub user has push (write) access to
+// a specific repository. Returns true if the user has write, maintain, or admin
+// permission. Returns false if the user has no push access or if the API call fails
+// (e.g., 403 means no push access).
+func CanPushToRepo(repoOwner, repoName, username string) bool {
+	endpoint := fmt.Sprintf("repos/%s/%s/collaborators/%s/permission", repoOwner, repoName, username)
+	cmd := exec.Command("gh", "api", endpoint, "--jq", ".permission")
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		// 403 means no push access. Network errors and other failures also
+		// return false — it's safer to skip push (user can push manually)
+		// than to assume access and fail confusingly at push time.
+		return false
+	}
+	perm := strings.TrimSpace(stdout.String())
+	return perm == "write" || perm == "maintain" || perm == "admin"
+}
+
 // GetPRChecks gets the CI check status for a PR
 func (c *Client) GetPRChecks(number int) (*CheckStatus, error) {
 	output, err := c.runGH("pr", "checks", fmt.Sprintf("%d", number))
 	if err != nil {
-		// If checks fail to fetch, return unknown status
-		return &CheckStatus{State: "unknown", Summary: "checks unavailable"}, nil
+		return nil, fmt.Errorf("failed to fetch PR checks for #%d: %w", number, err)
 	}
 
 	lines := strings.Split(strings.TrimSpace(output), "\n")
@@ -151,15 +250,21 @@ func (c *Client) GetPRChecks(number int) (*CheckStatus, error) {
 		if strings.Contains(lower, "successful") && strings.Contains(lower, "pending checks") {
 			re := regexp.MustCompile(`(\d+)\s+failing`)
 			if matches := re.FindStringSubmatch(lower); len(matches) > 1 {
-				fmt.Sscanf(matches[1], "%d", &failed)
+				if n, err := strconv.Atoi(matches[1]); err == nil {
+					failed = n
+				}
 			}
 			re = regexp.MustCompile(`(\d+)\s+successful`)
 			if matches := re.FindStringSubmatch(lower); len(matches) > 1 {
-				fmt.Sscanf(matches[1], "%d", &passed)
+				if n, err := strconv.Atoi(matches[1]); err == nil {
+					passed = n
+				}
 			}
 			re = regexp.MustCompile(`(\d+)\s+pending`)
 			if matches := re.FindStringSubmatch(lower); len(matches) > 1 {
-				fmt.Sscanf(matches[1], "%d", &pending)
+				if n, err := strconv.Atoi(matches[1]); err == nil {
+					pending = n
+				}
 			}
 			// Found summary line, use these counts
 			break
@@ -262,7 +367,7 @@ func (c *Client) ListOpenPRs() ([]OpenPR, error) {
 		} `json:"author"`
 	}
 	if err := json.Unmarshal([]byte(output), &prs); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse PR list response: %w", err)
 	}
 
 	result := make([]OpenPR, len(prs))

@@ -11,7 +11,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/internal/ui"
 )
 
-const version = "1.11.2"
+const version = "4.0.0"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
@@ -118,7 +118,7 @@ func main() {
 		err = commands.List(args)
 	case "status", "st":
 		err = commands.Status(args)
-	case "sync", "rebase", "rb":
+	case "sync":
 		err = commands.Sync(args)
 	case "pr":
 		err = commands.PR(args)
@@ -140,12 +140,16 @@ func main() {
 		err = commands.Amend(args)
 	case "diff":
 		err = commands.Diff(args)
+	case "log":
+		err = commands.Log(args)
 	case "push":
 		err = commands.Push(args)
 	case "up":
 		err = commands.Up(args)
 	case "down":
 		err = commands.Down(args)
+	case "agent":
+		err = commands.Agent(args)
 	case "menu":
 		err = runInteractiveMenu()
 	default:
@@ -167,17 +171,17 @@ func main() {
 func runInteractiveMenu() error {
 	for {
 		options := []string{
-			ui.IconNew + "  new      - Create a new branch in the stack",
-			ui.IconInfo + "  status   - Show status of current stack",
-			ui.IconSync + "  sync     - Sync stack with remote (rebase onto main)",
-			ui.IconBranch + "  pr       - Manage pull requests",
+			ui.IconBullet + "  config   - Configure ezstack",
+			ui.IconCancel + "  delete   - Delete a branch and its worktree",
 			ui.IconArrow + "  goto     - Navigate to a branch worktree",
+			ui.IconInfo + "  help     - Show help",
+			ui.IconNew + "  new      - Create a new branch in the stack",
+			ui.IconBranch + "  pr       - Manage pull requests",
 			ui.IconUp + "  reparent - Change the parent of a branch",
 			ui.IconNew + "  stack    - Add a branch to a stack",
+			ui.IconInfo + "  status   - Show status of current stack",
+			ui.IconSync + "  sync     - Sync stack with remote (rebase onto main)",
 			ui.IconCancel + "  unstack  - Remove a branch from tracking",
-			ui.IconCancel + "  delete   - Delete a branch and its worktree",
-			ui.IconBullet + "  config   - Configure ezstack",
-			ui.IconInfo + "  help     - Show help",
 		}
 
 		selected, err := ui.SelectOption(options, "Select a command:")
@@ -187,29 +191,29 @@ func runInteractiveMenu() error {
 
 		var cmdErr error
 		switch selected {
-		case 0:
-			cmdErr = commands.New(nil)
-		case 1:
-			cmdErr = commands.Status(nil)
-		case 2:
-			cmdErr = commands.Sync(nil)
-		case 3:
-			cmdErr = commands.PR(nil)
-		case 4:
-			cmdErr = commands.Goto(nil)
-		case 5:
-			cmdErr = commands.Reparent(nil)
-		case 6:
-			cmdErr = commands.Stack(nil)
-		case 7:
-			cmdErr = commands.Unstack(nil)
-		case 8:
-			cmdErr = commands.Delete(nil)
-		case 9:
+		case 0: // config
 			cmdErr = commands.Config(nil)
-		case 10:
+		case 1: // delete
+			cmdErr = commands.Delete(nil)
+		case 2: // goto
+			cmdErr = commands.Goto(nil)
+		case 3: // help
 			printUsage()
 			return nil
+		case 4: // new
+			cmdErr = commands.New(nil)
+		case 5: // pr
+			cmdErr = commands.PR(nil)
+		case 6: // reparent
+			cmdErr = commands.Reparent(nil)
+		case 7: // stack
+			cmdErr = commands.Stack(nil)
+		case 8: // status
+			cmdErr = commands.Status(nil)
+		case 9: // sync
+			cmdErr = commands.Sync(nil)
+		case 10: // unstack
+			cmdErr = commands.Unstack(nil)
 		}
 
 		if cmdErr == ui.ErrBack {
@@ -229,24 +233,25 @@ func printUsage() {
     ezs <command> [options]
 
 %sCOMMANDS%s
-    new, n        Create a new branch in the stack
-    list, ls      List all stacks and branches
-    status, st    Show status of current stack
-    sync, rb      Sync stack with remote (accepts stack hash prefix, min 3 chars)
-    goto, go      Navigate to a branch worktree
-    up            Navigate up the stack (toward parent)
+    agent         Launch AI agent with stack context
+    amend         Amend last commit and auto-sync children
+    commit, ci    Commit and auto-sync child branches
+    config        Configure ezstack
+    delete, del, rm  Delete a branch and its worktree
+    diff          Show diff against parent branch
     down          Navigate down the stack (toward children)
+    goto, go      Navigate to a branch worktree
+    list, ls      List all stacks and branches
+    menu          Interactive command menu
+    new, n        Create a new branch in the stack
+    pr            Manage pull requests
+    push          Push current branch or entire stack
     reparent, rp  Change the parent of a branch
     stack         Add a branch to a stack
+    status, st    Show status of current stack
+    sync          Sync stack with remote (accepts stack hash prefix, min 3 chars)
     unstack       Remove a branch from tracking (keeps git branch)
-    delete, del, rm  Delete a branch and its worktree
-    commit, ci    Commit and auto-sync child branches
-    amend         Amend last commit and auto-sync children
-    diff          Show diff against parent branch
-    push          Push current branch or entire stack
-    pr            Manage pull requests
-    config        Configure ezstack
-    menu          Interactive command menu
+    up            Navigate up the stack (toward parent)
 
 %sOPTIONS%s
     -h, --help       Show this help message
@@ -287,7 +292,7 @@ func printShellInit() {
 # Add this to your shell config: eval "$(ezs --shell-init)"
 ezs() {
     case "${1:-}" in
-        goto|go|new|n|delete|del|rm|sync|rebase|rb|up|down)
+        goto|go|new|n|delete|del|rm|sync|up|down|menu)
             # These commands may output "cd <path>" which we need to eval
             eval "$(EZS_SHELL_WRAPPER=1 command ezs "$@")"
             ;;
@@ -314,12 +319,12 @@ fi
 }
 
 var topLevelCommands = []string{
-	"new", "list", "status", "sync", "goto", "up", "down",
-	"reparent", "stack", "unstack", "delete", "commit", "amend",
-	"diff", "push", "pr", "config", "menu",
+	"agent", "amend", "commit", "config", "delete", "diff", "down",
+	"goto", "list", "log", "menu", "new", "pr", "push",
+	"reparent", "stack", "status", "sync", "unstack", "up",
 }
 
-var prSubcommands = []string{"create", "update", "merge", "draft", "stack"}
+var prSubcommands = []string{"create", "draft", "merge", "stack", "update"}
 
 func printCompletions(args []string) {
 	if len(args) == 0 || (len(args) == 1 && args[0] == "") {
@@ -334,6 +339,16 @@ func printCompletions(args []string) {
 	case "pr":
 		for _, sub := range prSubcommands {
 			fmt.Println(sub)
+		}
+	case "agent":
+		if len(args) >= 2 && (args[1] == "prompt") {
+			fmt.Println("work")
+			fmt.Println("feature")
+			fmt.Println("feat")
+		} else {
+			fmt.Println("feature")
+			fmt.Println("feat")
+			fmt.Println("prompt")
 		}
 	}
 }
