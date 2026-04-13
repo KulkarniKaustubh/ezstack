@@ -733,6 +733,94 @@ function M._show_help()
   vim.keymap.set("n", "<Esc>", "<cmd>close<cr>", { buffer = bufnr, silent = true })
 end
 
+--- Open a scratch split with `git diff <base>...HEAD` output.
+---@param base string
+function M.show_diff(base)
+  local result = vim.system(
+    { "git", "diff", base .. "...HEAD" },
+    { text = true, cwd = vim.fn.getcwd() }
+  ):wait()
+  if result.code ~= 0 then
+    local err = vim.trim(result.stderr or "")
+    vim.notify("git diff failed: " .. (err ~= "" and err or "code " .. result.code), vim.log.levels.ERROR)
+    return
+  end
+  local lines = vim.split(result.stdout or "", "\n")
+  if #lines == 1 and lines[1] == "" then
+    lines = { "(no diff vs " .. base .. ")" }
+  end
+  local bufnr = vim.api.nvim_create_buf(false, true)
+  vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+  vim.bo[bufnr].modifiable = false
+  vim.bo[bufnr].buftype = "nofile"
+  vim.bo[bufnr].bufhidden = "wipe"
+  vim.bo[bufnr].filetype = "diff"
+  pcall(vim.api.nvim_buf_set_name, bufnr, "ezstack://diff/" .. base)
+  vim.cmd("botright vsplit")
+  vim.api.nvim_win_set_buf(0, bufnr)
+  vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = bufnr, silent = true, desc = "Close" })
+end
+
+--- Render the stack list as an ASCII tree in a scratch buffer.
+function M.show_graph()
+  cli.list_stacks(function(err, stacks)
+    if err then
+      vim.notify("ezstack: " .. err, vim.log.levels.ERROR)
+      return
+    end
+    if #stacks == 0 then
+      vim.notify("No stacks found", vim.log.levels.INFO)
+      return
+    end
+    local lines = {}
+    for idx, stack in ipairs(stacks) do
+      if idx > 1 then
+        table.insert(lines, "")
+      end
+      local label = stack.name and (stack.name .. " [" .. stack.hash .. "]") or stack.hash
+      table.insert(lines, "Stack: " .. label .. "  root: " .. stack.root)
+      local branches = stack.branches or {}
+      if #branches == 0 then
+        table.insert(lines, "  (empty)")
+      else
+        local sorted = sort_branches(branches, stack.root)
+        local children = {}
+        for _, b in ipairs(sorted) do
+          children[b.parent] = children[b.parent] or {}
+          table.insert(children[b.parent], b)
+        end
+        local function walk(parent_name, prefix)
+          local kids = children[parent_name] or {}
+          for i, b in ipairs(kids) do
+            local is_last = (i == #kids)
+            local connector = is_last and "└── " or "├── "
+            local marker = b.is_current and "* " or "  "
+            local pr = ""
+            if b.pr_number and b.pr_number > 0 then
+              pr = string.format("  PR #%d", b.pr_number)
+              if b.pr_state and b.pr_state ~= "" then
+                pr = pr .. " [" .. b.pr_state .. "]"
+              end
+            end
+            table.insert(lines, prefix .. connector .. marker .. b.name .. pr)
+            walk(b.name, prefix .. (is_last and "    " or "│   "))
+          end
+        end
+        walk(stack.root, "")
+      end
+    end
+    local bufnr = vim.api.nvim_create_buf(false, true)
+    vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, lines)
+    vim.bo[bufnr].modifiable = false
+    vim.bo[bufnr].buftype = "nofile"
+    vim.bo[bufnr].bufhidden = "wipe"
+    pcall(vim.api.nvim_buf_set_name, bufnr, "ezstack://graph")
+    vim.cmd("botright split")
+    vim.api.nvim_win_set_buf(0, bufnr)
+    vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = bufnr, silent = true, desc = "Close" })
+  end, { force = true, all = true })
+end
+
 --- Render a stack tree as plain text lines (for Telescope preview).
 ---@param stack table Stack JSON data
 ---@param highlight_branch? string Branch name to highlight
