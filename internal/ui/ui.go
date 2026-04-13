@@ -93,6 +93,67 @@ func init() {
 	}
 }
 
+// SuggestCommand returns the candidate from candidates with the smallest
+// edit distance to input, provided the distance is small enough to be
+// plausibly a typo. Returns "" if no candidate qualifies.
+func SuggestCommand(input string, candidates []string) string {
+	best := ""
+	bestDist := -1
+	for _, c := range candidates {
+		d := levenshtein(input, c)
+		if bestDist == -1 || d < bestDist {
+			bestDist = d
+			best = c
+		}
+	}
+	maxLen := len(input)
+	if len(best) > maxLen {
+		maxLen = len(best)
+	}
+	if bestDist >= 0 && bestDist <= 3 && bestDist*2 <= maxLen {
+		return best
+	}
+	return ""
+}
+
+func levenshtein(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	la, lb := len(ar), len(br)
+	if la == 0 {
+		return lb
+	}
+	if lb == 0 {
+		return la
+	}
+	prev := make([]int, lb+1)
+	curr := make([]int, lb+1)
+	for j := 0; j <= lb; j++ {
+		prev[j] = j
+	}
+	for i := 1; i <= la; i++ {
+		curr[0] = i
+		for j := 1; j <= lb; j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			del := prev[j] + 1
+			ins := curr[j-1] + 1
+			sub := prev[j-1] + cost
+			m := del
+			if ins < m {
+				m = ins
+			}
+			if sub < m {
+				m = sub
+			}
+			curr[j] = m
+		}
+		prev, curr = curr, prev
+	}
+	return prev[lb]
+}
+
 // Hyperlink wraps text in OSC 8 escape sequence for clickable terminal links
 func Hyperlink(url, text string) string {
 	if url == "" {

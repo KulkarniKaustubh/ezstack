@@ -906,6 +906,93 @@ func ResolveBranchRemote(g *git.Git, mgr *stack.Manager, branchName string) stri
 	return persisted
 }
 
+// commandExamples maps a command name to a list of example invocations with descriptions.
+var commandExamples = map[string][][2]string{
+	"commit": {
+		{"ezs commit -m \"Add feature\"", "Commit staged changes and auto-sync children"},
+		{"ezs commit -a -m \"Fix typo\"", "Stage tracked changes and commit"},
+		{"ezs commit --amend --no-edit", "Amend last commit without editing message"},
+	},
+	"sync": {
+		{"ezs sync", "Interactive sync of current stack"},
+		{"ezs sync -a", "Auto-sync ALL stacks"},
+		{"ezs sync --stats", "Show summary of commits rebased per child"},
+		{"ezs sync --squash", "Squash each child's commits into one during sync"},
+		{"ezs sync --dry-run", "Preview sync without making changes"},
+	},
+	"push": {
+		{"ezs push", "Push current branch to its remote"},
+		{"ezs push -s", "Push every branch in the current stack"},
+		{"ezs push --verify", "Run pre-push hook before pushing"},
+		{"ezs push --all-remotes", "Push to origin and the configured fork"},
+	},
+	"pr": {
+		{"ezs pr create -t \"Add login\"", "Create a PR with the given title"},
+		{"ezs pr create -s", "Create PRs for every branch in the stack"},
+		{"ezs pr --draft-all", "Create all stack PRs as drafts"},
+		{"ezs pr merge", "Merge the current branch's PR"},
+	},
+	"new": {
+		{"ezs new feature-x", "Create a new branch off the current branch"},
+		{"ezs new feature-x -p main", "Create a branch off main"},
+		{"ezs new feature-x --template fastapi", "Branch from a template in ~/.ezstack/templates"},
+	},
+	"delete": {
+		{"ezs delete feature-x", "Delete a branch and its worktree"},
+		{"ezs delete feature-x --cascade", "Delete branch and all orphaned children"},
+	},
+	"goto": {
+		{"ezs goto feature-x", "Jump to a branch worktree"},
+		{"ezs goto --search auth", "Fuzzy-find a branch by substring"},
+	},
+	"agent": {
+		{"ezs agent", "Launch the agent on the current stack"},
+		{"ezs agent feature \"add JWT auth\"", "Build a feature as stacked branches"},
+		{"ezs agent --preset reviewer", "Use a saved prompt preset"},
+		{"ezs agent --no-push", "Block any auto-push during the agent run"},
+		{"ezs agent --dry-run --save-prompt /tmp/p.md", "Write the composed prompt to a file"},
+	},
+	"config": {
+		{"ezs config show", "Show current configuration"},
+		{"ezs config set sync_strategy merge", "Set the sync strategy for this repo"},
+		{"ezs config export ~/ezs-backup.json", "Backup the global config to a file"},
+		{"ezs config import ~/ezs-backup.json", "Restore config from a backup file"},
+	},
+	"status": {
+		{"ezs status", "Show current stack with PR/CI info"},
+		{"ezs status --watch", "Auto-refresh status every 5 seconds"},
+	},
+	"doctor": {
+		{"ezs doctor", "Check git/gh/fzf and config validity"},
+	},
+}
+
+// HasExamplesFlag returns true if args contain --examples and prints the registered
+// examples for the given command. Returns true when it handled the flag (caller should return).
+func HasExamplesFlag(cmdName string, args []string) bool {
+	for _, a := range args {
+		if a == "--examples" {
+			PrintExamples(cmdName)
+			return true
+		}
+	}
+	return false
+}
+
+// PrintExamples prints the example invocations for a command.
+func PrintExamples(cmdName string) {
+	examples, ok := commandExamples[cmdName]
+	if !ok {
+		fmt.Fprintf(os.Stderr, "No examples available for '%s'\n", cmdName)
+		return
+	}
+	fmt.Fprintf(os.Stderr, "%sExamples for 'ezs %s'%s\n\n", ui.Bold, cmdName, ui.Reset)
+	for _, ex := range examples {
+		fmt.Fprintf(os.Stderr, "  %s# %s%s\n", ui.Gray, ex[1], ui.Reset)
+		fmt.Fprintf(os.Stderr, "  %s%s%s\n\n", ui.Cyan, ex[0], ui.Reset)
+	}
+}
+
 // NavigateToBranch navigates to a branch by cd-ing to its worktree or checking out the branch.
 func NavigateToBranch(g *git.Git, branchName, worktreePath string) error {
 	if worktreePath != "" {
