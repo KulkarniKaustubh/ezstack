@@ -237,6 +237,81 @@ func TestConfig_LoadSave(t *testing.T) {
 	}
 }
 
+// TestStackConfig_ConcurrentSave_NoLostUpdates exercises the flock that
+// serializes load-modify-save sequences. Without the lock, two goroutines
+// saving disjoint stacks could interleave read/modify/write and one
+// would silently overwrite the other.
+func TestStackConfig_ConcurrentSave_NoLostUpdates(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "stack-concurrent-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	originalHome := os.Getenv("EZSTACK_HOME")
+	defer os.Setenv("EZSTACK_HOME", originalHome)
+	os.Setenv("EZSTACK_HOME", tmpDir)
+
+	const repoA = "/test/repoA"
+	const repoB = "/test/repoB"
+
+	// Seed the shared stacks.json by saving an empty config for each repo.
+	for _, r := range []string{repoA, repoB} {
+		sc, err := LoadStackConfig(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sc.Save(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// Two goroutines repeatedly add disjoint stacks to their respective
+	// repos' section of the same shared stacks.json.
+	const iters = 30
+	done := make(chan error, 2)
+	worker := func(repo, prefix string) {
+		for i := 0; i < iters; i++ {
+			sc, err := LoadStackConfig(repo)
+			if err != nil {
+				done <- err
+				return
+			}
+			name := prefix + "-" + string(rune('a'+i))
+			hash := GenerateStackHash(name)
+			sc.Stacks[hash] = &Stack{
+				Hash: hash,
+				Root: "main",
+				Tree: BranchTree{name: BranchTree{}},
+			}
+			if err := sc.Save(repo); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}
+	go worker(repoA, "a")
+	go worker(repoB, "b")
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatalf("worker error: %v", err)
+		}
+	}
+
+	// Both repos must have kept all their iterations. Without the lock,
+	// late writers could overwrite earlier writers' additions to the other
+	// repo's section.
+	scA, _ := LoadStackConfig(repoA)
+	scB, _ := LoadStackConfig(repoB)
+	if len(scA.Stacks) != iters {
+		t.Errorf("repoA has %d stacks, want %d — concurrent save lost updates", len(scA.Stacks), iters)
+	}
+	if len(scB.Stacks) != iters {
+		t.Errorf("repoB has %d stacks, want %d — concurrent save lost updates", len(scB.Stacks), iters)
+	}
+}
+
 func TestStackConfig_LoadSave(t *testing.T) {
 	// Create a temp directory for config
 	tmpDir, err := os.MkdirTemp("", "stack-config-test-*")
