@@ -120,17 +120,19 @@ if [ -f "$FILE" ]; then
     changed+=("tauri-ui/src-tauri/Cargo.lock")
 fi
 
-# 11. Docs HTML files — use OLD_VERSION to avoid clobbering unrelated version strings.
-#     Skipped when OLD_VERSION == NEW_VERSION (already correct).
-if [ "$OLD_VERSION" != "$NEW_VERSION" ]; then
-    for doc in docs/index.html docs/vscode.html docs/agent.html docs/nvim.html docs/desktop.html docs/documentation.html; do
-        FILE="$REPO_ROOT/$doc"
-        if [ -f "$FILE" ]; then
-            sed -i.bak "s/$OLD_VERSION/$NEW_VERSION/g" "$FILE"
-            changed+=("$doc")
-        fi
-    done
-fi
+# 11. Docs HTML files — rewrite any `vX.Y.Z` or `ezstack[-_]X.Y.Z` token to the new
+#     version. Using a regex (instead of matching OLD_VERSION literally) means stale
+#     refs from prior skipped bumps get caught automatically on the next run.
+for doc in docs/index.html docs/vscode.html docs/agent.html docs/nvim.html docs/desktop.html docs/documentation.html; do
+    FILE="$REPO_ROOT/$doc"
+    if [ -f "$FILE" ]; then
+        sed -i.bak \
+            -e "s/v$SV/v$NEW_VERSION/g" \
+            -e "s/\(ezstack[-_]\)$SV/\1$NEW_VERSION/g" \
+            "$FILE"
+        changed+=("$doc")
+    fi
+done
 
 # Clean up .bak files left by sed -i.bak
 find "$REPO_ROOT" -name "*.bak" -not -path "*/node_modules/*" -delete 2>/dev/null || true
