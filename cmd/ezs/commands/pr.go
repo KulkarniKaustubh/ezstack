@@ -27,6 +27,7 @@ func printPRUsage() {
     update    Push changes to existing PR
 
 %sOPTIONS%s
+    --draft-all   Create draft PRs for every branch in the current stack
     -h, --help    Show this help message
 
 Run 'ezs pr <subcommand> --help' for subcommand options.
@@ -35,6 +36,14 @@ Run 'ezs pr <subcommand> --help' for subcommand options.
 
 // PR handles pull request operations
 func PR(args []string) error {
+	if HasExamplesFlag("pr", args) {
+		return nil
+	}
+	for _, a := range args {
+		if a == "--draft-all" {
+			return prDraftAll()
+		}
+	}
 	// Allow --help without requiring auth
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		printPRUsage()
@@ -151,8 +160,33 @@ func prInteractive() error {
 	return nil
 }
 
+// prDraftAll creates draft PRs for every branch in the current stack that
+// doesn't already have one. It is the --draft-all entry point for `ezs pr`.
+func prDraftAll() error {
+	if err := github.CheckAuth(); err != nil {
+		return ui.NewExitError(ui.ExitAuthRequired, "%v", err)
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	mgr, err := stack.NewManager(cwd)
+	if err != nil {
+		return err
+	}
+	currentStack, _, err := mgr.GetCurrentStack()
+	if err != nil {
+		return err
+	}
+	return prCreateAllDraft(currentStack, true)
+}
+
 // prCreateAll creates PRs for all branches in the stack that don't have PRs
 func prCreateAll(currentStack *config.Stack) error {
+	return prCreateAllDraft(currentStack, false)
+}
+
+func prCreateAllDraft(currentStack *config.Stack, draft bool) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -223,7 +257,7 @@ func prCreateAll(currentStack *config.Stack) error {
 			continue
 		}
 
-		pr, err := gh.CreatePR(formatBranchTitle(b.Name), "", b.Name, b.Parent, false)
+		pr, err := gh.CreatePR(formatBranchTitle(b.Name), "", b.Name, b.Parent, draft)
 		if err != nil {
 			ui.Warn(fmt.Sprintf("Failed to create PR for %s: %v", b.Name, err))
 			failed++
