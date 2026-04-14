@@ -526,16 +526,19 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_diff",
-			mcp.WithDescription("Show diff between a branch and its parent in the stack. Returns structured JSON by default (file list with additions/deletions and totals)."),
+			mcp.WithDescription("Show diff between a branch and its parent in the stack. Returns structured JSON numstat (file list with additions/deletions and totals) by default, or a human-readable diffstat summary with stat=true."),
 			mcp.WithString("branch", mcp.Description("Branch to diff (defaults to current)")),
 			mcp.WithBoolean("stat", mcp.Description("Return a diffstat summary instead of the JSON numstat view")),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
-		readOnlyHandler(commands.Diff, func(req mcp.CallToolRequest) []string {
+		// Explicit toolHandler (not readOnlyHandler) because readOnlyHandler
+		// unconditionally appends --json, which would override --stat inside
+		// commands.Diff and silently return JSON when the caller asked for
+		// stat output.
+		toolHandler(commands.Diff, func(req mcp.CallToolRequest) []string {
 			var args []string
 			stringFlag(&args, req, "branch", "--branch")
-			// Default to --json unless the caller explicitly asked for stat
 			if req.GetBool("stat", false) {
 				args = append(args, "--stat")
 			} else {
@@ -552,7 +555,10 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
-		readOnlyHandler(commands.Log, func(req mcp.CallToolRequest) []string {
+		// toolHandler + explicit --json: we always want JSON from Log, and
+		// keeping the flag in buildArgs makes the contract explicit in one
+		// place rather than depending on readOnlyHandler's injection.
+		toolHandler(commands.Log, func(req mcp.CallToolRequest) []string {
 			args := []string{"--json"}
 			stringFlag(&args, req, "branch", "--branch")
 			return args
@@ -630,7 +636,11 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
-		readOnlyHandler(commands.Config, func(req mcp.CallToolRequest) []string {
+		// toolHandler (not readOnlyHandler) because `ezs config` has no
+		// --json mode — readOnlyHandler would inject an unknown flag that
+		// Config silently drops, leaving behavior correct-by-accident and
+		// the abstraction misleading.
+		toolHandler(commands.Config, func(req mcp.CallToolRequest) []string {
 			return []string{"show"}
 		}),
 	)
