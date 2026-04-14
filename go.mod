@@ -1,6 +1,17 @@
+// Deprecated: This module has moved to github.com/KulkarniKaustubh/ezstack/v4.
+// Please update your import paths to use the /v4 suffix. Any tag on this
+// (non-/v4) module path is retracted; all future development lives at
+// github.com/KulkarniKaustubh/ezstack/v4.
 module github.com/KulkarniKaustubh/ezstack
 
 go 1.25.1
+
+// Retract every pre-/v4 tag so `go get` / `go install` on this path
+// resolves to a deprecation warning instead of stale code, and so
+// proxy.golang.org stops handing it out as "latest" for the old path.
+retract (
+	[v0.0.0, v1.11.5]
+)
 
 require (
 	github.com/chzyer/readline v1.5.1
