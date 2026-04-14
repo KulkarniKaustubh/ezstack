@@ -8,11 +8,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack"
-	"github.com/KulkarniKaustubh/ezstack/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/internal/stack"
-	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v4"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 	"github.com/spf13/pflag"
 )
 
@@ -607,28 +607,50 @@ func firstPositionalArg(args []string) (string, []string) {
 }
 
 // renderPrompt replaces template variables in a prompt template with actual values.
-// Variables are substituted in two passes:
-//  1. First pass: all variables EXCEPT EZS_COMMANDS and EZS_DOCS (which contain embedded
-//     documentation that itself references template variable names like {{BRANCH_NAME}}).
-//  2. Second pass: EZS_COMMANDS and EZS_DOCS are injected last so that template variable
-//     names mentioned in the documentation are preserved as literal text, not substituted.
+//
+// Each pass uses strings.NewReplacer so substitutions happen in a single scan
+// of the input string — content injected by one replacement is NOT re-scanned
+// and cannot accidentally match another token. This is critical because:
+//
+//  1. Custom and repo instruction files may contain text like {{BRANCH_NAME}}
+//     that users wrote literally and don't want re-expanded.
+//  2. The embedded docs (AGENTS.md / DOCUMENTATION.md) contain a reference
+//     table listing template variables, so their bodies contain literal
+//     {{EZS_DOCS}} and {{EZS_COMMANDS}} tokens. Without a single-pass
+//     replacer, substituting EZS_COMMANDS first would splice AGENTS.md into
+//     the template, and then the next iteration would find the literal
+//     {{EZS_DOCS}} inside it and expand DOCUMENTATION.md mid-table —
+//     scrambling the prompt layout non-deterministically.
+//
+// Two passes are still needed (not one big replacer) so that non-doc tokens
+// like {{BRANCH_NAME}} which appear literally inside the embedded docs
+// reference tables are preserved — pass 1 has already finished scanning
+// before pass 2 injects the docs, so those tokens inside the docs are never
+// considered for substitution.
 func renderPrompt(template string, vars map[string]string) string {
-	result := template
-
-	// Pass 1: substitute all non-doc variables
 	lateKeys := map[string]bool{"EZS_COMMANDS": true, "EZS_DOCS": true}
+
+	// Pass 1: substitute all non-doc variables in a single scan.
+	earlyPairs := make([]string, 0, 2*len(vars))
 	for key, value := range vars {
 		if lateKeys[key] {
 			continue
 		}
-		result = strings.ReplaceAll(result, "{{"+key+"}}", value)
+		earlyPairs = append(earlyPairs, "{{"+key+"}}", value)
 	}
+	result := strings.NewReplacer(earlyPairs...).Replace(template)
 
-	// Pass 2: inject documentation content (may contain {{VAR}} as literal text)
+	// Pass 2: inject documentation content in a single scan. Tokens like
+	// {{EZS_DOCS}} that appear inside {{EZS_COMMANDS}}' injected value are
+	// left as literal text — they came from the replacement, not the input.
+	latePairs := make([]string, 0, 4)
 	for key := range lateKeys {
 		if value, ok := vars[key]; ok {
-			result = strings.ReplaceAll(result, "{{"+key+"}}", value)
+			latePairs = append(latePairs, "{{"+key+"}}", value)
 		}
+	}
+	if len(latePairs) > 0 {
+		result = strings.NewReplacer(latePairs...).Replace(result)
 	}
 
 	return result

@@ -9,11 +9,16 @@ CONTENTS                                                    *ezstack-contents*
   4. Setup ................................ |ezstack-setup|
   5. Commands ............................. |ezstack-commands|
   6. Stack Viewer ......................... |ezstack-viewer|
-  7. Telescope ............................ |ezstack-telescope|
-  8. Statusline ........................... |ezstack-statusline|
-  9. Highlight Groups ..................... |ezstack-highlights|
-  10. Autocommands ........................ |ezstack-autocommands|
-  11. Lua API ............................. |ezstack-api|
+  7. Stack Graph .......................... |ezstack-graph|
+  8. Action Menu .......................... |ezstack-actions|
+  9. Telescope ............................ |ezstack-telescope|
+  10. Statusline .......................... |ezstack-statusline|
+  11. Default Keymaps ..................... |ezstack-keymaps|
+  12. Welcome Notification ................ |ezstack-welcome|
+  13. Highlight Groups .................... |ezstack-highlights|
+  14. Autocommands ........................ |ezstack-autocommands|
+  15. Lua API ............................. |ezstack-api|
+  16. Tests ............................... |ezstack-tests|
 
 ==============================================================================
 1. OVERVIEW                                                 *ezstack-overview*
@@ -53,7 +58,7 @@ is still recommended to override defaults.
 
 >lua
   require("ezstack").setup({
-    cli_path = "ezs",            -- path to ezs binary (auto-discovered)
+    cli_path = "ezs",             -- path to ezs binary (auto-discovered)
     auto_refresh = true,          -- refresh viewer on FugitiveChanged
     viewer_position = "botright", -- split position for viewer
     viewer_height = 15,           -- viewer window height
@@ -61,6 +66,9 @@ is still recommended to override defaults.
     goto_strategy = "tcd",        -- "tcd" | "cd" | "lcd"
     goto_close_buffers = false,
     goto_open_explorer = true,
+    default_keymaps = false,      -- install ]s/[s for stack navigation
+    statusline_format = "stack",  -- "stack" | "pr" | "full"
+    welcome = true,               -- one-time welcome notification
   })
 <
                                                        *ezstack-config-cli_path*
@@ -103,9 +111,14 @@ All commands are exposed under the |:Ezs| user command.
 :Ezs goto [branch]       Switch to a branch worktree.
 :Ezs up                  Navigate to the parent branch.
 :Ezs down                Navigate to a child branch.
-:Ezs diff [-- gitopts]   Show diff against parent branch (terminal).
+:Ezs diff                Show `parent...HEAD` in a scratch split (async).
+:Ezs diff {branch}       Show `{branch}...HEAD` in a scratch split.
+:Ezs diff -- {gitopts}   Forward to `ezs diff` (e.g. `--stat`, `--json`).
+:Ezs graph               ASCII tree of all stacks in a scratch split.
+:Ezs actions             Open the quick-action menu (same as |:EzsActions|).
 :Ezs commit [opts]       Commit and auto-sync child branches.
-:Ezs amend [opts]        Amend last commit and auto-sync children.
+:Ezs amend [opts]        Amend last commit and auto-sync children (args
+                         forwarded to `ezs amend`, e.g. `-m "msg"`).
 :Ezs stack [b] [p]       Add a branch to a stack.
 :Ezs unstack [branch]    Remove a branch from tracking.
 :Ezs log [branch]        Show commits in a branch since its parent.
@@ -151,8 +164,39 @@ Keymaps (buffer-local) ~
   ?      Show this help
   q      Close viewer
 
+                                                              *:EzsActions*
+:EzsActions              Alias for `:Ezs actions` — quick-action menu.
+
 ==============================================================================
-7. TELESCOPE                                               *ezstack-telescope*
+7. STACK GRAPH                                                 *ezstack-graph*
+
+`:Ezs graph` opens a read-only scratch buffer containing every stack
+rendered as an ASCII tree, one stack per block: >
+
+    Stack: my-feat [a1b2c3d]  root: main
+    ├──   feat-1  PR #100 [OPEN]
+    │   └── * feat-2  PR #101 [DRAFT]
+    └──   feat-3  PR #102 [OPEN]
+<
+`* ` marks the current branch. Press `q` to close. Branches whose parent
+chain does not reach `stack.root` are surfaced under an
+`(orphans — parent not reachable from root)` subheader rather than being
+silently dropped.
+
+==============================================================================
+8. ACTION MENU                                               *ezstack-actions*
+
+`:EzsActions` (also `:Ezs actions`) opens a |vim.ui.select| menu with the
+most common operations: sync (current / stack / continue), push branch /
+stack, PR create/update/draft/merge/open/stack, new/delete/goto branch,
+and graph. Bind it if you use it often: >lua
+
+    vim.keymap.set("n", "<leader>ea", "<cmd>EzsActions<cr>",
+        { desc = "ezstack actions" })
+<
+
+==============================================================================
+9. TELESCOPE                                               *ezstack-telescope*
 
 Load the extension once: >lua
   require("telescope").load_extension("ezstack")
@@ -162,12 +206,14 @@ Then: >
   :Telescope ezstack stacks      " Browse and rename stacks
 <
 Branches picker maps `<C-o>` (open PR), `<C-d>` (delete), `<C-p>` (push).
+Each branch entry includes PR state, CI summary (when available from
+`ezs list --json`), and `+adds/-dels` vs parent.
 Stacks picker maps `<C-r>` (rename).
 
 When Telescope is not installed, `:Ezs goto` falls back to |vim.ui.select|.
 
 ==============================================================================
-8. STATUSLINE                                             *ezstack-statusline*
+10. STATUSLINE                                            *ezstack-statusline*
 
 >lua
   require("lualine").setup({
@@ -179,12 +225,43 @@ When Telescope is not installed, `:Ezs goto` falls back to |vim.ui.select|.
     },
   })
 <
-The statusline component returns a string like " branch | stack [hash]"
-or "" when the current buffer is not in a stacked worktree. Results are
-cached for `statusline_cache_ttl` milliseconds.
+The component returns "" when the current buffer is not in any stack.
+Otherwise the shape depends on `statusline_format`:
+
+  "stack" (default)  " branch | stack [hash]"
+  "pr"               " branch | PR#N STATE"
+  "full"             " branch | stack [hash] | PR#N STATE"
+
+In "pr" and "full" modes the PR section is omitted when the branch has
+no PR. Results are cached for `statusline_cache_ttl` milliseconds.
 
 ==============================================================================
-9. HIGHLIGHT GROUPS                                       *ezstack-highlights*
+11. DEFAULT KEYMAPS                                          *ezstack-keymaps*
+
+When `default_keymaps = true`, the plugin installs two opt-in normal-mode
+mappings on `setup()`:
+
+  ]s     :Ezs down   Navigate toward children
+  [s     :Ezs up     Navigate toward the parent
+
+The mappings deliberately use `]s` / `[s` (Vim's spell-nav motions,
+inert unless `spell` is on) and NEVER the built-in `gn` / `gp` motions.
+Each mapping is installed only when no user mapping already exists for
+that key, so the installer will not clobber your existing bindings.
+
+==============================================================================
+12. WELCOME NOTIFICATION                                     *ezstack-welcome*
+
+On the first call to `require("ezstack").setup()` the plugin emits a
+one-time |vim.notify| pointing at `:Ezs`, `:Ezs graph`, `:Ezs new`, and
+`:EzsActions`. The idempotency marker lives under
+`stdpath("state")/ezstack/welcomed` and is NEVER written to `~/.ezstack`
+(that directory belongs to the `ezs` CLI).
+
+Set `welcome = false` in `setup()` to suppress the notification entirely.
+
+==============================================================================
+13. HIGHLIGHT GROUPS                                      *ezstack-highlights*
 
   EzstackStack            Stack header
   EzstackStackHash        Stack hash
@@ -211,10 +288,12 @@ All groups link to colorscheme-defined groups with `default = true`, so
 you can override any of them in your colorscheme.
 
 ==============================================================================
-10. AUTOCOMMANDS                                         *ezstack-autocommands*
+14. AUTOCOMMANDS                                        *ezstack-autocommands*
 
 The plugin emits the following |User| autocommand events:
 
+  EzstackSetup      At the end of |require("ezstack").setup()|. Useful for
+                    test harnesses and deferred wiring.
   EzstackGoto       After switching worktrees via |:Ezs| goto.
   EzstackChanged    After any mutation finishes (sync, push, delete, ...).
 
@@ -226,14 +305,35 @@ Hook into them with: >lua
 <
 
 ==============================================================================
-11. LUA API                                                       *ezstack-api*
+15. LUA API                                                      *ezstack-api*
 
 >lua
   require("ezstack").setup(opts)
   require("ezstack").statusline()        -- string for statusline
+  require("ezstack").actions_menu()      -- open :EzsActions
   require("ezstack").goto_worktree(path) -- jump to a worktree
   require("ezstack.cli").list_stacks(cb) -- async stack list
   require("ezstack.ui").open(use_status) -- open viewer
+  require("ezstack.ui").show_graph()     -- :Ezs graph
+  require("ezstack.ui").show_diff(base)  -- async diff split vs {base}
 <
+
+==============================================================================
+16. TESTS                                                      *ezstack-tests*
+
+The plugin ships with a |plenary.nvim| busted suite under
+`neovim-plugin/tests/`. Run it from the repo root: >
+
+    nvim --headless --noplugin \
+        -u neovim-plugin/tests/minimal_init.lua \
+        -c "PlenaryBustedDirectory neovim-plugin/tests/
+            {minimal_init = 'neovim-plugin/tests/minimal_init.lua',
+             sequential = true}"
+<
+`minimal_init.lua` auto-discovers |plenary.nvim| from
+`vendor/plenary.nvim`, `$EZSTACK_PLENARY`, or common package-manager
+install paths. The suite covers subcommand-dispatch completeness,
+statusline formatters, graph rendering (including orphans), default
+keymap installation, and welcome-marker idempotency.
 
 vim:tw=78:ts=8:noet:ft=help:norl:

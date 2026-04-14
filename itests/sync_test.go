@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 )
 
 // TestCommitsAhead tests counting commits ahead of base

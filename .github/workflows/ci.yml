@@ -31,6 +31,31 @@ jobs:
       - name: Test
         run: go test -v -race ./...
 
+  go-install:
+    # Verifies `go install github.com/.../ezstack/v4/cmd/ezs@<sha>` works
+    # against the module proxy. This catches SIV mistakes (e.g. bumping to
+    # a new major without updating the module path / import paths) that
+    # local `go build` can't see because it uses go.mod verbatim.
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+    needs: go
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: go install from scratch dir
+        env:
+          GOPROXY: direct
+          GOSUMDB: "off"
+        run: |
+          set -euxo pipefail
+          scratch="$(mktemp -d)"
+          cd "$scratch"
+          GOBIN="$scratch/bin" go install \
+            github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@${{ github.sha }}
+          "$scratch/bin/ezs" --version
+
   vscode:
     runs-on: ubuntu-latest
     steps:

@@ -20,12 +20,48 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Generate release notes with git-cliff
+        id: notes
+        uses: orhun/git-cliff-action@v4
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          OUTPUT: ${{ runner.temp }}/RELEASE_NOTES.md
+
+      - name: Preview release notes
+        run: cat "${{ steps.notes.outputs.changelog }}"
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: "~> v2"
-          args: release --clean
+          args: release --clean --release-notes=${{ steps.notes.outputs.changelog }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  verify-go-install:
+    # Confirms `go install github.com/.../ezstack/v4/cmd/ezs@<tag>` resolves
+    # and builds. If the module path ever drifts from the major version in
+    # the tag, this job fails fast and the release is caught before users
+    # hit the broken install command.
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: go install tagged version
+        env:
+          GOPROXY: direct
+          GOSUMDB: "off"
+        run: |
+          set -euxo pipefail
+          scratch="$(mktemp -d)"
+          cd "$scratch"
+          GOBIN="$scratch/bin" go install \
+            github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@${{ github.ref_name }}
+          "$scratch/bin/ezs" --version
 
   vsix:
     runs-on: ubuntu-latest
@@ -137,7 +173,7 @@ jobs:
 
   publish:
     runs-on: ubuntu-latest
-    needs: [release, vsix, nvim, desktop]
+    needs: [release, verify-go-install, vsix, nvim, desktop]
     steps:
       - uses: actions/checkout@v4
 

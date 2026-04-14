@@ -6,11 +6,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/internal/github"
-	"github.com/KulkarniKaustubh/ezstack/internal/stack"
-	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/github"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 	"github.com/spf13/pflag"
 )
 
@@ -1239,10 +1239,14 @@ func cleanupFullyMergedStacks(mgr *stack.Manager, stacks []*config.Stack) {
 			}
 		} else {
 			// Everything already cleaned up - remove stack from config automatically
-			if _, err := mgr.DeleteStack(info.StackHash); err != nil {
+			needsCd, err := mgr.DeleteStack(info.StackHash)
+			if err != nil {
 				ui.Warn(fmt.Sprintf("Failed to remove stack '%s' from config: %v", displayName, err))
 			} else {
 				ui.Success(fmt.Sprintf("Removed fully merged stack '%s' (all branches already cleaned up)", displayName))
+				if needsCd {
+					EmitCd(mgr.GetRepoDir())
+				}
 			}
 		}
 	}

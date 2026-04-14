@@ -8,30 +8,39 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 
-	"github.com/KulkarniKaustubh/ezstack/cmd/ezs/commands"
-	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/spf13/pflag"
 )
 
+// version is kept in lock-step with cmd/ezs/main.go via scripts/bump-version.sh.
+const version = "4.3.5"
+
 func main() {
-	// Optional --repo flag to set the working directory (git repo root).
-	// Useful when the MCP server is launched from a parent workspace directory.
-	for i := 1; i < len(os.Args); i++ {
-		if os.Args[i] == "--repo" && i+1 < len(os.Args) {
-			if err := os.Chdir(os.Args[i+1]); err != nil {
-				fmt.Fprintf(os.Stderr, "ezs-mcp: --repo %s: %v\n", os.Args[i+1], err)
-				os.Exit(1)
-			}
-			break
+	// --repo sets the working directory (git repo root). Useful when the MCP
+	// server is launched from a parent workspace directory.
+	fs := pflag.NewFlagSet("ezs-mcp", pflag.ContinueOnError)
+	repo := fs.String("repo", "", "Git repo root directory")
+	if err := fs.Parse(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "ezs-mcp: %v\n", err)
+		os.Exit(2)
+	}
+	if *repo != "" {
+		if err := os.Chdir(*repo); err != nil {
+			fmt.Fprintf(os.Stderr, "ezs-mcp: --repo %s: %v\n", *repo, err)
+			os.Exit(1)
 		}
 	}
 
 	s := server.NewMCPServer(
 		"ezstack",
-		"1.0.0",
+		version,
 		server.WithElicitation(),
+		// Tool list is static, so don't advertise listChanged notifications.
 		server.WithToolCapabilities(false),
 	)
 
@@ -43,8 +52,22 @@ func main() {
 	}
 }
 
+// toolMu serializes tool-handler execution. It is REQUIRED because two
+// independent process-global mutations happen per handler:
+//
+//  1. captureCommand swaps os.Stdout / os.Stderr to pipes
+//  2. setupElicitation replaces ui.activeBackend with a request-scoped closure
+//
+// mcp-go dispatches tool calls on separate goroutines, so without this lock
+// two concurrent requests would race on both globals — one request's output
+// could land in the other's pipe (or trigger a write-after-close panic) and
+// elicitation callbacks would be dispatched against the wrong request context.
+//
+// Serializing tool calls is acceptable for a single-user MCP server.
+var toolMu sync.Mutex
+
 // setupElicitation configures the MCP UI backend for the current request context.
-// Must be called at the start of each tool handler.
+// Must be called at the start of each tool handler while holding toolMu.
 func setupElicitation(ctx context.Context) {
 	session := server.ClientSessionFromContext(ctx)
 	elicitSession, hasElicit := session.(server.SessionWithElicitation)
@@ -63,7 +86,13 @@ func setupElicitation(ctx context.Context) {
 			if err != nil {
 				return nil, err
 			}
-			content, _ := result.Content.(map[string]interface{})
+			content, ok := result.Content.(map[string]interface{})
+			if !ok && result.Content != nil {
+				// Spec guarantees an object here; log so we can diagnose
+				// clients that send something else instead of silently
+				// producing zero-value form data downstream.
+				fmt.Fprintf(os.Stderr, "ezs-mcp: unexpected elicitation content type: %T\n", result.Content)
+			}
 			return &ui.ElicitResult{
 				Action:  string(result.Action),
 				Content: content,
@@ -73,7 +102,8 @@ func setupElicitation(ctx context.Context) {
 }
 
 // captureCommand runs fn(args) with stdout/stderr redirected to pipes,
-// returning the raw captured output from each stream.
+// returning the raw captured output from each stream. Caller MUST hold toolMu
+// — this mutates process-global os.Stdout / os.Stderr.
 func captureCommand(fn func([]string) error, args []string) (stdout, stderr string, cmdErr error) {
 	origStdout, origStderr := os.Stdout, os.Stderr
 
@@ -88,6 +118,15 @@ func captureCommand(fn func([]string) error, args []string) (stdout, stderr stri
 		return "", "", err
 	}
 
+	// Drain pipes concurrently so that commands writing more than the pipe
+	// buffer (~64KB on most systems) don't block on the write side before we
+	// get a chance to read.
+	var outBuf, errBuf bytes.Buffer
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); io.Copy(&outBuf, rOut) }()
+	go func() { defer wg.Done(); io.Copy(&errBuf, rErr) }()
+
 	os.Stdout = wOut
 	os.Stderr = wErr
 	cmdErr = fn(args)
@@ -96,9 +135,7 @@ func captureCommand(fn func([]string) error, args []string) (stdout, stderr stri
 	os.Stdout = origStdout
 	os.Stderr = origStderr
 
-	var outBuf, errBuf bytes.Buffer
-	io.Copy(&outBuf, rOut)
-	io.Copy(&errBuf, rErr)
+	wg.Wait()
 	rOut.Close()
 	rErr.Close()
 
@@ -132,6 +169,9 @@ func stripAnsi(s string) string {
 // Otherwise appends --json and returns structured data.
 func readOnlyHandler(fn func([]string) error, buildArgs func(mcp.CallToolRequest) []string) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		toolMu.Lock()
+		defer toolMu.Unlock()
+
 		setupElicitation(ctx)
 		args := buildArgs(req)
 		decorated := req.GetBool("decorated", false)
@@ -146,6 +186,9 @@ func readOnlyHandler(fn func([]string) error, buildArgs func(mcp.CallToolRequest
 		}
 
 		if decorated {
+			// ezstack commands write visual output to stderr (stdout is
+			// reserved for shell-eval like "cd <path>" emitted by EmitCd),
+			// so decorated mode returns stderr content.
 			if stderr == "" {
 				stderr = "done"
 			}
@@ -166,7 +209,40 @@ func readOnlyHandler(fn func([]string) error, buildArgs func(mcp.CallToolRequest
 // toolHandler wraps a command function as an MCP tool handler.
 func toolHandler(fn func([]string) error, buildArgs func(mcp.CallToolRequest) []string) server.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		toolMu.Lock()
+		defer toolMu.Unlock()
+
 		setupElicitation(ctx)
+		output, err := runCommand(fn, buildArgs(req))
+		if err != nil {
+			msg := output
+			if msg == "" {
+				msg = err.Error()
+			}
+			return mcp.NewToolResultError(msg), nil
+		}
+		if output == "" {
+			output = "done"
+		}
+		return mcp.NewToolResultText(output), nil
+	}
+}
+
+// yesModeHandler is toolHandler for destructive commands that would otherwise
+// block on an internal confirmation prompt. It flips ui.YesMode for the
+// duration of the call (safe under toolMu since it's process-global). The
+// MCP client layer is responsible for user-facing confirmation via the
+// destructive annotation.
+func yesModeHandler(fn func([]string) error, buildArgs func(mcp.CallToolRequest) []string) server.ToolHandlerFunc {
+	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		toolMu.Lock()
+		defer toolMu.Unlock()
+
+		setupElicitation(ctx)
+		prev := ui.YesMode
+		ui.YesMode = true
+		defer func() { ui.YesMode = prev }()
+
 		output, err := runCommand(fn, buildArgs(req))
 		if err != nil {
 			msg := output
@@ -186,6 +262,13 @@ func toolHandler(fn func([]string) error, buildArgs func(mcp.CallToolRequest) []
 func boolFlag(args *[]string, req mcp.CallToolRequest, key, flag string) {
 	if req.GetBool(key, false) {
 		*args = append(*args, flag)
+	}
+}
+
+// stringFlag appends "--flag value" to args when the request has a non-empty string.
+func stringFlag(args *[]string, req mcp.CallToolRequest, key, flag string) {
+	if v := req.GetString(key, ""); v != "" {
+		*args = append(*args, flag, v)
 	}
 }
 
@@ -226,8 +309,11 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_sync",
-			mcp.WithDescription("Sync stack branches with remote. Detects merged parents, rebases branches behind base. Without flags shows interactive selection."),
-			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithDescription("Sync stack branches with remote. Detects merged parents and rebases branches behind their base. Rewrites local history — on conflict, manual resolution may be required."),
+			// Sync rewrites local branch history (rebase) and may leave
+			// the working tree in a conflict state requiring manual
+			// resolution, so we mark it destructive.
+			mcp.WithDestructiveHintAnnotation(true),
 			mcp.WithBoolean("stack", mcp.Description("Sync current stack (auto-detect)")),
 			mcp.WithBoolean("all", mcp.Description("Sync all stacks")),
 			mcp.WithBoolean("current", mcp.Description("Sync current branch only")),
@@ -269,10 +355,15 @@ func registerTools(s *server.MCPServer) {
 	s.AddTool(
 		mcp.NewTool("ezstack_pr_create",
 			mcp.WithDescription("Create a pull request for the current branch."),
+			mcp.WithString("title", mcp.Description("PR title (defaults to branch name)")),
+			mcp.WithBoolean("draft", mcp.Description("Create as draft PR")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.PR, func(req mcp.CallToolRequest) []string {
-			return []string{"create"}
+			args := []string{"create"}
+			stringFlag(&args, req, "title", "--title")
+			boolFlag(&args, req, "draft", "--draft")
+			return args
 		}),
 	)
 
@@ -297,56 +388,75 @@ func registerTools(s *server.MCPServer) {
 	)
 
 	// ---- Branch management ----
+	//
+	// For branch-management tools, positional-arg parameters are marked
+	// Required() so the commands never fall through to their interactive
+	// fzf-backed selection paths — those would hang or error in an MCP
+	// context with no attached terminal.
 
 	s.AddTool(
 		mcp.NewTool("ezstack_goto",
-			mcp.WithDescription("Switch to a branch in the stack. Omit branch for interactive selection."),
-			mcp.WithString("branch", mcp.Description("Branch name to switch to")),
+			mcp.WithDescription("Switch to a branch in the stack."),
+			mcp.WithString("branch",
+				mcp.Description("Branch name to switch to"),
+				mcp.Required(),
+			),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.Goto, func(req mcp.CallToolRequest) []string {
-			if b := req.GetString("branch", ""); b != "" {
-				return []string{b}
-			}
-			return nil
+			return []string{req.GetString("branch", "")}
 		}),
 	)
 
 	s.AddTool(
 		mcp.NewTool("ezstack_new",
-			mcp.WithDescription("Create a new branch in the stack."),
-			mcp.WithString("name", mcp.Description("Branch name to create")),
+			mcp.WithDescription("Create a new branch in the stack. Without an explicit parent, the new branch stacks on the MCP server's current branch, which may not match the agent's expectation — pass parent explicitly when in doubt."),
+			mcp.WithString("name",
+				mcp.Description("Branch name to create"),
+				mcp.Required(),
+			),
+			mcp.WithString("parent", mcp.Description("Parent branch (defaults to current branch)")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.New, func(req mcp.CallToolRequest) []string {
-			if n := req.GetString("name", ""); n != "" {
-				return []string{n}
-			}
-			return nil
+			args := []string{req.GetString("name", "")}
+			stringFlag(&args, req, "parent", "--parent")
+			return args
 		}),
 	)
 
 	s.AddTool(
 		mcp.NewTool("ezstack_delete",
-			mcp.WithDescription("Delete a branch from the stack."),
-			mcp.WithString("branch", mcp.Description("Branch name to delete")),
+			mcp.WithDescription("Delete a branch from the stack. Confirmation is handled at the MCP client layer via the destructive annotation; internal confirm prompts are auto-accepted."),
+			mcp.WithString("branch",
+				mcp.Description("Branch name to delete"),
+				mcp.Required(),
+			),
 			mcp.WithDestructiveHintAnnotation(true),
 		),
-		toolHandler(commands.Delete, func(req mcp.CallToolRequest) []string {
-			if b := req.GetString("branch", ""); b != "" {
-				return []string{b}
-			}
-			return nil
+		yesModeHandler(commands.Delete, func(req mcp.CallToolRequest) []string {
+			return []string{req.GetString("branch", "")}
 		}),
 	)
 
 	s.AddTool(
 		mcp.NewTool("ezstack_reparent",
 			mcp.WithDescription("Move a branch to a new parent in the stack."),
+			mcp.WithString("branch",
+				mcp.Description("Branch to reparent"),
+				mcp.Required(),
+			),
+			mcp.WithString("new_parent",
+				mcp.Description("New parent branch"),
+				mcp.Required(),
+			),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.Reparent, func(req mcp.CallToolRequest) []string {
-			return nil
+			return []string{
+				req.GetString("branch", ""),
+				req.GetString("new_parent", ""),
+			}
 		}),
 	)
 }

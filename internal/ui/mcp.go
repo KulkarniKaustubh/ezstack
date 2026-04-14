@@ -3,7 +3,7 @@ package ui
 import (
 	"fmt"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 )
 
 // ElicitResult holds the response from an MCP elicitation request.

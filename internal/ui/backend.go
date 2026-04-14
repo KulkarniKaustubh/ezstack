@@ -1,6 +1,6 @@
 package ui
 
-import "github.com/KulkarniKaustubh/ezstack/internal/config"
+import "github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 
 // Backend defines the interface for interactive user prompts.
 // Implementations include the terminal TUI (default) and MCP elicitation.

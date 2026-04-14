@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 )
 
 // TestEnv holds the test environment configuration
