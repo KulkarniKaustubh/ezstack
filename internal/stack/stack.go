@@ -713,7 +713,10 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 			oldStack.ReparentBranch(branch.Name, "")
 			oldStack.PopulateBranchesWithCache(cache)
 		} else {
-			mainStackKey := m.findStackByRoot(newParentName)
+			// Use the unique variant — if multiple stacks share this root,
+			// findStackByRoot would pick one non-deterministically via map iteration.
+			// Returning "" forces the fallback path to create a fresh stack instead.
+			mainStackKey := m.findUniqueStackByRoot(newParentName)
 			if mainStackKey != "" {
 				if err := m.moveBranchToStack(branch.Name, oldStackKey, mainStackKey, newParentName); err != nil {
 					return nil, fmt.Errorf("failed to move branch to main stack: %w", err)
@@ -1444,6 +1447,12 @@ func (m *Manager) MarkBranchMerged(branchName string) error {
 	if branch == nil {
 		return fmt.Errorf("branch '%s' not found in any stack", branchName)
 	}
+
+	// Rebind git to the main worktree and hop cwd out of the branch worktree
+	// before we remove it — otherwise `git worktree remove` / `git branch -D`
+	// run from a vanished directory and fail with chdir errors.
+	m.rebindGitToRepo()
+	m.moveCwdOutOf(branch.WorktreePath)
 
 	// Remove the worktree and branch from git
 	worktreePath := branch.WorktreePath
