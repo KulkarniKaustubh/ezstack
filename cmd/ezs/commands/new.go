@@ -459,10 +459,10 @@ func promptWorktreeBaseDir(repoDir string, cfg *config.Config) (string, error) {
 	ui.Info("Worktrees should be stored OUTSIDE the repository (e.g., as sibling directories).")
 	fmt.Fprintln(os.Stderr)
 
-	// Suggest a default: parent directory of the repo
+	// Suggest a default: <parent>/<repo>_worktrees
 	defaultDir := ""
 	if repoDir != "" {
-		defaultDir = filepath.Dir(repoDir)
+		defaultDir = filepath.Join(filepath.Dir(repoDir), filepath.Base(repoDir)+"_worktrees")
 	}
 
 	for {
