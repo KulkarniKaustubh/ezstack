@@ -633,8 +633,10 @@ editor, the desktop app, and Claude Code all stay in sync.
 ### MCP Server (Claude Code & other MCP clients)
 
 Located in `cmd/ezs-mcp/`. A standalone Model Context Protocol server that
-exposes the core stack operations as MCP tools. Point any MCP-compatible agent
-(Claude Code, Zed, etc.) at it and the agent can drive `ezs` directly.
+exposes the full stack workflow as MCP tools. Point any MCP-compatible agent
+(Claude Code, Zed, etc.) at it and the agent can drive `ezs` directly &mdash;
+inspect, mutate, navigate, and manage pull requests without leaving the agent
+loop. 21 tools, one binary.
 
 **Install**
 
@@ -660,26 +662,60 @@ when Claude launches the MCP server from a parent workspace directory.
 
 **Tools**
 
+**Inspection**
+
 | Tool | Annotation | Description |
 |---|---|---|
 | `ezstack_status` | read-only | Current stack with PR and CI status. `all`, `decorated`. |
 | `ezstack_list` | read-only | List all stacks and branches. `all`, `decorated`. |
-| `ezstack_sync` | destructive | Rebase (or merge) branches with their base. `stack`, `all`, `current`, `parent`, `children`, `merge`, `dry_run`. |
-| `ezstack_push` | destructive | Push current branch or entire stack. `stack`, `force`. |
-| `ezstack_pr_create` | &mdash; | Create a pull request for the current branch. `title`, `draft`. |
-| `ezstack_pr_stack` | &mdash; | Update every PR description in the stack with navigation links. |
-| `ezstack_pr_merge` | destructive | Merge the pull request for the current branch. |
+| `ezstack_diff` | read-only | Diff against parent branch as JSON numstat (default) or diffstat. `branch`, `stat`. |
+| `ezstack_log` | read-only | Commits since parent as JSON (hash, message, author, ISO date). `branch`. |
+| `ezstack_config_show` | read-only | Full ezstack configuration for the active repo. |
+
+**Branch management**
+
+| Tool | Annotation | Description |
+|---|---|---|
 | `ezstack_goto` | &mdash; | Switch to a branch. `branch` (required). |
 | `ezstack_new` | &mdash; | Create a new branch. `name` (required), `parent`. |
 | `ezstack_delete` | destructive | Delete a branch and its worktree. `branch` (required). |
 | `ezstack_reparent` | &mdash; | Move a branch to a new parent. `branch` and `new_parent` (both required). |
+| `ezstack_stack` | &mdash; | Add a standalone branch to a stack. `branch` (required), `parent` or `base`. |
+| `ezstack_unstack` | &mdash; | Remove a branch from ezstack tracking (leaves the git branch/worktree intact). `branch` (required). |
 
-Read-only tools return JSON by default; pass `decorated=true` to get the
-terminal-styled output. Destructive tools are tagged with the MCP destructive
-annotation so the client prompts before running them. Branch-management tools
-mark their positional arguments as `Required` in the tool schema so the agent
-cannot trigger an interactive `fzf` selection that would hang in a no-terminal
-context.
+**Committing & syncing**
+
+| Tool | Annotation | Description |
+|---|---|---|
+| `ezstack_commit` | destructive | Commit staged (or all) changes and auto-sync children. `message` (required), `all`, `merge`, `rebase`. Auto-pushes if the branch is already on the remote. |
+| `ezstack_amend` | destructive | Amend the last commit and auto-sync children. Optional `message` (otherwise `--no-edit`), `all`, `merge`, `rebase`. Force-pushes if the branch is already on the remote. |
+| `ezstack_sync` | destructive | Rebase (or merge) branches with their base. `stack`, `all`, `current`, `parent`, `children`, `merge`, `dry_run`, `resume` (maps to `--continue`). |
+| `ezstack_push` | destructive | Push current branch or entire stack. `stack`, `force`. |
+
+**Pull requests**
+
+| Tool | Annotation | Description |
+|---|---|---|
+| `ezstack_pr_create` | &mdash; | Create a pull request for the current branch. `title`, `draft`. |
+| `ezstack_pr_update` | destructive | Push the latest commits and refresh the PR base branch / stack description. `branch`. |
+| `ezstack_pr_merge` | destructive | Merge the pull request for the current branch. |
+| `ezstack_pr_draft` | &mdash; | Toggle a PR between draft and ready-for-review. `branch`. |
+| `ezstack_pr_stack` | &mdash; | Update every PR description in the stack with navigation links. |
+
+**Configuration**
+
+| Tool | Annotation | Description |
+|---|---|---|
+| `ezstack_config_set` | &mdash; | Set a config value. `key` and `value` (both required). Valid keys: `worktree_base_dir`, `default_base_branch`, `github_token`, `cd_after_new`, `use_worktrees`, `sync_strategy`, `agent_command`. |
+
+Read-only inspection tools return JSON by default; `ezstack_status` and
+`ezstack_list` accept `decorated=true` for terminal-styled output. Destructive
+tools are tagged with the MCP destructive annotation so the client prompts
+before running them. Branch-management tools mark their positional arguments as
+`Required` in the tool schema so the agent cannot trigger an interactive `fzf`
+selection that would hang in a no-terminal context. `ezstack_commit` requires
+an explicit `message` and `ezstack_amend` defaults to `--no-edit` so neither
+can ever launch `$EDITOR` and corrupt the JSON-RPC transport.
 
 **Safety** &mdash; every tool handler acquires a process-wide mutex before
 running, since `ezs` operates on shared process state (stdout/stderr, the

@@ -67,7 +67,7 @@
           Back to ezstack
         </a>
         <h1>MCP Server<br>for Claude Code</h1>
-        <p class="hero-sub">ezstack ships a standalone Model Context Protocol server, <code>ezs-mcp</code>, that exposes the core stack operations as MCP tools. Point Claude Code (or any MCP-compatible agent) at it and it can drive <code>ezs</code> directly &mdash; status, list, sync, push, PR create/merge, goto, new, delete, reparent.</p>
+        <p class="hero-sub">ezstack ships a standalone Model Context Protocol server, <code>ezs-mcp</code>, that exposes the full stack workflow as MCP tools. Point Claude Code (or any MCP-compatible agent) at it and it can drive <code>ezs</code> directly &mdash; inspect, commit, sync, push, manage pull requests, navigate, and configure, all without leaving the agent loop.</p>
         <div class="hero-actions">
           <div class="install-cmd" id="hero-install">
             <span class="install-prompt">$</span>
@@ -91,7 +91,7 @@
     <div class="container">
       <div class="workflow-header" data-animate>
         <span class="mode-label mode-label-work">How It Works</span>
-        <h2>One binary. Eleven tools. Real <code>ezs</code> under the hood.</h2>
+        <h2>One binary. 21 tools. Real <code>ezs</code> under the hood.</h2>
         <p><code>ezs-mcp</code> is a separate binary that speaks JSON-RPC over stdio. Under the hood it invokes the same <code>ezs</code> command functions your shell uses &mdash; there is no second copy of the logic to drift. Your agent gets the identical behavior you'd get from the terminal, captured and handed back as structured tool results.</p>
       </div>
 
@@ -146,11 +146,12 @@
     <div class="container">
       <div class="workflow-header" data-animate>
         <span class="mode-label mode-label-feature">Tool Catalog</span>
-        <h2>Eleven tools, full stack coverage</h2>
-        <p>Every core ezstack operation an agent needs &mdash; inspect, mutate, push, PR &mdash; exposed with strict input schemas. Read-only tools default to JSON; destructive tools carry the MCP destructive annotation.</p>
+        <h2>Twenty-one tools, full stack coverage</h2>
+        <p>Every ezstack operation an agent needs &mdash; inspect, commit, sync, push, PR, configure &mdash; exposed with strict input schemas. Read-only tools default to JSON; destructive tools carry the MCP destructive annotation; tools that would normally launch an editor or an <code>fzf</code> picker have those paths closed off at the schema level so they can't hang the MCP transport.</p>
       </div>
 
       <div class="template-vars" data-animate>
+        <h3>Inspection</h3>
         <table class="var-table">
           <thead>
             <tr>
@@ -171,39 +172,44 @@
               <td>List all stacks and branches. <code>all</code>, <code>decorated</code>.</td>
             </tr>
             <tr>
-              <td><code>ezstack_sync</code></td>
-              <td><span class="mode-label mode-label-feature">destructive</span></td>
-              <td>Rebase (or merge) stack branches with their base. <code>stack</code>, <code>all</code>, <code>current</code>, <code>parent</code>, <code>children</code>, <code>merge</code>, <code>dry_run</code>.</td>
+              <td><code>ezstack_diff</code></td>
+              <td><span class="mode-label mode-label-work">read-only</span></td>
+              <td>Diff against parent branch as JSON numstat (default) or diffstat. <code>branch</code>, <code>stat</code>.</td>
             </tr>
             <tr>
-              <td><code>ezstack_push</code></td>
-              <td><span class="mode-label mode-label-feature">destructive</span></td>
-              <td>Push current branch or entire stack. <code>stack</code>, <code>force</code>.</td>
+              <td><code>ezstack_log</code></td>
+              <td><span class="mode-label mode-label-work">read-only</span></td>
+              <td>Commits since parent as JSON (hash, message, author, ISO date). <code>branch</code>.</td>
             </tr>
             <tr>
-              <td><code>ezstack_pr_create</code></td>
-              <td>&mdash;</td>
-              <td>Create a pull request for the current branch. <code>title</code>, <code>draft</code>.</td>
+              <td><code>ezstack_config_show</code></td>
+              <td><span class="mode-label mode-label-work">read-only</span></td>
+              <td>Full ezstack configuration for the active repo.</td>
             </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="template-vars" data-animate>
+        <h3>Branch management</h3>
+        <table class="var-table">
+          <thead>
             <tr>
-              <td><code>ezstack_pr_stack</code></td>
-              <td>&mdash;</td>
-              <td>Update every PR description in the stack with navigation links.</td>
+              <th>Tool</th>
+              <th>Annotation</th>
+              <th>Description</th>
             </tr>
-            <tr>
-              <td><code>ezstack_pr_merge</code></td>
-              <td><span class="mode-label mode-label-feature">destructive</span></td>
-              <td>Merge the pull request for the current branch.</td>
-            </tr>
+          </thead>
+          <tbody>
             <tr>
               <td><code>ezstack_goto</code></td>
               <td>&mdash;</td>
-              <td>Switch to a branch in the stack. <code>branch</code> (required).</td>
+              <td>Switch to a branch. <code>branch</code> (required).</td>
             </tr>
             <tr>
               <td><code>ezstack_new</code></td>
               <td>&mdash;</td>
-              <td>Create a new branch in the stack. <code>name</code> (required), <code>parent</code>.</td>
+              <td>Create a new branch. <code>name</code> (required), <code>parent</code>.</td>
             </tr>
             <tr>
               <td><code>ezstack_delete</code></td>
@@ -214,6 +220,111 @@
               <td><code>ezstack_reparent</code></td>
               <td>&mdash;</td>
               <td>Move a branch to a new parent. <code>branch</code> and <code>new_parent</code> (both required).</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_stack</code></td>
+              <td>&mdash;</td>
+              <td>Add a standalone branch to a stack. <code>branch</code> (required), <code>parent</code> or <code>base</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_unstack</code></td>
+              <td>&mdash;</td>
+              <td>Remove a branch from ezstack tracking (leaves the git branch and worktree intact). <code>branch</code> (required).</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="template-vars" data-animate>
+        <h3>Committing &amp; syncing</h3>
+        <table class="var-table">
+          <thead>
+            <tr>
+              <th>Tool</th>
+              <th>Annotation</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ezstack_commit</code></td>
+              <td><span class="mode-label mode-label-feature">destructive</span></td>
+              <td>Commit staged (or all) changes and auto-sync children. <code>message</code> (required), <code>all</code>, <code>merge</code>, <code>rebase</code>. Auto-pushes if the branch is already on the remote.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_amend</code></td>
+              <td><span class="mode-label mode-label-feature">destructive</span></td>
+              <td>Amend the last commit and auto-sync children. Optional <code>message</code> (otherwise <code>--no-edit</code>), <code>all</code>, <code>merge</code>, <code>rebase</code>. Force-pushes if the branch is already on the remote.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_sync</code></td>
+              <td><span class="mode-label mode-label-feature">destructive</span></td>
+              <td>Rebase (or merge) stack branches with their base. <code>stack</code>, <code>all</code>, <code>current</code>, <code>parent</code>, <code>children</code>, <code>merge</code>, <code>dry_run</code>, <code>resume</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_push</code></td>
+              <td><span class="mode-label mode-label-feature">destructive</span></td>
+              <td>Push current branch or entire stack. <code>stack</code>, <code>force</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="template-vars" data-animate>
+        <h3>Pull requests</h3>
+        <table class="var-table">
+          <thead>
+            <tr>
+              <th>Tool</th>
+              <th>Annotation</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ezstack_pr_create</code></td>
+              <td>&mdash;</td>
+              <td>Create a pull request for the current branch. <code>title</code>, <code>draft</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_pr_update</code></td>
+              <td><span class="mode-label mode-label-feature">destructive</span></td>
+              <td>Push the latest commits and refresh the PR base branch and stack description. <code>branch</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_pr_merge</code></td>
+              <td><span class="mode-label mode-label-feature">destructive</span></td>
+              <td>Merge the pull request for the current branch.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_pr_draft</code></td>
+              <td>&mdash;</td>
+              <td>Toggle a PR between draft and ready-for-review. <code>branch</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_pr_stack</code></td>
+              <td>&mdash;</td>
+              <td>Update every PR description in the stack with navigation links.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="template-vars" data-animate>
+        <h3>Configuration</h3>
+        <table class="var-table">
+          <thead>
+            <tr>
+              <th>Tool</th>
+              <th>Annotation</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ezstack_config_set</code></td>
+              <td>&mdash;</td>
+              <td>Set a config value. <code>key</code> and <code>value</code> (both required). Valid keys: <code>worktree_base_dir</code>, <code>default_base_branch</code>, <code>github_token</code>, <code>cd_after_new</code>, <code>use_worktrees</code>, <code>sync_strategy</code>, <code>agent_command</code>.</td>
             </tr>
           </tbody>
         </table>

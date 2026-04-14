@@ -85,10 +85,20 @@ func TestListTools_Registered(t *testing.T) {
 		"ezstack_pr_create",
 		"ezstack_pr_stack",
 		"ezstack_pr_merge",
+		"ezstack_pr_update",
+		"ezstack_pr_draft",
 		"ezstack_goto",
 		"ezstack_new",
 		"ezstack_delete",
 		"ezstack_reparent",
+		"ezstack_commit",
+		"ezstack_amend",
+		"ezstack_diff",
+		"ezstack_log",
+		"ezstack_stack",
+		"ezstack_unstack",
+		"ezstack_config_show",
+		"ezstack_config_set",
 	}
 	sort.Strings(want)
 	var got []string
@@ -116,6 +126,11 @@ func TestListTools_Registered(t *testing.T) {
 		{"ezstack_delete", "branch"},
 		{"ezstack_reparent", "branch"},
 		{"ezstack_reparent", "new_parent"},
+		{"ezstack_commit", "message"},
+		{"ezstack_stack", "branch"},
+		{"ezstack_unstack", "branch"},
+		{"ezstack_config_set", "key"},
+		{"ezstack_config_set", "value"},
 	}
 	for _, rc := range requiredChecks {
 		tl, ok := byName[rc.tool]
@@ -137,17 +152,27 @@ func TestListTools_Registered(t *testing.T) {
 
 	// Destructive annotation — sync rewrites history and must be flagged.
 	destructiveWant := map[string]bool{
-		"ezstack_status":    false,
-		"ezstack_list":      false,
-		"ezstack_sync":      true,
-		"ezstack_push":      true,
-		"ezstack_pr_create": false,
-		"ezstack_pr_stack":  false,
-		"ezstack_pr_merge":  true,
-		"ezstack_goto":      false,
-		"ezstack_new":       false,
-		"ezstack_delete":    true,
-		"ezstack_reparent":  false,
+		"ezstack_status":      false,
+		"ezstack_list":        false,
+		"ezstack_sync":        true,
+		"ezstack_push":        true,
+		"ezstack_pr_create":   false,
+		"ezstack_pr_stack":    false,
+		"ezstack_pr_merge":    true,
+		"ezstack_pr_update":   true,
+		"ezstack_pr_draft":    false,
+		"ezstack_goto":        false,
+		"ezstack_new":         false,
+		"ezstack_delete":      true,
+		"ezstack_reparent":    false,
+		"ezstack_commit":      true,
+		"ezstack_amend":       true,
+		"ezstack_diff":        false,
+		"ezstack_log":         false,
+		"ezstack_stack":       false,
+		"ezstack_unstack":     false,
+		"ezstack_config_show": false,
+		"ezstack_config_set":  false,
 	}
 	for name, want := range destructiveWant {
 		tl, ok := byName[name]
