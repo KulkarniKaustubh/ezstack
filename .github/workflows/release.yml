@@ -61,7 +61,13 @@ jobs:
           cd "$scratch"
           GOBIN="$scratch/bin" go install \
             github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@${{ github.ref_name }}
+          GOBIN="$scratch/bin" go install \
+            github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@${{ github.ref_name }}
           "$scratch/bin/ezs" --version
+          # ezs-mcp speaks JSON-RPC over stdio and has no --version flag; a
+          # successful `go install` plus an executable binary is enough to
+          # confirm the release is installable.
+          test -x "$scratch/bin/ezs-mcp"
 
   vsix:
     runs-on: ubuntu-latest
