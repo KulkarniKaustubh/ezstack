@@ -169,6 +169,8 @@ claude mcp add ezstack -- ezs-mcp --repo "$(pwd)"
 
 `--repo` pins the server to a specific git repository root, which is useful when Claude launches the MCP server from a parent workspace directory. Read-only tools (`ezstack_status`, `ezstack_list`) return JSON by default, or pass `decorated=true` to get the terminal-styled output. Destructive tools (`ezstack_sync`, `ezstack_push`, `ezstack_delete`, `ezstack_pr_merge`) are tagged with the MCP destructive annotation so the client can prompt the user before running them.
 
+Full feature tour and tool catalog: [mcp.html](https://kulkarnikaustubh.github.io/ezstack/mcp.html).
+
 ## Configuration
 
 ezstack supports both worktree-based and checkout-based workflows:
@@ -220,6 +222,7 @@ your editor or a native GUI:
 | **VS Code Extension** (`vscode-extension/`) | Sidebar stack tree, per-branch file browser, PR & CI status, command palette, agent integration | [vscode.html](https://kulkarnikaustubh.github.io/ezstack/vscode.html) · [README](vscode-extension/README.md) |
 | **Neovim Plugin** (`neovim-plugin/`) | Native Lua plugin with `:Ezs` command suite, styled stack viewer, Telescope pickers, statusline component, fugitive auto-refresh | [nvim.html](https://kulkarnikaustubh.github.io/ezstack/nvim.html) · [README](neovim-plugin/README.md) |
 | **Desktop App** (`tauri-ui/`) | Tauri v2 + React 19 desktop GUI. Three-panel layout, visual stack graph with drag-to-reparent, branch reflog history, sidebar repo filter, toast notifications, remote SSH mode | [desktop.html](https://kulkarnikaustubh.github.io/ezstack/desktop.html) · [README](tauri-ui/README.md) |
+| **MCP Server** (`cmd/ezs-mcp/`) | Model Context Protocol server for Claude Code and other MCP-compatible agents. Exposes eleven stack operations as tools with destructive annotations and required-arg schemas | [mcp.html](https://kulkarnikaustubh.github.io/ezstack/mcp.html) |
 
 ### VS Code
 
