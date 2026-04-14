@@ -5,10 +5,10 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/internal/stack"
-	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 )
 
 // Up navigates to the parent branch in the stack

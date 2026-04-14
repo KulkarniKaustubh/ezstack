@@ -7,12 +7,12 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/internal/github"
-	"github.com/KulkarniKaustubh/ezstack/internal/helpers"
-	"github.com/KulkarniKaustubh/ezstack/internal/stack"
-	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/github"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/helpers"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 	"github.com/spf13/pflag"
 )
 
@@ -674,12 +674,10 @@ func showDiffStatsAgainstBase(g *git.Git, branch, baseBranch string) {
 		return
 	}
 
-	// Use origin/ refs for accurate stats matching what PRs show
-	baseRef := baseBranch
-	if g.RemoteBranchExists(baseBranch) {
-		baseRef = "origin/" + baseBranch
-	}
-	branchRef := "origin/" + branch
+	// Diff against the LOCAL base and LOCAL branch so stats reflect the
+	// user's working state rather than possibly-stale origin refs.
+	baseRef := resolveLocalRef(g, baseBranch)
+	branchRef := resolveLocalRef(g, branch)
 
 	added, removed, err := g.GetDiffStat(baseRef, branchRef)
 	if err != nil {

@@ -53,7 +53,7 @@ brew install ezstack
 **Go Install**
 
 ```bash
-go install github.com/KulkarniKaustubh/ezstack/cmd/ezs@latest
+go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest
 ```
 
 **Build from source**

@@ -671,7 +671,7 @@
 <span class="c-cmd">brew</span> <span class="c-flag">install</span> <span class="c-str">ezstack</span>
 </code></pre>
       <p><strong>Go Install</strong></p>
-      <pre><code><span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/cmd/ezs@latest</span>
+      <pre><code><span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest</span>
 </code></pre>
       <p><strong>Build from source</strong></p>
       <pre><code><span class="c-cmd">git</span> <span class="c-flag">clone</span> <span class="c-str">https://github.com/KulkarniKaustubh/ezstack.git</span>
@@ -1523,11 +1523,20 @@ Options:
       <a href="https://github.com/KulkarniKaustubh/ezstack/releases">Releases page</a>.</p>
       <p><strong>Layout</strong> — three panels:</p>
       <ol>
-      <li><strong>Stacks sidebar</strong> — every stack in the repo, with branch counts</li>
-      <li><strong>Stack graph</strong> — visual tree, color-coded by health, current branch
-      highlighted</li>
+      <li><strong>Repositories sidebar</strong> — every repo tracked in <code>~/.ezstack/config.json</code>,
+      with a filter box at the top (type to narrow by name or full path, <code>Esc</code>
+      or the ✕ button clears it). The currently selected repo stays visible
+      even when it doesn't match the filter, so the UI can never drift into a
+      state where the selection is hidden and unreachable.</li>
+      <li><strong>Stack graph</strong> — visual tree of every stack in the repo, color-coded
+      by health with the current branch highlighted. Branch nodes are
+      <strong>drag-and-drop reparentable</strong>: drag a node onto another branch and the
+      desktop app runs <code>ezs reparent</code> with the configured sync strategy. Drops
+      that would create a cycle (onto a descendant), onto the branch itself, or
+      onto the current parent are blocked with an inline toast.</li>
       <li><strong>Branch detail</strong> — PR state, CI checks, review status, mergeable
-      state, and action buttons</li>
+      state, a <strong>History</strong> panel showing the most recent reflog entries for
+      the branch (hash, action, timestamp), and action buttons.</li>
       </ol>
       <p>The status bar shows repo path, current branch, and last refresh time. The
       title bar has a theme toggle (dark / light / system) and a connection pill
@@ -1535,11 +1544,17 @@ Options:
       <p><strong>Operations</strong> are exposed as dialogs: new branch, sync, push, delete,
       reparent, PR create/update/merge, toggle draft, update stack tables, agent
       (branch- or stack-scoped), agent feature, and agent prompt management
-      (view/edit/reset across the shipped, custom, and repo layers). The CLI output
-      of every operation lands in a terminal-like panel below the main view.</p>
+      (view/edit/reset across the shipped, custom, and repo layers). Every
+      operation surfaces a <strong>toast notification</strong> in the bottom-right: success
+      toasts auto-dismiss after five seconds, error toasts stay until dismissed so
+      the CLI output stays available to copy. The full raw CLI output still lands
+      in a terminal-like panel below the main view.</p>
       <p><strong>Polling</strong> — every 30 seconds (paused when the window loses focus).
       Failures back off exponentially (30s → 60s → 120s → 240s → 300s).</p>
-      <p><strong>Keyboard shortcuts</strong>: <code>Cmd+R</code> refresh, <code>Cmd+N</code> new branch.</p>
+      <p><strong>Keyboard shortcuts</strong>: <code>Cmd+R</code> refresh, <code>Cmd+N</code> new branch, <code>Esc</code> clears the
+      branch selection (or clears the sidebar filter when the filter input is
+      focused), <code>↑/↓</code> moves between branches in the selected stack, <code>←/→</code> or <code>[</code>/<code>]</code>
+      moves between stacks.</p>
       <p><strong>Remote (SSH) mode</strong> — the desktop app can drive an <code>ezs</code> install on a
       remote machine. Click the <strong>Connect</strong> pill in the title bar, fill in
       host/user/port/key (and optionally a jump host), and pick a repo from the
@@ -1579,7 +1594,7 @@ Options:
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License · v4.1.0</span>
+          <span class="footer-meta">MIT License · v4.3.5</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

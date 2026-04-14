@@ -6,8 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 )
 
 // Doctor verifies that ezstack's runtime dependencies and config are healthy.

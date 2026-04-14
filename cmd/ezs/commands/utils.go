@@ -7,12 +7,12 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/internal/github"
-	"github.com/KulkarniKaustubh/ezstack/internal/hooks"
-	"github.com/KulkarniKaustubh/ezstack/internal/stack"
-	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/github"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/hooks"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 )
 
 // BuildHookContext returns a hooks.Context populated with the current repo
@@ -630,6 +630,22 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 	return gh
 }
 
+// resolveLocalRef returns the local branch name if it exists, falling back to
+// origin/<name> if the branch is only present on the remote. Diff stats should
+// always prefer the local ref so they reflect the user's working state.
+func resolveLocalRef(g *git.Git, name string) string {
+	if name == "" {
+		return name
+	}
+	if g.BranchExists(name) {
+		return name
+	}
+	if g.RemoteBranchExists(name) {
+		return "origin/" + name
+	}
+	return name
+}
+
 // fetchDiffStats computes diff stats for all branches in a stack using parallel local git ops.
 // This is fast (no network) and safe to call from ezs ls.
 func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
@@ -653,14 +669,11 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			parentRef := rootBase
-			if g.RemoteBranchExists(rootBase) {
-				parentRef = "origin/" + rootBase
-			}
-			branchRef := s.Root
-			if g.RemoteBranchExists(s.Root) {
-				branchRef = "origin/" + s.Root
-			}
+			// Always diff against the LOCAL parent and LOCAL branch so the
+			// stats reflect the user's working state, not stale origin refs.
+			// Fall back to origin/<ref> only if the local ref doesn't exist.
+			parentRef := resolveLocalRef(g, rootBase)
+			branchRef := resolveLocalRef(g, s.Root)
 			added, removed, err := g.GetDiffStat(parentRef, branchRef)
 			if err != nil {
 				return
@@ -681,16 +694,11 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 			if b.IsMerged {
 				return
 			}
-			// Use origin/ refs when available for both parent and branch
-			// to get accurate stats matching what PRs show
-			parentRef := b.Parent
-			if g.RemoteBranchExists(b.Parent) {
-				parentRef = "origin/" + b.Parent
-			}
-			branchRef := b.Name
-			if g.RemoteBranchExists(b.Name) {
-				branchRef = "origin/" + b.Name
-			}
+			// Always diff against the LOCAL parent branch so the stats match
+			// what the user actually has checked out. Using origin/<parent>
+			// would hide local-only parent commits and misreport the diff.
+			parentRef := resolveLocalRef(g, b.Parent)
+			branchRef := resolveLocalRef(g, b.Name)
 			added, removed, err := g.GetDiffStat(parentRef, branchRef)
 			if err != nil {
 				return

@@ -3,7 +3,7 @@ package commands
 import (
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 )
 
 func TestTopoOrderStackBranches_Linear(t *testing.T) {

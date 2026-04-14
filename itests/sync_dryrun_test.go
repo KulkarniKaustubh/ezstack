@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
 )
 
 // installFailingHook writes a hook into ~/.ezstack/hooks/<name> that exits 1

@@ -28,7 +28,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 )
 
 // Context carries optional metadata that ezstack exposes to hooks via env vars.
