@@ -507,7 +507,6 @@ These files use template variables that are replaced at runtime:
 | `{{BRANCH_NAME}}` | Current branch name |
 | `{{PARENT_NAME}}` | Parent branch name |
 | `{{WORKTREE_PATH}}` | Path to the current worktree |
-| `{{EZS_COMMANDS}}` | Available ezs commands reference |
 | `{{EZS_DOCS}}` | Full ezstack documentation for AI agents |
 | `{{FEATURE_DESCRIPTION}}` | Feature description (feature mode only) |
 | `{{CUSTOM_INSTRUCTIONS}}` | Custom instructions slot |

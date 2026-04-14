@@ -87,6 +87,7 @@ func Agent(args []string) error {
 	stackFlag := fs.StringP("stack", "s", "", "Stack hash prefix or name")
 	branchFlag := fs.StringP("branch", "b", "", "Branch to work in")
 	dryRunFlag := fs.Bool("dry-run", false, "Print the composed prompt and exit without launching the agent")
+	noMCPFlag := fs.Bool("no-mcp", false, "Do not auto-install/register the ezstack MCP server; embed docs in the prompt instead")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -154,7 +155,8 @@ func Agent(args []string) error {
 				return err
 			}
 		}
-		return agentFeature(agentCmd, repoPath, description, featureStack, *dryRunFlag)
+		useMCP := ensureEzstackMCP(agentCmd, *noMCPFlag, *dryRunFlag)
+		return agentFeature(agentCmd, repoPath, description, featureStack, *dryRunFlag, useMCP)
 	}
 
 	// Reject unknown subcommands (e.g. "ezs agent new" or "ezs agent foo")
@@ -174,7 +176,8 @@ func Agent(args []string) error {
 	}
 
 	branchScoped := *branchFlag != ""
-	return agentWork(g, agentCmd, repoPath, targetStack, *branchFlag, branchScoped, *dryRunFlag)
+	useMCP := ensureEzstackMCP(agentCmd, *noMCPFlag, *dryRunFlag)
+	return agentWork(g, agentCmd, repoPath, targetStack, *branchFlag, branchScoped, *dryRunFlag, useMCP)
 }
 
 // ── Prompt subcommand ──────────────────────────────────────────────────────────
@@ -211,7 +214,6 @@ func agentPrompt(args []string) error {
     {{BRANCH_NAME}}            Current branch name
     {{PARENT_NAME}}            Parent branch name
     {{WORKTREE_PATH}}          Path to the current worktree
-    {{EZS_COMMANDS}}           Available ezs commands reference
     {{EZS_DOCS}}               Full ezstack documentation for AI agents
     {{FEATURE_DESCRIPTION}}    Feature description (feature mode only)
     {{CUSTOM_INSTRUCTIONS}}    Custom instructions slot
@@ -608,49 +610,28 @@ func firstPositionalArg(args []string) (string, []string) {
 
 // renderPrompt replaces template variables in a prompt template with actual values.
 //
-// Each pass uses strings.NewReplacer so substitutions happen in a single scan
-// of the input string — content injected by one replacement is NOT re-scanned
-// and cannot accidentally match another token. This is critical because:
-//
-//  1. Custom and repo instruction files may contain text like {{BRANCH_NAME}}
-//     that users wrote literally and don't want re-expanded.
-//  2. The embedded docs (AGENTS.md / DOCUMENTATION.md) contain a reference
-//     table listing template variables, so their bodies contain literal
-//     {{EZS_DOCS}} and {{EZS_COMMANDS}} tokens. Without a single-pass
-//     replacer, substituting EZS_COMMANDS first would splice AGENTS.md into
-//     the template, and then the next iteration would find the literal
-//     {{EZS_DOCS}} inside it and expand DOCUMENTATION.md mid-table —
-//     scrambling the prompt layout non-deterministically.
-//
-// Two passes are still needed (not one big replacer) so that non-doc tokens
-// like {{BRANCH_NAME}} which appear literally inside the embedded docs
-// reference tables are preserved — pass 1 has already finished scanning
-// before pass 2 injects the docs, so those tokens inside the docs are never
-// considered for substitution.
+// Substitution happens in two passes so that non-doc tokens (like
+// {{BRANCH_NAME}}) which appear literally inside the embedded
+// DOCUMENTATION.md reference tables are preserved: pass 1 substitutes
+// everything except EZS_DOCS, and pass 2 injects the docs body. Each pass
+// uses strings.NewReplacer so the content injected by one replacement is
+// not re-scanned for other tokens. Custom and repo instruction files may
+// also contain literal {{BRANCH_NAME}}-style strings the user doesn't want
+// re-expanded, and this structure keeps those intact too.
 func renderPrompt(template string, vars map[string]string) string {
-	lateKeys := map[string]bool{"EZS_COMMANDS": true, "EZS_DOCS": true}
+	const lateKey = "EZS_DOCS"
 
-	// Pass 1: substitute all non-doc variables in a single scan.
 	earlyPairs := make([]string, 0, 2*len(vars))
 	for key, value := range vars {
-		if lateKeys[key] {
+		if key == lateKey {
 			continue
 		}
 		earlyPairs = append(earlyPairs, "{{"+key+"}}", value)
 	}
 	result := strings.NewReplacer(earlyPairs...).Replace(template)
 
-	// Pass 2: inject documentation content in a single scan. Tokens like
-	// {{EZS_DOCS}} that appear inside {{EZS_COMMANDS}}' injected value are
-	// left as literal text — they came from the replacement, not the input.
-	latePairs := make([]string, 0, 4)
-	for key := range lateKeys {
-		if value, ok := vars[key]; ok {
-			latePairs = append(latePairs, "{{"+key+"}}", value)
-		}
-	}
-	if len(latePairs) > 0 {
-		result = strings.NewReplacer(latePairs...).Replace(result)
+	if value, ok := vars[lateKey]; ok {
+		result = strings.NewReplacer("{{"+lateKey+"}}", value).Replace(result)
 	}
 
 	return result
@@ -727,9 +708,10 @@ func resolveStackByRef(mgr *stack.Manager, stacks []*config.Stack, ref string) (
 // agentWork launches the agent in work session mode.
 // If branchScoped is true (--branch was explicitly set), the agent is scoped to that single branch.
 // Otherwise, the agent works on the entire stack.
-func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack, branchName string, branchScoped, dryRun bool) error {
+func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack, branchName string, branchScoped, dryRun, useMCP bool) error {
 	ctx := buildAgentContext(g, repoPath, targetStack, branchName)
 	ctx.branchScoped = branchScoped
+	ctx.useMCP = useMCP
 
 	prompt, err := buildRenderedWorkPrompt(ctx)
 	if err != nil {
@@ -755,8 +737,8 @@ func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack,
 // agentFeature launches the agent in feature builder mode.
 // If existingStack is non-nil, its branches are provided as context so the agent
 // can build on an already-created (but possibly empty) stack instead of starting from scratch.
-func agentFeature(agentCmd, repoPath, description string, existingStack *config.Stack, dryRun bool) error {
-	prompt, err := buildRenderedFeaturePrompt(repoPath, description, existingStack)
+func agentFeature(agentCmd, repoPath, description string, existingStack *config.Stack, dryRun, useMCP bool) error {
+	prompt, err := buildRenderedFeaturePrompt(repoPath, description, existingStack, useMCP)
 	if err != nil {
 		return err
 	}
@@ -802,6 +784,7 @@ type agentContext struct {
 	stackJSON    string
 	hasStack     bool
 	branchScoped bool // true when --branch was explicitly set
+	useMCP       bool // true when the ezstack MCP is registered and prompts should use the stub
 	repoPath     string
 }
 
@@ -935,11 +918,10 @@ func buildRenderedWorkPrompt(ctx *agentContext) (string, error) {
 	return buildComposedPrompt(template, vars, ctx.repoPath, "work")
 }
 
-func buildRenderedFeaturePrompt(repoPath, description string, existingStack *config.Stack) (string, error) {
+func buildRenderedFeaturePrompt(repoPath, description string, existingStack *config.Stack, useMCP bool) (string, error) {
 	vars := map[string]string{
 		"FEATURE_DESCRIPTION": description,
-		"EZS_COMMANDS":        ezsCommandsReference,
-		"EZS_DOCS":            ezsDocsReference,
+		"EZS_DOCS":            docsReferenceFor(useMCP),
 	}
 
 	// If an existing stack is provided, include its JSON and adapt the process instructions
@@ -988,10 +970,18 @@ func buildTemplateVars(ctx *agentContext) map[string]string {
 		"BRANCH_NAME":   ctx.branchName,
 		"PARENT_NAME":   ctx.parentName,
 		"WORKTREE_PATH": ctx.worktreePath,
-		"EZS_COMMANDS":  ezsCommandsReference,
-		"EZS_DOCS":      ezsDocsReference,
+		"EZS_DOCS":      docsReferenceFor(ctx.useMCP),
 	}
 	return vars
+}
+
+// docsReferenceFor returns the MCP stub when the ezstack MCP is active,
+// otherwise the full embedded DOCUMENTATION.md.
+func docsReferenceFor(useMCP bool) string {
+	if useMCP {
+		return mcpDocsStub
+	}
+	return ezsDocsReference
 }
 
 // ── Agent process ──────────────────────────────────────────────────────────────
@@ -1031,11 +1021,9 @@ func spawnAgentProcess(agentCmd, workDir, prompt string) error {
 
 // ── Default prompt templates ───────────────────────────────────────────────────
 
-// ezsCommandsReference and ezsDocsReference are loaded from embedded documentation files.
-var (
-	ezsCommandsReference = ezstack.Agents
-	ezsDocsReference     = ezstack.Documentation
-)
+// ezsDocsReference is the full embedded DOCUMENTATION.md, injected into the
+// shipped prompt as {{EZS_DOCS}} when the MCP is not active.
+var ezsDocsReference = ezstack.Documentation
 
 // defaultWorkBranchPromptTemplate is used when the agent is scoped to a single branch (--branch).
 const defaultWorkBranchPromptTemplate = `You are working inside an ezstack-managed repository that uses stacked PRs with git worktrees.
@@ -1065,8 +1053,6 @@ When your work is done: commit with "ezs -y commit", then summarize what you cha
 - Parent: {{PARENT_NAME}}
 - Worktree: {{WORKTREE_PATH}}
 
-## ezs Commands
-{{EZS_COMMANDS}}
 {{CUSTOM_INSTRUCTIONS}}
 {{REPO_INSTRUCTIONS}}
 
@@ -1097,8 +1083,6 @@ When your work is done: commit affected branches with "ezs -y commit", then summ
 ## Current Stack
 {{STACK_JSON}}
 
-## ezs Commands
-{{EZS_COMMANDS}}
 {{CUSTOM_INSTRUCTIONS}}
 {{REPO_INSTRUCTIONS}}
 
@@ -1135,8 +1119,6 @@ After each branch: commit with "ezs -y commit" and report the branch name + 1–
 {{EXISTING_STACK_SECTION}}
 {{PROCESS_INSTRUCTIONS}}
 
-## ezs Commands
-{{EZS_COMMANDS}}
 {{CUSTOM_INSTRUCTIONS}}
 {{REPO_INSTRUCTIONS}}
 

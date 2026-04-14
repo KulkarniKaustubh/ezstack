@@ -5,6 +5,3 @@ import _ "embed"
 
 //go:embed DOCUMENTATION.md
 var Documentation string
-
-//go:embed AGENTS.md
-var Agents string

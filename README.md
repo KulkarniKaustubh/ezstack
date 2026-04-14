@@ -147,7 +147,7 @@ ezs agent prompt --shipped work
 ezs agent prompt --edit work
 ```
 
-Agent prompts are composed from three layers: a shipped prompt (updated with releases), custom instructions (`~/.ezstack/`), and repo-specific instructions (`<repo>/.ezstack/`). See [AGENTS.md](AGENTS.md) for full details.
+Agent prompts are composed from three layers: a shipped prompt (updated with releases), custom instructions (`~/.ezstack/`), and repo-specific instructions (`<repo>/.ezstack/`). See the [agent workflows](DOCUMENTATION.md#ezs-agent) section of DOCUMENTATION.md for full details.
 
 ## MCP Server (Claude Code & other MCP clients)
 
@@ -266,7 +266,7 @@ Supports Remote (SSH) mode for driving `ezs` on a dev VM.
 
 ## Documentation
 
-See [DOCUMENTATION.md](DOCUMENTATION.md) for comprehensive documentation, or [AGENTS.md](AGENTS.md) for AI-assisted workflows.
+See [DOCUMENTATION.md](DOCUMENTATION.md) for comprehensive documentation, including [AI-assisted workflows with `ezs agent`](DOCUMENTATION.md#ezs-agent).
 
 ## License
 

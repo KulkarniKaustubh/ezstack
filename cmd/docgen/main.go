@@ -60,7 +60,7 @@ var categories = []category{
                 <li><code>agent-work-prompt.md</code> &mdash; Work session prompt</li>
                 <li><code>agent-feature-prompt.md</code> &mdash; Feature builder prompt</li>
               </ul>
-              <p>Prompts use template variables replaced at runtime: <code>{{STACK_JSON}}</code>, <code>{{BRANCH_NAME}}</code>, <code>{{PARENT_NAME}}</code>, <code>{{WORKTREE_PATH}}</code>, <code>{{EZS_COMMANDS}}</code>, <code>{{EZS_DOCS}}</code>, <code>{{FEATURE_DESCRIPTION}}</code>.</p>
+              <p>Prompts use template variables replaced at runtime: <code>{{STACK_JSON}}</code>, <code>{{BRANCH_NAME}}</code>, <code>{{PARENT_NAME}}</code>, <code>{{WORKTREE_PATH}}</code>, <code>{{EZS_DOCS}}</code>, <code>{{FEATURE_DESCRIPTION}}</code>.</p>
             </div>`,
 	},
 }
