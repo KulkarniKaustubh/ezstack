@@ -43,12 +43,20 @@ Pick whichever fits your setup. Both drop `ezs` (and `ezs-mcp`, if you also
 want the MCP server) onto your `PATH` without cloning the repo.
 
 ```bash
-# Homebrew — macOS / Linux
+# Homebrew — macOS / Linux (installs ezs and ezs-mcp side by side)
 brew install KulkarniKaustubh/ezstack/ezstack
 
 # Go toolchain — Go 1.25+ required (matches the module's go directive)
 go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest
+go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
 ```
+
+`ezs-mcp` is the companion MCP server that `ezs agent` (and any standalone
+MCP client) uses to drive `ezs` from inside Claude Code. If you install via
+`go install`, run both lines so the CLI and the MCP server stay in
+lock-step. If you skip the `ezs-mcp` line, `ezs agent` will still bootstrap
+it on first launch &mdash; but installing it upfront is faster and works
+offline.
 
 You'll also need `git` 2.20+, [`fzf`](https://github.com/junegunn/fzf) for
 interactive selection prompts, and the [GitHub CLI](https://cli.github.com/)
@@ -487,7 +495,36 @@ Options:
     -s, --stack <hash>   Stack to work on (hash prefix or "name")
     -b, --branch <name>  Branch to work in (implies stack)
     --dry-run            Print the composed prompt and exit (don't launch agent)
+    --no-mcp             Do not auto-install/register ezs-mcp; embed docs in
+                         the prompt instead (escape hatch for non-claude CLIs
+                         or air-gapped environments)
 ```
+
+#### Automatic MCP integration (Claude Code)
+
+When the configured agent CLI is `claude`, `ezs agent` automatically:
+
+1. **Ensures `ezs-mcp` is installed and version-aligned.** If the binary is
+   missing or was built against a different ezstack release, ezs runs
+   `go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@v<version>`,
+   falling back to `@latest` for untagged dev builds.
+2. **Registers `ezs-mcp` with Claude Code at user scope** (equivalent to
+   running `claude mcp add ezstack --scope user -- ezs-mcp` yourself), so
+   the full 21-tool ezstack surface is available to the agent from the
+   first message.
+3. **Swaps the shipped prompt for a short MCP stub** that tells the agent
+   to prefer MCP tools over shelling out to `ezs`. The large
+   `DOCUMENTATION.md` body is no longer pasted into context &mdash; the
+   agent gets the tool schemas directly via MCP, which is both cheaper and
+   more reliable than prose instructions.
+
+The result: `ezs agent` on a fresh machine with claude installed is a
+single command. No manual `go install`, no manual `claude mcp add`, no
+hand-maintained prompt about what commands exist.
+
+Opt out with `--no-mcp` (restores the legacy doc-paste prompt) or by
+setting `agent_command` to a non-`claude` CLI &mdash; MCP auto-install is
+only attempted when the CLI basename is `claude`.
 
 #### Prompt Composition
 

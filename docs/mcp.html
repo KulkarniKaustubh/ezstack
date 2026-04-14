@@ -68,8 +68,17 @@
         </a>
         <h1>MCP Server<br>for Claude Code</h1>
         <p class="hero-sub">ezstack ships a standalone Model Context Protocol server, <code>ezs-mcp</code>, that exposes the full stack workflow as MCP tools. Point Claude Code (or any MCP-compatible agent) at it and it can drive <code>ezs</code> directly &mdash; inspect, commit, sync, push, manage pull requests, navigate, and configure, all without leaving the agent loop.</p>
+        <p class="hero-sub" style="margin-top: 1rem; font-size: 0.95rem; color: var(--text-secondary);">Two commands: install the binary, then register it with Claude Code. Both are user-scope &mdash; one-time, every repo.</p>
         <div class="hero-actions">
           <div class="install-cmd" id="hero-install">
+            <span class="install-prompt">$</span>
+            <span class="install-text">go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest</span>
+            <button class="copy-btn" data-copy='go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest' aria-label="Copy to clipboard">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <div class="install-cmd" style="margin-top: 0.75rem;">
             <span class="install-prompt">$</span>
             <span class="install-text">claude mcp add ezstack --scope user -- ezs-mcp</span>
             <button class="copy-btn" data-copy='claude mcp add ezstack --scope user -- ezs-mcp' aria-label="Copy to clipboard">
@@ -77,6 +86,7 @@
               <span class="copy-label">Copy</span>
             </button>
           </div>
+          <p style="margin-top: 1rem; font-size: 0.875rem; color: var(--text-tertiary);">Already using <code>ezs agent</code>? Both commands run automatically on first launch &mdash; <a href="agent.html#mcp-auto" style="color: var(--accent);">see Automatic MCP integration</a>.</p>
           <a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener" class="btn btn-secondary" style="margin-top: 1rem;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
             About the Model Context Protocol
@@ -454,7 +464,7 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v4.3.5</span>
+          <span class="footer-meta">MIT License &middot; v4.4.0</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

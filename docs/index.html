@@ -348,7 +348,7 @@
     <div class="container">
       <div class="agent-showcase-inner">
         <h2 class="section-title" data-animate>Let AI build your stack</h2>
-        <p class="section-sub" data-animate>Launch an AI agent with full stack context injected. Work on a branch or describe a feature and let the agent build it as stacked PRs.</p>
+        <p class="section-sub" data-animate>Launch an AI agent with full stack context injected. Work on a branch or describe a feature and let the agent build it as stacked PRs. With Claude Code, the ezstack MCP server is auto-installed and registered on first launch &mdash; zero setup.</p>
 
         <div class="agent-modes" data-animate>
           <div class="agent-mode-card">
@@ -357,8 +357,10 @@
             <p>The agent sees your stack structure, worktree paths, and all ezstack commands. It works within a single branch.</p>
             <div class="step-code">
               <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span>
+<span class="c-dim">Installing ezs-mcp@v4.4.0... ✓</span>
+<span class="c-dim">Registering ezstack MCP with claude (user scope)... ✓</span>
 <span class="c-dim">Launching claude in ~/worktrees/auth-service...</span>
-<span class="c-dim">Stack context injected (3 branches, 2 PRs)</span>
+<span class="c-dim">Stack context injected (3 branches, 2 PRs, 21 MCP tools)</span>
 
 <span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--branch</span> auth-middleware
 <span class="c-dim">Launching claude in ~/worktrees/auth-middleware...</span></code></pre>
