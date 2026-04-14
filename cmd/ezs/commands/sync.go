@@ -1239,10 +1239,14 @@ func cleanupFullyMergedStacks(mgr *stack.Manager, stacks []*config.Stack) {
 			}
 		} else {
 			// Everything already cleaned up - remove stack from config automatically
-			if _, err := mgr.DeleteStack(info.StackHash); err != nil {
+			needsCd, err := mgr.DeleteStack(info.StackHash)
+			if err != nil {
 				ui.Warn(fmt.Sprintf("Failed to remove stack '%s' from config: %v", displayName, err))
 			} else {
 				ui.Success(fmt.Sprintf("Removed fully merged stack '%s' (all branches already cleaned up)", displayName))
+				if needsCd {
+					EmitCd(mgr.GetRepoDir())
+				}
 			}
 		}
 	}
