@@ -161,13 +161,13 @@ go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
 make install-mcp
 ```
 
-Register with Claude Code:
+Register with Claude Code (one registration, every repo — `ezs-mcp` operates on whichever directory Claude launches it in):
 
 ```bash
-claude mcp add ezstack -- ezs-mcp --repo "$(pwd)"
+claude mcp add ezstack --scope user -- ezs-mcp
 ```
 
-`--repo` pins the server to a specific git repository root, which is useful when Claude launches the MCP server from a parent workspace directory. Read-only tools (`ezstack_status`, `ezstack_list`, `ezstack_diff`, `ezstack_log`, `ezstack_config_show`) return JSON by default, or pass `decorated=true` (where supported) to get the terminal-styled output. Destructive tools (`ezstack_commit`, `ezstack_amend`, `ezstack_sync`, `ezstack_push`, `ezstack_delete`, `ezstack_pr_merge`, `ezstack_pr_update`) are tagged with the MCP destructive annotation so the client can prompt before running them. `ezstack_commit` requires an explicit `message` and `ezstack_amend` defaults to `--no-edit` so neither can ever launch `$EDITOR` and corrupt the JSON-RPC transport.
+If you open Claude Code at a monorepo root but your ezstack-configured repo is a subdirectory, Claude will launch `ezs-mcp` with the monorepo root as its cwd, which won't match any sub-repo. In that case, register a per-subrepo entry with an absolute path: `claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo`. Read-only tools (`ezstack_status`, `ezstack_list`, `ezstack_diff`, `ezstack_log`, `ezstack_config_show`) return JSON by default, or pass `decorated=true` (where supported) to get the terminal-styled output. Destructive tools (`ezstack_commit`, `ezstack_amend`, `ezstack_sync`, `ezstack_push`, `ezstack_delete`, `ezstack_pr_merge`, `ezstack_pr_update`) are tagged with the MCP destructive annotation so the client can prompt before running them. `ezstack_commit` requires an explicit `message` and `ezstack_amend` defaults to `--no-edit` so neither can ever launch `$EDITOR` and corrupt the JSON-RPC transport.
 
 Full feature tour and tool catalog: [mcp.html](https://kulkarnikaustubh.github.io/ezstack/mcp.html).
 

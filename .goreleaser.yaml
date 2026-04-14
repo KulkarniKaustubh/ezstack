@@ -85,7 +85,7 @@ brews:
 
       To use ezstack from Claude Code, register the MCP server:
 
-        claude mcp add ezstack -- ezs-mcp --repo "$(pwd)"
+        claude mcp add ezstack --scope user -- ezs-mcp
     test: |
       assert_match version.to_s, shell_output("#{bin}/ezs --version")
 

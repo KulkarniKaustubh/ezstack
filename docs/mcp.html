@@ -71,8 +71,8 @@
         <div class="hero-actions">
           <div class="install-cmd" id="hero-install">
             <span class="install-prompt">$</span>
-            <span class="install-text">claude mcp add ezstack -- ezs-mcp --repo "$(pwd)"</span>
-            <button class="copy-btn" data-copy='claude mcp add ezstack -- ezs-mcp --repo "$(pwd)"' aria-label="Copy to clipboard">
+            <span class="install-text">claude mcp add ezstack --scope user -- ezs-mcp</span>
+            <button class="copy-btn" data-copy='claude mcp add ezstack --scope user -- ezs-mcp' aria-label="Copy to clipboard">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
               <span class="copy-label">Copy</span>
             </button>
@@ -336,43 +336,55 @@
   <section class="prompt-section" id="install">
     <div class="container">
       <h2 class="section-title" data-animate>Installation</h2>
-      <p class="section-sub" data-animate>Install the <code>ezs-mcp</code> binary, then register it once with your MCP client. The server is pinned to a repository via <code>--repo</code>, so it keeps working even when the client launches it from a parent workspace directory.</p>
+      <p class="section-sub" data-animate>Install the <code>ezs-mcp</code> binary, then register it once with your MCP client. The registration command is repo-independent &mdash; <code>ezs-mcp</code> operates on whichever directory Claude Code launches it in, so one registration works for every repo you use.</p>
 
-      <div class="prompt-grid" data-animate>
-        <div class="prompt-card">
-          <h3>Homebrew (macOS / Linux)</h3>
-          <p>The <code>ezstack</code> formula installs both <code>ezs</code> and <code>ezs-mcp</code> side by side.</p>
-          <div class="step-code">
-            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">brew tap</span> KulkarniKaustubh/ezstack
-<span class="c-prompt">$</span> <span class="c-cmd">brew install</span> ezstack
-<span class="c-dim">  → installs both ezs and ezs-mcp</span></code></pre>
+      <div class="install-steps" data-animate>
+        <div class="install-step">
+          <div class="install-step-head">
+            <span class="install-step-num">1</span>
+            <h3>Install the binary</h3>
           </div>
-        </div>
-        <div class="prompt-card">
-          <h3>Go install</h3>
-          <p>Fetch the MCP server directly from the module proxy. Same command works for a specific tag or <code>@latest</code>.</p>
-          <div class="step-code">
-            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">go install</span> \
-    github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest</code></pre>
+          <p>Pick whichever matches your setup. All three install <code>ezs</code> and <code>ezs-mcp</code> side by side so the CLI and the MCP server stay in lock-step.</p>
+          <div class="install-option">
+            <div class="install-option-label">Homebrew &mdash; macOS / Linux, no clone</div>
+            <div class="step-code">
+              <pre><code><span class="c-prompt">$</span> <span class="c-cmd">brew install</span> KulkarniKaustubh/ezstack/ezstack
+<span class="c-dim">  → installs ezs and ezs-mcp into $(brew --prefix)/bin</span></code></pre>
+            </div>
           </div>
-        </div>
-        <div class="prompt-card">
-          <h3>From source</h3>
-          <p>Clone the repo and build both binaries with a single make target.</p>
-          <div class="step-code">
-            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">git clone</span> https://github.com/KulkarniKaustubh/ezstack.git
+          <div class="install-option">
+            <div class="install-option-label">Go toolchain &mdash; any OS with Go 1.22+, no clone</div>
+            <div class="step-code">
+              <pre><code><span class="c-prompt">$</span> <span class="c-cmd">go install</span> github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest
+<span class="c-prompt">$</span> <span class="c-cmd">go install</span> github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
+<span class="c-dim">  → installs both binaries into $(go env GOBIN) (usually ~/go/bin)</span></code></pre>
+            </div>
+          </div>
+          <div class="install-option">
+            <div class="install-option-label">From source &mdash; if you&rsquo;re already hacking on ezstack</div>
+            <div class="step-code">
+              <pre><code><span class="c-prompt">$</span> <span class="c-cmd">git clone</span> https://github.com/KulkarniKaustubh/ezstack.git
 <span class="c-prompt">$</span> <span class="c-cmd">cd</span> ezstack
 <span class="c-prompt">$</span> <span class="c-cmd">make</span> install-all
-<span class="c-dim">  → installs ezs and ezs-mcp to ~/.local/bin</span></code></pre>
+<span class="c-dim">  → builds ezs and ezs-mcp and drops them into ~/.local/bin</span></code></pre>
+            </div>
           </div>
         </div>
-        <div class="prompt-card">
-          <h3>Register with Claude Code</h3>
-          <p>Run this once inside any ezstack-configured repo. Claude Code will launch <code>ezs-mcp</code> on demand and route tool calls to it.</p>
+
+        <div class="install-step">
+          <div class="install-step-head">
+            <span class="install-step-num">2</span>
+            <h3>Register with Claude Code</h3>
+          </div>
+          <p>One registration, every repo. Claude Code launches MCP servers with the current project&rsquo;s directory as their working directory, and <code>ezs-mcp</code> simply operates on that directory &mdash; so you do <em>not</em> want to bake a specific repo path into this command. Use <code>--scope user</code> to make it available in every project without re-registering.</p>
           <div class="step-code">
-            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">claude mcp add</span> ezstack \
-    -- ezs-mcp <span class="c-flag">--repo</span> <span class="c-string">"$(pwd)"</span>
-<span class="c-green">✓ added MCP server "ezstack"</span></code></pre>
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">claude mcp add</span> ezstack <span class="c-flag">--scope</span> <span class="c-string">user</span> -- ezs-mcp
+<span class="c-green">✓ added MCP server "ezstack" (user scope)</span></code></pre>
+          </div>
+          <p style="margin-top: 1rem;"><strong>Escape hatch &mdash; monorepo subdirectories.</strong> If you open Claude Code at a monorepo root but your ezstack-configured repo is a subdirectory, Claude will launch <code>ezs-mcp</code> with the monorepo root as cwd, and <code>ezs-mcp</code> won&rsquo;t know which sub-repo to act on. In that specific case, pass <code>--repo</code> with an absolute path to pin this registration to one sub-repo:</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">claude mcp add</span> ezstack-subrepo -- ezs-mcp <span class="c-flag">--repo</span> <span class="c-string">/abs/path/to/subrepo</span>
+<span class="c-dim">  → register one server per sub-repo; give each a distinct name</span></code></pre>
           </div>
         </div>
       </div>
