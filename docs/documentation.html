@@ -547,6 +547,7 @@
           <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
           <div class="nav-dropdown-menu">
             <a href="agent.html">AI Agent</a>
+            <a href="mcp.html">MCP Server</a>
             <a href="vscode.html">VS Code Extension</a>
             <a href="index.html#ecosystem">Desktop App</a>
             <a href="index.html#ecosystem">Neovim Plugin</a>
@@ -619,6 +620,7 @@
         <li><a href="#reviewing-a-remote-pr" class="toc-h3">Reviewing a Remote PR</a></li>
         <li><a href="#stacking-on-a-remote-pr" class="toc-h3">Stacking on a Remote PR</a></li>
         <li><a href="#editor--desktop-integrations">Editor &amp; Desktop Integrations</a></li>
+        <li><a href="#mcp-server-claude-code--other-mcp-clients" class="toc-h3">MCP Server (Claude Code &amp; other MCP clients)</a></li>
         <li><a href="#vs-code-extension" class="toc-h3">VS Code Extension</a></li>
         <li><a href="#neovim-plugin" class="toc-h3">Neovim Plugin</a></li>
         <li><a href="#desktop-app" class="toc-h3">Desktop App</a></li>
@@ -1121,10 +1123,111 @@ Options:
 
       <section class="docs-section" id="editor--desktop-integrations" data-heading="Editor &amp; Desktop Integrations">
       <h2 id="editor--desktop-integrations">Editor &amp; Desktop Integrations</h2>
-      <p>ezstack ships with three first-party clients that wrap the <code>ezs</code> CLI. They all
-      read and write the same on-disk state (<code>~/.ezstack/stacks.json</code> and per-repo
-      config), so you can mix and match them freely — the CLI, your editor, and
-      the desktop app all stay in sync.</p>
+      <p>ezstack ships with four first-party clients that wrap the <code>ezs</code> CLI: a VS Code
+      extension, a Neovim plugin, a desktop app, and an MCP server for AI agents.
+      They all read and write the same on-disk state (<code>~/.ezstack/stacks.json</code> and
+      per-repo config), so you can mix and match them freely — the CLI, your
+      editor, the desktop app, and Claude Code all stay in sync.</p>
+      <h3 id="mcp-server-claude-code--other-mcp-clients">MCP Server (Claude Code &amp; other MCP clients)</h3>
+      <p>Located in <code>cmd/ezs-mcp/</code>. A standalone Model Context Protocol server that
+      exposes the core stack operations as MCP tools. Point any MCP-compatible agent
+      (Claude Code, Zed, etc.) at it and the agent can drive <code>ezs</code> directly.</p>
+      <p><strong>Install</strong></p>
+      <pre><code><span class="c-comment"># Homebrew (ships alongside ezs)</span>
+<span class="c-cmd">brew</span> <span class="c-flag">install</span> <span class="c-str">KulkarniKaustubh/ezstack/ezstack</span>
+
+<span class="c-comment"># Go install</span>
+<span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest</span>
+
+<span class="c-comment"># From source</span>
+<span class="c-cmd">make</span> <span class="c-str">install-mcp</span>
+</code></pre>
+      <p><strong>Register with Claude Code</strong> (run once per repo):</p>
+      <pre><code><span class="c-cmd">claude</span> <span class="c-flag">mcp</span> <span class="c-str">add</span> <span class="c-str">ezstack</span> <span class="c-flag">--</span> <span class="c-str">ezs-mcp</span> <span class="c-flag">--repo</span> <span class="c-str">&#34;$(pwd)&#34;</span>
+</code></pre>
+      <p><code>--repo</code> pins the server to a specific git repository root, which is useful
+      when Claude launches the MCP server from a parent workspace directory.</p>
+      <p><strong>Tools</strong></p>
+      <table>
+      <thead>
+      <tr>
+      <th>Tool</th>
+      <th>Annotation</th>
+      <th>Description</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td><code>ezstack_status</code></td>
+      <td>read-only</td>
+      <td>Current stack with PR and CI status. <code>all</code>, <code>decorated</code>.</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_list</code></td>
+      <td>read-only</td>
+      <td>List all stacks and branches. <code>all</code>, <code>decorated</code>.</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_sync</code></td>
+      <td>destructive</td>
+      <td>Rebase (or merge) branches with their base. <code>stack</code>, <code>all</code>, <code>current</code>, <code>parent</code>, <code>children</code>, <code>merge</code>, <code>dry_run</code>.</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_push</code></td>
+      <td>destructive</td>
+      <td>Push current branch or entire stack. <code>stack</code>, <code>force</code>.</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_pr_create</code></td>
+      <td>—</td>
+      <td>Create a pull request for the current branch. <code>title</code>, <code>draft</code>.</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_pr_stack</code></td>
+      <td>—</td>
+      <td>Update every PR description in the stack with navigation links.</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_pr_merge</code></td>
+      <td>destructive</td>
+      <td>Merge the pull request for the current branch.</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_goto</code></td>
+      <td>—</td>
+      <td>Switch to a branch. <code>branch</code> (required).</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_new</code></td>
+      <td>—</td>
+      <td>Create a new branch. <code>name</code> (required), <code>parent</code>.</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_delete</code></td>
+      <td>destructive</td>
+      <td>Delete a branch and its worktree. <code>branch</code> (required).</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_reparent</code></td>
+      <td>—</td>
+      <td>Move a branch to a new parent. <code>branch</code> and <code>new_parent</code> (both required).</td>
+      </tr>
+      </tbody>
+      </table>
+      <p>Read-only tools return JSON by default; pass <code>decorated=true</code> to get the
+      terminal-styled output. Destructive tools are tagged with the MCP destructive
+      annotation so the client prompts before running them. Branch-management tools
+      mark their positional arguments as <code>Required</code> in the tool schema so the agent
+      cannot trigger an interactive <code>fzf</code> selection that would hang in a no-terminal
+      context.</p>
+      <p><strong>Safety</strong> — every tool handler acquires a process-wide mutex before
+      running, since <code>ezs</code> operates on shared process state (stdout/stderr, the
+      <code>ui.Backend</code>, <code>ui.YesMode</code>). Stdout and stderr are captured via concurrent pipe
+      drainers started before the command runs, so large outputs can't block on the
+      OS pipe buffer. Both behaviors are covered by unit tests under
+      <code>cmd/ezs-mcp/*_test.go</code> and a stdio integration test under <code>itests/mcp_test.go</code>
+      that boots the real binary.</p>
+      <p>Full feature tour: <a href="https://kulkarnikaustubh.github.io/ezstack/mcp.html">https://kulkarnikaustubh.github.io/ezstack/mcp.html</a>.</p>
       <h3 id="vs-code-extension">VS Code Extension</h3>
       <p>Located in <code>vscode-extension/</code>. Adds an <strong>ezstack</strong> panel to the activity bar
       with two views: a stack tree (branches grouped by stack, with PR state, CI

@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP Server - ezstack</title>
+  <meta name="description" content="Drive ezstack from Claude Code and any MCP-compatible agent. The ezs-mcp server exposes stack operations as Model Context Protocol tools — status, list, sync, push, PR create/merge, goto, new, delete, reparent.">
+  <meta name="theme-color" content="#09090b">
+  <link rel="canonical" href="https://kulkarnikaustubh.github.io/ezstack/mcp.html">
+
+  <!-- Open Graph -->
+  <meta property="og:title" content="MCP Server - ezstack">
+  <meta property="og:description" content="Drive ezstack from Claude Code and any MCP-compatible agent. Stack operations as Model Context Protocol tools.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://kulkarnikaustubh.github.io/ezstack/mcp.html">
+
+  <!-- Favicon -->
+  <link rel="icon" href="img/favicon.png" type="image/png">
+  <link rel="icon" href="img/favicon.svg" type="image/svg+xml">
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- Navigation -->
+  <nav class="nav" id="nav">
+    <div class="nav-inner">
+      <a href="index.html" class="nav-brand"><img src="img/logo.png" alt="ezstack" width="24" height="24" class="nav-logo">ezstack</a>
+      <button class="nav-toggle" id="nav-toggle" aria-label="Toggle navigation">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+      <div class="nav-links" id="nav-links">
+        <a href="index.html#features">Features</a>
+        <a href="documentation.html">Docs</a>
+        <a href="#tools">Tools</a>
+        <a href="#install">Install</a>
+        <a href="#safety">Safety</a>
+        <div class="nav-dropdown">
+          <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
+          <div class="nav-dropdown-menu">
+            <a href="agent.html">AI Agent</a>
+            <a href="mcp.html">MCP Server</a>
+            <a href="vscode.html">VS Code Extension</a>
+            <a href="desktop.html">Desktop App</a>
+            <a href="nvim.html">Neovim Plugin</a>
+          </div>
+        </div>
+        <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener" class="nav-github">GitHub</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <section class="agent-hero" id="hero">
+    <div class="hero-glow"></div>
+    <div class="container">
+      <div class="hero-content">
+        <a href="index.html" class="back-link">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+          Back to ezstack
+        </a>
+        <h1>MCP Server<br>for Claude Code</h1>
+        <p class="hero-sub">ezstack ships a standalone Model Context Protocol server, <code>ezs-mcp</code>, that exposes the core stack operations as MCP tools. Point Claude Code (or any MCP-compatible agent) at it and it can drive <code>ezs</code> directly &mdash; status, list, sync, push, PR create/merge, goto, new, delete, reparent.</p>
+        <div class="hero-actions">
+          <div class="install-cmd" id="hero-install">
+            <span class="install-prompt">$</span>
+            <span class="install-text">claude mcp add ezstack -- ezs-mcp --repo "$(pwd)"</span>
+            <button class="copy-btn" data-copy='claude mcp add ezstack -- ezs-mcp --repo "$(pwd)"' aria-label="Copy to clipboard">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
+              <span class="copy-label">Copy</span>
+            </button>
+          </div>
+          <a href="https://modelcontextprotocol.io/" target="_blank" rel="noopener" class="btn btn-secondary" style="margin-top: 1rem;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+            About the Model Context Protocol
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- What It Does -->
+  <section class="workflow-section" id="overview">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <span class="mode-label mode-label-work">How It Works</span>
+        <h2>One binary. Eleven tools. Real <code>ezs</code> under the hood.</h2>
+        <p><code>ezs-mcp</code> is a separate binary that speaks JSON-RPC over stdio. Under the hood it invokes the same <code>ezs</code> command functions your shell uses &mdash; there is no second copy of the logic to drift. Your agent gets the identical behavior you'd get from the terminal, captured and handed back as structured tool results.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">1</div>
+          <h3>Stack-aware from the first call</h3>
+          <p>Read-only tools return JSON by default so the agent can reason about the stack shape, or pass <code>decorated=true</code> to get the terminal-styled output you'd see from <code>ezs status</code>. Pin the server to a specific repo with <code>--repo</code> so it behaves predictably when Claude launches it from a parent workspace directory.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Agent asks: "what does the stack look like?"</span>
+<span class="c-prompt">→</span> <span class="c-cmd">ezstack_list</span> <span class="c-flag">{ "all": true }</span>
+<span class="c-dim">  returns JSON: every stack, branch, parent, PR state, CI status</span>
+
+<span class="c-comment"># Or request the pretty version:</span>
+<span class="c-prompt">→</span> <span class="c-cmd">ezstack_status</span> <span class="c-flag">{ "decorated": true }</span>
+<span class="c-dim">  returns the same colored tree you see in a terminal</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">2</div>
+          <h3>Destructive tools are tagged</h3>
+          <p>Tools that rewrite history or mutate remote state (<code>ezstack_sync</code>, <code>ezstack_push</code>, <code>ezstack_delete</code>, <code>ezstack_pr_merge</code>) carry the MCP <em>destructive</em> annotation, so clients like Claude Code can prompt the user before executing them. Read-only tools carry the <em>read-only</em> annotation and run without interruption.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Claude Code sees the annotation and asks:</span>
+<span class="c-yellow">⚠</span>  <span class="c-dim">Tool</span> <span class="c-red">ezstack_sync</span> <span class="c-dim">is marked destructive.</span>
+   <span class="c-dim">Run with</span> <span class="c-flag">{ "all": true }</span> <span class="c-dim">?</span>
+   <span class="c-green">[Y]es</span> / <span class="c-red">[N]o</span> / <span class="c-dim">[A]lways allow this tool</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-blue">3</div>
+          <h3>No hidden interactive prompts</h3>
+          <p>Branch-management tools like <code>ezstack_goto</code>, <code>ezstack_new</code>, <code>ezstack_delete</code>, and <code>ezstack_reparent</code> mark their positional arguments as <em>Required</em> in the tool schema, so the agent cannot call them with missing args &mdash; preventing fallthrough to <code>fzf</code>-backed interactive selection that would hang in a no-terminal context. Internal yes/no prompts are auto-accepted for destructive tools (the client already confirmed via the annotation).</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Schema rejects the call before it runs:</span>
+<span class="c-prompt">→</span> <span class="c-cmd">ezstack_delete</span> <span class="c-flag">{}</span>
+<span class="c-red">✗ error: missing required argument "branch"</span>
+
+<span class="c-comment"># Properly formed call runs without waiting on a prompt:</span>
+<span class="c-prompt">→</span> <span class="c-cmd">ezstack_delete</span> <span class="c-flag">{ "branch": "feature-part2" }</span>
+<span class="c-green">✓ deleted feature-part2 and its worktree</span></code></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Tools Catalog -->
+  <section class="workflow-section" id="tools">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <span class="mode-label mode-label-feature">Tool Catalog</span>
+        <h2>Eleven tools, full stack coverage</h2>
+        <p>Every core ezstack operation an agent needs &mdash; inspect, mutate, push, PR &mdash; exposed with strict input schemas. Read-only tools default to JSON; destructive tools carry the MCP destructive annotation.</p>
+      </div>
+
+      <div class="template-vars" data-animate>
+        <table class="var-table">
+          <thead>
+            <tr>
+              <th>Tool</th>
+              <th>Annotation</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>ezstack_status</code></td>
+              <td><span class="mode-label mode-label-work">read-only</span></td>
+              <td>Current stack with PR and CI status. <code>all</code>, <code>decorated</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_list</code></td>
+              <td><span class="mode-label mode-label-work">read-only</span></td>
+              <td>List all stacks and branches. <code>all</code>, <code>decorated</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_sync</code></td>
+              <td><span class="mode-label mode-label-feature">destructive</span></td>
+              <td>Rebase (or merge) stack branches with their base. <code>stack</code>, <code>all</code>, <code>current</code>, <code>parent</code>, <code>children</code>, <code>merge</code>, <code>dry_run</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_push</code></td>
+              <td><span class="mode-label mode-label-feature">destructive</span></td>
+              <td>Push current branch or entire stack. <code>stack</code>, <code>force</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_pr_create</code></td>
+              <td>&mdash;</td>
+              <td>Create a pull request for the current branch. <code>title</code>, <code>draft</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_pr_stack</code></td>
+              <td>&mdash;</td>
+              <td>Update every PR description in the stack with navigation links.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_pr_merge</code></td>
+              <td><span class="mode-label mode-label-feature">destructive</span></td>
+              <td>Merge the pull request for the current branch.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_goto</code></td>
+              <td>&mdash;</td>
+              <td>Switch to a branch in the stack. <code>branch</code> (required).</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_new</code></td>
+              <td>&mdash;</td>
+              <td>Create a new branch in the stack. <code>name</code> (required), <code>parent</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_delete</code></td>
+              <td><span class="mode-label mode-label-feature">destructive</span></td>
+              <td>Delete a branch and its worktree. <code>branch</code> (required).</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_reparent</code></td>
+              <td>&mdash;</td>
+              <td>Move a branch to a new parent. <code>branch</code> and <code>new_parent</code> (both required).</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Installation -->
+  <section class="prompt-section" id="install">
+    <div class="container">
+      <h2 class="section-title" data-animate>Installation</h2>
+      <p class="section-sub" data-animate>Install the <code>ezs-mcp</code> binary, then register it once with your MCP client. The server is pinned to a repository via <code>--repo</code>, so it keeps working even when the client launches it from a parent workspace directory.</p>
+
+      <div class="prompt-grid" data-animate>
+        <div class="prompt-card">
+          <h3>Homebrew (macOS / Linux)</h3>
+          <p>The <code>ezstack</code> formula installs both <code>ezs</code> and <code>ezs-mcp</code> side by side.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">brew tap</span> KulkarniKaustubh/ezstack
+<span class="c-prompt">$</span> <span class="c-cmd">brew install</span> ezstack
+<span class="c-dim">  → installs both ezs and ezs-mcp</span></code></pre>
+          </div>
+        </div>
+        <div class="prompt-card">
+          <h3>Go install</h3>
+          <p>Fetch the MCP server directly from the module proxy. Same command works for a specific tag or <code>@latest</code>.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">go install</span> \
+    github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest</code></pre>
+          </div>
+        </div>
+        <div class="prompt-card">
+          <h3>From source</h3>
+          <p>Clone the repo and build both binaries with a single make target.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">git clone</span> https://github.com/KulkarniKaustubh/ezstack.git
+<span class="c-prompt">$</span> <span class="c-cmd">cd</span> ezstack
+<span class="c-prompt">$</span> <span class="c-cmd">make</span> install-all
+<span class="c-dim">  → installs ezs and ezs-mcp to ~/.local/bin</span></code></pre>
+          </div>
+        </div>
+        <div class="prompt-card">
+          <h3>Register with Claude Code</h3>
+          <p>Run this once inside any ezstack-configured repo. Claude Code will launch <code>ezs-mcp</code> on demand and route tool calls to it.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">claude mcp add</span> ezstack \
+    -- ezs-mcp <span class="c-flag">--repo</span> <span class="c-string">"$(pwd)"</span>
+<span class="c-green">✓ added MCP server "ezstack"</span></code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="template-vars" data-animate>
+        <h3>Flags &amp; environment</h3>
+        <p style="text-align: center; color: var(--text-secondary); font-size: 0.9375rem; margin-bottom: 1.5rem;"><code>ezs-mcp</code> is minimal on purpose &mdash; one flag and one optional environment variable.</p>
+        <table class="var-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Type</th>
+              <th>Description</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>--repo &lt;path&gt;</code></td>
+              <td>flag</td>
+              <td>Absolute path to the git repository root. The server <code>cd</code>s here at startup so every tool call operates against the same repo regardless of where the client launched the process from.</td>
+            </tr>
+            <tr>
+              <td><code>EZSTACK_HOME</code></td>
+              <td>env var</td>
+              <td>Override the ezstack config directory (defaults to <code>~/.ezstack</code>). Useful for isolated test environments.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- Safety -->
+  <section class="workflow-section" id="safety">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <span class="mode-label mode-label-work">Safety</span>
+        <h2>Built for agents that share a process</h2>
+        <p>MCP servers receive concurrent tool calls, and <code>ezs</code> operates on global process state (stdout/stderr, the ezstack <code>ui.Backend</code>, working directory). <code>ezs-mcp</code> is explicitly engineered to keep those invariants intact.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">1</div>
+          <h3>Serialized tool execution</h3>
+          <p>Every tool handler acquires a process-wide mutex before running, so two concurrent calls from the agent are serialized rather than racing on shared globals (stdout/stderr swaps, <code>ui.Backend</code> replacement, <code>ui.YesMode</code>). The race detector is clean under <code>go test -race</code>.</p>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">2</div>
+          <h3>Deadlock-safe output capture</h3>
+          <p>Stdout and stderr from each <code>ezs</code> invocation are captured via concurrent pipe drainers started before the command runs &mdash; so large outputs (<code>ezs list --all</code> against a huge repo, verbose <code>ezs sync</code> traces) can't block on the ~64 KB OS pipe buffer.</p>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">3</div>
+          <h3>CI-backed install contract</h3>
+          <p>The release pipeline verifies <code>go install github.com/.../ezs-mcp@&lt;tag&gt;</code> resolves and the resulting binary is executable on every tagged release, and a stdio integration test boots the real binary, lists tools, and round-trips calls against a temp repo on every PR. If the install contract ever drifts, CI fails before users see it.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Footer -->
+  <footer class="footer">
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <span class="footer-name">ezstack</span>
+          <span class="footer-meta">MIT License &middot; v4.3.5</span>
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
+          <a href="documentation.html">Docs</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener">Releases</a>
+          <a href="https://github.com/KulkarniKaustubh/ezstack/issues" target="_blank" rel="noopener">Issues</a>
+        </div>
+        <div class="footer-credit">
+          Made by <a href="https://github.com/KulkarniKaustubh" target="_blank" rel="noopener">Kaustubh Kulkarni</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+  <script src="js/main.js"></script>
+</body>
+</html>

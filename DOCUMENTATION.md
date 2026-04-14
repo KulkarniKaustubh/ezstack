@@ -624,10 +624,74 @@ ezs stack
 
 ## Editor & Desktop Integrations
 
-ezstack ships with three first-party clients that wrap the `ezs` CLI. They all
-read and write the same on-disk state (`~/.ezstack/stacks.json` and per-repo
-config), so you can mix and match them freely &mdash; the CLI, your editor, and
-the desktop app all stay in sync.
+ezstack ships with four first-party clients that wrap the `ezs` CLI: a VS Code
+extension, a Neovim plugin, a desktop app, and an MCP server for AI agents.
+They all read and write the same on-disk state (`~/.ezstack/stacks.json` and
+per-repo config), so you can mix and match them freely &mdash; the CLI, your
+editor, the desktop app, and Claude Code all stay in sync.
+
+### MCP Server (Claude Code & other MCP clients)
+
+Located in `cmd/ezs-mcp/`. A standalone Model Context Protocol server that
+exposes the core stack operations as MCP tools. Point any MCP-compatible agent
+(Claude Code, Zed, etc.) at it and the agent can drive `ezs` directly.
+
+**Install**
+
+```bash
+# Homebrew (ships alongside ezs)
+brew install KulkarniKaustubh/ezstack/ezstack
+
+# Go install
+go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
+
+# From source
+make install-mcp
+```
+
+**Register with Claude Code** (run once per repo):
+
+```bash
+claude mcp add ezstack -- ezs-mcp --repo "$(pwd)"
+```
+
+`--repo` pins the server to a specific git repository root, which is useful
+when Claude launches the MCP server from a parent workspace directory.
+
+**Tools**
+
+| Tool | Annotation | Description |
+|---|---|---|
+| `ezstack_status` | read-only | Current stack with PR and CI status. `all`, `decorated`. |
+| `ezstack_list` | read-only | List all stacks and branches. `all`, `decorated`. |
+| `ezstack_sync` | destructive | Rebase (or merge) branches with their base. `stack`, `all`, `current`, `parent`, `children`, `merge`, `dry_run`. |
+| `ezstack_push` | destructive | Push current branch or entire stack. `stack`, `force`. |
+| `ezstack_pr_create` | &mdash; | Create a pull request for the current branch. `title`, `draft`. |
+| `ezstack_pr_stack` | &mdash; | Update every PR description in the stack with navigation links. |
+| `ezstack_pr_merge` | destructive | Merge the pull request for the current branch. |
+| `ezstack_goto` | &mdash; | Switch to a branch. `branch` (required). |
+| `ezstack_new` | &mdash; | Create a new branch. `name` (required), `parent`. |
+| `ezstack_delete` | destructive | Delete a branch and its worktree. `branch` (required). |
+| `ezstack_reparent` | &mdash; | Move a branch to a new parent. `branch` and `new_parent` (both required). |
+
+Read-only tools return JSON by default; pass `decorated=true` to get the
+terminal-styled output. Destructive tools are tagged with the MCP destructive
+annotation so the client prompts before running them. Branch-management tools
+mark their positional arguments as `Required` in the tool schema so the agent
+cannot trigger an interactive `fzf` selection that would hang in a no-terminal
+context.
+
+**Safety** &mdash; every tool handler acquires a process-wide mutex before
+running, since `ezs` operates on shared process state (stdout/stderr, the
+`ui.Backend`, `ui.YesMode`). Stdout and stderr are captured via concurrent pipe
+drainers started before the command runs, so large outputs can't block on the
+OS pipe buffer. Both behaviors are covered by unit tests under
+`cmd/ezs-mcp/*_test.go` and a stdio integration test under `itests/mcp_test.go`
+that boots the real binary.
+
+Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/mcp.html>.
+
+
 
 ### VS Code Extension
 
