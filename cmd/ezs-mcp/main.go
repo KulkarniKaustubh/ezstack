@@ -12,22 +12,25 @@ import (
 
 	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 	"github.com/spf13/pflag"
 )
-
-// version is kept in lock-step with cmd/ezs/main.go via scripts/bump-version.sh.
-const version = "4.3.5"
 
 func main() {
 	// --repo sets the working directory (git repo root). Useful when the MCP
 	// server is launched from a parent workspace directory.
 	fs := pflag.NewFlagSet("ezs-mcp", pflag.ContinueOnError)
 	repo := fs.String("repo", "", "Git repo root directory")
+	showVersion := fs.BoolP("version", "v", false, "Print version and exit")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "ezs-mcp: %v\n", err)
 		os.Exit(2)
+	}
+	if *showVersion {
+		fmt.Println(version.Version)
+		return
 	}
 	if *repo != "" {
 		if err := os.Chdir(*repo); err != nil {
@@ -38,7 +41,7 @@ func main() {
 
 	s := server.NewMCPServer(
 		"ezstack",
-		version,
+		version.Version,
 		server.WithElicitation(),
 		// Tool list is static, so don't advertise listChanged notifications.
 		server.WithToolCapabilities(false),

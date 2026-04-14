@@ -36,18 +36,11 @@ changed=()
 printf '%s' "$NEW_VERSION" > "$VERSION_FILE"
 changed+=("VERSION")
 
-# 2. Go CLI constant — match any semver for idempotent runs
-FILE="$REPO_ROOT/cmd/ezs/main.go"
+# 2. Centralized Go version constant — cmd/ezs and cmd/ezs-mcp both import this.
+FILE="$REPO_ROOT/internal/version/version.go"
 if [ -f "$FILE" ]; then
-    sed -i.bak "s/const version = \"$SV\"/const version = \"$NEW_VERSION\"/" "$FILE"
-    changed+=("cmd/ezs/main.go")
-fi
-
-# 2b. MCP server Go constant — kept in lock-step with the CLI
-FILE="$REPO_ROOT/cmd/ezs-mcp/main.go"
-if [ -f "$FILE" ]; then
-    sed -i.bak "s/const version = \"$SV\"/const version = \"$NEW_VERSION\"/" "$FILE"
-    changed+=("cmd/ezs-mcp/main.go")
+    sed -i.bak "s/const Version = \"$SV\"/const Version = \"$NEW_VERSION\"/" "$FILE"
+    changed+=("internal/version/version.go")
 fi
 
 # 3. VS Code extension package.json — match any semver in the "version" field

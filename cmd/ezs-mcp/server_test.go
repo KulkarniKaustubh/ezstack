@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -21,7 +22,7 @@ import (
 func newTestServer() *server.MCPServer {
 	s := server.NewMCPServer(
 		"ezstack",
-		version,
+		version.Version,
 		server.WithElicitation(),
 		server.WithToolCapabilities(false),
 	)

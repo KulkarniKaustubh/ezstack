@@ -9,9 +9,8 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
 )
-
-const version = "4.3.5"
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
@@ -81,7 +80,7 @@ func main() {
 		printUsage()
 		return
 	case "-v", "--version":
-		fmt.Printf("ezstack version %s\n", version)
+		fmt.Printf("ezstack version %s\n", version.Version)
 		return
 	}
 
