@@ -43,6 +43,13 @@ if [ -f "$FILE" ]; then
     changed+=("cmd/ezs/main.go")
 fi
 
+# 2b. MCP server Go constant — kept in lock-step with the CLI
+FILE="$REPO_ROOT/cmd/ezs-mcp/main.go"
+if [ -f "$FILE" ]; then
+    sed -i.bak "s/const version = \"$SV\"/const version = \"$NEW_VERSION\"/" "$FILE"
+    changed+=("cmd/ezs-mcp/main.go")
+fi
+
 # 3. VS Code extension package.json — match any semver in the "version" field
 FILE="$REPO_ROOT/vscode-extension/package.json"
 if [ -f "$FILE" ]; then

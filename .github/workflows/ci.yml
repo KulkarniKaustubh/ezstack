@@ -54,7 +54,10 @@ jobs:
           cd "$scratch"
           GOBIN="$scratch/bin" go install \
             github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@${{ github.sha }}
+          GOBIN="$scratch/bin" go install \
+            github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@${{ github.sha }}
           "$scratch/bin/ezs" --version
+          test -x "$scratch/bin/ezs-mcp"
 
   vscode:
     runs-on: ubuntu-latest

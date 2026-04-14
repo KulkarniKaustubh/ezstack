@@ -36,6 +36,9 @@ brew install ezstack
 
 ```bash
 go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest
+
+# Optional: MCP server for Claude Code and other MCP-compatible agents
+go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
 ```
 
 ### From Source
@@ -145,6 +148,26 @@ ezs agent prompt --edit work
 ```
 
 Agent prompts are composed from three layers: a shipped prompt (updated with releases), custom instructions (`~/.ezstack/`), and repo-specific instructions (`<repo>/.ezstack/`). See [AGENTS.md](AGENTS.md) for full details.
+
+## MCP Server (Claude Code & other MCP clients)
+
+ezstack ships a standalone MCP server, `ezs-mcp`, that exposes the core stack operations as Model Context Protocol tools. Point any MCP-compatible agent at it (Claude Code, Zed, etc.) and the agent can drive `ezs` directly — status, list, sync, push, PR create/merge, goto, new, delete, reparent.
+
+Install:
+
+```bash
+go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
+# or, from source
+make install-mcp
+```
+
+Register with Claude Code:
+
+```bash
+claude mcp add ezstack -- ezs-mcp --repo "$(pwd)"
+```
+
+`--repo` pins the server to a specific git repository root, which is useful when Claude launches the MCP server from a parent workspace directory. Read-only tools (`ezstack_status`, `ezstack_list`) return JSON by default, or pass `decorated=true` to get the terminal-styled output. Destructive tools (`ezstack_sync`, `ezstack_push`, `ezstack_delete`, `ezstack_pr_merge`) are tagged with the MCP destructive annotation so the client can prompt the user before running them.
 
 ## Configuration
 
