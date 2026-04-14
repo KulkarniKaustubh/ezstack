@@ -5,12 +5,54 @@ import (
 	"os"
 	"path/filepath"
 
+	"golang.org/x/term"
+
 	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
 )
+
+// knownCommands is the set of dispatchable ezs subcommands (including aliases).
+// Used to decide whether to trigger auto-setup before dispatch — we don't want
+// to run first-time setup just because the user typed a typo.
+var knownCommands = map[string]bool{
+	"new": true, "n": true,
+	"list": true, "ls": true,
+	"status": true, "st": true,
+	"sync": true,
+	"pr":   true,
+	"config": true, "cfg": true,
+	"goto": true, "go": true,
+	"delete": true, "del": true, "rm": true,
+	"reparent": true, "rp": true,
+	"stack":    true,
+	"unstack":  true,
+	"commit":   true, "ci": true,
+	"amend": true,
+	"diff":  true,
+	"log":   true,
+	"push":  true,
+	"up":    true,
+	"down":  true,
+	"agent": true,
+	"menu":  true,
+}
+
+// commandNeedsRepoConfig returns true if the command requires the current repo
+// to be configured in ezstack before it can run. `config`/`cfg` are exempt
+// because they *are* the setup path.
+func commandNeedsRepoConfig(cmd string) bool {
+	if !knownCommands[cmd] {
+		return false
+	}
+	switch cmd {
+	case "config", "cfg":
+		return false
+	}
+	return true
+}
 
 // checkRepoRoot checks if we're in a git repo root and returns the repo path.
 // Returns ("", false) if not in a git repo.
@@ -107,6 +149,31 @@ func main() {
 		}
 		printUsage()
 		return
+	}
+
+	// Auto-run first-time setup if this repo isn't configured yet.
+	// Skipped for `config`/`cfg` (which perform setup) and unknown commands
+	// (which will fall through to the usage error below).
+	if commandNeedsRepoConfig(cmd) && !hasRepoConfig(repoPath) {
+		if !term.IsTerminal(int(os.Stdin.Fd())) {
+			ui.Error("ezstack is not configured for this repository. Run 'ezs config' from an interactive shell to set it up.")
+			os.Exit(ui.ExitUsage)
+		}
+		ui.Info("ezstack is not configured for this repository. Let's set it up first.")
+		fmt.Println()
+		if cfgErr := commands.Config(nil); cfgErr != nil {
+			if cfgErr == ui.ErrBack {
+				return
+			}
+			ui.Error(cfgErr.Error())
+			os.Exit(ui.GetExitCode(cfgErr))
+		}
+		// Guard against the user aborting setup without actually configuring.
+		if !hasRepoConfig(repoPath) {
+			ui.Error("Setup was not completed. Aborting.")
+			os.Exit(ui.ExitUsage)
+		}
+		fmt.Println()
 	}
 
 	var err error

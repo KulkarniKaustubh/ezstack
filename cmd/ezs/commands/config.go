@@ -302,6 +302,7 @@ func configInteractive() error {
 	currentWorktreeBaseDir := ""
 	currentCdAfterNew := true
 	currentUseWorktrees := true
+	currentAgentCommand := "claude"
 	if repoCfg != nil {
 		currentWorktreeBaseDir = repoCfg.WorktreeBaseDir
 		if repoCfg.CdAfterNew != nil {
@@ -309,6 +310,9 @@ func configInteractive() error {
 		}
 		if repoCfg.UseWorktrees != nil {
 			currentUseWorktrees = *repoCfg.UseWorktrees
+		}
+		if repoCfg.AgentCommand != "" {
+			currentAgentCommand = repoCfg.AgentCommand
 		}
 	}
 
@@ -371,6 +375,14 @@ func configInteractive() error {
 		}
 		ui.Success(fmt.Sprintf("Set sync_strategy = %s", repoCfg.SyncStrategy))
 	}
+
+	// Agent command: which CLI 'ezs agent' should invoke.
+	agentCommand := strings.TrimSpace(ui.Prompt("AI agent CLI command (used by 'ezs agent')", currentAgentCommand))
+	if agentCommand == "" {
+		agentCommand = "claude"
+	}
+	repoCfg.AgentCommand = agentCommand
+	ui.Success(fmt.Sprintf("Set agent_command = %s", agentCommand))
 
 	cfg.SetRepoConfig(repoPath, repoCfg)
 	if err := cfg.Save(); err != nil {
