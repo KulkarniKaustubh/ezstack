@@ -661,18 +661,17 @@ func resolveAgentStack(mgr *stack.Manager, stackRef, branchName string) (*config
 		return resolveStackByRef(mgr, stacks, stackRef)
 	}
 
-	// Try current branch's stack
+	// Use the current branch's stack if we're on one. Unlike other ezs
+	// commands, we deliberately do NOT fall back to auto-picking when the
+	// current branch isn't in any stack: on main (or any non-stack branch)
+	// the user must explicitly pass --stack/--branch, otherwise `ezs agent`
+	// with a single stack in the repo would silently launch into it.
 	currentStack, _, err := mgr.GetCurrentStack()
 	if err == nil && currentStack != nil {
 		return currentStack, nil
 	}
-
-	// Interactive selection
-	if len(stacks) == 1 {
-		return stacks[0], nil
-	}
-
-	return ui.SelectStack(stacks, "Select a stack to work on")
+	return nil, ui.NewExitError(ui.ExitNotInStack,
+		"current branch is not part of any stack.\nCheckout a stack branch (ezs goto <branch>) or pass --stack/--branch.")
 }
 
 // resolveStackByRef resolves a stack reference that could be a hash prefix or a name.

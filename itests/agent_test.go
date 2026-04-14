@@ -175,6 +175,37 @@ exit 0
 	}
 }
 
+// TestAgentOnNonStackBranch_Errors guards against the bug where `ezs agent`
+// silently auto-launched into the only stack in the repo when run from a
+// non-stack branch (e.g. main). The expected behavior: error with exit
+// code 5 (ExitNotInStack) so the user explicitly chooses a stack.
+func TestAgentOnNonStackBranch_Errors(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	// One stack in the repo, but the test runs from env.RepoDir which is on main.
+	CreateBranchWithCommit(t, env, "feature-a", "main")
+
+	// Stub claude so the agent-CLI lookup passes; resolveAgentStack should
+	// fail before we ever reach the launch, so the stub's body doesn't matter.
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), "#!/bin/sh\nexit 0\n")
+
+	out, err := runEzsAgent(t, env)
+	if err == nil {
+		t.Fatalf("expected `ezs agent` on main to fail, got success:\n%s", out)
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("expected *exec.ExitError, got %T: %v", err, err)
+	}
+	if code := exitErr.ExitCode(); code != 5 {
+		t.Errorf("expected exit code 5 (ExitNotInStack), got %d\noutput:\n%s", code, out)
+	}
+	if !strings.Contains(string(out), "not part of any stack") {
+		t.Errorf("expected 'not part of any stack' in output, got:\n%s", out)
+	}
+}
+
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
