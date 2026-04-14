@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 )
 
 // Git wraps git operations
@@ -726,6 +726,12 @@ func (g *Git) DeleteBranch(branchName string, force bool) error {
 
 // RemoveWorktree removes a worktree and optionally deletes the branch
 func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName string) error {
+	// Capture the main worktree *before* we remove anything. Once we remove
+	// the worktree, g.RepoDir may point at a directory that no longer exists,
+	// and then `git rev-parse --git-common-dir` will fail with chdir errors,
+	// which previously broke the branch-deletion step below.
+	mainWT, _ := g.GetMainWorktree()
+
 	// Check if the worktree directory exists
 	_, statErr := os.Stat(worktreePath)
 	if statErr != nil && !os.IsNotExist(statErr) {
@@ -763,8 +769,16 @@ func (g *Git) RemoveWorktree(worktreePath string, deleteBranch bool, branchName 
 	// the worktree we just deleted (causing chdir errors).
 	if deleteBranch && branchName != "" {
 		branchGit := g
-		if mainWT, err := g.GetMainWorktree(); err == nil && mainWT != "" && mainWT != g.RepoDir {
+		// Prefer the pre-captured main worktree if g.RepoDir is gone or
+		// differs from main. This keeps us working even if the worktree we
+		// just removed was the one g was pointing at.
+		if mainWT != "" && mainWT != g.RepoDir {
 			branchGit = New(mainWT)
+		} else if _, err := os.Stat(g.RepoDir); err != nil {
+			// g.RepoDir vanished and we don't know main — last-ditch fallback.
+			if recovered, err := New(".").GetMainWorktree(); err == nil && recovered != "" {
+				branchGit = New(recovered)
+			}
 		}
 		_, err := branchGit.run("branch", "-D", branchName)
 		if err != nil {

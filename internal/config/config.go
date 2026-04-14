@@ -1073,6 +1073,16 @@ func (cc *CacheConfig) Save(repoDir string) error {
 	}
 
 	stackPath := filepath.Join(configDir, "stacks.json")
+
+	// Serialize with other writers of stacks.json. Without this, a concurrent
+	// StackConfig.Save or CacheConfig.Save can clobber our updates in the
+	// read-modify-write window below.
+	lock, lockErr := acquireFileLock(stackPath + ".lock")
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.release()
+
 	var file stackConfigFile
 
 	data, err := os.ReadFile(stackPath)

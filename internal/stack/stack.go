@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 )
 
 // Manager handles stack operations
@@ -84,6 +84,41 @@ func newManager(repoDir string, reconcile bool) (*Manager, error) {
 // GetRepoDir returns the main repository directory
 func (m *Manager) GetRepoDir() string {
 	return m.repoDir
+}
+
+// rebindGitToRepo points the internal git handle at the main worktree.
+// Call before destructive commands (delete, stack tear-down) whose current
+// cwd might otherwise sit inside a worktree that is about to be removed.
+func (m *Manager) rebindGitToRepo() {
+	if m.git == nil || m.git.RepoDir != m.repoDir {
+		m.git = git.New(m.repoDir)
+	}
+}
+
+// moveCwdOutOf moves the process's cwd to the main repo if it currently sits
+// inside the given path. A best-effort operation: failures are ignored because
+// the subsequent worktree removal will still try to proceed.
+func (m *Manager) moveCwdOutOf(path string) {
+	if path == "" {
+		return
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		// cwd may have already been deleted under us — move to main repo.
+		_ = os.Chdir(m.repoDir)
+		return
+	}
+	cwdResolved, _ := filepath.EvalSymlinks(cwd)
+	pathResolved, _ := filepath.EvalSymlinks(path)
+	if cwdResolved == "" {
+		cwdResolved = cwd
+	}
+	if pathResolved == "" {
+		pathResolved = path
+	}
+	if cwdResolved == pathResolved || strings.HasPrefix(cwdResolved, pathResolved+string(os.PathSeparator)) {
+		_ = os.Chdir(m.repoDir)
+	}
 }
 
 // GetConfig returns the loaded global config, avoiding redundant config.Load() calls.
@@ -495,6 +530,16 @@ func (m *Manager) DeleteBranch(branchName string, force bool) error {
 		return fmt.Errorf("branch '%s' not found in any stack", branchName)
 	}
 
+	// Rebind git handle to the main worktree so we can safely remove any
+	// worktree — including one the user was running ezs from. Without this,
+	// m.git.RepoDir may point at the worktree we're about to delete, and every
+	// subsequent git call will fail with chdir: no such file or directory.
+	m.rebindGitToRepo()
+
+	// If the caller's process cwd is inside the worktree we're about to
+	// remove, move it out so the OS doesn't hold the directory open.
+	m.moveCwdOutOf(branch.WorktreePath)
+
 	// Check for child branches
 	children := m.GetChildren(branchName)
 	if len(children) > 0 && !force {
@@ -668,7 +713,10 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 			oldStack.ReparentBranch(branch.Name, "")
 			oldStack.PopulateBranchesWithCache(cache)
 		} else {
-			mainStackKey := m.findStackByRoot(newParentName)
+			// Use the unique variant — if multiple stacks share this root,
+			// findStackByRoot would pick one non-deterministically via map iteration.
+			// Returning "" forces the fallback path to create a fresh stack instead.
+			mainStackKey := m.findUniqueStackByRoot(newParentName)
 			if mainStackKey != "" {
 				if err := m.moveBranchToStack(branch.Name, oldStackKey, mainStackKey, newParentName); err != nil {
 					return nil, fmt.Errorf("failed to move branch to main stack: %w", err)
@@ -1345,29 +1393,28 @@ func (m *Manager) DeleteStack(stackHash string) (bool, error) {
 
 	cache := m.stackConfig.Cache
 
+	// Rebind git handle to the main worktree up-front so destructive calls
+	// below cannot fail because their cwd is a worktree we just removed.
+	m.rebindGitToRepo()
+
+	// Track whether we had to move the process cwd out of a removed worktree.
+	needsCd := false
+
 	// Determine the current branch so we don't try to delete it (git refuses)
 	currentBranch, _ := m.git.CurrentBranch()
-
-	// Determine current directory so we can detect if we're inside a worktree being deleted
-	cwd, _ := os.Getwd()
-	needsCd := false
 
 	// Clean up any remaining worktrees and git branches
 	for _, branch := range stack.Branches {
 		// Try to remove worktree if it exists
 		if branch.WorktreePath != "" {
 			if _, err := os.Stat(branch.WorktreePath); err == nil {
-				// If we're inside this worktree, move out first so git can remove it
+				// If our process cwd is inside this worktree, move out first.
+				cwd, _ := os.Getwd()
 				cwdResolved, _ := filepath.EvalSymlinks(cwd)
 				wtResolved, _ := filepath.EvalSymlinks(branch.WorktreePath)
 				if cwdResolved == wtResolved || strings.HasPrefix(cwdResolved, wtResolved+string(os.PathSeparator)) {
-					if err := os.Chdir(m.repoDir); err != nil {
-						fmt.Fprintf(os.Stderr, "  Warning: failed to leave worktree %s: %v\n", branch.WorktreePath, err)
-						continue
-					}
+					m.moveCwdOutOf(branch.WorktreePath)
 					needsCd = true
-					// Update the git instance to run from the main repo
-					m.git = git.New(m.repoDir)
 				}
 				if err := m.git.RemoveWorktree(branch.WorktreePath, true, branch.Name); err != nil {
 					fmt.Fprintf(os.Stderr, "  Warning: failed to remove worktree %s: %v\n", branch.WorktreePath, err)
@@ -1400,6 +1447,12 @@ func (m *Manager) MarkBranchMerged(branchName string) error {
 	if branch == nil {
 		return fmt.Errorf("branch '%s' not found in any stack", branchName)
 	}
+
+	// Rebind git to the main worktree and hop cwd out of the branch worktree
+	// before we remove it — otherwise `git worktree remove` / `git branch -D`
+	// run from a vanished directory and fail with chdir errors.
+	m.rebindGitToRepo()
+	m.moveCwdOutOf(branch.WorktreePath)
 
 	// Remove the worktree and branch from git
 	worktreePath := branch.WorktreePath

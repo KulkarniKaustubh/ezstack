@@ -660,7 +660,7 @@
 <span class="c-cmd">brew</span> <span class="c-flag">install</span> <span class="c-str">ezstack</span>
 </code></pre>
       <p><strong>Go Install</strong></p>
-      <pre><code><span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/cmd/ezs@latest</span>
+      <pre><code><span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest</span>
 </code></pre>
       <p><strong>Build from source</strong></p>
       <pre><code><span class="c-cmd">git</span> <span class="c-flag">clone</span> <span class="c-str">https://github.com/KulkarniKaustubh/ezstack.git</span>
@@ -1209,12 +1209,23 @@ Options:
 :Ezs <span class="c-flag">pr</span> <span class="c-str">merge</span>        <span class="c-str">&#34; prompts for method</span>
 :Ezs <span class="c-flag">goto</span> <span class="c-str">[branch]</span>   <span class="c-str">&#34; switch worktree (uses :tcd by default)</span>
 :Ezs <span class="c-flag">up</span> <span class="c-str">|</span> <span class="c-str">:Ezs</span> <span class="c-str">down</span>  <span class="c-str">&#34; navigate the stack</span>
+:Ezs <span class="c-flag">diff</span>            <span class="c-str">&#34; parent..HEAD in a scratch split (async)</span>
+:Ezs <span class="c-flag">diff</span> <span class="c-flag">--</span> <span class="c-flag">--stat</span>  <span class="c-str">&#34; forward to `ezs diff` (any git-diff options)</span>
+:Ezs <span class="c-flag">graph</span>           <span class="c-str">&#34; ASCII tree of every stack in a scratch split</span>
+:EzsActions          <span class="c-str">&#34; quick-action menu (also :Ezs actions)</span>
 :Ezs <span class="c-flag">agent</span>           <span class="c-str">&#34; launch the AI agent</span>
 :Ezs <span class="c-flag">agent</span> <span class="c-str">feature</span> <span class="c-str">&#34;description&#34;</span>
 </code></pre>
       <p>The viewer is a non-modifiable buffer with single-key bindings: <code>&lt;CR&gt;</code> goto,
       <code>o</code> open PR, <code>r</code> refresh, <code>n</code> new, <code>d</code> delete, <code>p</code>/<code>P</code> push, <code>s</code> sync, <code>a</code>/<code>A</code>
       agent, <code>?</code> help, <code>q</code> close.</p>
+      <p><strong>Quick action menu (<code>:EzsActions</code>)</strong> — a <code>vim.ui.select</code> dropdown with
+      sync (current / stack / continue), push branch / stack, PR create /
+      update / draft / merge / open / stack, new / delete / goto branch, and
+      graph. Bind it to <code>&lt;leader&gt;ea</code> if you reach for it often.</p>
+      <p><strong>Stack graph (<code>:Ezs graph</code>)</strong> — reads <code>ezs list --json</code> and renders
+      every stack as an ASCII tree. Branches whose parent chain does not reach
+      <code>stack.root</code> are surfaced under an <code>(orphans &amp;mdash; parent not reachable from root)</code> header rather than being silently dropped. Press <code>q</code> to close.</p>
       <p><strong>Telescope pickers</strong> (when telescope.nvim is installed):</p>
       <pre><code>:Telescope <span class="c-flag">ezstack</span> <span class="c-str">branches</span>    <span class="c-str">&#34; fuzzy-find branches across stacks</span>
 :Telescope <span class="c-flag">ezstack</span> <span class="c-str">stacks</span>      <span class="c-str">&#34; fuzzy-find stacks</span>
@@ -1269,11 +1280,33 @@ Options:
       <td><code>true</code></td>
       <td>Open the file explorer at the new worktree root</td>
       </tr>
+      <tr>
+      <td><code>default_keymaps</code></td>
+      <td><code>false</code></td>
+      <td>Install opt-in <code>]s</code> / <code>[s</code> stack-navigation mappings (never clobbers existing user mappings, and deliberately avoids Vim's built-in <code>gn</code> / <code>gp</code>)</td>
+      </tr>
+      <tr>
+      <td><code>statusline_format</code></td>
+      <td><code>&quot;stack&quot;</code></td>
+      <td><code>&quot;stack&quot;</code> → <code> branch | stack [hash]</code>, <code>&quot;pr&quot;</code> → <code> branch | PR#N STATE</code>, <code>&quot;full&quot;</code> → both</td>
+      </tr>
+      <tr>
+      <td><code>welcome</code></td>
+      <td><code>true</code></td>
+      <td>Show a one-time welcome notification on first <code>setup()</code>. The idempotency marker lives under <code>stdpath(&quot;state&quot;)/ezstack/welcomed</code> — never under <code>~/.ezstack</code>, which belongs to the CLI</td>
+      </tr>
       </tbody>
       </table>
-      <p>The plugin fires <code>User EzstackChanged</code> after every CLI mutation and
-      <code>User EzstackGoto</code> after a worktree switch — hook your own logic in via
+      <p><strong>Autocommands</strong> — the plugin fires <code>User EzstackSetup</code> at the end of
+      <code>setup()</code>, <code>User EzstackChanged</code> after every CLI mutation, and
+      <code>User EzstackGoto</code> after a worktree switch. Hook your own logic in via
       <code>autocmd</code>. Run <code>:help ezstack</code> for the bundled vimdoc reference.</p>
+      <p><strong>Tests</strong> — a plenary.nvim busted suite lives in
+      <code>neovim-plugin/tests/</code>. Run it with
+      <code>nvim --headless --noplugin -u neovim-plugin/tests/minimal_init.lua -c &quot;PlenaryBustedDirectory neovim-plugin/tests/ {minimal_init = 'neovim-plugin/tests/minimal_init.lua', sequential = true}&quot;</code>.
+      It covers subcommand-dispatch completeness, statusline formatters, graph
+      rendering (including orphan handling), default-keymap installation, and
+      welcome-marker idempotency.</p>
       <p>Full feature tour: <a href="https://kulkarnikaustubh.github.io/ezstack/nvim.html">https://kulkarnikaustubh.github.io/ezstack/nvim.html</a>.</p>
       <h3 id="desktop-app">Desktop App</h3>
       <p>Located in <code>tauri-ui/</code>. A native desktop app built with <strong>Tauri v2</strong> (Rust
@@ -1295,11 +1328,20 @@ Options:
       <a href="https://github.com/KulkarniKaustubh/ezstack/releases">Releases page</a>.</p>
       <p><strong>Layout</strong> — three panels:</p>
       <ol>
-      <li><strong>Stacks sidebar</strong> — every stack in the repo, with branch counts</li>
-      <li><strong>Stack graph</strong> — visual tree, color-coded by health, current branch
-      highlighted</li>
+      <li><strong>Repositories sidebar</strong> — every repo tracked in <code>~/.ezstack/config.json</code>,
+      with a filter box at the top (type to narrow by name or full path, <code>Esc</code>
+      or the ✕ button clears it). The currently selected repo stays visible
+      even when it doesn't match the filter, so the UI can never drift into a
+      state where the selection is hidden and unreachable.</li>
+      <li><strong>Stack graph</strong> — visual tree of every stack in the repo, color-coded
+      by health with the current branch highlighted. Branch nodes are
+      <strong>drag-and-drop reparentable</strong>: drag a node onto another branch and the
+      desktop app runs <code>ezs reparent</code> with the configured sync strategy. Drops
+      that would create a cycle (onto a descendant), onto the branch itself, or
+      onto the current parent are blocked with an inline toast.</li>
       <li><strong>Branch detail</strong> — PR state, CI checks, review status, mergeable
-      state, and action buttons</li>
+      state, a <strong>History</strong> panel showing the most recent reflog entries for
+      the branch (hash, action, timestamp), and action buttons.</li>
       </ol>
       <p>The status bar shows repo path, current branch, and last refresh time. The
       title bar has a theme toggle (dark / light / system) and a connection pill
@@ -1307,11 +1349,17 @@ Options:
       <p><strong>Operations</strong> are exposed as dialogs: new branch, sync, push, delete,
       reparent, PR create/update/merge, toggle draft, update stack tables, agent
       (branch- or stack-scoped), agent feature, and agent prompt management
-      (view/edit/reset across the shipped, custom, and repo layers). The CLI output
-      of every operation lands in a terminal-like panel below the main view.</p>
+      (view/edit/reset across the shipped, custom, and repo layers). Every
+      operation surfaces a <strong>toast notification</strong> in the bottom-right: success
+      toasts auto-dismiss after five seconds, error toasts stay until dismissed so
+      the CLI output stays available to copy. The full raw CLI output still lands
+      in a terminal-like panel below the main view.</p>
       <p><strong>Polling</strong> — every 30 seconds (paused when the window loses focus).
       Failures back off exponentially (30s → 60s → 120s → 240s → 300s).</p>
-      <p><strong>Keyboard shortcuts</strong>: <code>Cmd+R</code> refresh, <code>Cmd+N</code> new branch.</p>
+      <p><strong>Keyboard shortcuts</strong>: <code>Cmd+R</code> refresh, <code>Cmd+N</code> new branch, <code>Esc</code> clears the
+      branch selection (or clears the sidebar filter when the filter input is
+      focused), <code>↑/↓</code> moves between branches in the selected stack, <code>←/→</code> or <code>[</code>/<code>]</code>
+      moves between stacks.</p>
       <p><strong>Remote (SSH) mode</strong> — the desktop app can drive an <code>ezs</code> install on a
       remote machine. Click the <strong>Connect</strong> pill in the title bar, fill in
       host/user/port/key (and optionally a jump host), and pick a repo from the
@@ -1351,7 +1399,7 @@ Options:
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License · v4.1.0</span>
+          <span class="footer-meta">MIT License · v4.3.5</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
