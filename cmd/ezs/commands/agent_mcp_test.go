@@ -288,16 +288,14 @@ exit 99
 	}
 }
 
-// TestEnsureEzstackMCP_PinnedInstallFailureReturnsFalse verifies that when
-// `go install @v<version>` fails (e.g. the tag doesn't exist because the
-// running ezs binary's version.Version has drifted ahead of the latest
-// release), ensureEzstackMCP returns false and only the pinned install is
-// attempted — no silent @latest fallback. The caller falls back to the
-// legacy embedded-docs prompt, and the user sees a loud error explaining
-// how to fix the version drift.
-func TestEnsureEzstackMCP_PinnedInstallFailureReturnsFalse(t *testing.T) {
+// TestEnsureEzstackMCP_PinnedInstallFallsBackToLatest simulates a dev build
+// where @v<version> doesn't exist yet (the tag hasn't been pushed). The go
+// stub fails the pinned install and succeeds on the @latest retry. The
+// function must return true and both install invocations must be recorded.
+func TestEnsureEzstackMCP_PinnedInstallFallsBackToLatest(t *testing.T) {
 	dir := t.TempDir()
 	goLog := filepath.Join(dir, "go_install_calls.txt")
+	mcpPath := filepath.Join(dir, "ezs-mcp")
 
 	writeStubBin(t, dir, "claude", `#!/bin/sh
 if [ "$1" = "mcp" ] && [ "$2" = "get" ] && [ "$3" = "ezstack" ]; then
@@ -315,33 +313,52 @@ fi
 exit 0
 `)
 
-	// go install always fails — the pinned tag doesn't exist. Record every
-	// call so the test can assert only one was attempted (no fallback).
+	// go install <target>: fail on @v<version>, succeed on @latest. Record
+	// every call so the test can assert the fallback actually happened.
 	writeStubBin(t, dir, "go", `#!/bin/sh
 PATH="/usr/bin:/bin:$PATH"
 if [ "$1" = "install" ]; then
   echo "$2" >> "`+goLog+`"
-  echo "no such tag" >&2
-  exit 1
+  case "$2" in
+    *@latest)
+      cat > "`+mcpPath+`" <<'EOF'
+#!/bin/sh
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+  echo "`+version.Version+`"
+  exit 0
+fi
+exit 0
+EOF
+      chmod +x "`+mcpPath+`"
+      exit 0
+      ;;
+    *)
+      echo "no such tag" >&2
+      exit 1
+      ;;
+  esac
 fi
 exit 99
 `)
 
 	isolateStubPath(t, dir)
 
-	if got := ensureEzstackMCP("claude", false, false); got {
-		t.Error("pinned install failure should return false (caller falls back to embedded docs)")
+	if got := ensureEzstackMCP("claude", false, false); !got {
+		t.Error("pinned-fail-then-latest case should return true")
 	}
 	logged, err := os.ReadFile(goLog)
 	if err != nil {
 		t.Fatalf("expected go install log: %v", err)
 	}
 	calls := strings.Split(strings.TrimSpace(string(logged)), "\n")
-	if len(calls) != 1 {
-		t.Fatalf("expected exactly 1 go install call (pinned only, no @latest fallback), got %d: %v", len(calls), calls)
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 go install calls (pinned + latest), got %d: %v", len(calls), calls)
 	}
 	if !strings.HasSuffix(calls[0], "@v"+version.Version) {
-		t.Errorf("call should pin @v%s, got %q", version.Version, calls[0])
+		t.Errorf("first call should pin @v%s, got %q", version.Version, calls[0])
+	}
+	if !strings.HasSuffix(calls[1], "@latest") {
+		t.Errorf("second call should fall back to @latest, got %q", calls[1])
 	}
 }
 

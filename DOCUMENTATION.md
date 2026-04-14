@@ -506,12 +506,8 @@ When the configured agent CLI is `claude`, `ezs agent` automatically:
 
 1. **Ensures `ezs-mcp` is installed and version-aligned.** If the binary is
    missing or was built against a different ezstack release, ezs runs
-   `go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@v<version>`
-   pinned to the exact version baked into the running `ezs` binary. There is
-   no silent `@latest` fallback: if the pinned install fails (e.g. because
-   your `ezs` was built ahead of the latest released tag), ezs surfaces the
-   error and falls back to the legacy embedded-docs prompt so you can fix
-   the drift by upgrading `ezs`.
+   `go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@v<version>`,
+   falling back to `@latest` for untagged dev builds.
 2. **Registers `ezs-mcp` with Claude Code at user scope** (equivalent to
    running `claude mcp add ezstack --scope user -- ezs-mcp` yourself), so
    the full 21-tool ezstack surface is available to the agent from the
