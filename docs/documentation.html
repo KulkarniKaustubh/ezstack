@@ -1069,8 +1069,12 @@ Options:
       <ol>
       <li><strong>Ensures <code>ezs-mcp</code> is installed and version-aligned.</strong> If the binary is
       missing or was built against a different ezstack release, ezs runs
-      <code>go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@v&lt;version&gt;</code>,
-      falling back to <code>@latest</code> for untagged dev builds.</li>
+      <code>go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@v&lt;version&gt;</code>
+      pinned to the exact version baked into the running <code>ezs</code> binary. There is
+      no silent <code>@latest</code> fallback: if the pinned install fails (e.g. because
+      your <code>ezs</code> was built ahead of the latest released tag), ezs surfaces the
+      error and falls back to the legacy embedded-docs prompt so you can fix
+      the drift by upgrading <code>ezs</code>.</li>
       <li><strong>Registers <code>ezs-mcp</code> with Claude Code at user scope</strong> (equivalent to
       running <code>claude mcp add ezstack --scope user -- ezs-mcp</code> yourself), so
       the full 21-tool ezstack surface is available to the agent from the

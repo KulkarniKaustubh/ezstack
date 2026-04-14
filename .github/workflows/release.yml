@@ -219,7 +219,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           git add \
             VERSION \
-            cmd/ezs/main.go \
+            internal/version/version.go \
             vscode-extension/package.json \
             vscode-extension/package-lock.json \
             vscode-extension/README.md \

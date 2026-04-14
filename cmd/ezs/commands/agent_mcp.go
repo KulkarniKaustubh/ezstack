@@ -81,26 +81,24 @@ func ensureMCPBinary() error {
 	return nil
 }
 
-// installMCPBinary runs `go install` for ezs-mcp. It first tries the exact
-// release matching the running ezs binary (@v<version>), and falls back to
-// @latest if that tag doesn't exist — this keeps release builds pinned
-// while still working on dev builds whose version hasn't been tagged yet.
+// installMCPBinary runs `go install github.com/.../ezs-mcp@v<version>` where
+// <version> is the literal release version baked into the running ezs binary.
+// Every tagged release pushes matching cmd/ezs and cmd/ezs-mcp builds to the
+// module proxy, and scripts/bump-version.sh + the release workflow keep
+// internal/version.Version pinned to the last released tag, so this install
+// is expected to succeed unconditionally. If it ever fails, surface the real
+// error rather than silently retrying with @latest — a silent fallback would
+// let a stale internal/version.Version install a mismatched ezs-mcp build.
 // reason is surfaced to the user so they understand why we're reinstalling.
 func installMCPBinary(reason string) error {
 	if _, err := exec.LookPath("go"); err != nil {
 		return fmt.Errorf("ezs-mcp %s and no `go` in PATH to install one (try `go install %s@v%s` manually)", reason, ezsMCPModulePath, version.Version)
 	}
 
-	pinnedTarget := ezsMCPModulePath + "@v" + version.Version
-	ui.Info(fmt.Sprintf("Installing %s (%s)...", pinnedTarget, reason))
-	if err := runGoInstall(pinnedTarget); err != nil {
-		// Pinned tag may not exist yet on an untagged dev build. Fall back to
-		// @latest so the MCP still comes up, just not version-pinned.
-		latestTarget := ezsMCPModulePath + "@latest"
-		ui.Warn(fmt.Sprintf("go install %s failed (%v) — retrying with %s", pinnedTarget, err, latestTarget))
-		if err := runGoInstall(latestTarget); err != nil {
-			return fmt.Errorf("go install failed for both %s and %s: %w", pinnedTarget, latestTarget, err)
-		}
+	target := ezsMCPModulePath + "@v" + version.Version
+	ui.Info(fmt.Sprintf("Installing %s (%s)...", target, reason))
+	if err := runGoInstall(target); err != nil {
+		return fmt.Errorf("go install %s failed: %w\n\nYour ezs binary reports version %s but the matching ezs-mcp release could not be installed. Upgrade ezs (brew upgrade ezstack / go install %s@latest) so its version matches a published tag, or pass --no-mcp to skip MCP auto-install.", target, err, version.Version, "github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs")
 	}
 
 	if _, err := exec.LookPath("ezs-mcp"); err != nil {
