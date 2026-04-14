@@ -660,12 +660,10 @@ func showDiffStatsAgainstBase(g *git.Git, branch, baseBranch string) {
 		return
 	}
 
-	// Use origin/ refs for accurate stats matching what PRs show
-	baseRef := baseBranch
-	if g.RemoteBranchExists(baseBranch) {
-		baseRef = "origin/" + baseBranch
-	}
-	branchRef := "origin/" + branch
+	// Diff against the LOCAL base and LOCAL branch so stats reflect the
+	// user's working state rather than possibly-stale origin refs.
+	baseRef := resolveLocalRef(g, baseBranch)
+	branchRef := resolveLocalRef(g, branch)
 
 	added, removed, err := g.GetDiffStat(baseRef, branchRef)
 	if err != nil {
