@@ -54,6 +54,95 @@ func TestRenderPromptUnusedVarsPreserved(t *testing.T) {
 	}
 }
 
+// TestRenderPromptDocsDoNotRecursivelyExpand is a regression test for the
+// bug fixed in v4.3.3. The embedded AGENTS.md and DOCUMENTATION.md files
+// both contain a reference table listing the template variables, so their
+// *bodies* contain literal tokens like `{{EZS_DOCS}}` and `{{EZS_COMMANDS}}`.
+//
+// The old renderPrompt used a sequential ReplaceAll loop over a map for the
+// pass-2 substitution. Because Go map iteration order is non-deterministic,
+// substituting EZS_COMMANDS first would splice AGENTS.md into the template,
+// and the next loop iteration would then find the literal {{EZS_DOCS}}
+// token *inside that just-injected content* and expand DOCUMENTATION.md
+// mid-reference-table — scrambling the prompt layout and multiplying its
+// length.
+//
+// The correct behavior: each late-pass substitution is a single scan of
+// the input, and tokens that end up inside the injected replacement text
+// are left as literal text.
+func TestRenderPromptDocsDoNotRecursivelyExpand(t *testing.T) {
+	template := `## Commands
+{{EZS_COMMANDS}}
+## Docs
+{{EZS_DOCS}}
+`
+	// Each doc value contains the *other* doc's token as literal text,
+	// mimicking the real AGENTS.md / DOCUMENTATION.md reference tables.
+	commands := "COMMANDS_BODY with literal {{EZS_DOCS}} reference"
+	docs := "DOCS_BODY with literal {{EZS_COMMANDS}} reference"
+
+	vars := map[string]string{
+		"EZS_COMMANDS": commands,
+		"EZS_DOCS":     docs,
+	}
+
+	// Run many iterations to defeat map-iteration-order non-determinism:
+	// the old buggy code would intermittently produce different outputs
+	// depending on which key the map yielded first.
+	var first string
+	for i := 0; i < 50; i++ {
+		result := renderPrompt(template, vars)
+		if i == 0 {
+			first = result
+		} else if result != first {
+			t.Fatalf("renderPrompt is non-deterministic; iteration %d differs from iteration 0", i)
+		}
+
+		// Each doc's body must appear exactly once.
+		if got := strings.Count(result, "COMMANDS_BODY"); got != 1 {
+			t.Errorf("expected COMMANDS_BODY exactly once, got %d\noutput:\n%s", got, result)
+		}
+		if got := strings.Count(result, "DOCS_BODY"); got != 1 {
+			t.Errorf("expected DOCS_BODY exactly once, got %d\noutput:\n%s", got, result)
+		}
+		// The literal tokens inside each doc's body must stay literal —
+		// pass 2 must not re-process replacement text.
+		if !strings.Contains(result, "COMMANDS_BODY with literal {{EZS_DOCS}} reference") {
+			t.Errorf("EZS_DOCS token inside commands body was unexpectedly expanded\noutput:\n%s", result)
+		}
+		if !strings.Contains(result, "DOCS_BODY with literal {{EZS_COMMANDS}} reference") {
+			t.Errorf("EZS_COMMANDS token inside docs body was unexpectedly expanded\noutput:\n%s", result)
+		}
+	}
+}
+
+// TestRenderPromptPass1ValuesNotReExpandedByDocs ensures that when pass 1
+// substitutes (e.g.) CUSTOM_INSTRUCTIONS with user-provided text, and that
+// text happens to contain the literal string "{{BRANCH_NAME}}", pass 2's
+// doc substitution does not touch it — and conversely that {{BRANCH_NAME}}
+// appearing literally inside EZS_DOCS is also preserved (by design of the
+// two-pass structure).
+func TestRenderPromptPass1ValuesNotReExpandedByDocs(t *testing.T) {
+	template := `{{BRANCH_NAME}} | {{CUSTOM_INSTRUCTIONS}} | {{EZS_DOCS}}`
+	vars := map[string]string{
+		"BRANCH_NAME":         "feat-x",
+		"CUSTOM_INSTRUCTIONS": "user wrote literal {{BRANCH_NAME}} here",
+		"EZS_DOCS":            "docs mention {{BRANCH_NAME}} as a variable",
+	}
+
+	result := renderPrompt(template, vars)
+
+	// Only the real template placeholder gets substituted — one instance.
+	if got := strings.Count(result, "feat-x"); got != 1 {
+		t.Errorf("expected BRANCH_NAME substituted exactly once, got %d\noutput: %s", got, result)
+	}
+	// Both literal {{BRANCH_NAME}} tokens (one from custom, one from docs)
+	// must survive as literal text.
+	if got := strings.Count(result, "{{BRANCH_NAME}}"); got != 2 {
+		t.Errorf("expected 2 literal {{BRANCH_NAME}} tokens preserved, got %d\noutput: %s", got, result)
+	}
+}
+
 func TestLoadInstructionsFileNotFound(t *testing.T) {
 	content, isOverride := loadInstructionsFile("/nonexistent/path/file.md")
 	if content != "" {
