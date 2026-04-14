@@ -151,7 +151,7 @@ Agent prompts are composed from three layers: a shipped prompt (updated with rel
 
 ## MCP Server (Claude Code & other MCP clients)
 
-ezstack ships a standalone MCP server, `ezs-mcp`, that exposes the core stack operations as Model Context Protocol tools. Point any MCP-compatible agent at it (Claude Code, Zed, etc.) and the agent can drive `ezs` directly — status, list, sync, push, PR create/merge, goto, new, delete, reparent.
+ezstack ships a standalone MCP server, `ezs-mcp`, that exposes the full stack workflow as Model Context Protocol tools. Point any MCP-compatible agent at it (Claude Code, Zed, etc.) and the agent can drive `ezs` directly: inspect (`status`, `list`, `diff`, `log`, `config_show`), mutate (`commit`, `amend`, `sync`, `push`, `new`, `delete`, `reparent`, `stack`, `unstack`, `config_set`), navigate (`goto`), and manage PRs (`pr_create`, `pr_update`, `pr_merge`, `pr_draft`, `pr_stack`). 21 tools, one binary.
 
 Install:
 
@@ -167,7 +167,7 @@ Register with Claude Code:
 claude mcp add ezstack -- ezs-mcp --repo "$(pwd)"
 ```
 
-`--repo` pins the server to a specific git repository root, which is useful when Claude launches the MCP server from a parent workspace directory. Read-only tools (`ezstack_status`, `ezstack_list`) return JSON by default, or pass `decorated=true` to get the terminal-styled output. Destructive tools (`ezstack_sync`, `ezstack_push`, `ezstack_delete`, `ezstack_pr_merge`) are tagged with the MCP destructive annotation so the client can prompt the user before running them.
+`--repo` pins the server to a specific git repository root, which is useful when Claude launches the MCP server from a parent workspace directory. Read-only tools (`ezstack_status`, `ezstack_list`, `ezstack_diff`, `ezstack_log`, `ezstack_config_show`) return JSON by default, or pass `decorated=true` (where supported) to get the terminal-styled output. Destructive tools (`ezstack_commit`, `ezstack_amend`, `ezstack_sync`, `ezstack_push`, `ezstack_delete`, `ezstack_pr_merge`, `ezstack_pr_update`) are tagged with the MCP destructive annotation so the client can prompt before running them. `ezstack_commit` requires an explicit `message` and `ezstack_amend` defaults to `--no-edit` so neither can ever launch `$EDITOR` and corrupt the JSON-RPC transport.
 
 Full feature tour and tool catalog: [mcp.html](https://kulkarnikaustubh.github.io/ezstack/mcp.html).
 

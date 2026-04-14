@@ -321,6 +321,7 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithBoolean("children", mcp.Description("Rebase children onto current branch")),
 			mcp.WithBoolean("merge", mcp.Description("Use merge instead of rebase")),
 			mcp.WithBoolean("dry_run", mcp.Description("Preview what would be synced without making changes")),
+			mcp.WithBoolean("resume", mcp.Description("Resume a sync after the user has resolved rebase conflicts (maps to ezs sync --continue)")),
 		),
 		toolHandler(commands.Sync, func(req mcp.CallToolRequest) []string {
 			var args []string
@@ -331,6 +332,7 @@ func registerTools(s *server.MCPServer) {
 			boolFlag(&args, req, "children", "--children")
 			boolFlag(&args, req, "merge", "--merge")
 			boolFlag(&args, req, "dry_run", "--dry-run")
+			boolFlag(&args, req, "resume", "--continue")
 			return args
 		}),
 	)
@@ -456,6 +458,201 @@ func registerTools(s *server.MCPServer) {
 			return []string{
 				req.GetString("branch", ""),
 				req.GetString("new_parent", ""),
+			}
+		}),
+	)
+
+	// ---- Commit & amend ----
+	//
+	// message is Required for ezstack_commit and --no-edit is forced for
+	// ezstack_amend (unless a new message is supplied), because ezs commit
+	// shells out via RunInteractive which inherits the parent's stdin. In
+	// the MCP server the parent stdin is the JSON-RPC transport, so letting
+	// git launch an editor would corrupt the protocol stream.
+	//
+	// Both handlers use yesModeHandler so the internal "Push to remote?"
+	// confirmation (ConfirmTUIWithDefault) is auto-accepted — the MCP
+	// client has no way to answer a stdin prompt. Commit will therefore
+	// push automatically when the branch already exists on the remote;
+	// agents that want a commit-without-push should use ezstack_commit
+	// on branches that have not been pushed yet.
+
+	s.AddTool(
+		mcp.NewTool("ezstack_commit",
+			mcp.WithDescription("Commit staged (or all) changes and auto-sync child branches. Auto-pushes when the branch already exists on the remote. Refuses to open an editor: message is required."),
+			mcp.WithString("message",
+				mcp.Description("Commit message — passed directly to git commit -m"),
+				mcp.Required(),
+			),
+			mcp.WithBoolean("all", mcp.Description("Stage all tracked modified files (git commit -a)")),
+			mcp.WithBoolean("merge", mcp.Description("Use merge instead of rebase when syncing children")),
+			mcp.WithBoolean("rebase", mcp.Description("Use rebase instead of merge when syncing children")),
+			mcp.WithDestructiveHintAnnotation(true),
+		),
+		yesModeHandler(commands.Commit, func(req mcp.CallToolRequest) []string {
+			var args []string
+			boolFlag(&args, req, "all", "-a")
+			args = append(args, "-m", req.GetString("message", ""))
+			boolFlag(&args, req, "merge", "--merge")
+			boolFlag(&args, req, "rebase", "--rebase")
+			return args
+		}),
+	)
+
+	s.AddTool(
+		mcp.NewTool("ezstack_amend",
+			mcp.WithDescription("Amend the last commit and auto-sync child branches. Force-pushes when the branch already exists on the remote (amend rewrites history). If message is omitted, --no-edit is forced to avoid launching an editor."),
+			mcp.WithString("message", mcp.Description("New commit message. If omitted, the existing message is preserved via --no-edit.")),
+			mcp.WithBoolean("all", mcp.Description("Stage all tracked modified files before amending (git commit -a)")),
+			mcp.WithBoolean("merge", mcp.Description("Use merge instead of rebase when syncing children")),
+			mcp.WithBoolean("rebase", mcp.Description("Use rebase instead of merge when syncing children")),
+			mcp.WithDestructiveHintAnnotation(true),
+		),
+		yesModeHandler(commands.Amend, func(req mcp.CallToolRequest) []string {
+			var args []string
+			boolFlag(&args, req, "all", "-a")
+			if msg := req.GetString("message", ""); msg != "" {
+				args = append(args, "-m", msg)
+			} else {
+				args = append(args, "--no-edit")
+			}
+			boolFlag(&args, req, "merge", "--merge")
+			boolFlag(&args, req, "rebase", "--rebase")
+			return args
+		}),
+	)
+
+	// ---- Inspection ----
+
+	s.AddTool(
+		mcp.NewTool("ezstack_diff",
+			mcp.WithDescription("Show diff between a branch and its parent in the stack. Returns structured JSON by default (file list with additions/deletions and totals)."),
+			mcp.WithString("branch", mcp.Description("Branch to diff (defaults to current)")),
+			mcp.WithBoolean("stat", mcp.Description("Return a diffstat summary instead of the JSON numstat view")),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		readOnlyHandler(commands.Diff, func(req mcp.CallToolRequest) []string {
+			var args []string
+			stringFlag(&args, req, "branch", "--branch")
+			// Default to --json unless the caller explicitly asked for stat
+			if req.GetBool("stat", false) {
+				args = append(args, "--stat")
+			} else {
+				args = append(args, "--json")
+			}
+			return args
+		}),
+	)
+
+	s.AddTool(
+		mcp.NewTool("ezstack_log",
+			mcp.WithDescription("Show commits in a branch since its parent. Always returns JSON (hash, message, author, ISO date, count)."),
+			mcp.WithString("branch", mcp.Description("Branch to show commits for (defaults to current)")),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		readOnlyHandler(commands.Log, func(req mcp.CallToolRequest) []string {
+			args := []string{"--json"}
+			stringFlag(&args, req, "branch", "--branch")
+			return args
+		}),
+	)
+
+	// ---- Additional PR operations ----
+
+	s.AddTool(
+		mcp.NewTool("ezstack_pr_update",
+			mcp.WithDescription("Push the latest commits and update the PR base branch and stack description to match the current stack structure."),
+			mcp.WithString("branch", mcp.Description("Branch whose PR to update (defaults to current)")),
+			mcp.WithDestructiveHintAnnotation(true),
+		),
+		yesModeHandler(commands.PR, func(req mcp.CallToolRequest) []string {
+			args := []string{"update"}
+			stringFlag(&args, req, "branch", "--branch")
+			return args
+		}),
+	)
+
+	s.AddTool(
+		mcp.NewTool("ezstack_pr_draft",
+			mcp.WithDescription("Toggle a pull request between draft and ready-for-review."),
+			mcp.WithString("branch", mcp.Description("Branch whose PR to toggle (defaults to current)")),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		yesModeHandler(commands.PR, func(req mcp.CallToolRequest) []string {
+			args := []string{"draft"}
+			stringFlag(&args, req, "branch", "--branch")
+			return args
+		}),
+	)
+
+	// ---- Stack membership ----
+
+	s.AddTool(
+		mcp.NewTool("ezstack_stack",
+			mcp.WithDescription("Add a branch to a stack by setting its parent. Pass either parent (to attach under an existing branch) or base (to start a new stack rooted on a non-default base branch like develop)."),
+			mcp.WithString("branch",
+				mcp.Description("Branch to add to the stack"),
+				mcp.Required(),
+			),
+			mcp.WithString("parent", mcp.Description("Parent branch in an existing stack")),
+			mcp.WithString("base", mcp.Description("Base branch for a new stack (mutually exclusive with parent)")),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		yesModeHandler(commands.Stack, func(req mcp.CallToolRequest) []string {
+			args := []string{"--branch", req.GetString("branch", "")}
+			stringFlag(&args, req, "parent", "--parent")
+			stringFlag(&args, req, "base", "--base")
+			return args
+		}),
+	)
+
+	s.AddTool(
+		mcp.NewTool("ezstack_unstack",
+			mcp.WithDescription("Remove a branch from ezstack tracking without deleting the git branch or worktree. Children are reparented to the untracked branch's parent."),
+			mcp.WithString("branch",
+				mcp.Description("Branch to untrack"),
+				mcp.Required(),
+			),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		yesModeHandler(commands.Unstack, func(req mcp.CallToolRequest) []string {
+			return []string{"--branch", req.GetString("branch", "")}
+		}),
+	)
+
+	// ---- Configuration ----
+
+	s.AddTool(
+		mcp.NewTool("ezstack_config_show",
+			mcp.WithDescription("Show the current ezstack configuration, including the config directory, global settings, and per-repo settings for the active repository."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		readOnlyHandler(commands.Config, func(req mcp.CallToolRequest) []string {
+			return []string{"show"}
+		}),
+	)
+
+	s.AddTool(
+		mcp.NewTool("ezstack_config_set",
+			mcp.WithDescription("Set an ezstack configuration value. Valid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, sync_strategy, agent_command."),
+			mcp.WithString("key",
+				mcp.Description("Config key to set"),
+				mcp.Required(),
+			),
+			mcp.WithString("value",
+				mcp.Description("New value for the key"),
+				mcp.Required(),
+			),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		toolHandler(commands.Config, func(req mcp.CallToolRequest) []string {
+			return []string{
+				"set",
+				req.GetString("key", ""),
+				req.GetString("value", ""),
 			}
 		}),
 	)
