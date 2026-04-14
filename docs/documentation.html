@@ -597,8 +597,8 @@
         <li><a href="#2-wire-up-shell-integration" class="toc-h3">2. Wire up shell integration</a></li>
         <li><a href="#3-configure-the-repo" class="toc-h3">3. Configure the repo</a></li>
         <li><a href="#4-create-your-first-stacked-branch" class="toc-h3">4. Create your first stacked branch</a></li>
-        <li><a href="#5-push-and-open-prs" class="toc-h3">5. Push and open PRs</a></li>
-        <li><a href="#6-check-the-stack-any-time" class="toc-h3">6. Check the stack any time</a></li>
+        <li><a href="#5-push-the-stack-and-open-prs" class="toc-h3">5. Push the stack and open PRs</a></li>
+        <li><a href="#6-inspect-the-stack-any-time" class="toc-h3">6. Inspect the stack any time</a></li>
         <li><a href="#installation">Installation</a></li>
         <li><a href="#configuration">Configuration</a></li>
         <li><a href="#workflows">Workflows</a></li>
@@ -658,132 +658,183 @@
 
       <section class="docs-section" id="getting-started" data-heading="Getting Started">
       <h2 id="getting-started">Getting Started</h2>
-      <p>A five-minute path from zero to a live stacked PR. Each step shows the exact
-      command to run and what ezstack does under the hood, so there's nothing to
-      reverse-engineer later.</p>
+      <p>A guided path from zero to a live stacked PR. Every command and every
+      parenthetical describes what ezstack actually does — no glossed-over details.</p>
       <h3 id="1-install-the-binary">1. Install the binary</h3>
-      <p>Pick one. Both drop <code>ezs</code> (and <code>ezs-mcp</code>, if you want the MCP server) on your
-      <code>PATH</code> without cloning the repo.</p>
+      <p>Pick whichever fits your setup. Both drop <code>ezs</code> (and <code>ezs-mcp</code>, if you also
+      want the MCP server) onto your <code>PATH</code> without cloning the repo.</p>
       <pre><code><span class="c-comment"># Homebrew — macOS / Linux</span>
 <span class="c-cmd">brew</span> <span class="c-flag">install</span> <span class="c-str">KulkarniKaustubh/ezstack/ezstack</span>
 
-<span class="c-comment"># Go toolchain — any OS with Go 1.22+</span>
+<span class="c-comment"># Go toolchain — Go 1.25+ required (matches the module&#39;s go directive)</span>
 <span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest</span>
 </code></pre>
+      <p>You'll also need <code>git</code> 2.20+, <a href="https://github.com/junegunn/fzf"><code>fzf</code></a> for
+      interactive selection prompts, and the <a href="https://cli.github.com/">GitHub CLI</a>
+      (<code>gh</code>) for any PR-related commands.</p>
       <p>Verify the install:</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">--version</span>
-<span class="c-comment"># → ezs v4.3.5</span>
+<span class="c-comment"># → ezstack version 4.3.5</span>
 </code></pre>
       <h3 id="2-wire-up-shell-integration">2. Wire up shell integration</h3>
-      <p>ezstack changes your working directory for commands like <code>goto</code>, <code>new</code>, <code>up</code>,
-      <code>down</code>, and <code>sync</code> (so switching branches actually drops you into the right
-      worktree). That needs a one-line eval in your shell rc:</p>
+      <p>A handful of ezstack commands need to change your shell's working directory:
+      <code>goto</code>, <code>new</code>, <code>delete</code>, <code>sync</code>, <code>up</code>, <code>down</code>, and <code>menu</code> (these are the
+      commands the shell wrapper intercepts in <code>cmd/ezs/main.go</code>). A one-line eval in
+      your rc file installs the wrapper.</p>
       <pre><code><span class="c-comment"># zsh</span>
 <span class="c-cmd">echo</span> <span class="c-str">&#39;eval &#34;$(ezs --shell-init)&#34;&#39;</span> <span class="c-str">&gt;&gt;</span> <span class="c-str">~/.zshrc</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">exec</span> <span class="c-str">zsh</span>
 
 <span class="c-comment"># bash</span>
 <span class="c-cmd">echo</span> <span class="c-str">&#39;eval &#34;$(ezs --shell-init)&#34;&#39;</span> <span class="c-str">&gt;&gt;</span> <span class="c-str">~/.bashrc</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">exec</span> <span class="c-str">bash</span>
 </code></pre>
-      <p>Without this, any command that would <code>cd</code> instead prints the target path and
-      you'd have to <code>cd</code> manually — it still works, just clunkier.</p>
+      <p>Without the wrapper installed, those commands still run — they just print
+      something like <code>cd /path/to/worktree</code> instead of actually moving your shell,
+      and you'd have to copy-paste the path yourself.</p>
       <h3 id="3-configure-the-repo">3. Configure the repo</h3>
-      <p>Run <code>ezs config</code> inside a git repository. This is an interactive first-run
-      wizard — it asks five questions and writes the answers to <code>~/.ezstack/</code>
-      (a global section plus a per-repo section keyed by repo path).</p>
+      <p><code>ezs config</code> (with no subcommand) launches an interactive first-run wizard
+      that writes settings into <code>~/.ezstack/config.json</code> — one global section plus a
+      per-repo section keyed by the repository's absolute path.</p>
       <pre><code><span class="c-cmd">cd</span> <span class="c-str">~/code/my-project</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span>
 </code></pre>
-      <p>You'll be asked:</p>
+      <p>The wizard asks these prompts, in order:</p>
       <table>
       <thead>
       <tr>
+      <th>#</th>
       <th>Prompt</th>
       <th>What it sets</th>
-      <th>Recommended</th>
+      <th>Default</th>
+      <th>Notes</th>
       </tr>
       </thead>
       <tbody>
       <tr>
-      <td>Use worktrees?</td>
-      <td><code>use_worktrees</code> — one working directory per branch vs. a single <code>git checkout</code>-based workspace</td>
-      <td><strong>yes</strong> (enables parallel work across the stack)</td>
-      </tr>
-      <tr>
-      <td>Worktree base directory</td>
-      <td><code>worktree_base_dir</code> — where per-branch worktrees are materialized</td>
-      <td><code>~/code/my-project-worktrees</code> (keep it next to the repo)</td>
-      </tr>
-      <tr>
-      <td>Main branch name</td>
-      <td><code>default_base_branch</code> — the root of every new stack</td>
-      <td><code>main</code> or <code>master</code></td>
-      </tr>
-      <tr>
-      <td>Auto-cd after <code>ezs new</code>?</td>
-      <td><code>cd_after_new</code> — jump into the new worktree automatically</td>
+      <td>1</td>
+      <td>Use git worktrees for new branches (recommended)</td>
+      <td><code>use_worktrees</code> (per-repo)</td>
       <td><strong>yes</strong></td>
+      <td>Required for <code>ezs agent</code>. Strongly recommended; enables parallel work across the stack.</td>
       </tr>
       <tr>
-      <td>Sync strategy</td>
-      <td><code>sync_strategy</code> — <code>rebase</code> (linear history) or <code>merge</code></td>
-      <td><strong>rebase</strong></td>
+      <td>2</td>
+      <td>Worktree base directory (where new worktrees will be created)</td>
+      <td><code>worktree_base_dir</code> (per-repo)</td>
+      <td><code>&lt;parent-of-repo&gt;/&lt;repo-name&gt;_worktrees</code></td>
+      <td>Only asked if you said yes to step 1. Must be <strong>outside</strong> the repo itself — the wizard re-prompts if you point it inside.</td>
+      </tr>
+      <tr>
+      <td>3</td>
+      <td>Auto-cd into new worktrees after creation</td>
+      <td><code>cd_after_new</code> (per-repo)</td>
+      <td><strong>yes</strong></td>
+      <td>Only effective if the shell wrapper from step 2 is installed.</td>
+      </tr>
+      <tr>
+      <td>4</td>
+      <td>Select your sync strategy</td>
+      <td><code>sync_strategy</code> (per-repo)</td>
+      <td><strong><code>merge</code></strong></td>
+      <td>The wizard explicitly recommends <code>merge</code> because <code>rebase</code> rewrites history and forces a force-push on every sync. The two options shown are <code>merge</code> and <code>rebase</code>.</td>
+      </tr>
+      <tr>
+      <td>5</td>
+      <td>AI agent CLI command (used by <code>ezs agent</code>)</td>
+      <td><code>agent_command</code> (per-repo)</td>
+      <td><strong><code>claude</code></strong></td>
+      <td>The literal command name <code>ezs agent</code> will exec inside a worktree. Set to <code>aider</code>, <code>cursor-agent</code>, <code>codex</code>, etc. if you want a different CLI.</td>
       </tr>
       </tbody>
       </table>
-      <p>You can flip any of these later without re-running the wizard:</p>
-      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">show</span>                                   <span class="c-comment"># dump current config</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">use_worktrees</span> <span class="c-str">true</span>                 <span class="c-comment"># toggle worktree mode</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">worktree_base_dir</span> <span class="c-str">~/code/wt</span>        <span class="c-comment"># move the worktree root</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">default_base_branch</span> <span class="c-str">master</span>         <span class="c-comment"># switch default base</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">sync_strategy</span> <span class="c-str">merge</span>                <span class="c-comment"># prefer merges over rebases</span>
-</code></pre>
-      <p>If you want agents and the MCP server to share the same config, also set:</p>
-      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">github_token</span> <span class="c-str">ghp_...</span>               <span class="c-comment"># optional; falls back to `gh auth`</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">claude</span>               <span class="c-comment"># command for `ezs agent`</span>
+      <p>The wizard does <strong>not</strong> prompt for the base branch name. <code>default_base_branch</code>
+      is a global setting that defaults to the literal string <code>&quot;main&quot;</code> if unset
+      (see <code>cmd/ezs/commands/config.go</code>); change it with <code>ezs config set</code> below if
+      your repo uses something else.</p>
+      <p>You can change any setting later without re-running the wizard:</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">show</span>                                    <span class="c-comment"># dump global + active-repo config</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">use_worktrees</span> <span class="c-str">true</span>                  <span class="c-comment"># toggle worktree mode</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">worktree_base_dir</span> <span class="c-str">~/code/wt</span>         <span class="c-comment"># move the worktree root</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">cd_after_new</span> <span class="c-str">true</span>                   <span class="c-comment"># toggle auto-cd</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">sync_strategy</span> <span class="c-str">rebase</span>                <span class="c-comment"># switch to rebase-based sync</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">aider</span>                 <span class="c-comment"># switch the agent CLI</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">default_base_branch</span> <span class="c-str">master</span>          <span class="c-comment"># override the global default base</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">github_token</span> <span class="c-str">ghp_...</span>                <span class="c-comment"># optional; otherwise falls back to `gh auth`</span>
 </code></pre>
       <h3 id="4-create-your-first-stacked-branch">4. Create your first stacked branch</h3>
-      <pre><code><span class="c-comment"># Creates feature-1 rooted on main, with its own worktree, and cd&#39;s into it.</span>
+      <p><code>ezs new &lt;name&gt;</code> creates a branch whose parent defaults to <strong>your current
+      branch</strong>, not <code>main</code>. So if you want a fresh stack rooted on <code>main</code>, make sure
+      you're on <code>main</code> first (or pass <code>--parent main</code> explicitly).</p>
+      <pre><code><span class="c-cmd">git</span> <span class="c-flag">checkout</span> <span class="c-str">main</span>          <span class="c-comment"># or:  ezs new feature-1 --parent main</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">feature-1</span>
-<span class="c-comment">#   - git fetch origin main</span>
-<span class="c-comment">#   - git branch feature-1 origin/main</span>
-<span class="c-comment">#   - git worktree add &lt;worktree_base_dir&gt;/feature-1 feature-1</span>
-<span class="c-comment">#   - records {parent: main} in ~/.ezstack/stacks.json</span>
-<span class="c-comment">#   - cd &lt;worktree_base_dir&gt;/feature-1</span>
+<span class="c-comment">#   What this actually does (see cmd/ezs/commands/new.go):</span>
+<span class="c-comment">#     - reads use_worktrees / worktree_base_dir from the per-repo config</span>
+<span class="c-comment">#     - creates branch `feature-1` from the current branch (no implicit</span>
+<span class="c-comment">#       `git fetch` — work off whatever your local main currently points at)</span>
+<span class="c-comment">#     - if use_worktrees=true: `git worktree add &lt;worktree_base_dir&gt;/feature-1 feature-1`</span>
+<span class="c-comment">#     - records the branch in ~/.ezstack/stacks.json with parent=&lt;your previous branch&gt;</span>
+<span class="c-comment">#     - if this is the first branch in a new stack, prompts you for a stack name</span>
+<span class="c-comment">#     - if cd_after_new=true and the shell wrapper is installed: cd into the worktree</span>
 </code></pre>
-      <p>Make some edits, then commit:</p>
+      <p>Make some edits, then commit. <code>ezs commit</code> is a thin wrapper over <code>git commit</code>
+      that also rebases child branches and offers to push for you.</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">commit</span> <span class="c-flag">-am</span> <span class="c-str">&#34;Scaffold feature&#34;</span>
-<span class="c-comment">#   - git add -A &amp;&amp; git commit -m &#34;...&#34;</span>
-<span class="c-comment">#   - ezs sync --children  (no-op on a fresh branch; rebases descendants otherwise)</span>
+<span class="c-comment">#   What this actually does (see cmd/ezs/commands/commit.go):</span>
+<span class="c-comment">#     1. Runs `git commit -am &#34;...&#34;` interactively (your editor still works for</span>
+<span class="c-comment">#        long messages — the -m here just bypasses it).</span>
+<span class="c-comment">#     2. If the branch already exists on the remote, prompts:</span>
+<span class="c-comment">#          &#34;Push to remote? [Y/n]&#34;</span>
+<span class="c-comment">#        — answer Y to push, or n to defer. (Amend prompts for `--force` push.)</span>
+<span class="c-comment">#     3. Looks up child branches in stacks.json and rebases (or merges,</span>
+<span class="c-comment">#        per sync_strategy) each child onto the new tip. On a brand-new</span>
+<span class="c-comment">#        leaf branch this is a no-op.</span>
 </code></pre>
       <p>Stack a second branch on top:</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">feature-2</span> <span class="c-flag">--parent</span> <span class="c-str">feature-1</span>
-<span class="c-comment"># ... edit ...</span>
+<span class="c-comment"># ... edit files in the feature-2 worktree ...</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">commit</span> <span class="c-flag">-am</span> <span class="c-str">&#34;Wire up feature&#34;</span>
 </code></pre>
-      <h3 id="5-push-and-open-prs">5. Push and open PRs</h3>
-      <pre><code><span class="c-comment"># Push every branch in the stack in one shot.</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">push</span> <span class="c-flag">--stack</span>
-<span class="c-comment">#   - walks root → leaf</span>
-<span class="c-comment">#   - git push --force-with-lease origin &lt;branch&gt; (sets upstream on first push)</span>
-
-<span class="c-comment"># Open a PR for each branch. Base = parent branch (NOT main), so feature-2&#39;s</span>
-<span class="c-comment"># PR targets feature-1 and only shows the feature-2 diff.</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">goto</span> <span class="c-str">feature-1</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">ezs</span> <span class="c-str">pr</span> <span class="c-str">create</span> <span class="c-flag">-t</span> <span class="c-str">&#34;Part 1: scaffolding&#34;</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">goto</span> <span class="c-str">feature-2</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">ezs</span> <span class="c-str">pr</span> <span class="c-str">create</span> <span class="c-flag">-t</span> <span class="c-str">&#34;Part 2: wire it up&#34;</span>
-
-<span class="c-comment"># Inject stack-navigation links + ✅ / 🔵 markers into every PR body.</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">stack</span>
+      <h3 id="5-push-the-stack-and-open-prs">5. Push the stack and open PRs</h3>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">push</span> <span class="c-flag">--stack</span>
+<span class="c-comment">#   What this actually does (see cmd/ezs/commands/push.go):</span>
+<span class="c-comment">#     - walks every branch in the current stack, root → leaf, skipping any</span>
+<span class="c-comment">#       branches already marked merged</span>
+<span class="c-comment">#     - for each: `git push -u &lt;remote&gt; &lt;branch&gt;` (plain push, sets upstream)</span>
+<span class="c-comment">#     - skips branches whose remote is &#34;no-push&#34; (fork PRs without</span>
+<span class="c-comment">#       maintainer-push permission) with a warning</span>
+<span class="c-comment">#     - add `--force` (or `-f`) to switch to `git push -u --force-with-lease`,</span>
+<span class="c-comment">#       which is what you want after rebases or amends</span>
 </code></pre>
-      <h3 id="6-check-the-stack-any-time">6. Check the stack any time</h3>
-      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">status</span>        <span class="c-comment"># current branch + stack position + PR / CI state</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">ls</span>            <span class="c-comment"># every stack in this repo, tree-formatted</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">diff</span>          <span class="c-comment"># diff of the current branch against its parent</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">log</span>           <span class="c-comment"># commits on the current branch since its parent</span>
+      <p>Open a PR for each branch. The base branch ezstack passes to <code>gh pr create</code>
+      is the branch's recorded <strong>parent</strong> in <code>stacks.json</code>, NOT <code>main</code>. So
+      <code>feature-2</code>'s PR targets <code>feature-1</code> and the diff only shows feature-2's
+      commits.</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">goto</span> <span class="c-str">feature-1</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">create</span> <span class="c-flag">-t</span> <span class="c-str">&#34;Part 1: scaffolding&#34;</span>
+
+<span class="c-cmd">ezs</span> <span class="c-flag">goto</span> <span class="c-str">feature-2</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">create</span> <span class="c-flag">-t</span> <span class="c-str">&#34;Part 2: wire it up&#34;</span>
+<span class="c-comment">#   - shells out to `gh pr create --base &lt;parent&gt; --head &lt;branch&gt; --title &#34;...&#34;`</span>
+<span class="c-comment">#   - records the PR number back into stacks.json</span>
+<span class="c-comment">#   - add `-d` / `--draft` to open as a draft</span>
 </code></pre>
-      <p>That's the whole flow. For day-two operations (merged parents, remote PRs,
-      stacking on top of someone else's work) keep reading in
-      <a href="#workflows">Workflows</a>, or jump to <a href="#commands">Commands</a> for the full
-      reference.</p>
+      <p>Now inject stack-navigation links into every PR description so reviewers can
+      hop around the stack:</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">stack</span>
+<span class="c-comment">#   - calls gh.UpdateStackDescription for every PR in the stack</span>
+<span class="c-comment">#     (see cmd/ezs/commands/utils.go and the github client)</span>
+<span class="c-comment">#   - rewrites each PR body so it contains a managed block listing every</span>
+<span class="c-comment">#     branch in the stack, with the active branch marked</span>
+</code></pre>
+      <h3 id="6-inspect-the-stack-any-time">6. Inspect the stack any time</h3>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">status</span>        <span class="c-comment"># current branch + its position in the stack + PR / CI status</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">ls</span>            <span class="c-comment"># alias for `ezs list` — every stack in the repo, tree-formatted</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">diff</span>          <span class="c-comment"># diff of the current branch against its parent (numstat / diffstat)</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">log</span>           <span class="c-comment"># commits on the current branch since its parent (hash, msg, author, date)</span>
+</code></pre>
+      <p>That's the whole flow. For day-two operations (merged parents, reviewing
+      remote PRs, stacking on top of someone else's work) jump to
+      <a href="#workflows">Workflows</a>, or <a href="#commands">Commands</a> for the full reference of
+      every flag on every subcommand.</p>
       </section>
 
       <section class="docs-section" id="installation" data-heading="Installation">

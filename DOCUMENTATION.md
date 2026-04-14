@@ -34,35 +34,39 @@ ezstack is a CLI tool for managing stacked pull requests. It supports two workfl
 
 ## Getting Started
 
-A five-minute path from zero to a live stacked PR. Each step shows the exact
-command to run and what ezstack does under the hood, so there's nothing to
-reverse-engineer later.
+A guided path from zero to a live stacked PR. Every command and every
+parenthetical describes what ezstack actually does — no glossed-over details.
 
 ### 1. Install the binary
 
-Pick one. Both drop `ezs` (and `ezs-mcp`, if you want the MCP server) on your
-`PATH` without cloning the repo.
+Pick whichever fits your setup. Both drop `ezs` (and `ezs-mcp`, if you also
+want the MCP server) onto your `PATH` without cloning the repo.
 
 ```bash
 # Homebrew — macOS / Linux
 brew install KulkarniKaustubh/ezstack/ezstack
 
-# Go toolchain — any OS with Go 1.22+
+# Go toolchain — Go 1.25+ required (matches the module's go directive)
 go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest
 ```
+
+You'll also need `git` 2.20+, [`fzf`](https://github.com/junegunn/fzf) for
+interactive selection prompts, and the [GitHub CLI](https://cli.github.com/)
+(`gh`) for any PR-related commands.
 
 Verify the install:
 
 ```bash
 ezs --version
-# → ezs v4.3.5
+# → ezstack version 4.3.5
 ```
 
 ### 2. Wire up shell integration
 
-ezstack changes your working directory for commands like `goto`, `new`, `up`,
-`down`, and `sync` (so switching branches actually drops you into the right
-worktree). That needs a one-line eval in your shell rc:
+A handful of ezstack commands need to change your shell's working directory:
+`goto`, `new`, `delete`, `sync`, `up`, `down`, and `menu` (these are the
+commands the shell wrapper intercepts in `cmd/ezs/main.go`). A one-line eval in
+your rc file installs the wrapper.
 
 ```bash
 # zsh
@@ -72,105 +76,146 @@ echo 'eval "$(ezs --shell-init)"' >> ~/.zshrc && exec zsh
 echo 'eval "$(ezs --shell-init)"' >> ~/.bashrc && exec bash
 ```
 
-Without this, any command that would `cd` instead prints the target path and
-you'd have to `cd` manually — it still works, just clunkier.
+Without the wrapper installed, those commands still run — they just print
+something like `cd /path/to/worktree` instead of actually moving your shell,
+and you'd have to copy-paste the path yourself.
 
 ### 3. Configure the repo
 
-Run `ezs config` inside a git repository. This is an interactive first-run
-wizard — it asks five questions and writes the answers to `~/.ezstack/`
-(a global section plus a per-repo section keyed by repo path).
+`ezs config` (with no subcommand) launches an interactive first-run wizard
+that writes settings into `~/.ezstack/config.json` — one global section plus a
+per-repo section keyed by the repository's absolute path.
 
 ```bash
 cd ~/code/my-project
 ezs config
 ```
 
-You'll be asked:
+The wizard asks these prompts, in order:
 
-| Prompt | What it sets | Recommended |
-|---|---|---|
-| Use worktrees? | `use_worktrees` — one working directory per branch vs. a single `git checkout`-based workspace | **yes** (enables parallel work across the stack) |
-| Worktree base directory | `worktree_base_dir` — where per-branch worktrees are materialized | `~/code/my-project-worktrees` (keep it next to the repo) |
-| Main branch name | `default_base_branch` — the root of every new stack | `main` or `master` |
-| Auto-cd after `ezs new`? | `cd_after_new` — jump into the new worktree automatically | **yes** |
-| Sync strategy | `sync_strategy` — `rebase` (linear history) or `merge` | **rebase** |
+| # | Prompt | What it sets | Default | Notes |
+|---|---|---|---|---|
+| 1 | Use git worktrees for new branches (recommended) | `use_worktrees` (per-repo) | **yes** | Required for `ezs agent`. Strongly recommended; enables parallel work across the stack. |
+| 2 | Worktree base directory (where new worktrees will be created) | `worktree_base_dir` (per-repo) | `<parent-of-repo>/<repo-name>_worktrees` | Only asked if you said yes to step 1. Must be **outside** the repo itself — the wizard re-prompts if you point it inside. |
+| 3 | Auto-cd into new worktrees after creation | `cd_after_new` (per-repo) | **yes** | Only effective if the shell wrapper from step 2 is installed. |
+| 4 | Select your sync strategy | `sync_strategy` (per-repo) | **`merge`** | The wizard explicitly recommends `merge` because `rebase` rewrites history and forces a force-push on every sync. The two options shown are `merge` and `rebase`. |
+| 5 | AI agent CLI command (used by `ezs agent`) | `agent_command` (per-repo) | **`claude`** | The literal command name `ezs agent` will exec inside a worktree. Set to `aider`, `cursor-agent`, `codex`, etc. if you want a different CLI. |
 
-You can flip any of these later without re-running the wizard:
+The wizard does **not** prompt for the base branch name. `default_base_branch`
+is a global setting that defaults to the literal string `"main"` if unset
+(see `cmd/ezs/commands/config.go`); change it with `ezs config set` below if
+your repo uses something else.
 
-```bash
-ezs config show                                   # dump current config
-ezs config set use_worktrees true                 # toggle worktree mode
-ezs config set worktree_base_dir ~/code/wt        # move the worktree root
-ezs config set default_base_branch master         # switch default base
-ezs config set sync_strategy merge                # prefer merges over rebases
-```
-
-If you want agents and the MCP server to share the same config, also set:
+You can change any setting later without re-running the wizard:
 
 ```bash
-ezs config set github_token ghp_...               # optional; falls back to `gh auth`
-ezs config set agent_command claude               # command for `ezs agent`
+ezs config show                                    # dump global + active-repo config
+ezs config set use_worktrees true                  # toggle worktree mode
+ezs config set worktree_base_dir ~/code/wt         # move the worktree root
+ezs config set cd_after_new true                   # toggle auto-cd
+ezs config set sync_strategy rebase                # switch to rebase-based sync
+ezs config set agent_command aider                 # switch the agent CLI
+ezs config set default_base_branch master          # override the global default base
+ezs config set github_token ghp_...                # optional; otherwise falls back to `gh auth`
 ```
 
 ### 4. Create your first stacked branch
 
+`ezs new <name>` creates a branch whose parent defaults to **your current
+branch**, not `main`. So if you want a fresh stack rooted on `main`, make sure
+you're on `main` first (or pass `--parent main` explicitly).
+
 ```bash
-# Creates feature-1 rooted on main, with its own worktree, and cd's into it.
+git checkout main          # or:  ezs new feature-1 --parent main
 ezs new feature-1
-#   - git fetch origin main
-#   - git branch feature-1 origin/main
-#   - git worktree add <worktree_base_dir>/feature-1 feature-1
-#   - records {parent: main} in ~/.ezstack/stacks.json
-#   - cd <worktree_base_dir>/feature-1
+#   What this actually does (see cmd/ezs/commands/new.go):
+#     - reads use_worktrees / worktree_base_dir from the per-repo config
+#     - creates branch `feature-1` from the current branch (no implicit
+#       `git fetch` — work off whatever your local main currently points at)
+#     - if use_worktrees=true: `git worktree add <worktree_base_dir>/feature-1 feature-1`
+#     - records the branch in ~/.ezstack/stacks.json with parent=<your previous branch>
+#     - if this is the first branch in a new stack, prompts you for a stack name
+#     - if cd_after_new=true and the shell wrapper is installed: cd into the worktree
 ```
 
-Make some edits, then commit:
+Make some edits, then commit. `ezs commit` is a thin wrapper over `git commit`
+that also rebases child branches and offers to push for you.
 
 ```bash
 ezs commit -am "Scaffold feature"
-#   - git add -A && git commit -m "..."
-#   - ezs sync --children  (no-op on a fresh branch; rebases descendants otherwise)
+#   What this actually does (see cmd/ezs/commands/commit.go):
+#     1. Runs `git commit -am "..."` interactively (your editor still works for
+#        long messages — the -m here just bypasses it).
+#     2. If the branch already exists on the remote, prompts:
+#          "Push to remote? [Y/n]"
+#        — answer Y to push, or n to defer. (Amend prompts for `--force` push.)
+#     3. Looks up child branches in stacks.json and rebases (or merges,
+#        per sync_strategy) each child onto the new tip. On a brand-new
+#        leaf branch this is a no-op.
 ```
 
 Stack a second branch on top:
 
 ```bash
 ezs new feature-2 --parent feature-1
-# ... edit ...
+# ... edit files in the feature-2 worktree ...
 ezs commit -am "Wire up feature"
 ```
 
-### 5. Push and open PRs
+### 5. Push the stack and open PRs
 
 ```bash
-# Push every branch in the stack in one shot.
 ezs push --stack
-#   - walks root → leaf
-#   - git push --force-with-lease origin <branch> (sets upstream on first push)
-
-# Open a PR for each branch. Base = parent branch (NOT main), so feature-2's
-# PR targets feature-1 and only shows the feature-2 diff.
-ezs goto feature-1 && ezs pr create -t "Part 1: scaffolding"
-ezs goto feature-2 && ezs pr create -t "Part 2: wire it up"
-
-# Inject stack-navigation links + ✅ / 🔵 markers into every PR body.
-ezs pr stack
+#   What this actually does (see cmd/ezs/commands/push.go):
+#     - walks every branch in the current stack, root → leaf, skipping any
+#       branches already marked merged
+#     - for each: `git push -u <remote> <branch>` (plain push, sets upstream)
+#     - skips branches whose remote is "no-push" (fork PRs without
+#       maintainer-push permission) with a warning
+#     - add `--force` (or `-f`) to switch to `git push -u --force-with-lease`,
+#       which is what you want after rebases or amends
 ```
 
-### 6. Check the stack any time
+Open a PR for each branch. The base branch ezstack passes to `gh pr create`
+is the branch's recorded **parent** in `stacks.json`, NOT `main`. So
+`feature-2`'s PR targets `feature-1` and the diff only shows feature-2's
+commits.
 
 ```bash
-ezs status        # current branch + stack position + PR / CI state
-ezs ls            # every stack in this repo, tree-formatted
-ezs diff          # diff of the current branch against its parent
-ezs log           # commits on the current branch since its parent
+ezs goto feature-1
+ezs pr create -t "Part 1: scaffolding"
+
+ezs goto feature-2
+ezs pr create -t "Part 2: wire it up"
+#   - shells out to `gh pr create --base <parent> --head <branch> --title "..."`
+#   - records the PR number back into stacks.json
+#   - add `-d` / `--draft` to open as a draft
 ```
 
-That's the whole flow. For day-two operations (merged parents, remote PRs,
-stacking on top of someone else's work) keep reading in
-[Workflows](#workflows), or jump to [Commands](#commands) for the full
-reference.
+Now inject stack-navigation links into every PR description so reviewers can
+hop around the stack:
+
+```bash
+ezs pr stack
+#   - calls gh.UpdateStackDescription for every PR in the stack
+#     (see cmd/ezs/commands/utils.go and the github client)
+#   - rewrites each PR body so it contains a managed block listing every
+#     branch in the stack, with the active branch marked
+```
+
+### 6. Inspect the stack any time
+
+```bash
+ezs status        # current branch + its position in the stack + PR / CI status
+ezs ls            # alias for `ezs list` — every stack in the repo, tree-formatted
+ezs diff          # diff of the current branch against its parent (numstat / diffstat)
+ezs log           # commits on the current branch since its parent (hash, msg, author, date)
+```
+
+That's the whole flow. For day-two operations (merged parents, reviewing
+remote PRs, stacking on top of someone else's work) jump to
+[Workflows](#workflows), or [Commands](#commands) for the full reference of
+every flag on every subcommand.
 
 ---
 
