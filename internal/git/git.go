@@ -306,31 +306,118 @@ func (g *Git) GetCommitsAhead(branch, target string) (int, error) {
 	return count, nil
 }
 
+// parseShortstat extracts added/removed counts from a `git diff --shortstat`
+// line like " 3 files changed, 42 insertions(+), 7 deletions(-)".
+func parseShortstat(output string) (added, removed int) {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return 0, 0
+	}
+	for _, part := range strings.Split(output, ",") {
+		part = strings.TrimSpace(part)
+		fields := strings.Fields(part)
+		if len(fields) == 0 {
+			continue
+		}
+		n, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		switch {
+		case strings.Contains(part, "insertion"):
+			added = n
+		case strings.Contains(part, "deletion"):
+			removed = n
+		}
+	}
+	return added, removed
+}
+
 // GetDiffStat returns the total lines added and removed between base and head.
 // Uses three-dot diff (merge-base) to show only changes introduced by head,
 // not changes on base that head doesn't have.
+//
+// Deprecated: prefer GetStackDiffStat, which handles stale parent refs,
+// working-tree changes, and remote-only branches robustly.
 func (g *Git) GetDiffStat(base, head string) (added int, removed int, err error) {
 	output, err := g.run("diff", "--shortstat", base+"..."+head)
 	if err != nil {
 		return 0, 0, err
 	}
-	output = strings.TrimSpace(output)
-	if output == "" {
-		return 0, 0, nil
+	added, removed = parseShortstat(output)
+	return added, removed, nil
+}
+
+// GetStackDiffStat computes the added/removed line counts introduced by
+// `branch` on top of its parent, in a way that is robust against all the
+// shapes an ezstack branch can take:
+//
+//   - No PR yet, local only                  — uses local parent
+//   - Remote PR on origin                    — uses origin/<parent>
+//   - PR from a fork                         — falls back to origin/<branch>
+//   - Parent branch drifted after `ezs sync` — picks the newer merge-base
+//     between local parent and origin/<parent>
+//   - Unstaged + staged working-tree edits   — included when branch == HEAD
+//
+// parentCandidates are tried in order; any that don't resolve are skipped.
+// We compute merge-base against each resolvable candidate and choose the
+// one that is latest in history (descendant of the others). This is what
+// prevents stale local-parent refs from inflating the counts after a sync.
+//
+// When includeWorkingTree is true the caller guarantees that `branch`
+// resolves to HEAD, and we diff the merge-base against the working tree
+// (tracked files only — matching plain `git diff` semantics).
+func (g *Git) GetStackDiffStat(parentCandidates []string, branch string, includeWorkingTree bool) (added, removed int, err error) {
+	if branch == "" {
+		return 0, 0, fmt.Errorf("branch is required")
 	}
-	// Parse "N insertions(+)" and "N deletions(-)" from the shortstat line
-	for _, part := range strings.Split(output, ",") {
-		part = strings.TrimSpace(part)
-		if strings.Contains(part, "insertion") {
-			if n, parseErr := strconv.Atoi(strings.Fields(part)[0]); parseErr == nil {
-				added = n
-			}
-		} else if strings.Contains(part, "deletion") {
-			if n, parseErr := strconv.Atoi(strings.Fields(part)[0]); parseErr == nil {
-				removed = n
-			}
+	if _, e := g.run("rev-parse", "--verify", branch); e != nil {
+		return 0, 0, fmt.Errorf("branch %q does not resolve: %w", branch, e)
+	}
+
+	var bases []string
+	seen := make(map[string]bool)
+	for _, p := range parentCandidates {
+		if p == "" {
+			continue
+		}
+		if _, e := g.run("rev-parse", "--verify", p); e != nil {
+			continue
+		}
+		mb, e := g.run("merge-base", p, branch)
+		if e != nil {
+			continue
+		}
+		mb = strings.TrimSpace(mb)
+		if mb == "" || seen[mb] {
+			continue
+		}
+		seen[mb] = true
+		bases = append(bases, mb)
+	}
+	if len(bases) == 0 {
+		return 0, 0, fmt.Errorf("no parent candidate resolved for %s", branch)
+	}
+
+	// Pick the newest merge-base: the one that is a descendant of all
+	// others. If candidates are divergent (rare), keep the first.
+	best := bases[0]
+	for _, b := range bases[1:] {
+		// `merge-base --is-ancestor A B` exits 0 iff A is an ancestor of B.
+		if _, e := g.run("merge-base", "--is-ancestor", best, b); e == nil {
+			best = b
 		}
 	}
+
+	args := []string{"diff", "--shortstat", best}
+	if !includeWorkingTree {
+		args = append(args, branch)
+	}
+	output, err := g.run(args...)
+	if err != nil {
+		return 0, 0, err
+	}
+	added, removed = parseShortstat(output)
 	return added, removed, nil
 }
 
@@ -359,6 +446,36 @@ func (g *Git) IsLocalAheadOfRemote(branch string, remote string) (bool, error) {
 // Deprecated: Use IsLocalAheadOfRemote instead.
 func (g *Git) IsLocalAheadOfOrigin(branch string) (bool, error) {
 	return g.IsLocalAheadOfRemote(branch, "origin")
+}
+
+// LocalDiffersFromRemote reports whether the local branch differs from
+// origin/<branch>. When includeWorkingTree is true and the branch is the
+// current HEAD, uncommitted changes count as divergence — so that a dirty
+// working tree on a pushed branch is surfaced as "local != pushed".
+func (g *Git) LocalDiffersFromRemote(branch string, includeWorkingTree bool) (bool, error) {
+	if !g.RemoteBranchExists(branch) {
+		return true, nil
+	}
+	localSha, err := g.run("rev-parse", "--verify", branch)
+	if err != nil {
+		return false, err
+	}
+	remoteSha, err := g.run("rev-parse", "--verify", "origin/"+branch)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(localSha) != strings.TrimSpace(remoteSha) {
+		return true, nil
+	}
+	if includeWorkingTree {
+		// `git diff --quiet HEAD` exits 1 when the working tree or index
+		// differs from HEAD. Any other non-zero exit is a real error, but
+		// in practice we only care about the binary "dirty?" signal here.
+		if _, err := g.run("diff", "--quiet", "HEAD"); err != nil {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // RemoteBranchExists checks if a remote branch exists

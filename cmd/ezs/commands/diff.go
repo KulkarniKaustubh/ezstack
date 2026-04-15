@@ -29,12 +29,16 @@ func Diff(args []string) error {
     -b, --branch <name>  Show diff for a specific branch (default: current)
     --stat               Show diffstat only
     --json               Output file-level diff stats as JSON
+    --vs-pr              Diff the local branch against origin/<branch> — i.e.
+                         show exactly what your next push would add to the PR.
+                         Fails if the branch has not been pushed.
     -h, --help           Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	branchFlag := fs.StringP("branch", "b", "", "Show diff for a specific branch")
 	stat := fs.Bool("stat", false, "Show diffstat only")
 	jsonFlag := fs.Bool("json", false, "Output file-level diff stats as JSON")
+	vsPR := fs.Bool("vs-pr", false, "Diff local branch against origin/<branch>")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -78,23 +82,78 @@ func Diff(args []string) error {
 		parent = branch.Parent
 	}
 
+	// --vs-pr: base is origin/<branch>, end is working tree (if current) or
+	// the local branch ref. This answers "what would my next push change on
+	// the PR?". Only valid once the branch has been pushed.
+	if *vsPR {
+		if !g.RemoteBranchExists(branchName) {
+			return fmt.Errorf("branch %q has not been pushed — nothing on origin to compare against", branchName)
+		}
+		base := "origin/" + branchName
+		end := branchName
+		if cur, _ := g.CurrentBranch(); cur == branchName {
+			end = ""
+		}
+
+		if *jsonFlag {
+			return diffJSON(g, base, end)
+		}
+		diffArgs := []string{"diff", base}
+		if end != "" {
+			diffArgs = append(diffArgs, end)
+		}
+		if *stat {
+			diffArgs = append(diffArgs, "--stat")
+		}
+		diffArgs = append(diffArgs, fs.Args()...)
+		return g.RunInteractive(diffArgs...)
+	}
+
 	// Use origin/ for the parent when available to get consistent diffs
 	parentRef := parent
 	if g.RemoteBranchExists(parent) {
 		parentRef = "origin/" + parent
 	}
 
-	if *jsonFlag {
-		return diffJSON(g, parentRef, branchName)
+	base, end, err := diffRange(g, parentRef, branchName)
+	if err != nil {
+		return err
 	}
 
-	diffArgs := []string{"diff", parentRef + "..." + branchName}
+	if *jsonFlag {
+		return diffJSON(g, base, end)
+	}
+
+	diffArgs := []string{"diff", base}
+	if end != "" {
+		diffArgs = append(diffArgs, end)
+	}
 	if *stat {
 		diffArgs = append(diffArgs, "--stat")
 	}
 	diffArgs = append(diffArgs, fs.Args()...)
 
 	return g.RunInteractive(diffArgs...)
+}
+
+// diffRange returns the base and end refs for `git diff`. When branchName is
+// the currently checked-out branch, end is empty so that `git diff <base>`
+// compares the merge-base to the working tree, including unstaged and staged
+// changes. Otherwise we diff committed state only.
+func diffRange(g *git.Git, parentRef, branchName string) (string, string, error) {
+	mb, err := g.RunCapture("merge-base", parentRef, branchName)
+	if err != nil {
+		return parentRef + "..." + branchName, "", nil
+	}
+	base := strings.TrimSpace(mb)
+	if base == "" {
+		return parentRef + "..." + branchName, "", nil
+	}
+	cur, _ := g.CurrentBranch()
+	if cur == branchName {
+		return base, "", nil
+	}
+	return base, branchName, nil
 }
 
 type diffFileJSON struct {
@@ -110,8 +169,12 @@ type diffOutputJSON struct {
 	TotalDeleted int            `json:"total_deletions"`
 }
 
-func diffJSON(g *git.Git, parentRef, branchName string) error {
-	output, err := g.RunCapture("diff", "--numstat", parentRef+"..."+branchName)
+func diffJSON(g *git.Git, base, end string) error {
+	args := []string{"diff", "--numstat", base}
+	if end != "" {
+		args = append(args, end)
+	}
+	output, err := g.RunCapture(args...)
 	if err != nil {
 		return fmt.Errorf("git diff failed: %w", err)
 	}

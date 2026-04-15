@@ -619,69 +619,144 @@ func resolveLocalRef(g *git.Git, name string) string {
 	return name
 }
 
+// parentCandidatesFor returns refs to try as the "parent" when computing a
+// branch's diff stats. Both the local parent and origin/<parent> are returned
+// when available so GetStackDiffStat can pick whichever merge-base is newer —
+// this is what keeps the stats correct after `ezs sync` rebases the branch
+// onto an updated remote parent.
+func parentCandidatesFor(g *git.Git, parent string) []string {
+	if parent == "" {
+		return nil
+	}
+	var out []string
+	if g.BranchExists(parent) {
+		out = append(out, parent)
+	}
+	if g.RemoteBranchExists(parent) {
+		out = append(out, "origin/"+parent)
+	}
+	return out
+}
+
 // fetchDiffStats computes diff stats for all branches in a stack using parallel local git ops.
 // This is fast (no network) and safe to call from ezs ls.
+//
+// For the currently checked-out branch we diff the merge-base against the
+// working tree so unstaged + staged edits are reflected in the counts. For
+// every other branch we diff committed state only. In both cases we consider
+// both the local parent and origin/<parent> and pick whichever merge-base is
+// newer — this keeps the stats correct after `ezs sync` rebases onto a
+// freshly fetched remote parent.
 func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 	statusMap := make(map[string]*ui.BranchStatus)
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// Compute diff for the root branch against its base.
-	// Use RootBase if stored, otherwise infer from common base branches
-	// when the root is a remote feature branch (not main/master itself).
+	currentBranch, _ := g.CurrentBranch()
+
+	// compute gathers diff stats for a single branch. worktreePath is the
+	// branch's dedicated worktree (may be empty). When present and valid,
+	// we run git commands from inside that worktree so the stats reflect
+	// *that* worktree's uncommitted edits — meaning `ezs list` shows
+	// working-tree-accurate counts even when invoked from a different
+	// worktree or from the main repo.
+	compute := func(name, parent, worktreePath string) {
+		parents := parentCandidatesFor(g, parent)
+		if len(parents) == 0 {
+			return
+		}
+
+		// Pick the Git client to use for this branch's stats.
+		statGit := g
+		hasWorktree := false
+		if worktreePath != "" {
+			if st, err := os.Stat(worktreePath); err == nil && st.IsDir() {
+				statGit = git.New(worktreePath)
+				hasWorktree = true
+			}
+		}
+
+		branchRef := name
+		includeWT := false
+		localExists := g.BranchExists(name)
+		switch {
+		case hasWorktree:
+			// The branch has its own worktree on disk — diff against the
+			// working tree of that worktree.
+			includeWT = true
+		case currentBranch != "" && currentBranch == name && localExists:
+			// No dedicated worktree but the branch is the cwd's HEAD.
+			includeWT = true
+		case !localExists:
+			if !g.RemoteBranchExists(name) {
+				return
+			}
+			branchRef = "origin/" + name
+		}
+
+		added, removed, err := statGit.GetStackDiffStat(parents, branchRef, includeWT)
+		if err != nil {
+			return
+		}
+
+		status := &ui.BranchStatus{
+			Additions: added,
+			Deletions: removed,
+		}
+
+		// If the branch also exists on origin AND the local state (including
+		// any working-tree changes) differs from the remote, compute a
+		// second stat showing what's currently on the PR.
+		if localExists && g.RemoteBranchExists(name) {
+			pushedDifferent, _ := statGit.LocalDiffersFromRemote(name, includeWT)
+			if pushedDifferent {
+				if pAdded, pRemoved, err := statGit.GetStackDiffStat(parents, "origin/"+name, false); err == nil {
+					status.PushedAdditions = pAdded
+					status.PushedDeletions = pRemoved
+					status.HasPushedDiff = true
+				}
+			}
+		}
+
+		mu.Lock()
+		statusMap[name] = status
+		mu.Unlock()
+	}
+
+	// Root branch: base is RootBase if stored, else main/master.
 	rootBase := s.RootBase
 	if rootBase == "" && s.Root != "main" && s.Root != "master" {
 		for _, candidate := range []string{"main", "master"} {
-			if g.RemoteBranchExists(candidate) {
+			if g.BranchExists(candidate) || g.RemoteBranchExists(candidate) {
 				rootBase = candidate
 				break
 			}
 		}
 	}
 	if rootBase != "" {
+		// Look up the root branch's worktree, if any.
+		var rootWT string
+		for _, b := range s.Branches {
+			if b.Name == s.Root {
+				rootWT = b.WorktreePath
+				break
+			}
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Always diff against the LOCAL parent and LOCAL branch so the
-			// stats reflect the user's working state, not stale origin refs.
-			// Fall back to origin/<ref> only if the local ref doesn't exist.
-			parentRef := resolveLocalRef(g, rootBase)
-			branchRef := resolveLocalRef(g, s.Root)
-			added, removed, err := g.GetDiffStat(parentRef, branchRef)
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			statusMap[s.Root] = &ui.BranchStatus{
-				Additions: added,
-				Deletions: removed,
-			}
-			mu.Unlock()
+			compute(s.Root, rootBase, rootWT)
 		}()
 	}
 
 	for _, branch := range s.Branches {
+		if branch.IsMerged {
+			continue
+		}
 		wg.Add(1)
 		go func(b *config.Branch) {
 			defer wg.Done()
-			if b.IsMerged {
-				return
-			}
-			// Always diff against the LOCAL parent branch so the stats match
-			// what the user actually has checked out. Using origin/<parent>
-			// would hide local-only parent commits and misreport the diff.
-			parentRef := resolveLocalRef(g, b.Parent)
-			branchRef := resolveLocalRef(g, b.Name)
-			added, removed, err := g.GetDiffStat(parentRef, branchRef)
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			statusMap[b.Name] = &ui.BranchStatus{
-				Additions: added,
-				Deletions: removed,
-			}
-			mu.Unlock()
+			compute(b.Name, b.Parent, b.WorktreePath)
 		}(branch)
 	}
 

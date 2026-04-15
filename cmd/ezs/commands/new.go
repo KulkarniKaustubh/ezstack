@@ -660,12 +660,21 @@ func showDiffStatsAgainstBase(g *git.Git, branch, baseBranch string) {
 		return
 	}
 
-	// Diff against the LOCAL base and LOCAL branch so stats reflect the
-	// user's working state rather than possibly-stale origin refs.
-	baseRef := resolveLocalRef(g, baseBranch)
-	branchRef := resolveLocalRef(g, branch)
-
-	added, removed, err := g.GetDiffStat(baseRef, branchRef)
+	parents := parentCandidatesFor(g, baseBranch)
+	if len(parents) == 0 {
+		return
+	}
+	branchRef := branch
+	includeWT := false
+	if cur, _ := g.CurrentBranch(); cur == branch && g.BranchExists(branch) {
+		includeWT = true
+	} else if !g.BranchExists(branch) {
+		if !g.RemoteBranchExists(branch) {
+			return
+		}
+		branchRef = "origin/" + branch
+	}
+	added, removed, err := g.GetStackDiffStat(parents, branchRef, includeWT)
 	if err != nil {
 		return
 	}

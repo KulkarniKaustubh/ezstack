@@ -154,8 +154,16 @@ type BranchStatus struct {
 	CISummary   string // e.g., "3/3 passed"
 	Mergeable   string // "MERGEABLE", "CONFLICTING", "UNKNOWN"
 	ReviewState string // "APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED", ""
-	Additions   int    // Lines added relative to parent
-	Deletions   int    // Lines removed relative to parent
+	Additions   int    // Lines added relative to parent (local, working tree)
+	Deletions   int    // Lines removed relative to parent (local, working tree)
+
+	// Pushed counts: origin/<branch> vs parent, committed only.
+	// Only rendered when HasPushedDiff is true — i.e. the local working tree
+	// has diverged from what's currently on the remote PR, so the user's
+	// next push would change the PR.
+	PushedAdditions int
+	PushedDeletions int
+	HasPushedDiff   bool
 }
 
 // SelectBranch uses fzf to select a branch from a list
@@ -626,8 +634,11 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 	}
 	if statusMap != nil {
 		if rootStatus, ok := statusMap[stack.Root]; ok && rootStatus != nil {
-			if rootStatus.Additions > 0 || rootStatus.Deletions > 0 {
+			if rootStatus.Additions > 0 || rootStatus.Deletions > 0 || rootStatus.HasPushedDiff {
 				rootLine += fmt.Sprintf(" %s+%d%s %s-%d%s", Green, rootStatus.Additions, Reset, Red, rootStatus.Deletions, Reset)
+				if rootStatus.HasPushedDiff {
+					rootLine += fmt.Sprintf(" %s(pushed +%d -%d)%s", Gray, rootStatus.PushedAdditions, rootStatus.PushedDeletions, Reset)
+				}
 			}
 		}
 	}
@@ -835,14 +846,18 @@ func getDiffStats(branch *config.Branch, statusMap map[string]*BranchStatus) str
 	if !ok || status == nil {
 		return ""
 	}
-	if status.Additions == 0 && status.Deletions == 0 {
-		return ""
-	}
 	// Hide diff stats for merged/closed branches since they're meaningless
 	if branch.IsMerged || branch.PRState == "MERGED" || branch.PRState == "CLOSED" {
 		return ""
 	}
-	return fmt.Sprintf(" %s+%d%s %s-%d%s", Green, status.Additions, Reset, Red, status.Deletions, Reset)
+	if status.Additions == 0 && status.Deletions == 0 && !status.HasPushedDiff {
+		return ""
+	}
+	out := fmt.Sprintf(" %s+%d%s %s-%d%s", Green, status.Additions, Reset, Red, status.Deletions, Reset)
+	if status.HasPushedDiff {
+		out += fmt.Sprintf(" %s(pushed +%d -%d)%s", Gray, status.PushedAdditions, status.PushedDeletions, Reset)
+	}
+	return out
 }
 
 // getStatusText returns CI/review status text WITHOUT color codes (for width calculation)

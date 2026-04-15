@@ -781,6 +781,330 @@ func TestAddRemote(t *testing.T) {
 	}
 }
 
+// TestParseShortstat is pedantic about the output shapes git actually emits
+// so we don't regress on the simple parser that powers every diff count.
+func TestParseShortstat(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       string
+		wantAdded   int
+		wantRemoved int
+	}{
+		{"empty", "", 0, 0},
+		{"whitespace only", "   \n\t  ", 0, 0},
+		{"insertions only", " 1 file changed, 42 insertions(+)", 42, 0},
+		{"deletions only", " 1 file changed, 7 deletions(-)", 0, 7},
+		{"both", " 3 files changed, 42 insertions(+), 7 deletions(-)", 42, 7},
+		{"singular insertion", " 1 file changed, 1 insertion(+)", 1, 0},
+		{"singular deletion", " 1 file changed, 1 deletion(-)", 0, 1},
+		{"both singular", " 2 files changed, 1 insertion(+), 1 deletion(-)", 1, 1},
+		{"trailing newline", " 1 file changed, 5 insertions(+), 2 deletions(-)\n", 5, 2},
+		{"malformed field is skipped", " 1 file changed, oops insertions(+), 9 deletions(-)", 0, 9},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, r := parseShortstat(tt.input)
+			if a != tt.wantAdded || r != tt.wantRemoved {
+				t.Errorf("parseShortstat(%q) = (%d,%d), want (%d,%d)",
+					tt.input, a, r, tt.wantAdded, tt.wantRemoved)
+			}
+		})
+	}
+}
+
+// setupRepoWithBareRemote creates a repo wired to a local bare origin, with an
+// initial commit on main already pushed. Used by the diff-stat and divergence
+// tests below.
+func setupRepoWithBareRemote(t *testing.T) (repoDir, bareDir string, cleanup func()) {
+	t.Helper()
+	tmp, err := os.MkdirTemp("", "ezs-diff-test-*")
+	if err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cleanup = func() { os.RemoveAll(tmp) }
+	repoDir = filepath.Join(tmp, "repo")
+	bareDir = filepath.Join(tmp, "remote.git")
+	if err := os.MkdirAll(repoDir, 0755); err != nil {
+		cleanup()
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	mustGit(t, "", "init", "-b", "main", repoDir)
+	mustGit(t, "", "init", "--bare", bareDir)
+	mustGit(t, repoDir, "config", "user.email", "test@test.com")
+	mustGit(t, repoDir, "config", "user.name", "Test User")
+	mustGit(t, repoDir, "remote", "add", "origin", bareDir)
+	if err := os.WriteFile(filepath.Join(repoDir, "README.md"), []byte("r\n"), 0644); err != nil {
+		cleanup()
+		t.Fatalf("write: %v", err)
+	}
+	mustGit(t, repoDir, "add", ".")
+	mustGit(t, repoDir, "commit", "-q", "-m", "initial")
+	mustGit(t, repoDir, "push", "-q", "origin", "main")
+	return repoDir, bareDir, cleanup
+}
+
+func mustGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %s failed: %v: %s", strings.Join(args, " "), err, out)
+	}
+}
+
+func writeFile(t *testing.T, dir, name, content string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+}
+
+// TestGetStackDiffStat_Committed covers the baseline case: committed lines
+// on a feature branch relative to a local parent.
+func TestGetStackDiffStat_Committed(t *testing.T) {
+	dir, _, cleanup := setupRepoWithBareRemote(t)
+	defer cleanup()
+	g := New(dir)
+
+	mustGit(t, dir, "checkout", "-q", "-b", "feature")
+	writeFile(t, dir, "f.txt", "a\nb\nc\n")
+	mustGit(t, dir, "add", "f.txt")
+	mustGit(t, dir, "commit", "-q", "-m", "feat")
+
+	added, removed, err := g.GetStackDiffStat([]string{"main"}, "feature", false)
+	if err != nil {
+		t.Fatalf("GetStackDiffStat: %v", err)
+	}
+	if added != 3 || removed != 0 {
+		t.Errorf("committed counts = (%d,%d), want (3,0)", added, removed)
+	}
+}
+
+// TestGetStackDiffStat_WorkingTree asserts that includeWorkingTree picks up
+// unstaged + staged changes — the whole point of the fix.
+func TestGetStackDiffStat_WorkingTree(t *testing.T) {
+	dir, _, cleanup := setupRepoWithBareRemote(t)
+	defer cleanup()
+	g := New(dir)
+
+	mustGit(t, dir, "checkout", "-q", "-b", "feature")
+	writeFile(t, dir, "f.txt", "a\nb\nc\n")
+	mustGit(t, dir, "add", "f.txt")
+	mustGit(t, dir, "commit", "-q", "-m", "feat")
+
+	// Two unstaged line additions + one staged new file with one line.
+	writeFile(t, dir, "f.txt", "a\nb\nc\nd\ne\n")
+	writeFile(t, dir, "g.txt", "new\n")
+	mustGit(t, dir, "add", "g.txt")
+
+	// Sanity: committed-only still reports 3.
+	added, removed, err := g.GetStackDiffStat([]string{"main"}, "feature", false)
+	if err != nil {
+		t.Fatalf("committed: %v", err)
+	}
+	if added != 3 || removed != 0 {
+		t.Errorf("committed = (%d,%d), want (3,0)", added, removed)
+	}
+
+	// Working-tree mode: 3 committed + 2 unstaged + 1 staged = 6.
+	added, removed, err = g.GetStackDiffStat([]string{"main"}, "feature", true)
+	if err != nil {
+		t.Fatalf("working tree: %v", err)
+	}
+	if added != 6 || removed != 0 {
+		t.Errorf("working tree = (%d,%d), want (6,0)", added, removed)
+	}
+}
+
+// TestGetStackDiffStat_PicksNewestMergeBase is the post-sync regression test:
+// when multiple parent candidates resolve, we must pick the merge-base that
+// is newest in history so a stale local parent ref doesn't inflate counts.
+func TestGetStackDiffStat_PicksNewestMergeBase(t *testing.T) {
+	dir, _, cleanup := setupRepoWithBareRemote(t)
+	defer cleanup()
+	g := New(dir)
+
+	// Timeline:
+	//   main ──── A ──── B ──── C (feature)
+	//             ▲       ▲
+	//             │       └ parent-new
+	//             └ parent-old
+	// "parent-old" is ancestor of "parent-new"; feature is at C, 1 commit
+	// past parent-new. If we use parent-old as the base we get 2 commits
+	// of diff; parent-new gives 1. GetStackDiffStat must pick parent-new.
+	writeFile(t, dir, "a.txt", "A\n")
+	mustGit(t, dir, "add", "a.txt")
+	mustGit(t, dir, "commit", "-q", "-m", "A")
+	mustGit(t, dir, "branch", "parent-old")
+
+	writeFile(t, dir, "b.txt", "B\n")
+	mustGit(t, dir, "add", "b.txt")
+	mustGit(t, dir, "commit", "-q", "-m", "B")
+	mustGit(t, dir, "branch", "parent-new")
+
+	mustGit(t, dir, "checkout", "-q", "-b", "feature")
+	writeFile(t, dir, "c.txt", "C\n")
+	mustGit(t, dir, "add", "c.txt")
+	mustGit(t, dir, "commit", "-q", "-m", "C")
+
+	// Using only parent-old: 2 lines added (b.txt + c.txt).
+	aOld, _, err := g.GetStackDiffStat([]string{"parent-old"}, "feature", false)
+	if err != nil {
+		t.Fatalf("parent-old only: %v", err)
+	}
+	if aOld != 2 {
+		t.Errorf("parent-old only added = %d, want 2", aOld)
+	}
+
+	// Using both: must pick parent-new, so 1 line (c.txt).
+	aBoth, _, err := g.GetStackDiffStat([]string{"parent-old", "parent-new"}, "feature", false)
+	if err != nil {
+		t.Fatalf("both: %v", err)
+	}
+	if aBoth != 1 {
+		t.Errorf("both-candidates added = %d, want 1 (should prefer newest merge-base)", aBoth)
+	}
+
+	// Same result when order is reversed.
+	aRev, _, err := g.GetStackDiffStat([]string{"parent-new", "parent-old"}, "feature", false)
+	if err != nil {
+		t.Fatalf("reversed: %v", err)
+	}
+	if aRev != aBoth {
+		t.Errorf("order-dependent: got %d then %d", aBoth, aRev)
+	}
+}
+
+// TestGetStackDiffStat_SkipsInvalidCandidates verifies that nonexistent parent
+// candidates are silently skipped so a partial candidate list still works.
+func TestGetStackDiffStat_SkipsInvalidCandidates(t *testing.T) {
+	dir, _, cleanup := setupRepoWithBareRemote(t)
+	defer cleanup()
+	g := New(dir)
+
+	mustGit(t, dir, "checkout", "-q", "-b", "feature")
+	writeFile(t, dir, "f.txt", "x\ny\n")
+	mustGit(t, dir, "add", "f.txt")
+	mustGit(t, dir, "commit", "-q", "-m", "feat")
+
+	added, _, err := g.GetStackDiffStat([]string{"no-such-branch", "main"}, "feature", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if added != 2 {
+		t.Errorf("added = %d, want 2", added)
+	}
+}
+
+// TestGetStackDiffStat_NoValidCandidates errors cleanly when nothing resolves.
+func TestGetStackDiffStat_NoValidCandidates(t *testing.T) {
+	dir, _, cleanup := setupRepoWithBareRemote(t)
+	defer cleanup()
+	g := New(dir)
+
+	_, _, err := g.GetStackDiffStat([]string{"nope", ""}, "main", false)
+	if err == nil {
+		t.Error("expected error for no valid candidates, got nil")
+	}
+}
+
+// TestGetStackDiffStat_InvalidBranch errors cleanly when the branch ref is bogus.
+func TestGetStackDiffStat_InvalidBranch(t *testing.T) {
+	dir, _, cleanup := setupRepoWithBareRemote(t)
+	defer cleanup()
+	g := New(dir)
+
+	_, _, err := g.GetStackDiffStat([]string{"main"}, "not-a-ref", false)
+	if err == nil {
+		t.Error("expected error for invalid branch, got nil")
+	}
+}
+
+// TestLocalDiffersFromRemote covers every combination the dual-count renderer
+// cares about: no remote, in sync, diverged by commit, and dirty working tree.
+func TestLocalDiffersFromRemote(t *testing.T) {
+	dir, _, cleanup := setupRepoWithBareRemote(t)
+	defer cleanup()
+	g := New(dir)
+
+	mustGit(t, dir, "checkout", "-q", "-b", "feature")
+	writeFile(t, dir, "f.txt", "hello\n")
+	mustGit(t, dir, "add", "f.txt")
+	mustGit(t, dir, "commit", "-q", "-m", "f")
+
+	// 1) Branch has never been pushed → treated as diverged.
+	differs, err := g.LocalDiffersFromRemote("feature", false)
+	if err != nil {
+		t.Fatalf("unpushed: %v", err)
+	}
+	if !differs {
+		t.Error("unpushed branch should be reported as diverged")
+	}
+
+	// 2) Push it → in sync.
+	mustGit(t, dir, "push", "-q", "origin", "feature")
+	differs, err = g.LocalDiffersFromRemote("feature", false)
+	if err != nil {
+		t.Fatalf("in sync: %v", err)
+	}
+	if differs {
+		t.Error("pushed branch in sync should not be reported as diverged")
+	}
+
+	// 3) Dirty working tree on a pushed branch.
+	//    With includeWorkingTree=false we ignore the WT (in sync).
+	//    With includeWorkingTree=true the dirty WT counts as divergence.
+	writeFile(t, dir, "f.txt", "hello\nworld\n")
+	if differs, err := g.LocalDiffersFromRemote("feature", false); err != nil {
+		t.Fatalf("dirty committed-only: %v", err)
+	} else if differs {
+		t.Error("dirty WT with includeWT=false should not diverge")
+	}
+	if differs, err := g.LocalDiffersFromRemote("feature", true); err != nil {
+		t.Fatalf("dirty WT: %v", err)
+	} else if !differs {
+		t.Error("dirty WT with includeWT=true should diverge")
+	}
+
+	// 4) New local commit → diverged from origin regardless of includeWT.
+	mustGit(t, dir, "add", "f.txt")
+	mustGit(t, dir, "commit", "-q", "-m", "more")
+	if differs, err := g.LocalDiffersFromRemote("feature", false); err != nil {
+		t.Fatalf("ahead: %v", err)
+	} else if !differs {
+		t.Error("local ahead of origin should diverge even without WT check")
+	}
+}
+
+// TestGetStackDiffStat_DeletionsCounted makes sure removals also flow through
+// the parser correctly — it's easy for a regex-style parser to miss the
+// singular-form "deletion(-)".
+func TestGetStackDiffStat_DeletionsCounted(t *testing.T) {
+	dir, _, cleanup := setupRepoWithBareRemote(t)
+	defer cleanup()
+	g := New(dir)
+
+	writeFile(t, dir, "big.txt", "1\n2\n3\n4\n5\n")
+	mustGit(t, dir, "add", "big.txt")
+	mustGit(t, dir, "commit", "-q", "-m", "seed")
+	mustGit(t, dir, "push", "-q", "origin", "main")
+
+	mustGit(t, dir, "checkout", "-q", "-b", "shrink")
+	writeFile(t, dir, "big.txt", "1\n")
+	mustGit(t, dir, "add", "big.txt")
+	mustGit(t, dir, "commit", "-q", "-m", "shrink")
+
+	added, removed, err := g.GetStackDiffStat([]string{"main"}, "shrink", false)
+	if err != nil {
+		t.Fatalf("GetStackDiffStat: %v", err)
+	}
+	if added != 0 || removed != 4 {
+		t.Errorf("counts = (%d,%d), want (0,4)", added, removed)
+	}
+}
+
 func TestPushForce_VariadicRemote(t *testing.T) {
 	// Test that Push and PushForce compile and accept variadic args
 	// (Can't test actual push without a real remote, but verify the API works)

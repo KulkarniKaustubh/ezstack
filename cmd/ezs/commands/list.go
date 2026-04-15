@@ -133,6 +133,11 @@ type branchJSON struct {
 	WorktreePath string `json:"worktree_path,omitempty"`
 	Additions    int    `json:"additions"`
 	Deletions    int    `json:"deletions"`
+	// Pushed counts reflect origin/<branch> vs parent, committed only.
+	// Populated when the local state has diverged from what's on the remote.
+	PushedAdditions int  `json:"pushed_additions,omitempty"`
+	PushedDeletions int  `json:"pushed_deletions,omitempty"`
+	HasPushedDiff   bool `json:"has_pushed_diff,omitempty"`
 }
 
 // statusStackJSON represents a stack in JSON status output (with PR/CI info)
@@ -197,6 +202,9 @@ func printStacksJSON(stacks []*config.Stack, currentBranch string, diffMaps []ma
 				if bs, ok := dm[b.Name]; ok {
 					bj.Additions = bs.Additions
 					bj.Deletions = bs.Deletions
+					bj.PushedAdditions = bs.PushedAdditions
+					bj.PushedDeletions = bs.PushedDeletions
+					bj.HasPushedDiff = bs.HasPushedDiff
 				}
 			}
 			sj.Branches = append(sj.Branches, bj)
@@ -252,6 +260,9 @@ func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusM
 					sbj.ReviewState = bs.ReviewState
 					sbj.Additions = bs.Additions
 					sbj.Deletions = bs.Deletions
+					sbj.PushedAdditions = bs.PushedAdditions
+					sbj.PushedDeletions = bs.PushedDeletions
+					sbj.HasPushedDiff = bs.HasPushedDiff
 				}
 			}
 			sj.Branches = append(sj.Branches, sbj)
