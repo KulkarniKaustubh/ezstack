@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -192,6 +193,51 @@ func TestListTools_Registered(t *testing.T) {
 	}
 }
 
+// TestListTools_BranchParamsForMainSupport verifies that tools that need to
+// work from non-stack branches (e.g. main) expose a "branch" parameter so
+// callers can target a specific branch without relying on GetCurrentStack().
+func TestListTools_BranchParamsForMainSupport(t *testing.T) {
+	c := newInitializedClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	byName := map[string]mcp.Tool{}
+	for _, tl := range res.Tools {
+		byName[tl.Name] = tl
+	}
+
+	// These tools must expose a "branch" string param so the agent can
+	// target a specific branch when the MCP server's cwd is on main.
+	toolsNeedingBranch := []string{
+		"ezstack_status",
+		"ezstack_push",
+		"ezstack_pr_create",
+		"ezstack_pr_merge",
+		"ezstack_pr_stack",
+	}
+	for _, name := range toolsNeedingBranch {
+		tl, ok := byName[name]
+		if !ok {
+			t.Errorf("tool %q not registered", name)
+			continue
+		}
+		if _, ok := tl.InputSchema.Properties["branch"]; !ok {
+			t.Errorf("tool %q missing \"branch\" param (needed for non-stack branch support)", name)
+		}
+	}
+
+	// ezstack_pr_merge should also expose "method"
+	if tl, ok := byName["ezstack_pr_merge"]; ok {
+		if _, ok := tl.InputSchema.Properties["method"]; !ok {
+			t.Errorf("ezstack_pr_merge missing \"method\" param")
+		}
+	}
+}
+
 // TestListTools_PrCreateHasTitleAndDraft is the regression test for a review
 // comment that the PR create tool should expose title + draft params so
 // agents can drive creation non-interactively.
@@ -363,6 +409,209 @@ func setupEphemeralRepo(t *testing.T) string {
 		t.Fatalf("chdir: %v", err)
 	}
 	return repoDir
+}
+
+// setupEphemeralRepoWithBranch extends setupEphemeralRepo by creating a
+// stack branch via the stack manager. The cwd is left on main — callers
+// can target the branch via --branch flag to exercise non-stack-branch paths.
+func setupEphemeralRepoWithBranch(t *testing.T, branchName string) string {
+	t.Helper()
+	repoDir := setupEphemeralRepo(t)
+
+	mgr, err := stack.NewManager(repoDir)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	b, err := mgr.CreateBranch(branchName, "main", "", "")
+	if err != nil {
+		t.Fatalf("CreateBranch(%s): %v", branchName, err)
+	}
+
+	// Add a commit in the worktree so diff/log have something to report.
+	wtPath := b.WorktreePath
+	filePath := filepath.Join(wtPath, branchName+".txt")
+	if err := os.WriteFile(filePath, []byte(branchName+" content\n"), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	for _, c := range [][]string{{"add", "."}, {"commit", "-m", "add " + branchName}} {
+		cmd := exec.Command("git", append([]string{"-C", wtPath}, c...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in worktree: %v\n%s", c, err, out)
+		}
+	}
+
+	// Switch back to main so the MCP server's cwd is on a non-stack branch.
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatalf("chdir back to repo: %v", err)
+	}
+	return repoDir
+}
+
+// TestCallTool_StatusWithBranch_FromMain verifies that ezstack_status with an
+// explicit branch param succeeds when the cwd is on main (a non-stack branch).
+func TestCallTool_StatusWithBranch_FromMain(t *testing.T) {
+	setupEphemeralRepoWithBranch(t, "feature-x")
+
+	c := newInitializedClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	res, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "ezstack_status",
+			Arguments: map[string]any{"branch": "feature-x"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool(ezstack_status --branch): %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool returned error: %+v", res.Content)
+	}
+	text, ok := res.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %T, want TextContent", res.Content[0])
+	}
+	// JSON mode is default via readOnlyHandler — verify it parses.
+	var parsed any
+	if err := json.Unmarshal([]byte(text.Text), &parsed); err != nil {
+		t.Fatalf("status output not JSON: %v\npayload: %q", err, text.Text)
+	}
+	if !containsRaw(text.Text, "feature-x") {
+		t.Errorf("status output missing branch name: %q", text.Text)
+	}
+}
+
+// TestCallTool_StatusWithoutBranch_OnMain_FallsBackToRoot verifies that
+// calling ezstack_status without a branch param while on main still works
+// when there are stacks rooted on the current branch — the Status command
+// has a built-in fallback to GetStacksWithRoot(currentBranch).
+func TestCallTool_StatusWithoutBranch_OnMain_FallsBackToRoot(t *testing.T) {
+	setupEphemeralRepoWithBranch(t, "feature-y")
+
+	c := newInitializedClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	res, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "ezstack_status",
+			Arguments: map[string]any{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	// Status falls back to showing stacks rooted on main, so this should succeed.
+	if res.IsError {
+		t.Fatalf("tool error: %+v", res.Content)
+	}
+	text, ok := res.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %T", res.Content[0])
+	}
+	if !containsRaw(text.Text, "feature-y") {
+		t.Errorf("status fallback output missing branch: %q", text.Text)
+	}
+}
+
+// TestCallTool_ListAll_FromMain verifies that ezstack_list with all=true
+// works from main — the primary fallback path for non-stack branches.
+func TestCallTool_ListAll_FromMain(t *testing.T) {
+	setupEphemeralRepoWithBranch(t, "feature-z")
+
+	c := newInitializedClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	res, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "ezstack_list",
+			Arguments: map[string]any{"all": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool error: %+v", res.Content)
+	}
+	text, ok := res.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %T", res.Content[0])
+	}
+	if !containsRaw(text.Text, "feature-z") {
+		t.Errorf("list --all output missing branch: %q", text.Text)
+	}
+}
+
+// TestCallTool_DiffWithBranch_FromMain verifies that diff works with explicit
+// branch targeting from main.
+func TestCallTool_DiffWithBranch_FromMain(t *testing.T) {
+	setupEphemeralRepoWithBranch(t, "diff-branch")
+
+	c := newInitializedClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	res, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "ezstack_diff",
+			Arguments: map[string]any{"branch": "diff-branch"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool error: %+v", res.Content)
+	}
+	text, ok := res.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %T", res.Content[0])
+	}
+	// Default is JSON numstat — should parse and mention the file we added.
+	var parsed any
+	if err := json.Unmarshal([]byte(text.Text), &parsed); err != nil {
+		t.Fatalf("diff output not JSON: %v\npayload: %q", err, text.Text)
+	}
+	if !containsRaw(text.Text, "diff-branch.txt") {
+		t.Errorf("diff output missing expected file: %q", text.Text)
+	}
+}
+
+// TestCallTool_LogWithBranch_FromMain verifies that log works with explicit
+// branch targeting from main.
+func TestCallTool_LogWithBranch_FromMain(t *testing.T) {
+	setupEphemeralRepoWithBranch(t, "log-branch")
+
+	c := newInitializedClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	res, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "ezstack_log",
+			Arguments: map[string]any{"branch": "log-branch"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool error: %+v", res.Content)
+	}
+	text, ok := res.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %T", res.Content[0])
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(text.Text), &parsed); err != nil {
+		t.Fatalf("log output not JSON: %v\npayload: %q", err, text.Text)
+	}
+	if !containsRaw(text.Text, "add log-branch") {
+		t.Errorf("log output missing commit message: %q", text.Text)
+	}
 }
 
 func containsRaw(haystack, needle string) bool {

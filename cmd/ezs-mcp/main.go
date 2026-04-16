@@ -280,8 +280,9 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_status",
-			mcp.WithDescription("Show the current stack with PR and CI status for each branch. Returns JSON by default, or decorated terminal output with decorated=true."),
+			mcp.WithDescription("Show the current stack with PR and CI status for each branch. Returns JSON by default, or decorated terminal output with decorated=true. Use branch to target a specific branch's stack when not on a stack branch (e.g. when on main)."),
 			mcp.WithBoolean("all", mcp.Description("Show all stacks, not just the current one")),
+			mcp.WithString("branch", mcp.Description("Show status for a specific branch's stack (useful when not on a stack branch)")),
 			mcp.WithBoolean("decorated", mcp.Description("Return decorated terminal output (with colors/icons) instead of JSON")),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
@@ -289,14 +290,15 @@ func registerTools(s *server.MCPServer) {
 		readOnlyHandler(commands.Status, func(req mcp.CallToolRequest) []string {
 			var args []string
 			boolFlag(&args, req, "all", "--all")
+			stringFlag(&args, req, "branch", "--branch")
 			return args
 		}),
 	)
 
 	s.AddTool(
 		mcp.NewTool("ezstack_list",
-			mcp.WithDescription("List all stacks and their branches. Returns JSON by default, or decorated terminal output with decorated=true."),
-			mcp.WithBoolean("all", mcp.Description("Show all stacks")),
+			mcp.WithDescription("List all stacks and their branches. Returns JSON by default, or decorated terminal output with decorated=true. When running from a non-stack branch (e.g. main), pass all=true to see all stacks."),
+			mcp.WithBoolean("all", mcp.Description("Show all stacks (required when not on a stack branch)")),
 			mcp.WithBoolean("decorated", mcp.Description("Return decorated terminal output (with colors/icons) instead of JSON")),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithDestructiveHintAnnotation(false),
@@ -342,13 +344,15 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_push",
-			mcp.WithDescription("Push current branch or entire stack to remote."),
+			mcp.WithDescription("Push current branch or entire stack to remote. Use branch to push a specific branch when not on a stack branch."),
+			mcp.WithString("branch", mcp.Description("Push a specific branch by name (useful when not on a stack branch)")),
 			mcp.WithBoolean("stack", mcp.Description("Push all branches in the current stack")),
 			mcp.WithBoolean("force", mcp.Description("Force push")),
 			mcp.WithDestructiveHintAnnotation(true),
 		),
 		toolHandler(commands.Push, func(req mcp.CallToolRequest) []string {
 			var args []string
+			stringFlag(&args, req, "branch", "--branch")
 			boolFlag(&args, req, "stack", "--stack")
 			boolFlag(&args, req, "force", "--force")
 			return args
@@ -359,13 +363,15 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_pr_create",
-			mcp.WithDescription("Create a pull request for the current branch."),
+			mcp.WithDescription("Create a pull request for a branch. Use branch to target a specific branch when not on a stack branch."),
+			mcp.WithString("branch", mcp.Description("Branch to create PR for (defaults to current branch)")),
 			mcp.WithString("title", mcp.Description("PR title (defaults to branch name)")),
 			mcp.WithBoolean("draft", mcp.Description("Create as draft PR")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.PR, func(req mcp.CallToolRequest) []string {
 			args := []string{"create"}
+			stringFlag(&args, req, "branch", "--branch")
 			stringFlag(&args, req, "title", "--title")
 			boolFlag(&args, req, "draft", "--draft")
 			return args
@@ -374,21 +380,29 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_pr_stack",
-			mcp.WithDescription("Update all PR descriptions in the stack with navigation links."),
+			mcp.WithDescription("Update all PR descriptions in the stack with navigation links. Use branch to target a specific branch's stack when not on a stack branch."),
+			mcp.WithString("branch", mcp.Description("Branch whose stack to update (defaults to current branch's stack)")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.PR, func(req mcp.CallToolRequest) []string {
-			return []string{"stack"}
+			args := []string{"stack"}
+			stringFlag(&args, req, "branch", "--branch")
+			return args
 		}),
 	)
 
 	s.AddTool(
 		mcp.NewTool("ezstack_pr_merge",
-			mcp.WithDescription("Merge the pull request for the current branch."),
+			mcp.WithDescription("Merge the pull request for a branch. Use branch to target a specific branch when not on a stack branch."),
+			mcp.WithString("branch", mcp.Description("Branch whose PR to merge (defaults to current branch)")),
+			mcp.WithString("method", mcp.Description("Merge method: merge, squash, rebase (default: squash)")),
 			mcp.WithDestructiveHintAnnotation(true),
 		),
-		toolHandler(commands.PR, func(req mcp.CallToolRequest) []string {
-			return []string{"merge"}
+		yesModeHandler(commands.PR, func(req mcp.CallToolRequest) []string {
+			args := []string{"merge"}
+			stringFlag(&args, req, "branch", "--branch")
+			stringFlag(&args, req, "method", "--method")
+			return args
 		}),
 	)
 
