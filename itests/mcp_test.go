@@ -245,6 +245,155 @@ func TestMCPServer_MissingRequiredArg_Rejected(t *testing.T) {
 	}
 }
 
+// ── Tests for --branch targeting from main ─────────────────────────────────
+
+// TestMCPServer_StatusWithBranch_FromMain starts the MCP server with --repo
+// pointing at the main worktree (on main), then calls ezstack_status with an
+// explicit branch param. This is the core fix: tools must work from main
+// when given an explicit branch.
+func TestMCPServer_StatusWithBranch_FromMain(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranchWithCommit(t, env, "feat-status", "main")
+
+	c := startMCPStdioClient(t, env)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	res, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "ezstack_status",
+			Arguments: map[string]any{"branch": "feat-status"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool error: %+v", res.Content)
+	}
+	text, ok := res.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %T", res.Content[0])
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(text.Text), &parsed); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, text.Text)
+	}
+	if !contains(text.Text, "feat-status") {
+		t.Errorf("status output missing branch: %s", text.Text)
+	}
+}
+
+// TestMCPServer_DiffWithBranch_FromMain exercises ezstack_diff with an
+// explicit --branch from the real binary on main.
+func TestMCPServer_DiffWithBranch_FromMain(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranchWithCommit(t, env, "feat-diff", "main")
+
+	c := startMCPStdioClient(t, env)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	res, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "ezstack_diff",
+			Arguments: map[string]any{"branch": "feat-diff"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool error: %+v", res.Content)
+	}
+	text, ok := res.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %T", res.Content[0])
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(text.Text), &parsed); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, text.Text)
+	}
+	if !contains(text.Text, "feat-diff.txt") {
+		t.Errorf("diff output missing file: %s", text.Text)
+	}
+}
+
+// TestMCPServer_LogWithBranch_FromMain exercises ezstack_log with an
+// explicit --branch from the real binary on main.
+func TestMCPServer_LogWithBranch_FromMain(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranchWithCommit(t, env, "feat-log", "main")
+
+	c := startMCPStdioClient(t, env)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	res, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "ezstack_log",
+			Arguments: map[string]any{"branch": "feat-log"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool error: %+v", res.Content)
+	}
+	text, ok := res.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %T", res.Content[0])
+	}
+	var parsed any
+	if err := json.Unmarshal([]byte(text.Text), &parsed); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, text.Text)
+	}
+	if !contains(text.Text, "Add feat-log") {
+		t.Errorf("log output missing commit: %s", text.Text)
+	}
+}
+
+// TestMCPServer_ListAll_FromMain verifies that list with all=true works from
+// main even when there are stacks — the primary discovery path for agents.
+func TestMCPServer_ListAll_FromMain(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranch(t, env, "feat-list-a", "main")
+	CreateBranch(t, env, "feat-list-b", "main")
+
+	c := startMCPStdioClient(t, env)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	res, err := c.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{
+			Name:      "ezstack_list",
+			Arguments: map[string]any{"all": true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("tool error: %+v", res.Content)
+	}
+	text, ok := res.Content[0].(mcp.TextContent)
+	if !ok {
+		t.Fatalf("content[0] = %T", res.Content[0])
+	}
+	if !contains(text.Text, "feat-list-a") {
+		t.Errorf("output missing feat-list-a: %s", text.Text)
+	}
+}
+
 func contains(haystack, needle string) bool {
 	for i := 0; i+len(needle) <= len(haystack); i++ {
 		if haystack[i:i+len(needle)] == needle {
