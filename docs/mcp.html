@@ -174,7 +174,7 @@
             <tr>
               <td><code>ezstack_status</code></td>
               <td><span class="mode-label mode-label-work">read-only</span></td>
-              <td>Current stack with PR and CI status. <code>all</code>, <code>decorated</code>.</td>
+              <td>Current stack with PR and CI status. <code>all</code>, <code>branch</code>, <code>decorated</code>.</td>
             </tr>
             <tr>
               <td><code>ezstack_list</code></td>
@@ -274,7 +274,7 @@
             <tr>
               <td><code>ezstack_push</code></td>
               <td><span class="mode-label mode-label-feature">destructive</span></td>
-              <td>Push current branch or entire stack. <code>stack</code>, <code>force</code>.</td>
+              <td>Push current branch or entire stack. <code>branch</code>, <code>stack</code>, <code>force</code>.</td>
             </tr>
           </tbody>
         </table>
@@ -294,7 +294,7 @@
             <tr>
               <td><code>ezstack_pr_create</code></td>
               <td>&mdash;</td>
-              <td>Create a pull request for the current branch. <code>title</code>, <code>draft</code>.</td>
+              <td>Create a pull request. <code>branch</code>, <code>title</code>, <code>draft</code>.</td>
             </tr>
             <tr>
               <td><code>ezstack_pr_update</code></td>
@@ -304,7 +304,7 @@
             <tr>
               <td><code>ezstack_pr_merge</code></td>
               <td><span class="mode-label mode-label-feature">destructive</span></td>
-              <td>Merge the pull request for the current branch.</td>
+              <td>Merge the pull request for a branch. <code>branch</code>, <code>method</code>.</td>
             </tr>
             <tr>
               <td><code>ezstack_pr_draft</code></td>
@@ -314,7 +314,7 @@
             <tr>
               <td><code>ezstack_pr_stack</code></td>
               <td>&mdash;</td>
-              <td>Update every PR description in the stack with navigation links.</td>
+              <td>Update every PR description in the stack with navigation links. <code>branch</code>.</td>
             </tr>
           </tbody>
         </table>

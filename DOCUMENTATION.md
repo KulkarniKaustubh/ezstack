@@ -500,6 +500,8 @@ Options:
                          or air-gapped environments)
 ```
 
+You can run `ezs agent` from any branch, including `main` or other non-stack branches. If you're not on a stack branch, ezstack auto-selects the stack when there is exactly one, or shows an interactive picker when there are multiple stacks. You can always skip the picker with `--stack` or `--branch`.
+
 #### Automatic MCP integration (Claude Code)
 
 When the configured agent CLI is `claude`, `ezs agent` automatically:
@@ -791,6 +793,7 @@ Options:
     -t, --title <title>    PR title (defaults to branch name)
     -b, --body <body>      PR body/description
     -d, --draft            Create as draft PR
+    --branch <name>        Create PR for a specific branch (instead of current)
 ```
 
 #### `ezs pr draft`
@@ -802,7 +805,17 @@ Toggles the current branch's PR between draft and ready-for-review state.
 ```
 Options:
     -m, --method <method>      Merge method: merge, squash, rebase (default: interactive)
+    --branch <name>            Merge PR for a specific branch (instead of current)
     --no-delete-branch         Don't delete the remote branch after merge
+```
+
+#### `ezs pr stack`
+
+Update all PR descriptions in the stack with navigation links.
+
+```
+Options:
+    --branch <name>    Target a specific branch's stack (instead of current)
 ```
 
 ---
@@ -986,7 +999,7 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 
 | Tool | Annotation | Description |
 |---|---|---|
-| `ezstack_status` | read-only | Current stack with PR and CI status. `all`, `decorated`. |
+| `ezstack_status` | read-only | Current stack with PR and CI status. `all`, `branch`, `decorated`. |
 | `ezstack_list` | read-only | List all stacks and branches. `all`, `decorated`. |
 | `ezstack_diff` | read-only | Diff against parent branch as JSON numstat (default) or diffstat. `branch`, `stat`. |
 | `ezstack_log` | read-only | Commits since parent as JSON (hash, message, author, ISO date). `branch`. |
@@ -1010,17 +1023,17 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 | `ezstack_commit` | destructive | Commit staged (or all) changes and auto-sync children. `message` (required), `all`, `merge`, `rebase`. Auto-pushes if the branch is already on the remote. |
 | `ezstack_amend` | destructive | Amend the last commit and auto-sync children. Optional `message` (otherwise `--no-edit`), `all`, `merge`, `rebase`. Force-pushes if the branch is already on the remote. |
 | `ezstack_sync` | destructive | Rebase (or merge) branches with their base. `stack`, `all`, `current`, `parent`, `children`, `merge`, `dry_run`, `resume` (maps to `--continue`). |
-| `ezstack_push` | destructive | Push current branch or entire stack. `stack`, `force`. |
+| `ezstack_push` | destructive | Push current branch or entire stack. `branch`, `stack`, `force`. |
 
 **Pull requests**
 
 | Tool | Annotation | Description |
 |---|---|---|
-| `ezstack_pr_create` | &mdash; | Create a pull request for the current branch. `title`, `draft`. |
+| `ezstack_pr_create` | &mdash; | Create a pull request. `branch`, `title`, `draft`. |
 | `ezstack_pr_update` | destructive | Push the latest commits and refresh the PR base branch / stack description. `branch`. |
-| `ezstack_pr_merge` | destructive | Merge the pull request for the current branch. |
+| `ezstack_pr_merge` | destructive | Merge the pull request for a branch. `branch`, `method`. |
 | `ezstack_pr_draft` | &mdash; | Toggle a PR between draft and ready-for-review. `branch`. |
-| `ezstack_pr_stack` | &mdash; | Update every PR description in the stack with navigation links. |
+| `ezstack_pr_stack` | &mdash; | Update every PR description in the stack with navigation links. `branch`. |
 
 **Configuration**
 
@@ -1036,6 +1049,15 @@ before running them. Branch-management tools mark their positional arguments as
 selection that would hang in a no-terminal context. `ezstack_commit` requires
 an explicit `message` and `ezstack_amend` defaults to `--no-edit` so neither
 can ever launch `$EDITOR` and corrupt the JSON-RPC transport.
+
+**Branch targeting from non-stack branches** &mdash; most tools accept an
+optional `branch` parameter so they can be used when the MCP server's working
+directory is on a non-stack branch like `main`. Pass the target branch name
+explicitly and the tool resolves the stack from config instead of relying on
+`GetCurrentStack()`. For `ezstack_list`, pass `all=true` to discover all
+stacks. Tools that operate on the working tree (`ezstack_commit`,
+`ezstack_amend`) are inherently tied to the current worktree and should be
+invoked from the correct branch's directory.
 
 **Safety** &mdash; every tool handler acquires a process-wide mutex before
 running, since `ezs` operates on shared process state (stdout/stderr, the

@@ -190,15 +190,15 @@
         <div class="workflow-step" data-animate>
           <div class="workflow-step-number workflow-step-number-blue">1</div>
           <h3>Launch the agent</h3>
-          <p>Run <code>ezs agent</code> from any branch in a stack. The agent opens in that branch's worktree directory with full context.</p>
+          <p>Run <code>ezs agent</code> from any branch &mdash; including <code>main</code>. When you're on a stack branch, the agent scopes to that stack automatically. From a non-stack branch, it auto-selects the stack if there is exactly one, or shows a picker if there are multiple. You can always skip the picker with <code>--stack</code> or <code>--branch</code>.</p>
           <div class="step-code">
-            <pre><code><span class="c-comment"># Launch on current branch</span>
+            <pre><code><span class="c-comment"># Launch on current branch (or auto-pick stack from main)</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span>
 
-<span class="c-comment"># Or target a specific branch</span>
+<span class="c-comment"># Target a specific branch</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--branch</span> auth-middleware
 
-<span class="c-comment"># Or a specific stack</span>
+<span class="c-comment"># Target a specific stack</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">-s</span> a1b2c</code></pre>
           </div>
         </div>

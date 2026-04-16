@@ -136,7 +136,7 @@ Run `ezs <command> --help` for command-specific help.
 ezstack can launch an AI coding agent (Claude, Cursor, etc.) with full stack context injected automatically. The agent is scoped to a single stack and knows about all branches, worktree paths, and available commands. **Requires worktree mode** (`use_worktrees: true`, which is the default) — the agent needs separate working directories for each branch to operate in isolation.
 
 ```bash
-# Launch agent on current stack
+# Launch agent (works from any branch, including main)
 ezs agent
 
 # Build a feature as stacked branches
@@ -167,7 +167,7 @@ Register with Claude Code (one registration, every repo — `ezs-mcp` operates o
 claude mcp add ezstack --scope user -- ezs-mcp
 ```
 
-If you open Claude Code at a monorepo root but your ezstack-configured repo is a subdirectory, Claude will launch `ezs-mcp` with the monorepo root as its cwd, which won't match any sub-repo. In that case, register a per-subrepo entry with an absolute path: `claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo`. Read-only tools (`ezstack_status`, `ezstack_list`, `ezstack_diff`, `ezstack_log`, `ezstack_config_show`) return JSON by default, or pass `decorated=true` (where supported) to get the terminal-styled output. Destructive tools (`ezstack_commit`, `ezstack_amend`, `ezstack_sync`, `ezstack_push`, `ezstack_delete`, `ezstack_pr_merge`, `ezstack_pr_update`) are tagged with the MCP destructive annotation so the client can prompt before running them. `ezstack_commit` requires an explicit `message` and `ezstack_amend` defaults to `--no-edit` so neither can ever launch `$EDITOR` and corrupt the JSON-RPC transport.
+If you open Claude Code at a monorepo root but your ezstack-configured repo is a subdirectory, Claude will launch `ezs-mcp` with the monorepo root as its cwd, which won't match any sub-repo. In that case, register a per-subrepo entry with an absolute path: `claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo`. Read-only tools (`ezstack_status`, `ezstack_list`, `ezstack_diff`, `ezstack_log`, `ezstack_config_show`) return JSON by default, or pass `decorated=true` (where supported) to get the terminal-styled output. Destructive tools (`ezstack_commit`, `ezstack_amend`, `ezstack_sync`, `ezstack_push`, `ezstack_delete`, `ezstack_pr_merge`, `ezstack_pr_update`) are tagged with the MCP destructive annotation so the client can prompt before running them. `ezstack_commit` requires an explicit `message` and `ezstack_amend` defaults to `--no-edit` so neither can ever launch `$EDITOR` and corrupt the JSON-RPC transport. Most tools accept an optional `branch` parameter so they work even when the MCP server's working directory is on a non-stack branch like `main`.
 
 Full feature tour and tool catalog: [mcp.html](https://kulkarnikaustubh.github.io/ezstack/mcp.html).
 
