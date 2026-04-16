@@ -6,4 +6,4 @@ package version
 
 // Version is the current ezstack release. Kept in sync by
 // scripts/bump-version.sh.
-const Version = "4.4.3"
+const Version = "4.5.0"
