@@ -197,6 +197,18 @@ ezs commit -m "fix" --rebase  # rebase children even if config says merge
 
 The `--merge` and `--rebase` flags work with `sync`, `commit`, `amend`, and `reparent`.
 
+### Submodule Mirroring
+
+In worktree mode, `ezs new` automatically runs `git submodule update --init` against the same set of submodule paths that are currently initialized in the main worktree — so a new branch worktree starts with the same submodules active as the one you're working in. This matches the monorepo workflow (e.g. SONiC) where only a subset of submodules is initialized per developer.
+
+```bash
+ezs new feature-a                       # mirror submodules from main worktree
+ezs new feature-a --no-init-submodules  # skip submodule init for this worktree
+ezs config set init_submodules false    # disable globally per-repo
+```
+
+Submodule init failures are logged as warnings but do not fail branch creation. Submodules that are deinit'd in the main worktree stay uninit'd in the new one.
+
 ## Exit Codes
 
 | Code | Meaning |

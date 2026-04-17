@@ -892,7 +892,10 @@
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">&lt;key&gt;</span> <span class="c-str">&lt;value&gt;</span>    <span class="c-dim">Set a configuration value</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">show</span>                 <span class="c-dim">Show current configuration</span>
 </code></pre>
-      <p><strong>Available keys:</strong> <code>worktree_base_dir</code>, <code>default_base_branch</code>, <code>cd_after_new</code>, <code>use_worktrees</code>, <code>sync_strategy</code></p>
+      <p><strong>Available keys:</strong> <code>worktree_base_dir</code>, <code>default_base_branch</code>, <code>cd_after_new</code>, <code>use_worktrees</code>, <code>sync_strategy</code>, <code>init_submodules</code></p>
+      <ul>
+      <li><code>init_submodules</code> (per-repo, default <code>true</code>): when creating a new worktree, mirror the same set of initialized submodules that are active in the main worktree. Useful for monorepos (e.g. SONiC) where developers only init the submodules they actively work on. Overridable per-invocation with <code>ezs new --init-submodules</code> / <code>--no-init-submodules</code>.</li>
+      </ul>
       <p><strong>Global flags</strong></p>
       <p>These flags work with any command and can appear in any position:</p>
       <pre><code><span class="c-flag">-y,</span> <span class="c-flag">--yes</span>        <span class="c-dim">Auto-confirm all yes/no prompts (selection menus still show)</span>
@@ -1064,6 +1067,7 @@ Options:
                          <span class="c-cmd">the</span> <span class="c-flag">prompt</span> <span class="c-str">instead</span> <span class="c-str">(escape</span> <span class="c-str">hatch</span> <span class="c-str">for</span> <span class="c-str">non-claude</span> <span class="c-str">CLIs</span>
                          <span class="c-cmd">or</span> <span class="c-str">air-gapped</span> <span class="c-str">environments)</span>
 </code></pre>
+      <p>You can run <code>ezs agent</code> from any branch, including <code>main</code> or other non-stack branches. If you're not on a stack branch, ezstack auto-selects the stack when there is exactly one, or shows an interactive picker when there are multiple stacks. You can always skip the picker with <code>--stack</code> or <code>--branch</code>.</p>
       <h4 id="automatic-mcp-integration-claude-code">Automatic MCP integration (Claude Code)</h4>
       <p>When the configured agent CLI is <code>claude</code>, <code>ezs agent</code> automatically:</p>
       <ol>
@@ -1286,9 +1290,12 @@ Options:
     <span class="c-flag">-w,</span> <span class="c-flag">--worktree</span> <span class="c-str">&lt;path&gt;</span>     <span class="c-dim">Worktree path (defaults to configured base dir + branch name)</span>
     <span class="c-flag">-c,</span> <span class="c-flag">--cd</span>                  <span class="c-dim">Change to the new worktree after creation</span>
     <span class="c-flag">-C,</span> <span class="c-flag">--no-cd</span>               <span class="c-dim">Don&#39;t change to the new worktree (overrides config)</span>
+    <span class="c-flag">-s,</span> <span class="c-flag">--init-submodules</span>     <span class="c-dim">Mirror main worktree&#39;s initialized submodules (overrides config)</span>
+    <span class="c-flag">-S,</span> <span class="c-flag">--no-init-submodules</span>  <span class="c-dim">Skip submodule initialization (overrides config)</span>
     <span class="c-flag">-f,</span> <span class="c-flag">--from-worktree</span>       <span class="c-dim">Register an existing worktree as a stack root</span>
     <span class="c-flag">-r,</span> <span class="c-flag">--from-remote</span>         <span class="c-dim">Create a stack from a remote branch/PR</span>
 </code></pre>
+      <p><strong>Submodule mirroring.</strong> By default, <code>ezs new</code> inspects the main worktree's initialized submodules (via <code>git submodule status</code>) and runs <code>git submodule update --init -- &lt;paths&gt;</code> on the same paths in the new worktree. Submodules that are deinit'd in the main worktree are left uninitialized in the new worktree too — which matches the monorepo workflow (e.g. SONiC) where developers only init the subset of submodules they work on. Mirroring can be disabled globally via <code>ezs config set init_submodules false</code>, and overridden per-invocation with <code>--init-submodules</code> / <code>--no-init-submodules</code>. A failure to mirror submodules is logged as a warning and does not fail branch creation.</p>
       <p>With <code>origin/&lt;branch&gt;</code>, creates a local worktree tracking the remote branch and registers it in a stack (root = PR base branch, or <code>main</code> by default). The branch is marked as <code>(remote)</code> in <code>ezs ls</code> output. All commands (sync, push, commit, etc.) work normally on it.</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">origin/feature-branch</span>       <span class="c-comment"># Checkout remote branch into a worktree + register stack</span>
 </code></pre>
@@ -1325,13 +1332,20 @@ Subcommands:
     <span class="c-flag">-t,</span> <span class="c-flag">--title</span> <span class="c-str">&lt;title&gt;</span>    <span class="c-dim">PR title (defaults to branch name)</span>
     <span class="c-flag">-b,</span> <span class="c-flag">--body</span> <span class="c-str">&lt;body&gt;</span>      <span class="c-dim">PR body/description</span>
     <span class="c-flag">-d,</span> <span class="c-flag">--draft</span>            <span class="c-dim">Create as draft PR</span>
+    <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>        <span class="c-dim">Create PR for a specific branch (instead of current)</span>
 </code></pre>
       <h4 id="ezs-pr-draft"><code>ezs pr draft</code></h4>
       <p>Toggles the current branch's PR between draft and ready-for-review state.</p>
       <h4 id="ezs-pr-merge"><code>ezs pr merge</code></h4>
       <pre><code>Options:
     <span class="c-flag">-m,</span> <span class="c-flag">--method</span> <span class="c-str">&lt;method&gt;</span>      <span class="c-dim">Merge method: merge, squash, rebase (default: interactive)</span>
+    <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>            <span class="c-dim">Merge PR for a specific branch (instead of current)</span>
     <span class="c-flag">--no-delete-branch</span>         <span class="c-dim">Don&#39;t delete the remote branch after merge</span>
+</code></pre>
+      <h4 id="ezs-pr-stack"><code>ezs pr stack</code></h4>
+      <p>Update all PR descriptions in the stack with navigation links.</p>
+      <pre><code>Options:
+    <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>    <span class="c-dim">Target a specific branch&#39;s stack (instead of current)</span>
 </code></pre>
       <h3 id="ezs-push"><code>ezs push</code></h3>
       <p>Push current branch or entire stack to remote.</p>
@@ -1465,7 +1479,7 @@ Options:
       <tr>
       <td><code>ezstack_status</code></td>
       <td>read-only</td>
-      <td>Current stack with PR and CI status. <code>all</code>, <code>decorated</code>.</td>
+      <td>Current stack with PR and CI status. <code>all</code>, <code>branch</code>, <code>decorated</code>.</td>
       </tr>
       <tr>
       <td><code>ezstack_list</code></td>
@@ -1559,7 +1573,7 @@ Options:
       <tr>
       <td><code>ezstack_push</code></td>
       <td>destructive</td>
-      <td>Push current branch or entire stack. <code>stack</code>, <code>force</code>.</td>
+      <td>Push current branch or entire stack. <code>branch</code>, <code>stack</code>, <code>force</code>.</td>
       </tr>
       </tbody>
       </table>
@@ -1576,7 +1590,7 @@ Options:
       <tr>
       <td><code>ezstack_pr_create</code></td>
       <td>—</td>
-      <td>Create a pull request for the current branch. <code>title</code>, <code>draft</code>.</td>
+      <td>Create a pull request. <code>branch</code>, <code>title</code>, <code>draft</code>.</td>
       </tr>
       <tr>
       <td><code>ezstack_pr_update</code></td>
@@ -1586,7 +1600,7 @@ Options:
       <tr>
       <td><code>ezstack_pr_merge</code></td>
       <td>destructive</td>
-      <td>Merge the pull request for the current branch.</td>
+      <td>Merge the pull request for a branch. <code>branch</code>, <code>method</code>.</td>
       </tr>
       <tr>
       <td><code>ezstack_pr_draft</code></td>
@@ -1596,7 +1610,7 @@ Options:
       <tr>
       <td><code>ezstack_pr_stack</code></td>
       <td>—</td>
-      <td>Update every PR description in the stack with navigation links.</td>
+      <td>Update every PR description in the stack with navigation links. <code>branch</code>.</td>
       </tr>
       </tbody>
       </table>
@@ -1625,6 +1639,14 @@ Options:
       selection that would hang in a no-terminal context. <code>ezstack_commit</code> requires
       an explicit <code>message</code> and <code>ezstack_amend</code> defaults to <code>--no-edit</code> so neither
       can ever launch <code>$EDITOR</code> and corrupt the JSON-RPC transport.</p>
+      <p><strong>Branch targeting from non-stack branches</strong> — most tools accept an
+      optional <code>branch</code> parameter so they can be used when the MCP server's working
+      directory is on a non-stack branch like <code>main</code>. Pass the target branch name
+      explicitly and the tool resolves the stack from config instead of relying on
+      <code>GetCurrentStack()</code>. For <code>ezstack_list</code>, pass <code>all=true</code> to discover all
+      stacks. Tools that operate on the working tree (<code>ezstack_commit</code>,
+      <code>ezstack_amend</code>) are inherently tied to the current worktree and should be
+      invoked from the correct branch's directory.</p>
       <p><strong>Safety</strong> — every tool handler acquires a process-wide mutex before
       running, since <code>ezs</code> operates on shared process state (stdout/stderr, the
       <code>ui.Backend</code>, <code>ui.YesMode</code>). Stdout and stderr are captured via concurrent pipe

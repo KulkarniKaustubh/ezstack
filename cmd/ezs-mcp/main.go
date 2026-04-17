@@ -460,11 +460,13 @@ func registerTools(s *server.MCPServer) {
 				mcp.Required(),
 			),
 			mcp.WithString("parent", mcp.Description("Parent branch (defaults to current branch)")),
+			mcp.WithBoolean("init_submodules", mcp.Description("Whether to mirror the main worktree's initialized submodules into the new worktree. Omit to use the configured default (true unless overridden).")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.New, func(req mcp.CallToolRequest) []string {
 			args := []string{req.GetString("name", "")}
 			stringFlag(&args, req, "parent", "--parent")
+			tristateBoolFlag(&args, req, "init_submodules", "--init-submodules", "--no-init-submodules")
 			return args
 		}),
 	)
