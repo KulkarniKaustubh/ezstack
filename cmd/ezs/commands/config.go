@@ -28,6 +28,7 @@ func printConfigUsage() {
     github_token          GitHub token for API access
     cd_after_new          Auto-cd to new worktree (true/false, per-repo)
     use_worktrees         Use git worktrees for new branches (true/false, per-repo)
+    init_submodules       Mirror initialized submodules into new worktrees (true/false, per-repo)
     sync_strategy         Sync method: "rebase" or "merge" (per-repo)
     agent_command         AI agent CLI command (default: "claude", per-repo)
 
@@ -153,6 +154,19 @@ func configSet(key, value string) error {
 		repoCfg.UseWorktrees = &boolVal
 		cfg.SetRepoConfig(repoPath, repoCfg)
 		ui.Info(fmt.Sprintf("Setting use_worktrees for repo: %s", repoPath))
+	case "init_submodules":
+		repoPath, err := getCurrentRepoPath()
+		if err != nil {
+			return fmt.Errorf("init_submodules is a per-repo setting: %w", err)
+		}
+		repoCfg := cfg.GetRepoConfig(repoPath)
+		if repoCfg == nil {
+			repoCfg = &config.RepoConfig{}
+		}
+		boolVal := value == "true" || value == "1" || value == "yes"
+		repoCfg.InitSubmodules = &boolVal
+		cfg.SetRepoConfig(repoPath, repoCfg)
+		ui.Info(fmt.Sprintf("Setting init_submodules for repo: %s", repoPath))
 	case "sync_strategy":
 		repoPath, err := getCurrentRepoPath()
 		if err != nil {
@@ -184,7 +198,7 @@ func configSet(key, value string) error {
 		cfg.SetRepoConfig(repoPath, repoCfg)
 		ui.Info(fmt.Sprintf("Setting agent_command for repo: %s", repoPath))
 	default:
-		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, sync_strategy, agent_command", key)
+		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, init_submodules, sync_strategy, agent_command", key)
 	}
 
 	if err := cfg.Save(); err != nil {
@@ -245,6 +259,11 @@ func configShow() error {
 			} else {
 				fmt.Fprintf(os.Stderr, "  use_worktrees: true (default)\n")
 			}
+			if repoCfg.InitSubmodules != nil {
+				fmt.Fprintf(os.Stderr, "  init_submodules: %v\n", *repoCfg.InitSubmodules)
+			} else {
+				fmt.Fprintf(os.Stderr, "  init_submodules: true (default)\n")
+			}
 			if repoCfg.SyncStrategy != "" {
 				fmt.Fprintf(os.Stderr, "  sync_strategy: %s\n", repoCfg.SyncStrategy)
 			} else {
@@ -302,6 +321,7 @@ func configInteractive() error {
 	currentWorktreeBaseDir := ""
 	currentCdAfterNew := true
 	currentUseWorktrees := true
+	currentInitSubmodules := true
 	currentAgentCommand := "claude"
 	if repoCfg != nil {
 		currentWorktreeBaseDir = repoCfg.WorktreeBaseDir
@@ -310,6 +330,9 @@ func configInteractive() error {
 		}
 		if repoCfg.UseWorktrees != nil {
 			currentUseWorktrees = *repoCfg.UseWorktrees
+		}
+		if repoCfg.InitSubmodules != nil {
+			currentInitSubmodules = *repoCfg.InitSubmodules
 		}
 		if repoCfg.AgentCommand != "" {
 			currentAgentCommand = repoCfg.AgentCommand
@@ -362,6 +385,10 @@ func configInteractive() error {
 	cdAfterNew := ui.ConfirmTUIWithDefault("Auto-cd into new worktrees after creation", currentCdAfterNew)
 	repoCfg.CdAfterNew = &cdAfterNew
 	ui.Success(fmt.Sprintf("Set cd_after_new = %v", cdAfterNew))
+
+	initSubmodules := ui.ConfirmTUIWithDefault("Mirror initialized submodules into new worktrees", currentInitSubmodules)
+	repoCfg.InitSubmodules = &initSubmodules
+	ui.Success(fmt.Sprintf("Set init_submodules = %v", initSubmodules))
 
 	// Sync strategy: rebase or merge
 	options := []string{"merge", "rebase"}

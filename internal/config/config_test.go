@@ -161,6 +161,64 @@ func TestConfig_GetCdAfterNew(t *testing.T) {
 	}
 }
 
+func TestConfig_GetInitSubmodules(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name     string
+		config   *Config
+		repoPath string
+		want     bool
+	}{
+		{
+			name: "explicit true",
+			config: &Config{
+				Repos: map[string]*RepoConfig{
+					"/repo": {InitSubmodules: &trueVal},
+				},
+			},
+			repoPath: "/repo",
+			want:     true,
+		},
+		{
+			name: "explicit false",
+			config: &Config{
+				Repos: map[string]*RepoConfig{
+					"/repo": {InitSubmodules: &falseVal},
+				},
+			},
+			repoPath: "/repo",
+			want:     false,
+		},
+		{
+			name: "nil defaults to true",
+			config: &Config{
+				Repos: map[string]*RepoConfig{
+					"/repo": {},
+				},
+			},
+			repoPath: "/repo",
+			want:     true,
+		},
+		{
+			name:     "missing repo defaults to true",
+			config:   &Config{Repos: map[string]*RepoConfig{}},
+			repoPath: "/missing",
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.GetInitSubmodules(tt.repoPath)
+			if got != tt.want {
+				t.Errorf("GetInitSubmodules() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConfig_SetRepoConfig(t *testing.T) {
 	config := &Config{}
 
