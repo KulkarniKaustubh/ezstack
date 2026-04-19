@@ -17,8 +17,7 @@ Neovim plugin for [ezstack](https://github.com/KulkarniKaustubh/ezstack) — man
 
 ```lua
 {
-  "KulkarniKaustubh/ezstack",
-  subdir = "neovim-plugin",
+  "KulkarniKaustubh/ezstack.nvim",
   cmd = { "Ezs" },                  -- lazy-load on first :Ezs
   keys = { { "<leader>ez", "<cmd>Ezs<cr>", desc = "Ezstack viewer" } },
   config = function()
@@ -37,8 +36,7 @@ require("telescope").load_extension("ezstack")
 
 ```lua
 use {
-  "KulkarniKaustubh/ezstack",
-  rtp = "neovim-plugin",
+  "KulkarniKaustubh/ezstack.nvim",
   config = function()
     require("ezstack").setup()
   end,
@@ -47,10 +45,10 @@ use {
 
 ### Manual
 
-Clone the repo and add `neovim-plugin/` to your runtimepath:
+Clone the repo and add it to your runtimepath:
 
 ```vim
-set runtimepath+=/path/to/ezstack/neovim-plugin
+set runtimepath+=/path/to/ezstack.nvim
 ```
 
 ## Configuration
@@ -267,12 +265,12 @@ The plugin also fires its own `User EzstackChanged` autocommand after every CLI 
 
 ## Tests
 
-The plugin ships with a [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) test suite under `neovim-plugin/tests/`. Run it from the repo root:
+The plugin ships with a [plenary.nvim](https://github.com/nvim-lua/plenary.nvim) test suite under `tests/`. Run it from the repo root:
 
 ```bash
 nvim --headless --noplugin \
-  -u neovim-plugin/tests/minimal_init.lua \
-  -c "PlenaryBustedDirectory neovim-plugin/tests/ {minimal_init = 'neovim-plugin/tests/minimal_init.lua', sequential = true}"
+  -u tests/minimal_init.lua \
+  -c "PlenaryBustedDirectory tests/ {minimal_init = 'tests/minimal_init.lua', sequential = true}"
 ```
 
 `minimal_init.lua` auto-discovers `plenary.nvim` from `vendor/plenary.nvim`, `$EZSTACK_PLENARY`, or common package-manager install paths. The suite covers subcommand-dispatch completeness (every advertised `:Ezs` name has a handler), statusline formatters, graph rendering (including orphans), default-keymap installation, and welcome-marker idempotency.
