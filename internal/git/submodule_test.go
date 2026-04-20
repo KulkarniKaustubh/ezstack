@@ -259,6 +259,29 @@ func TestMirrorSubmodules_EndToEnd(t *testing.T) {
 	}
 }
 
+// TestListInitializedSubmodules_PathWithSpaces verifies that submodule paths
+// containing spaces survive the parser. This is rare in practice but legal,
+// and a naive whitespace-splitting parser would silently truncate them.
+func TestListInitializedSubmodules_PathWithSpaces(t *testing.T) {
+	enableFileProtocol(t)
+	parent, parentCleanup := setupTestRepo(t)
+	defer parentCleanup()
+
+	src, cleanupSrc := setupSubmoduleRepo(t, "spaced")
+	defer cleanupSrc()
+
+	addSubmodule(t, parent, src, "vendor/dir with spaces")
+
+	g := New(parent)
+	paths, err := g.ListInitializedSubmodules()
+	if err != nil {
+		t.Fatalf("ListInitializedSubmodules: %v", err)
+	}
+	if len(paths) != 1 || paths[0] != "vendor/dir with spaces" {
+		t.Errorf("paths = %v, want [vendor/dir with spaces]", paths)
+	}
+}
+
 func TestMirrorSubmodules_RejectsEmptyPaths(t *testing.T) {
 	if err := MirrorSubmodules("", "/tmp"); err == nil {
 		t.Errorf("expected error on empty source path")
