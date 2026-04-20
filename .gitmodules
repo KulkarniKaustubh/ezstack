@@ -1,0 +1,4 @@
+[submodule "neovim-plugin"]
+	path = neovim-plugin
+	url = git@github.com:KulkarniKaustubh/ezstack.nvim.git
+	branch = main

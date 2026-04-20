@@ -1064,6 +1064,7 @@ Options:
                          <span class="c-cmd">the</span> <span class="c-flag">prompt</span> <span class="c-str">instead</span> <span class="c-str">(escape</span> <span class="c-str">hatch</span> <span class="c-str">for</span> <span class="c-str">non-claude</span> <span class="c-str">CLIs</span>
                          <span class="c-cmd">or</span> <span class="c-str">air-gapped</span> <span class="c-str">environments)</span>
 </code></pre>
+      <p>You can run <code>ezs agent</code> from any branch, including <code>main</code> or other non-stack branches. If you're not on a stack branch, ezstack auto-selects the stack when there is exactly one, or shows an interactive picker when there are multiple stacks. You can always skip the picker with <code>--stack</code> or <code>--branch</code>.</p>
       <h4 id="automatic-mcp-integration-claude-code">Automatic MCP integration (Claude Code)</h4>
       <p>When the configured agent CLI is <code>claude</code>, <code>ezs agent</code> automatically:</p>
       <ol>
@@ -1325,13 +1326,20 @@ Subcommands:
     <span class="c-flag">-t,</span> <span class="c-flag">--title</span> <span class="c-str">&lt;title&gt;</span>    <span class="c-dim">PR title (defaults to branch name)</span>
     <span class="c-flag">-b,</span> <span class="c-flag">--body</span> <span class="c-str">&lt;body&gt;</span>      <span class="c-dim">PR body/description</span>
     <span class="c-flag">-d,</span> <span class="c-flag">--draft</span>            <span class="c-dim">Create as draft PR</span>
+    <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>        <span class="c-dim">Create PR for a specific branch (instead of current)</span>
 </code></pre>
       <h4 id="ezs-pr-draft"><code>ezs pr draft</code></h4>
       <p>Toggles the current branch's PR between draft and ready-for-review state.</p>
       <h4 id="ezs-pr-merge"><code>ezs pr merge</code></h4>
       <pre><code>Options:
     <span class="c-flag">-m,</span> <span class="c-flag">--method</span> <span class="c-str">&lt;method&gt;</span>      <span class="c-dim">Merge method: merge, squash, rebase (default: interactive)</span>
+    <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>            <span class="c-dim">Merge PR for a specific branch (instead of current)</span>
     <span class="c-flag">--no-delete-branch</span>         <span class="c-dim">Don&#39;t delete the remote branch after merge</span>
+</code></pre>
+      <h4 id="ezs-pr-stack"><code>ezs pr stack</code></h4>
+      <p>Update all PR descriptions in the stack with navigation links.</p>
+      <pre><code>Options:
+    <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>    <span class="c-dim">Target a specific branch&#39;s stack (instead of current)</span>
 </code></pre>
       <h3 id="ezs-push"><code>ezs push</code></h3>
       <p>Push current branch or entire stack to remote.</p>
@@ -1465,7 +1473,7 @@ Options:
       <tr>
       <td><code>ezstack_status</code></td>
       <td>read-only</td>
-      <td>Current stack with PR and CI status. <code>all</code>, <code>decorated</code>.</td>
+      <td>Current stack with PR and CI status. <code>all</code>, <code>branch</code>, <code>decorated</code>.</td>
       </tr>
       <tr>
       <td><code>ezstack_list</code></td>
@@ -1559,7 +1567,7 @@ Options:
       <tr>
       <td><code>ezstack_push</code></td>
       <td>destructive</td>
-      <td>Push current branch or entire stack. <code>stack</code>, <code>force</code>.</td>
+      <td>Push current branch or entire stack. <code>branch</code>, <code>stack</code>, <code>force</code>.</td>
       </tr>
       </tbody>
       </table>
@@ -1576,7 +1584,7 @@ Options:
       <tr>
       <td><code>ezstack_pr_create</code></td>
       <td>—</td>
-      <td>Create a pull request for the current branch. <code>title</code>, <code>draft</code>.</td>
+      <td>Create a pull request. <code>branch</code>, <code>title</code>, <code>draft</code>.</td>
       </tr>
       <tr>
       <td><code>ezstack_pr_update</code></td>
@@ -1586,7 +1594,7 @@ Options:
       <tr>
       <td><code>ezstack_pr_merge</code></td>
       <td>destructive</td>
-      <td>Merge the pull request for the current branch.</td>
+      <td>Merge the pull request for a branch. <code>branch</code>, <code>method</code>.</td>
       </tr>
       <tr>
       <td><code>ezstack_pr_draft</code></td>
@@ -1596,7 +1604,7 @@ Options:
       <tr>
       <td><code>ezstack_pr_stack</code></td>
       <td>—</td>
-      <td>Update every PR description in the stack with navigation links.</td>
+      <td>Update every PR description in the stack with navigation links. <code>branch</code>.</td>
       </tr>
       </tbody>
       </table>
@@ -1625,6 +1633,14 @@ Options:
       selection that would hang in a no-terminal context. <code>ezstack_commit</code> requires
       an explicit <code>message</code> and <code>ezstack_amend</code> defaults to <code>--no-edit</code> so neither
       can ever launch <code>$EDITOR</code> and corrupt the JSON-RPC transport.</p>
+      <p><strong>Branch targeting from non-stack branches</strong> — most tools accept an
+      optional <code>branch</code> parameter so they can be used when the MCP server's working
+      directory is on a non-stack branch like <code>main</code>. Pass the target branch name
+      explicitly and the tool resolves the stack from config instead of relying on
+      <code>GetCurrentStack()</code>. For <code>ezstack_list</code>, pass <code>all=true</code> to discover all
+      stacks. Tools that operate on the working tree (<code>ezstack_commit</code>,
+      <code>ezstack_amend</code>) are inherently tied to the current worktree and should be
+      invoked from the correct branch's directory.</p>
       <p><strong>Safety</strong> — every tool handler acquires a process-wide mutex before
       running, since <code>ezs</code> operates on shared process state (stdout/stderr, the
       <code>ui.Backend</code>, <code>ui.YesMode</code>). Stdout and stderr are captured via concurrent pipe
@@ -1689,13 +1705,12 @@ Options:
       </table>
       <p>Full feature tour: <a href="https://kulkarnikaustubh.github.io/ezstack/vscode.html">https://kulkarnikaustubh.github.io/ezstack/vscode.html</a>.</p>
       <h3 id="neovim-plugin">Neovim Plugin</h3>
-      <p>Located in <code>neovim-plugin/</code>. Native Lua plugin for Neovim 0.10+. Exposes a
+      <p>Distributed as <a href="https://github.com/KulkarniKaustubh/ezstack.nvim"><code>ezstack.nvim</code></a>. Native Lua plugin for Neovim 0.10+. Exposes a
       single <code>:Ezs</code> user command with subcommand and flag completion, plus a styled
       stack viewer buffer, Telescope pickers, and a statusline component.</p>
       <p><strong>Install (lazy.nvim)</strong></p>
       <pre><code>{
-  <span class="c-str">&#34;KulkarniKaustubh/ezstack&#34;</span><span class="c-str">,</span>
-  <span class="c-cmd">subdir</span> <span class="c-str">=</span> <span class="c-str">&#34;neovim-plugin&#34;</span><span class="c-str">,</span>
+  <span class="c-str">&#34;KulkarniKaustubh/ezstack.nvim&#34;</span><span class="c-str">,</span>
   <span class="c-cmd">cmd</span>    <span class="c-dim">= { &#34;Ezs&#34; },</span>
   <span class="c-cmd">keys</span>   <span class="c-dim">= { { &#34;&lt;leader&gt;ez&#34;, &#34;&lt;cmd&gt;Ezs&lt;cr&gt;&#34;, desc = &#34;Ezstack viewer&#34; } },</span>
   <span class="c-cmd">config</span> <span class="c-str">=</span> <span class="c-str">function()</span>
@@ -1705,7 +1720,8 @@ Options:
 }
 </code></pre>
       <p><code>packer.nvim</code> and a manual <code>runtimepath+=...</code> install also work — see
-      <code>neovim-plugin/README.md</code> for the alternatives.</p>
+      the <a href="https://github.com/KulkarniKaustubh/ezstack.nvim#readme">ezstack.nvim README</a>
+      for the alternatives.</p>
       <p><strong>Key commands</strong> (every <code>ezs</code> subcommand has a <code>:Ezs</code> mirror):</p>
       <pre><code>:Ezs                 <span class="c-str">&#34; open the stack viewer</span>
 :Ezs <span class="c-flag">status</span>          <span class="c-str">&#34; viewer with PR/CI info</span>
@@ -1809,9 +1825,9 @@ Options:
       <code>setup()</code>, <code>User EzstackChanged</code> after every CLI mutation, and
       <code>User EzstackGoto</code> after a worktree switch. Hook your own logic in via
       <code>autocmd</code>. Run <code>:help ezstack</code> for the bundled vimdoc reference.</p>
-      <p><strong>Tests</strong> — a plenary.nvim busted suite lives in
-      <code>neovim-plugin/tests/</code>. Run it with
-      <code>nvim --headless --noplugin -u neovim-plugin/tests/minimal_init.lua -c &quot;PlenaryBustedDirectory neovim-plugin/tests/ {minimal_init = 'neovim-plugin/tests/minimal_init.lua', sequential = true}&quot;</code>.
+      <p><strong>Tests</strong> — a plenary.nvim busted suite lives in the <code>ezstack.nvim</code> repo
+      under <code>tests/</code>. From inside that repo, run:
+      <code>nvim --headless --noplugin -u tests/minimal_init.lua -c &quot;PlenaryBustedDirectory tests/ {minimal_init = 'tests/minimal_init.lua', sequential = true}&quot;</code>.
       It covers subcommand-dispatch completeness, statusline formatters, graph
       rendering (including orphan handling), default-keymap installation, and
       welcome-marker idempotency.</p>
@@ -1907,7 +1923,7 @@ Options:
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License · v4.5.0</span>
+          <span class="footer-meta">MIT License · v4.5.1</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

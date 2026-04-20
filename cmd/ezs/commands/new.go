@@ -262,18 +262,17 @@ func New(args []string) error {
 			cfg := mgr.GetConfig()
 			baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
 
-			branchOptions := []string{baseBranch}
-			for _, s := range mgr.ListStacks() {
-				for _, b := range s.Branches {
-					branchOptions = append(branchOptions, b.Name)
-				}
+			choices := buildParentChoices(baseBranch, mgr.ListStacks())
+			labels := make([]string, len(choices))
+			for i, c := range choices {
+				labels[i] = c.label
 			}
 
-			selectedIdx, err := ui.SelectOption(branchOptions, "Select parent branch")
+			selectedIdx, err := ui.SelectOption(labels, "Select parent branch")
 			if err != nil {
 				return err
 			}
-			parentBranch = branchOptions[selectedIdx]
+			parentBranch = choices[selectedIdx].branch
 		} else {
 			parentBranch, err = g.CurrentBranch()
 			if err != nil {
@@ -393,6 +392,51 @@ func New(args []string) error {
 	}
 
 	return nil
+}
+
+// parentChoice pairs the picker label with the underlying branch name so that
+// users can disambiguate "create a new stack from main" vs "add a child to an
+// existing stack on top of main". The label is descriptive but the branch name
+// is what gets passed downstream.
+type parentChoice struct {
+	label  string
+	branch string
+}
+
+// buildParentChoices returns labeled options for the interactive "select parent
+// branch" flow. The base branch comes first, then any other stack roots, then
+// each stack's member branches. Without these labels, picking a stack tip from
+// a flat list silently appends the new branch to that stack instead of starting
+// a fresh one — see issue context for v4.5.1.
+func buildParentChoices(baseBranch string, stacks []*config.Stack) []parentChoice {
+	var choices []parentChoice
+	seen := map[string]bool{}
+
+	add := func(branch, label string) {
+		if branch == "" || seen[branch] {
+			return
+		}
+		seen[branch] = true
+		choices = append(choices, parentChoice{label: label, branch: branch})
+	}
+
+	if baseBranch != "" {
+		add(baseBranch, fmt.Sprintf("%s  (base branch — creates a NEW stack)", baseBranch))
+	}
+
+	// Other stack roots (skip baseBranch which is already added).
+	for _, s := range stacks {
+		add(s.Root, fmt.Sprintf("%s  (stack root — creates a NEW stack)", s.Root))
+	}
+
+	// Stack member branches — picking these adds a child to that stack.
+	for _, s := range stacks {
+		for _, b := range s.Branches {
+			add(b.Name, fmt.Sprintf("%s  (in stack '%s' — adds child to this stack)", b.Name, s.DisplayName()))
+		}
+	}
+
+	return choices
 }
 
 // resolveStackIntent determines whether a new branch should be added to an existing stack,
