@@ -49,13 +49,25 @@ func (g *Git) ListInitializedSubmodules() ([]string, error) {
 		if status == '-' {
 			continue
 		}
-		// Trim status char, then grab the second whitespace-separated field
-		// (the path). First field is the SHA.
-		fields := strings.Fields(line[1:])
-		if len(fields) < 2 {
+		// Format: "<status><sha> <path>[ (<desc>)]". Strip the status char,
+		// take the SHA up to the first space, then the path is the rest with
+		// the optional " (<desc>)" suffix removed. Parsing this way (rather
+		// than splitting on whitespace) preserves spaces inside submodule
+		// paths.
+		_, after, ok := strings.Cut(line[1:], " ")
+		if !ok || after == "" {
 			continue
 		}
-		paths = append(paths, fields[1])
+		path := after
+		if strings.HasSuffix(path, ")") {
+			if i := strings.LastIndex(path, " ("); i >= 0 {
+				path = path[:i]
+			}
+		}
+		if path == "" {
+			continue
+		}
+		paths = append(paths, path)
 	}
 	return paths, nil
 }
