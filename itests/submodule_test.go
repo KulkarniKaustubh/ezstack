@@ -16,10 +16,10 @@ import (
 // specific prompt behavior should craft their own backend instead.
 type stubBackend struct{}
 
-func (stubBackend) Confirm(string) bool                                 { return true }
-func (stubBackend) ConfirmWithDefault(_ string, defaultYes bool) bool   { return defaultYes }
-func (stubBackend) Select(_ []string, _ string, defaultIdx int) int    { return defaultIdx }
-func (stubBackend) SelectOption(_ []string, _ string) (int, error)     { return 0, nil }
+func (stubBackend) Confirm(string) bool                               { return true }
+func (stubBackend) ConfirmWithDefault(_ string, defaultYes bool) bool { return defaultYes }
+func (stubBackend) Select(_ []string, _ string, defaultIdx int) int   { return defaultIdx }
+func (stubBackend) SelectOption(_ []string, _ string) (int, error)    { return 0, nil }
 func (stubBackend) SelectOptionWithBack(_ []string, _ string) (int, error) {
 	return 0, nil
 }
@@ -205,6 +205,166 @@ func TestNewBranch_FlagOverridesConfig(t *testing.T) {
 	wt := filepath.Join(env.WorktreeDir, "feature")
 	if !submoduleInitialized(wt, "vendor/a") {
 		t.Errorf("expected --init-submodules to override config and mirror submodule")
+	}
+}
+
+// TestNewBranch_NoSubmodulesInSource_NoOp: a repo with no submodules at
+// all must not produce a warning or fail. This is the default state for
+// 99% of repos and the mirror code must stay silent in that case.
+func TestNewBranch_NoSubmodulesInSource_NoOp(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+	useStubBackend(t)
+
+	// Note: deliberately no submodule setup — env.RepoDir has no .gitmodules.
+
+	chdirForTest(t, env.RepoDir)
+	if err := commands.New([]string{"feature", "-p", "main"}); err != nil {
+		t.Fatalf("commands.New on submodule-free repo: %v", err)
+	}
+
+	wt := filepath.Join(env.WorktreeDir, "feature")
+	if _, err := os.Stat(wt); err != nil {
+		t.Errorf("worktree not created: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(wt, ".gitmodules")); !os.IsNotExist(err) {
+		t.Errorf("expected no .gitmodules in worktree, got stat err = %v", err)
+	}
+}
+
+// TestNewBranch_NoWorktreeMode_SkipsMirror: when use_worktrees=false, the
+// branch is created without a worktree and the mirror code path must not
+// run (there is no destination to mirror into). This guards against a
+// regression where submodule init would either error out or attempt to
+// run against a non-existent path.
+func TestNewBranch_NoWorktreeMode_SkipsMirror(t *testing.T) {
+	enableFileProtocolEnv(t)
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+	useStubBackend(t)
+
+	src := setupSubmoduleSource(t, "a")
+	addSubmoduleToRepo(t, env.RepoDir, src, "vendor/a")
+
+	// Disable worktrees for this repo.
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("config.Load: %v", err)
+	}
+	repoCfg := cfg.GetRepoConfig(env.RepoDir)
+	if repoCfg == nil {
+		repoCfg = &config.RepoConfig{}
+	}
+	falseVal := false
+	repoCfg.UseWorktrees = &falseVal
+	cfg.SetRepoConfig(env.RepoDir, repoCfg)
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("cfg.Save: %v", err)
+	}
+
+	chdirForTest(t, env.RepoDir)
+	if err := commands.New([]string{"feature", "-p", "main"}); err != nil {
+		t.Fatalf("commands.New (no-worktree mode): %v", err)
+	}
+
+	// No worktree directory should have been created — mirror runs against
+	// worktrees only.
+	if _, err := os.Stat(filepath.Join(env.WorktreeDir, "feature")); !os.IsNotExist(err) {
+		t.Errorf("worktree dir created in no-worktree mode (stat err = %v)", err)
+	}
+}
+
+// TestNewBranch_FromRemoteRef_MirrorsSubmodules: `ezs new origin/<branch>`
+// goes through newFromRemoteRef which has its own mirror call site. Verify
+// it actually mirrors so this path doesn't silently miss the feature.
+func TestNewBranch_FromRemoteRef_MirrorsSubmodules(t *testing.T) {
+	enableFileProtocolEnv(t)
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+	useStubBackend(t)
+
+	src := setupSubmoduleSource(t, "a")
+	addSubmoduleToRepo(t, env.RepoDir, src, "vendor/a")
+
+	// Wire up a bare origin and push main + a remote branch.
+	bare := filepath.Join(env.TmpDir, "bare.git")
+	if err := exec.Command("git", "init", "--bare", "-b", "main", bare).Run(); err != nil {
+		t.Fatalf("init bare: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "remote", "add", "origin", bare).Run(); err != nil {
+		t.Fatalf("remote add: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "push", "-u", "origin", "main").Run(); err != nil {
+		t.Fatalf("push main: %v", err)
+	}
+	// Create a branch on origin that the user will check out via origin/<branch>.
+	if err := exec.Command("git", "-C", env.RepoDir, "branch", "remote-feature", "main").Run(); err != nil {
+		t.Fatalf("branch remote-feature: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "push", "origin", "remote-feature").Run(); err != nil {
+		t.Fatalf("push remote-feature: %v", err)
+	}
+	// Drop the local branch so newFromRemoteRef takes the "create" path
+	// rather than the "branch already exists" early-return.
+	if err := exec.Command("git", "-C", env.RepoDir, "branch", "-D", "remote-feature").Run(); err != nil {
+		t.Fatalf("delete local remote-feature: %v", err)
+	}
+
+	chdirForTest(t, env.RepoDir)
+	if err := commands.New([]string{"origin/remote-feature"}); err != nil {
+		t.Fatalf("commands.New origin/remote-feature: %v", err)
+	}
+
+	wt := filepath.Join(env.WorktreeDir, "remote-feature")
+	if _, err := os.Stat(wt); err != nil {
+		t.Fatalf("worktree not created: %v", err)
+	}
+	if !submoduleInitialized(wt, "vendor/a") {
+		t.Errorf("expected vendor/a to be mirrored into newFromRemoteRef worktree")
+	}
+}
+
+// TestNewBranch_FromRemoteRef_NoInitFlag: --no-init-submodules must also
+// take effect on the newFromRemoteRef path (there are two flag plumbings —
+// one for the normal flow, one for origin/<branch>). Without a test, a
+// future refactor could drop the flag from one path and not the other.
+func TestNewBranch_FromRemoteRef_NoInitFlag(t *testing.T) {
+	enableFileProtocolEnv(t)
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+	useStubBackend(t)
+
+	src := setupSubmoduleSource(t, "a")
+	addSubmoduleToRepo(t, env.RepoDir, src, "vendor/a")
+
+	bare := filepath.Join(env.TmpDir, "bare.git")
+	if err := exec.Command("git", "init", "--bare", "-b", "main", bare).Run(); err != nil {
+		t.Fatalf("init bare: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "remote", "add", "origin", bare).Run(); err != nil {
+		t.Fatalf("remote add: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "push", "-u", "origin", "main").Run(); err != nil {
+		t.Fatalf("push main: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "branch", "remote-skip-sub", "main").Run(); err != nil {
+		t.Fatalf("branch: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "push", "origin", "remote-skip-sub").Run(); err != nil {
+		t.Fatalf("push branch: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "branch", "-D", "remote-skip-sub").Run(); err != nil {
+		t.Fatalf("delete local: %v", err)
+	}
+
+	chdirForTest(t, env.RepoDir)
+	if err := commands.New([]string{"origin/remote-skip-sub", "--no-init-submodules"}); err != nil {
+		t.Fatalf("commands.New: %v", err)
+	}
+
+	wt := filepath.Join(env.WorktreeDir, "remote-skip-sub")
+	if submoduleInitialized(wt, "vendor/a") {
+		t.Errorf("expected --no-init-submodules to suppress mirror in origin/<branch> flow")
 	}
 }
 
