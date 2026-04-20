@@ -97,11 +97,14 @@ jobs:
     needs: release
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Package Neovim plugin
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # Stage as ezstack-nvim/ so users get a clean top-level dir on extract
+          # neovim-plugin/ is a submodule pointing at KulkarniKaustubh/ezstack.nvim.
+          # Stage as ezstack-nvim/ so users get a clean top-level dir on extract.
           mkdir -p dist
           rsync -a --exclude '.git' neovim-plugin/ "ezstack-nvim/"
           tar czf "dist/ezstack-nvim-${VERSION}.tar.gz" ezstack-nvim
