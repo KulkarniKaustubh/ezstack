@@ -161,6 +161,64 @@ func TestConfig_GetCdAfterNew(t *testing.T) {
 	}
 }
 
+func TestConfig_GetInitSubmodules(t *testing.T) {
+	trueVal := true
+	falseVal := false
+
+	tests := []struct {
+		name     string
+		config   *Config
+		repoPath string
+		want     bool
+	}{
+		{
+			name: "explicit true",
+			config: &Config{
+				Repos: map[string]*RepoConfig{
+					"/repo": {InitSubmodules: &trueVal},
+				},
+			},
+			repoPath: "/repo",
+			want:     true,
+		},
+		{
+			name: "explicit false",
+			config: &Config{
+				Repos: map[string]*RepoConfig{
+					"/repo": {InitSubmodules: &falseVal},
+				},
+			},
+			repoPath: "/repo",
+			want:     false,
+		},
+		{
+			name: "nil defaults to true",
+			config: &Config{
+				Repos: map[string]*RepoConfig{
+					"/repo": {},
+				},
+			},
+			repoPath: "/repo",
+			want:     true,
+		},
+		{
+			name:     "missing repo defaults to true",
+			config:   &Config{Repos: map[string]*RepoConfig{}},
+			repoPath: "/missing",
+			want:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.config.GetInitSubmodules(tt.repoPath)
+			if got != tt.want {
+				t.Errorf("GetInitSubmodules() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestConfig_SetRepoConfig(t *testing.T) {
 	config := &Config{}
 
@@ -810,6 +868,66 @@ func TestConfig_GetSyncStrategy(t *testing.T) {
 				t.Errorf("GetSyncStrategy() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestConfig_InitSubmodules_Persistence verifies that the init_submodules
+// pointer-bool round-trips through Save/Load — covering the absent (nil),
+// explicit-true, and explicit-false cases. Pointer-bools are easy to lose
+// when JSON tags drift, so the round-trip is the contract.
+func TestConfig_InitSubmodules_Persistence(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "ezstack-config-init-sub-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	originalHome := os.Getenv("EZSTACK_HOME")
+	defer os.Setenv("EZSTACK_HOME", originalHome)
+	os.Setenv("EZSTACK_HOME", tmpDir)
+
+	trueVal := true
+	falseVal := false
+
+	cfg := &Config{
+		DefaultBaseBranch: "main",
+		Repos: map[string]*RepoConfig{
+			"/repo/explicit-true":  {RepoPath: "/repo/explicit-true", InitSubmodules: &trueVal},
+			"/repo/explicit-false": {RepoPath: "/repo/explicit-false", InitSubmodules: &falseVal},
+			"/repo/unset":          {RepoPath: "/repo/unset"},
+		},
+	}
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	loaded, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+
+	if got := loaded.GetInitSubmodules("/repo/explicit-true"); !got {
+		t.Errorf("explicit-true: GetInitSubmodules() = false, want true")
+	}
+	if got := loaded.GetInitSubmodules("/repo/explicit-false"); got {
+		t.Errorf("explicit-false: GetInitSubmodules() = true, want false")
+	}
+	if got := loaded.GetInitSubmodules("/repo/unset"); !got {
+		t.Errorf("unset: GetInitSubmodules() = false, want true (default)")
+	}
+	if got := loaded.GetInitSubmodules("/repo/unknown"); !got {
+		t.Errorf("unknown repo: GetInitSubmodules() = false, want true (default)")
+	}
+
+	// The explicit-false pointer must round-trip as a real false (not nil),
+	// because nil would make the getter fall back to the default of true and
+	// silently flip the user's setting.
+	rc := loaded.GetRepoConfig("/repo/explicit-false")
+	if rc == nil || rc.InitSubmodules == nil {
+		t.Fatalf("explicit-false: InitSubmodules pointer lost on reload (rc=%+v)", rc)
+	}
+	if *rc.InitSubmodules {
+		t.Errorf("explicit-false: *InitSubmodules = true, want false")
 	}
 }
 

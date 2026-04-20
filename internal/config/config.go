@@ -57,8 +57,9 @@ type RepoConfig struct {
 	CdAfterNew          *bool  `json:"cd_after_new,omitempty"`
 	UseWorktrees        *bool  `json:"use_worktrees,omitempty"`
 	AutoDraftWipCommits *bool  `json:"auto_draft_wip_commits,omitempty"`
-	SyncStrategy        string `json:"sync_strategy,omitempty"` // "rebase" (default) or "merge"
-	AgentCommand        string `json:"agent_command,omitempty"` // AI agent CLI command (default: "claude")
+	InitSubmodules      *bool  `json:"init_submodules,omitempty"` // Mirror main worktree's initialized submodules into new worktrees (default: true)
+	SyncStrategy        string `json:"sync_strategy,omitempty"`   // "rebase" (default) or "merge"
+	AgentCommand        string `json:"agent_command,omitempty"`   // AI agent CLI command (default: "claude")
 }
 
 // GetAgentCommand returns the configured agent command, defaulting to "claude".
@@ -117,6 +118,15 @@ func (c *Config) GetCdAfterNew(repoPath string) bool {
 func (c *Config) GetUseWorktrees(repoPath string) bool {
 	if repoCfg := c.GetRepoConfig(repoPath); repoCfg != nil && repoCfg.UseWorktrees != nil {
 		return *repoCfg.UseWorktrees
+	}
+	return true
+}
+
+// GetInitSubmodules returns whether to mirror the main worktree's initialized
+// submodules into newly created worktrees (default: true).
+func (c *Config) GetInitSubmodules(repoPath string) bool {
+	if repoCfg := c.GetRepoConfig(repoPath); repoCfg != nil && repoCfg.InitSubmodules != nil {
+		return *repoCfg.InitSubmodules
 	}
 	return true
 }

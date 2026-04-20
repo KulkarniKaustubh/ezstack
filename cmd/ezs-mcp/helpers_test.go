@@ -88,6 +88,45 @@ func TestStringFlag(t *testing.T) {
 	})
 }
 
+func TestTristateBoolFlag(t *testing.T) {
+	t.Run("true appends flagTrue", func(t *testing.T) {
+		var got []string
+		tristateBoolFlag(&got, fakeRequest(map[string]any{"x": true}), "x", "--yes", "--no")
+		if len(got) != 1 || got[0] != "--yes" {
+			t.Errorf("got %v, want [--yes]", got)
+		}
+	})
+	t.Run("false appends flagFalse", func(t *testing.T) {
+		var got []string
+		tristateBoolFlag(&got, fakeRequest(map[string]any{"x": false}), "x", "--yes", "--no")
+		if len(got) != 1 || got[0] != "--no" {
+			t.Errorf("got %v, want [--no]", got)
+		}
+	})
+	t.Run("missing is a no-op", func(t *testing.T) {
+		var got []string
+		tristateBoolFlag(&got, fakeRequest(map[string]any{}), "x", "--yes", "--no")
+		if len(got) != 0 {
+			t.Errorf("got %v, want []", got)
+		}
+	})
+	t.Run("non-bool value is a no-op", func(t *testing.T) {
+		var got []string
+		tristateBoolFlag(&got, fakeRequest(map[string]any{"x": "true"}), "x", "--yes", "--no")
+		if len(got) != 0 {
+			t.Errorf("got %v, want []", got)
+		}
+	})
+	t.Run("nil arguments map is a no-op", func(t *testing.T) {
+		var got []string
+		req := mcp.CallToolRequest{}
+		tristateBoolFlag(&got, req, "x", "--yes", "--no")
+		if len(got) != 0 {
+			t.Errorf("got %v, want []", got)
+		}
+	})
+}
+
 func TestCaptureCommand_StdoutStderrSplit(t *testing.T) {
 	stdout, stderr, err := captureCommand(func(args []string) error {
 		fmt.Fprint(os.Stdout, "out:"+strings.Join(args, ","))
