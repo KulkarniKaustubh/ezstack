@@ -294,7 +294,9 @@ ezs config set <key> <value>    Set a configuration value
 ezs config show                 Show current configuration
 ```
 
-**Available keys:** `worktree_base_dir`, `default_base_branch`, `cd_after_new`, `use_worktrees`, `sync_strategy`
+**Available keys:** `worktree_base_dir`, `default_base_branch`, `cd_after_new`, `use_worktrees`, `sync_strategy`, `init_submodules`
+
+- `init_submodules` (per-repo, default `true`): when creating a new worktree, mirror the same set of initialized submodules that are active in the main worktree. Useful for monorepos (e.g. SONiC) where developers only init the submodules they actively work on. Overridable per-invocation with `ezs new --init-submodules` / `--no-init-submodules`.
 
 **Global flags**
 
@@ -739,9 +741,13 @@ Options:
     -w, --worktree <path>     Worktree path (defaults to configured base dir + branch name)
     -c, --cd                  Change to the new worktree after creation
     -C, --no-cd               Don't change to the new worktree (overrides config)
+    -s, --init-submodules     Mirror main worktree's initialized submodules (overrides config)
+    -S, --no-init-submodules  Skip submodule initialization (overrides config)
     -f, --from-worktree       Register an existing worktree as a stack root
     -r, --from-remote         Create a stack from a remote branch/PR
 ```
+
+**Submodule mirroring.** By default, `ezs new` inspects the main worktree's initialized submodules (via `git submodule status`) and runs `git submodule update --init -- <paths>` on the same paths in the new worktree. Submodules that are deinit'd in the main worktree are left uninitialized in the new worktree too — which matches the monorepo workflow (e.g. SONiC) where developers only init the subset of submodules they work on. Mirroring can be disabled globally via `ezs config set init_submodules false`, and overridden per-invocation with `--init-submodules` / `--no-init-submodules`. A failure to mirror submodules is logged as a warning and does not fail branch creation.
 
 With `origin/<branch>`, creates a local worktree tracking the remote branch and registers it in a stack (root = PR base branch, or `main` by default). The branch is marked as `(remote)` in `ezs ls` output. All commands (sync, push, commit, etc.) work normally on it.
 ```bash
