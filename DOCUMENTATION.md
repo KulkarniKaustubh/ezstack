@@ -1121,7 +1121,7 @@ Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/vscode.html>.
 
 ### Neovim Plugin
 
-Located in `neovim-plugin/`. Native Lua plugin for Neovim 0.10+. Exposes a
+Distributed as [`ezstack.nvim`](https://github.com/KulkarniKaustubh/ezstack.nvim). Native Lua plugin for Neovim 0.10+. Exposes a
 single `:Ezs` user command with subcommand and flag completion, plus a styled
 stack viewer buffer, Telescope pickers, and a statusline component.
 
@@ -1129,8 +1129,7 @@ stack viewer buffer, Telescope pickers, and a statusline component.
 
 ```lua
 {
-  "KulkarniKaustubh/ezstack",
-  subdir = "neovim-plugin",
+  "KulkarniKaustubh/ezstack.nvim",
   cmd    = { "Ezs" },
   keys   = { { "<leader>ez", "<cmd>Ezs<cr>", desc = "Ezstack viewer" } },
   config = function()
@@ -1141,7 +1140,8 @@ stack viewer buffer, Telescope pickers, and a statusline component.
 ```
 
 `packer.nvim` and a manual `runtimepath+=...` install also work &mdash; see
-`neovim-plugin/README.md` for the alternatives.
+the [ezstack.nvim README](https://github.com/KulkarniKaustubh/ezstack.nvim#readme)
+for the alternatives.
 
 **Key commands** (every `ezs` subcommand has a `:Ezs` mirror):
 
@@ -1206,9 +1206,9 @@ from root)` header rather than being silently dropped. Press `q` to close.
 `User EzstackGoto` after a worktree switch. Hook your own logic in via
 `autocmd`. Run `:help ezstack` for the bundled vimdoc reference.
 
-**Tests** &mdash; a plenary.nvim busted suite lives in
-`neovim-plugin/tests/`. Run it with
-`nvim --headless --noplugin -u neovim-plugin/tests/minimal_init.lua -c "PlenaryBustedDirectory neovim-plugin/tests/ {minimal_init = 'neovim-plugin/tests/minimal_init.lua', sequential = true}"`.
+**Tests** &mdash; a plenary.nvim busted suite lives in the `ezstack.nvim` repo
+under `tests/`. From inside that repo, run:
+`nvim --headless --noplugin -u tests/minimal_init.lua -c "PlenaryBustedDirectory tests/ {minimal_init = 'tests/minimal_init.lua', sequential = true}"`.
 It covers subcommand-dispatch completeness, statusline formatters, graph
 rendering (including orphan handling), default-keymap installation, and
 welcome-marker idempotency.

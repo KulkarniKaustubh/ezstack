@@ -1711,13 +1711,12 @@ Options:
       </table>
       <p>Full feature tour: <a href="https://kulkarnikaustubh.github.io/ezstack/vscode.html">https://kulkarnikaustubh.github.io/ezstack/vscode.html</a>.</p>
       <h3 id="neovim-plugin">Neovim Plugin</h3>
-      <p>Located in <code>neovim-plugin/</code>. Native Lua plugin for Neovim 0.10+. Exposes a
+      <p>Distributed as <a href="https://github.com/KulkarniKaustubh/ezstack.nvim"><code>ezstack.nvim</code></a>. Native Lua plugin for Neovim 0.10+. Exposes a
       single <code>:Ezs</code> user command with subcommand and flag completion, plus a styled
       stack viewer buffer, Telescope pickers, and a statusline component.</p>
       <p><strong>Install (lazy.nvim)</strong></p>
       <pre><code>{
-  <span class="c-str">&#34;KulkarniKaustubh/ezstack&#34;</span><span class="c-str">,</span>
-  <span class="c-cmd">subdir</span> <span class="c-str">=</span> <span class="c-str">&#34;neovim-plugin&#34;</span><span class="c-str">,</span>
+  <span class="c-str">&#34;KulkarniKaustubh/ezstack.nvim&#34;</span><span class="c-str">,</span>
   <span class="c-cmd">cmd</span>    <span class="c-dim">= { &#34;Ezs&#34; },</span>
   <span class="c-cmd">keys</span>   <span class="c-dim">= { { &#34;&lt;leader&gt;ez&#34;, &#34;&lt;cmd&gt;Ezs&lt;cr&gt;&#34;, desc = &#34;Ezstack viewer&#34; } },</span>
   <span class="c-cmd">config</span> <span class="c-str">=</span> <span class="c-str">function()</span>
@@ -1727,7 +1726,8 @@ Options:
 }
 </code></pre>
       <p><code>packer.nvim</code> and a manual <code>runtimepath+=...</code> install also work — see
-      <code>neovim-plugin/README.md</code> for the alternatives.</p>
+      the <a href="https://github.com/KulkarniKaustubh/ezstack.nvim#readme">ezstack.nvim README</a>
+      for the alternatives.</p>
       <p><strong>Key commands</strong> (every <code>ezs</code> subcommand has a <code>:Ezs</code> mirror):</p>
       <pre><code>:Ezs                 <span class="c-str">&#34; open the stack viewer</span>
 :Ezs <span class="c-flag">status</span>          <span class="c-str">&#34; viewer with PR/CI info</span>
@@ -1831,9 +1831,9 @@ Options:
       <code>setup()</code>, <code>User EzstackChanged</code> after every CLI mutation, and
       <code>User EzstackGoto</code> after a worktree switch. Hook your own logic in via
       <code>autocmd</code>. Run <code>:help ezstack</code> for the bundled vimdoc reference.</p>
-      <p><strong>Tests</strong> — a plenary.nvim busted suite lives in
-      <code>neovim-plugin/tests/</code>. Run it with
-      <code>nvim --headless --noplugin -u neovim-plugin/tests/minimal_init.lua -c &quot;PlenaryBustedDirectory neovim-plugin/tests/ {minimal_init = 'neovim-plugin/tests/minimal_init.lua', sequential = true}&quot;</code>.
+      <p><strong>Tests</strong> — a plenary.nvim busted suite lives in the <code>ezstack.nvim</code> repo
+      under <code>tests/</code>. From inside that repo, run:
+      <code>nvim --headless --noplugin -u tests/minimal_init.lua -c &quot;PlenaryBustedDirectory tests/ {minimal_init = 'tests/minimal_init.lua', sequential = true}&quot;</code>.
       It covers subcommand-dispatch completeness, statusline formatters, graph
       rendering (including orphan handling), default-keymap installation, and
       welcome-marker idempotency.</p>
@@ -1929,7 +1929,7 @@ Options:
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License · v4.5.0</span>
+          <span class="footer-meta">MIT License · v4.5.1</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

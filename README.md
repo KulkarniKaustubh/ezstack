@@ -232,7 +232,7 @@ your editor or a native GUI:
 | Integration | Description | Docs |
 |---|---|---|
 | **VS Code Extension** (`vscode-extension/`) | Sidebar stack tree, per-branch file browser, PR & CI status, command palette, agent integration | [vscode.html](https://kulkarnikaustubh.github.io/ezstack/vscode.html) · [README](vscode-extension/README.md) |
-| **Neovim Plugin** (`neovim-plugin/`) | Native Lua plugin with `:Ezs` command suite, styled stack viewer, Telescope pickers, statusline component, fugitive auto-refresh | [nvim.html](https://kulkarnikaustubh.github.io/ezstack/nvim.html) · [README](neovim-plugin/README.md) |
+| **Neovim Plugin** ([`ezstack.nvim`](https://github.com/KulkarniKaustubh/ezstack.nvim)) | Native Lua plugin with `:Ezs` command suite, styled stack viewer, Telescope pickers, statusline component, fugitive auto-refresh | [nvim.html](https://kulkarnikaustubh.github.io/ezstack/nvim.html) · [README](https://github.com/KulkarniKaustubh/ezstack.nvim#readme) |
 | **Desktop App** (`tauri-ui/`) | Tauri v2 + React 19 desktop GUI. Three-panel layout, visual stack graph with drag-to-reparent, branch reflog history, sidebar repo filter, toast notifications, remote SSH mode | [desktop.html](https://kulkarnikaustubh.github.io/ezstack/desktop.html) · [README](tauri-ui/README.md) |
 | **MCP Server** (`cmd/ezs-mcp/`) | Model Context Protocol server for Claude Code and other MCP-compatible agents. Exposes eleven stack operations as tools with destructive annotations and required-arg schemas | [mcp.html](https://kulkarnikaustubh.github.io/ezstack/mcp.html) |
 
@@ -252,8 +252,7 @@ Then open the **ezstack** panel in the activity bar. Auto-refreshes on
 ```lua
 -- lazy.nvim
 {
-  "KulkarniKaustubh/ezstack",
-  subdir = "neovim-plugin",
+  "KulkarniKaustubh/ezstack.nvim",
   cmd    = { "Ezs" },
   config = function() require("ezstack").setup() end,
 }
