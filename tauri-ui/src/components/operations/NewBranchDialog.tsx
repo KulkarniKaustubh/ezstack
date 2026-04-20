@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import type { StatusStack } from "../../types/ezstack";
+import { buildParentPickChoices, ParentPickChoice } from "../../lib/parent-picker";
 
 interface NewBranchDialogProps {
   open: boolean;
@@ -13,6 +14,11 @@ interface NewBranchDialogProps {
   isLoading: boolean;
 }
 
+interface ScopedBranch {
+  branchName: string;
+  description: string;
+}
+
 export function NewBranchDialog({ open, onOpenChange, stacks, forStack, onSubmit, isLoading }: NewBranchDialogProps) {
   const [name, setName] = useState("");
   const [parent, setParent] = useState("");
@@ -21,10 +27,19 @@ export function NewBranchDialog({ open, onOpenChange, stacks, forStack, onSubmit
     if (!open) { setName(""); setParent(""); }
   }, [open]);
 
-  // If scoped to a stack, only show that stack's branches as parents
-  const sourceStacks = forStack ? [forStack] : stacks;
-  const allBranches = sourceStacks.flatMap((s) => [s.root, ...s.branches.map((b) => b.name)]);
-  const uniqueBranches = [...new Set(allBranches)];
+  // When scoped to a single stack, only that stack's branches are valid parents
+  // and the user already knows which stack they're in — flat list is fine.
+  // When unscoped, we MUST label each entry to distinguish "stack root → new
+  // stack" vs "stack tip → child of existing stack" so users don't silently
+  // add a branch to the wrong stack (see v4.5.1 fix).
+  const scopedBranches: ScopedBranch[] = forStack
+    ? [
+        { branchName: forStack.root, description: "stack root" },
+        ...forStack.branches.map((b) => ({ branchName: b.name, description: "" })),
+      ]
+    : [];
+  const choices: ParentPickChoice[] = forStack ? [] : buildParentPickChoices(stacks);
+  const renderedOptions = forStack ? scopedBranches : choices;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -71,9 +86,9 @@ export function NewBranchDialog({ open, onOpenChange, stacks, forStack, onSubmit
               ) : (
                 <option value="">Default (current branch)</option>
               )}
-              {uniqueBranches.map((b) => (
-                <option key={b} value={b}>
-                  {b}
+              {renderedOptions.map((opt) => (
+                <option key={opt.branchName} value={opt.branchName}>
+                  {opt.description ? `${opt.branchName}  —  ${opt.description}` : opt.branchName}
                 </option>
               ))}
             </select>
