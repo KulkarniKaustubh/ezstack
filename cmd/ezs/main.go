@@ -36,8 +36,27 @@ var knownCommands = map[string]bool{
 	"push":  true,
 	"up":    true,
 	"down":  true,
-	"agent": true,
-	"menu":  true,
+	"agent":  true,
+	"menu":   true,
+	"doctor": true,
+}
+
+// commandNeedsRepoCheck returns true if the command needs the caller to be in
+// a git repository. doctor is intentionally excluded so users can run it on a
+// fresh machine before cloning anything.
+func commandNeedsRepoCheck(cmd string) bool {
+	return cmd != "doctor"
+}
+
+// knownCommandNames returns the keys of knownCommands as a slice — needed by
+// ui.SuggestCommand for did-you-mean hints on unknown input. Aliases are
+// included so "ls" / "ci" etc. are valid typo targets.
+func knownCommandNames() []string {
+	names := make([]string, 0, len(knownCommands))
+	for k := range knownCommands {
+		names = append(names, k)
+	}
+	return names
 }
 
 // commandNeedsRepoConfig returns true if the command requires the current repo
@@ -48,7 +67,7 @@ func commandNeedsRepoConfig(cmd string) bool {
 		return false
 	}
 	switch cmd {
-	case "config", "cfg":
+	case "config", "cfg", "doctor":
 		return false
 	}
 	return true
@@ -124,11 +143,16 @@ func main() {
 	case "-v", "--version":
 		fmt.Printf("ezstack version %s\n", version.Version)
 		return
+	case "--info":
+		commands.Info(version.Version)
+		return
 	}
 
-	// Check if we're in a git repo for all other commands
+	// Check if we're in a git repo for all other commands. `doctor` is the
+	// exception — it's meant to be the first thing users run on a fresh
+	// machine, including before they've cloned or initialized any repo.
 	repoPath, inRepo := checkRepoRoot()
-	if !inRepo {
+	if !inRepo && commandNeedsRepoCheck(cmd) {
 		ui.Error("ezs must be run from a git repository root (or a worktree)")
 		os.Exit(ui.ExitNotInRepo)
 	}
@@ -218,8 +242,13 @@ func main() {
 		err = commands.Agent(args)
 	case "menu":
 		err = runInteractiveMenu()
+	case "doctor":
+		err = commands.Doctor(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
+		if suggestion := ui.SuggestCommand(cmd, knownCommandNames()); suggestion != "" {
+			fmt.Fprintf(os.Stderr, "Did you mean: %s?\n", suggestion)
+		}
 		printUsage()
 		os.Exit(ui.ExitUsage)
 	}

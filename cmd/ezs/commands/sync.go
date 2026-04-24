@@ -3,6 +3,7 @@ package commands
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
@@ -278,6 +279,13 @@ func Sync(args []string) error {
 // so the caller can request post-action reporting without forcing a return
 // path through a helper.
 func printSyncStats(cwd string) {
+	writeSyncStats(os.Stderr, cwd)
+}
+
+// writeSyncStats is the testable core of printSyncStats: it writes the stats
+// block to w so callers don't have to swap os.Stderr. printSyncStats exists
+// only to bind the default destination.
+func writeSyncStats(w io.Writer, cwd string) {
 	mgrLocal, mErr := stack.NewReadOnlyManager(cwd)
 	if mErr != nil {
 		return
@@ -287,7 +295,7 @@ func printSyncStats(cwd string) {
 		return
 	}
 	gLocal := git.New(cwd)
-	fmt.Fprintf(os.Stderr, "\n%sSync stats (commits ahead of parent):%s\n", ui.Bold, ui.Reset)
+	fmt.Fprintf(w, "\n%sSync stats (commits ahead of parent):%s\n", ui.Bold, ui.Reset)
 	for _, b := range currentStack.Branches {
 		if b.Parent == "" {
 			continue
@@ -296,7 +304,7 @@ func printSyncStats(cwd string) {
 		if err != nil {
 			continue
 		}
-		fmt.Fprintf(os.Stderr, "  %s %-30s %s%d commits%s\n", ui.IconBullet, b.Name, ui.Yellow, ahead, ui.Reset)
+		fmt.Fprintf(w, "  %s %-30s %s%d commits%s\n", ui.IconBullet, b.Name, ui.Yellow, ahead, ui.Reset)
 	}
 }
 

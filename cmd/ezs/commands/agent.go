@@ -1115,9 +1115,7 @@ func spawnAgentProcess(agentCmd, workDir, prompt string, noPush bool) error {
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if noPush {
-		cmd.Env = append(os.Environ(), agentNoPushEnv+"=1")
-	}
+	cmd.Env = agentProcessEnv(os.Environ(), noPush)
 
 	if err := cmd.Run(); err != nil {
 		// If the agent exited with a non-zero code, propagate it cleanly
@@ -1127,6 +1125,20 @@ func spawnAgentProcess(agentCmd, workDir, prompt string, noPush bool) error {
 		return err
 	}
 	return nil
+}
+
+// agentProcessEnv returns the env slice for the spawned agent, appending
+// EZS_AGENT_NO_PUSH=1 when noPush is set and passing the caller's env through
+// otherwise. Extracted for testability: nothing else about spawnAgentProcess
+// can be exercised without actually running an external command.
+func agentProcessEnv(parentEnv []string, noPush bool) []string {
+	if !noPush {
+		return nil // exec.Cmd inherits parent's env when Env is nil
+	}
+	env := make([]string, 0, len(parentEnv)+1)
+	env = append(env, parentEnv...)
+	env = append(env, agentNoPushEnv+"=1")
+	return env
 }
 
 // ── Default prompt templates ───────────────────────────────────────────────────

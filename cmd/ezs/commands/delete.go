@@ -130,9 +130,9 @@ func Delete(args []string) error {
 		children := mgr.GetChildren(branchName)
 		hasChildren := len(children) > 0
 
-		if hasChildren && !*force {
+		if hasChildren && !*force && !*cascadeFlag {
 			ui.Error(fmt.Sprintf("Branch '%s' has child branches", branchName))
-			return fmt.Errorf("cannot delete branch with children. Use --force to delete anyway")
+			return fmt.Errorf("cannot delete branch with children. Use --force or --cascade to delete anyway")
 		}
 
 		confirmPrompt := fmt.Sprintf("Delete branch '%s' and its worktree?", branchName)
@@ -155,12 +155,12 @@ func Delete(args []string) error {
 		}
 
 		children := mgr.GetChildren(branchName)
-		if len(children) > 0 && !*force {
+		if len(children) > 0 && !*force && !*cascadeFlag {
 			ui.Error(fmt.Sprintf("Branch '%s' has child branches:", branchName))
 			for _, c := range children {
 				fmt.Fprintf(os.Stderr, "  - %s\n", c.Name)
 			}
-			return fmt.Errorf("cannot delete branch with children. Use --force to delete anyway")
+			return fmt.Errorf("cannot delete branch with children. Use --force or --cascade to delete anyway")
 		}
 
 		ui.Warn(fmt.Sprintf("This will delete branch '%s' and its worktree", branchName))
