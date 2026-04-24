@@ -4,8 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 )
 
@@ -102,6 +104,110 @@ func TestNavigateToBranch_AlreadyOnTarget(t *testing.T) {
 	}
 	if got := currentBranch(t, dir); got != "already_here" {
 		t.Errorf("after NavigateToBranch: on %q, want already_here", got)
+	}
+}
+
+// TestFetchDiffStats_BaseDriftedFromOrigin reproduces the reporter's bug where
+// `ezs ls` line diff was "way off" after `ezs sync`. Sync rebases children onto
+// origin/<base> but never fast-forwards local <base>. If fetchDiffStats then
+// diffs against local <base>, the report includes every upstream commit landed
+// since the last local update — not what the branch actually contributes.
+//
+// The fix is to diff against origin/<base> when the branch's parent is the
+// stack's base (an upstream-tracked branch). This test sets up exactly that
+// drifted state and checks the reported additions/deletions match the feature
+// branch's own delta, not the upstream delta.
+func TestFetchDiffStats_BaseDriftedFromOrigin(t *testing.T) {
+	// Create a bare origin that local clones push/fetch against.
+	originDir := t.TempDir()
+	runIn := func(t *testing.T, dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git -C %s %v: %v\n%s", dir, args, err, out)
+		}
+	}
+	runIn(t, originDir, "init", "-q", "--bare", "-b", "main")
+
+	// Seed a working repo that will act as the publisher of upstream commits.
+	upstreamDir := t.TempDir()
+	runIn(t, upstreamDir, "init", "-q", "-b", "main")
+	runIn(t, upstreamDir, "config", "user.email", "up@test.com")
+	runIn(t, upstreamDir, "config", "user.name", "Up")
+	runIn(t, upstreamDir, "remote", "add", "origin", originDir)
+	if err := os.WriteFile(filepath.Join(upstreamDir, "README"), []byte("seed\n"), 0644); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	runIn(t, upstreamDir, "add", ".")
+	runIn(t, upstreamDir, "commit", "-qm", "seed")
+	runIn(t, upstreamDir, "push", "-q", "origin", "main")
+
+	// Local clone: fetch the seed, nothing else yet.
+	localDir := t.TempDir()
+	runIn(t, localDir, "clone", "-q", "-b", "main", originDir, ".")
+	runIn(t, localDir, "config", "user.email", "me@test.com")
+	runIn(t, localDir, "config", "user.name", "Me")
+
+	// Local: create a feature branch off main with its own delta (2 lines).
+	runIn(t, localDir, "checkout", "-qb", "feature")
+	featureContent := "feature-line-1\nfeature-line-2\n"
+	if err := os.WriteFile(filepath.Join(localDir, "feature.txt"), []byte(featureContent), 0644); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	runIn(t, localDir, "add", ".")
+	runIn(t, localDir, "commit", "-qm", "feature work")
+
+	// Upstream: advance main with a much larger commit (10 lines).
+	var bigBuf strings.Builder
+	for i := 0; i < 10; i++ {
+		bigBuf.WriteString("upstream-line\n")
+	}
+	if err := os.WriteFile(filepath.Join(upstreamDir, "upstream.txt"), []byte(bigBuf.String()), 0644); err != nil {
+		t.Fatalf("write upstream: %v", err)
+	}
+	runIn(t, upstreamDir, "add", ".")
+	runIn(t, upstreamDir, "commit", "-qm", "upstream advance")
+	runIn(t, upstreamDir, "push", "-q", "origin", "main")
+
+	// Local: fetch — now origin/main is ahead of local main. This is the
+	// drifted state. Simulate `ezs sync` by rebasing feature onto origin/main
+	// without fast-forwarding local main.
+	runIn(t, localDir, "fetch", "-q", "origin")
+	runIn(t, localDir, "rebase", "-q", "origin/main")
+
+	// Sanity: local main must still point at the original seed, not origin/main.
+	localMain, err := exec.Command("git", "-C", localDir, "rev-parse", "main").Output()
+	if err != nil {
+		t.Fatalf("rev-parse main: %v", err)
+	}
+	originMain, err := exec.Command("git", "-C", localDir, "rev-parse", "origin/main").Output()
+	if err != nil {
+		t.Fatalf("rev-parse origin/main: %v", err)
+	}
+	if strings.TrimSpace(string(localMain)) == strings.TrimSpace(string(originMain)) {
+		t.Fatalf("test precondition failed: local main and origin/main should have diverged")
+	}
+
+	// Invoke the function under test.
+	g := git.New(localDir)
+	s := &config.Stack{
+		Hash: "test",
+		Root: "main",
+		Branches: []*config.Branch{
+			{Name: "feature", Parent: "main"},
+		},
+	}
+	stats := fetchDiffStats(g, s)
+
+	got, ok := stats["feature"]
+	if !ok || got == nil {
+		t.Fatalf("no diff stats for feature branch; got %+v", stats)
+	}
+
+	// Feature's own delta is exactly 2 added lines. If the bug returns (diff
+	// resolves local main instead of origin/main) we'd see 12 (2 + 10).
+	if got.Additions != 2 || got.Deletions != 0 {
+		t.Errorf("feature diff = +%d/-%d; want +2/-0 (base drift leaked in)", got.Additions, got.Deletions)
 	}
 }
 
