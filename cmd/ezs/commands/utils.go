@@ -898,9 +898,12 @@ func detectForkRemote(g *git.Git, gh *github.Client, pr *github.PR) string {
 // ResolveBranchRemote returns the git remote that should receive pushes for branchName.
 // For branches that were registered as remote (fork) PRs but don't yet have a fork remote
 // recorded — typically because they predate fork detection or detection failed at register
-// time — this lazily re-runs detection, persists the result, and returns it. Returns
-// config.RemoteNoPush when detection fails or push is forbidden so callers will skip the
-// push instead of silently sending it to origin.
+// time — this lazily re-runs detection, persists the result, and returns it.
+//
+// Ambiguous outcomes (GitHub client init failed, no PR found yet) fall back to "origin"
+// without persisting anything: those signals are transient and must NOT latch the branch
+// into config.RemoteNoPush forever. Only a confirmed fork that forbids maintainer push
+// can produce a persisted _nopush sentinel, via detectForkRemote.
 func ResolveBranchRemote(g *git.Git, mgr *stack.Manager, branchName string) string {
 	if mgr == nil {
 		return "origin"
@@ -918,15 +921,13 @@ func ResolveBranchRemote(g *git.Git, mgr *stack.Manager, branchName string) stri
 	ui.Warn(fmt.Sprintf("Branch '%s' is tracked from a remote PR but has no fork remote configured — running fork detection now", branchName))
 	gh, ghErr := newGitHubClient(g)
 	if ghErr != nil {
-		ui.Warn(fmt.Sprintf("Could not init GitHub client for fork detection: %v — push will be skipped", ghErr))
-		_ = mgr.MarkBranchRemote(branchName, b.PRUrl, config.RemoteNoPush)
-		return config.RemoteNoPush
+		ui.Warn(fmt.Sprintf("Could not init GitHub client for fork detection: %v — pushing to origin", ghErr))
+		return "origin"
 	}
 	pr, prErr := gh.GetPRByBranch(branchName)
 	if prErr != nil || pr == nil {
-		ui.Warn(fmt.Sprintf("Could not look up PR for '%s': %v — push will be skipped", branchName, prErr))
-		_ = mgr.MarkBranchRemote(branchName, b.PRUrl, config.RemoteNoPush)
-		return config.RemoteNoPush
+		ui.Warn(fmt.Sprintf("No PR found for '%s' yet — pushing to origin", branchName))
+		return "origin"
 	}
 	forkRemote := detectForkRemote(g, gh, pr)
 	prURL := b.PRUrl

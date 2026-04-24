@@ -692,8 +692,17 @@ func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noC
 		}
 	}
 	if _, regErr := mgr.RegisterExistingBranch(remoteBranch, worktreePath, baseBranch); regErr == nil {
-		forkRemote := detectForkRemote(g, gh, pr)
-		mgr.MarkBranchRemote(remoteBranch, prURL, forkRemote)
+		// Only mark the branch as remote-contributor when we actually detected a fork
+		// (or a fork with push forbidden). detectForkRemote returns "" for same-repo PRs
+		// and for "no PR yet" — in those cases the branch is your own and should be
+		// pushed to origin like any other. Previously MarkBranchRemote was called
+		// unconditionally, which poisoned same-repo branches into the fork-detection
+		// path on every push.
+		if forkRemote := detectForkRemote(g, gh, pr); forkRemote != "" {
+			mgr.MarkBranchRemote(remoteBranch, prURL, forkRemote)
+		} else if pr != nil {
+			savePRToCache(mgr.GetRepoDir(), remoteBranch, pr.Number, prURL)
+		}
 	}
 
 	// Show PR info and diff stats
