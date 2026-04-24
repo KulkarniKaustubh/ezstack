@@ -36,6 +36,9 @@ brew install ezstack
 
 ```bash
 go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest
+
+# Optional: MCP server for Claude Code and other MCP-compatible agents
+go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
 ```
 
 ### From Source
@@ -145,7 +148,7 @@ ezstack also runs optional user hooks from `~/.ezstack/hooks/` around `commit`, 
 ezstack can launch an AI coding agent (Claude, Cursor, etc.) with full stack context injected automatically. The agent is scoped to a single stack and knows about all branches, worktree paths, and available commands. **Requires worktree mode** (`use_worktrees: true`, which is the default) — the agent needs separate working directories for each branch to operate in isolation.
 
 ```bash
-# Launch agent on current stack
+# Launch agent (works from any branch, including main)
 ezs agent
 
 # Build a feature as stacked branches
@@ -156,7 +159,29 @@ ezs agent prompt --shipped work
 ezs agent prompt --edit work
 ```
 
-Agent prompts are composed from three layers: a shipped prompt (updated with releases), custom instructions (`~/.ezstack/`), and repo-specific instructions (`<repo>/.ezstack/`). See [AGENTS.md](AGENTS.md) for full details.
+Agent prompts are composed from three layers: a shipped prompt (updated with releases), custom instructions (`~/.ezstack/`), and repo-specific instructions (`<repo>/.ezstack/`). See the [agent workflows](DOCUMENTATION.md#ezs-agent) section of DOCUMENTATION.md for full details.
+
+## MCP Server (Claude Code & other MCP clients)
+
+ezstack ships a standalone MCP server, `ezs-mcp`, that exposes the full stack workflow as Model Context Protocol tools. Point any MCP-compatible agent at it (Claude Code, Zed, etc.) and the agent can drive `ezs` directly: inspect (`status`, `list`, `diff`, `log`, `config_show`), mutate (`commit`, `amend`, `sync`, `push`, `new`, `delete`, `reparent`, `stack`, `unstack`, `config_set`), navigate (`goto`), and manage PRs (`pr_create`, `pr_update`, `pr_merge`, `pr_draft`, `pr_stack`). 21 tools, one binary.
+
+Install:
+
+```bash
+go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
+# or, from source
+make install-mcp
+```
+
+Register with Claude Code (one registration, every repo — `ezs-mcp` operates on whichever directory Claude launches it in):
+
+```bash
+claude mcp add ezstack --scope user -- ezs-mcp
+```
+
+If you open Claude Code at a monorepo root but your ezstack-configured repo is a subdirectory, Claude will launch `ezs-mcp` with the monorepo root as its cwd, which won't match any sub-repo. In that case, register a per-subrepo entry with an absolute path: `claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo`. Read-only tools (`ezstack_status`, `ezstack_list`, `ezstack_diff`, `ezstack_log`, `ezstack_config_show`) return JSON by default, or pass `decorated=true` (where supported) to get the terminal-styled output. Destructive tools (`ezstack_commit`, `ezstack_amend`, `ezstack_sync`, `ezstack_push`, `ezstack_delete`, `ezstack_pr_merge`, `ezstack_pr_update`) are tagged with the MCP destructive annotation so the client can prompt before running them. `ezstack_commit` requires an explicit `message` and `ezstack_amend` defaults to `--no-edit` so neither can ever launch `$EDITOR` and corrupt the JSON-RPC transport. Most tools accept an optional `branch` parameter so they work even when the MCP server's working directory is on a non-stack branch like `main`.
+
+Full feature tour and tool catalog: [mcp.html](https://kulkarnikaustubh.github.io/ezstack/mcp.html).
 
 ## Configuration
 
@@ -207,8 +232,9 @@ your editor or a native GUI:
 | Integration | Description | Docs |
 |---|---|---|
 | **VS Code Extension** (`vscode-extension/`) | Sidebar stack tree, per-branch file browser, PR & CI status, command palette, agent integration | [vscode.html](https://kulkarnikaustubh.github.io/ezstack/vscode.html) · [README](vscode-extension/README.md) |
-| **Neovim Plugin** (`neovim-plugin/`) | Native Lua plugin with `:Ezs` command suite, styled stack viewer, Telescope pickers, statusline component, fugitive auto-refresh | [nvim.html](https://kulkarnikaustubh.github.io/ezstack/nvim.html) · [README](neovim-plugin/README.md) |
+| **Neovim Plugin** ([`ezstack.nvim`](https://github.com/KulkarniKaustubh/ezstack.nvim)) | Native Lua plugin with `:Ezs` command suite, styled stack viewer, Telescope pickers, statusline component, fugitive auto-refresh | [nvim.html](https://kulkarnikaustubh.github.io/ezstack/nvim.html) · [README](https://github.com/KulkarniKaustubh/ezstack.nvim#readme) |
 | **Desktop App** (`tauri-ui/`) | Tauri v2 + React 19 desktop GUI. Three-panel layout, visual stack graph with drag-to-reparent, branch reflog history, sidebar repo filter, toast notifications, remote SSH mode | [desktop.html](https://kulkarnikaustubh.github.io/ezstack/desktop.html) · [README](tauri-ui/README.md) |
+| **MCP Server** (`cmd/ezs-mcp/`) | Model Context Protocol server for Claude Code and other MCP-compatible agents. Exposes eleven stack operations as tools with destructive annotations and required-arg schemas | [mcp.html](https://kulkarnikaustubh.github.io/ezstack/mcp.html) |
 
 ### VS Code
 
@@ -226,8 +252,7 @@ Then open the **ezstack** panel in the activity bar. Auto-refreshes on
 ```lua
 -- lazy.nvim
 {
-  "KulkarniKaustubh/ezstack",
-  subdir = "neovim-plugin",
+  "KulkarniKaustubh/ezstack.nvim",
   cmd    = { "Ezs" },
   config = function() require("ezstack").setup() end,
 }
@@ -252,7 +277,7 @@ Supports Remote (SSH) mode for driving `ezs` on a dev VM.
 
 ## Documentation
 
-See [DOCUMENTATION.md](DOCUMENTATION.md) for comprehensive documentation, or [AGENTS.md](AGENTS.md) for AI-assisted workflows.
+See [DOCUMENTATION.md](DOCUMENTATION.md) for comprehensive documentation, including [AI-assisted workflows with `ezs agent`](DOCUMENTATION.md#ezs-agent).
 
 ## License
 

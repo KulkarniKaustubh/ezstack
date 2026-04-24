@@ -34,6 +34,201 @@ ezstack is a CLI tool for managing stacked pull requests. It supports two workfl
 
 ---
 
+## Getting Started
+
+A guided path from zero to a live stacked PR. Every command and every
+parenthetical describes what ezstack actually does — no glossed-over details.
+
+### 1. Install the binary
+
+Pick whichever fits your setup. Both drop `ezs` (and `ezs-mcp`, if you also
+want the MCP server) onto your `PATH` without cloning the repo.
+
+```bash
+# Homebrew — macOS / Linux (installs ezs and ezs-mcp side by side)
+brew install KulkarniKaustubh/ezstack/ezstack
+
+# Go toolchain — Go 1.25+ required (matches the module's go directive)
+go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest
+go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
+```
+
+`ezs-mcp` is the companion MCP server that `ezs agent` (and any standalone
+MCP client) uses to drive `ezs` from inside Claude Code. If you install via
+`go install`, run both lines so the CLI and the MCP server stay in
+lock-step. If you skip the `ezs-mcp` line, `ezs agent` will still bootstrap
+it on first launch &mdash; but installing it upfront is faster and works
+offline.
+
+You'll also need `git` 2.20+, [`fzf`](https://github.com/junegunn/fzf) for
+interactive selection prompts, and the [GitHub CLI](https://cli.github.com/)
+(`gh`) for any PR-related commands.
+
+Verify the install:
+
+```bash
+ezs --version
+# → ezstack version 4.3.5
+```
+
+### 2. Wire up shell integration
+
+A handful of ezstack commands need to change your shell's working directory:
+`goto`, `new`, `delete`, `sync`, `up`, `down`, and `menu` (these are the
+commands the shell wrapper intercepts in `cmd/ezs/main.go`). A one-line eval in
+your rc file installs the wrapper.
+
+```bash
+# zsh
+echo 'eval "$(ezs --shell-init)"' >> ~/.zshrc && exec zsh
+
+# bash
+echo 'eval "$(ezs --shell-init)"' >> ~/.bashrc && exec bash
+```
+
+Without the wrapper installed, those commands still run — they just print
+something like `cd /path/to/worktree` instead of actually moving your shell,
+and you'd have to copy-paste the path yourself.
+
+### 3. Configure the repo
+
+`ezs config` (with no subcommand) launches an interactive first-run wizard
+that writes settings into `~/.ezstack/config.json` — one global section plus a
+per-repo section keyed by the repository's absolute path.
+
+```bash
+cd ~/code/my-project
+ezs config
+```
+
+The wizard asks these prompts, in order:
+
+| # | Prompt | What it sets | Default | Notes |
+|---|---|---|---|---|
+| 1 | Use git worktrees for new branches (recommended) | `use_worktrees` (per-repo) | **yes** | Required for `ezs agent`. Strongly recommended; enables parallel work across the stack. |
+| 2 | Worktree base directory (where new worktrees will be created) | `worktree_base_dir` (per-repo) | `<parent-of-repo>/<repo-name>_worktrees` | Only asked if you said yes to step 1. Must be **outside** the repo itself — the wizard re-prompts if you point it inside. |
+| 3 | Auto-cd into new worktrees after creation | `cd_after_new` (per-repo) | **yes** | Only effective if the shell wrapper from step 2 is installed. |
+| 4 | Select your sync strategy | `sync_strategy` (per-repo) | **`merge`** | The wizard explicitly recommends `merge` because `rebase` rewrites history and forces a force-push on every sync. The two options shown are `merge` and `rebase`. |
+| 5 | AI agent CLI command (used by `ezs agent`) | `agent_command` (per-repo) | **`claude`** | The literal command name `ezs agent` will exec inside a worktree. Set to `aider`, `cursor-agent`, `codex`, etc. if you want a different CLI. |
+
+The wizard does **not** prompt for the base branch name. `default_base_branch`
+is a global setting that defaults to the literal string `"main"` if unset
+(see `cmd/ezs/commands/config.go`); change it with `ezs config set` below if
+your repo uses something else.
+
+You can change any setting later without re-running the wizard:
+
+```bash
+ezs config show                                    # dump global + active-repo config
+ezs config set use_worktrees true                  # toggle worktree mode
+ezs config set worktree_base_dir ~/code/wt         # move the worktree root
+ezs config set cd_after_new true                   # toggle auto-cd
+ezs config set sync_strategy rebase                # switch to rebase-based sync
+ezs config set agent_command aider                 # switch the agent CLI
+ezs config set default_base_branch master          # override the global default base
+ezs config set github_token ghp_...                # optional; otherwise falls back to `gh auth`
+```
+
+### 4. Create your first stacked branch
+
+`ezs new <name>` creates a branch whose parent defaults to **your current
+branch**, not `main`. So if you want a fresh stack rooted on `main`, make sure
+you're on `main` first (or pass `--parent main` explicitly).
+
+```bash
+git checkout main          # or:  ezs new feature-1 --parent main
+ezs new feature-1
+#   What this actually does (see cmd/ezs/commands/new.go):
+#     - reads use_worktrees / worktree_base_dir from the per-repo config
+#     - creates branch `feature-1` from the current branch (no implicit
+#       `git fetch` — work off whatever your local main currently points at)
+#     - if use_worktrees=true: `git worktree add <worktree_base_dir>/feature-1 feature-1`
+#     - records the branch in ~/.ezstack/stacks.json with parent=<your previous branch>
+#     - if this is the first branch in a new stack, prompts you for a stack name
+#     - if cd_after_new=true and the shell wrapper is installed: cd into the worktree
+```
+
+Make some edits, then commit. `ezs commit` is a thin wrapper over `git commit`
+that also rebases child branches and offers to push for you.
+
+```bash
+ezs commit -am "Scaffold feature"
+#   What this actually does (see cmd/ezs/commands/commit.go):
+#     1. Runs `git commit -am "..."` interactively (your editor still works for
+#        long messages — the -m here just bypasses it).
+#     2. If the branch already exists on the remote, prompts:
+#          "Push to remote? [Y/n]"
+#        — answer Y to push, or n to defer. (Amend prompts for `--force` push.)
+#     3. Looks up child branches in stacks.json and rebases (or merges,
+#        per sync_strategy) each child onto the new tip. On a brand-new
+#        leaf branch this is a no-op.
+```
+
+Stack a second branch on top:
+
+```bash
+ezs new feature-2 --parent feature-1
+# ... edit files in the feature-2 worktree ...
+ezs commit -am "Wire up feature"
+```
+
+### 5. Push the stack and open PRs
+
+```bash
+ezs push --stack
+#   What this actually does (see cmd/ezs/commands/push.go):
+#     - walks every branch in the current stack, root → leaf, skipping any
+#       branches already marked merged
+#     - for each: `git push -u <remote> <branch>` (plain push, sets upstream)
+#     - skips branches whose remote is "no-push" (fork PRs without
+#       maintainer-push permission) with a warning
+#     - add `--force` (or `-f`) to switch to `git push -u --force-with-lease`,
+#       which is what you want after rebases or amends
+```
+
+Open a PR for each branch. The base branch ezstack passes to `gh pr create`
+is the branch's recorded **parent** in `stacks.json`, NOT `main`. So
+`feature-2`'s PR targets `feature-1` and the diff only shows feature-2's
+commits.
+
+```bash
+ezs goto feature-1
+ezs pr create -t "Part 1: scaffolding"
+
+ezs goto feature-2
+ezs pr create -t "Part 2: wire it up"
+#   - shells out to `gh pr create --base <parent> --head <branch> --title "..."`
+#   - records the PR number back into stacks.json
+#   - add `-d` / `--draft` to open as a draft
+```
+
+Now inject stack-navigation links into every PR description so reviewers can
+hop around the stack:
+
+```bash
+ezs pr stack
+#   - calls gh.UpdateStackDescription for every PR in the stack
+#     (see cmd/ezs/commands/utils.go and the github client)
+#   - rewrites each PR body so it contains a managed block listing every
+#     branch in the stack, with the active branch marked
+```
+
+### 6. Inspect the stack any time
+
+```bash
+ezs status        # current branch + its position in the stack + PR / CI status
+ezs ls            # alias for `ezs list` — every stack in the repo, tree-formatted
+ezs diff          # diff of the current branch against its parent (numstat / diffstat)
+ezs log           # commits on the current branch since its parent (hash, msg, author, date)
+```
+
+That's the whole flow. For day-two operations (merged parents, reviewing
+remote PRs, stacking on top of someone else's work) jump to
+[Workflows](#workflows), or [Commands](#commands) for the full reference of
+every flag on every subcommand.
+
+---
+
 ## Installation
 
 **Prerequisites**
@@ -119,6 +314,171 @@ These flags work with any command and can appear in any position:
 
 ---
 
+## Workflows
+
+Real end-to-end flows, annotated so you can see exactly what ezstack is doing to
+your git state on every step. If you want the full reference for any individual
+command, jump to the [Commands](#commands) section below.
+
+### Creating a Stacked PR
+
+The canonical flow: build two dependent branches, push them, open linked PRs.
+Every `ezs` line is a thin shell over git — the comments show the underlying
+operation so there is no magic.
+
+```bash
+# 1. Start a new stack rooted on the default base branch (main).
+#    - Fetches origin/main
+#    - Creates branch `feature-1` pointing at origin/main
+#    - Creates a worktree at <worktree_base_dir>/feature-1/ (if use_worktrees=true)
+#    - Records the branch in ~/.ezstack/stacks.json with parent=main
+#    - cd's your shell into the new worktree
+ezs new feature-1
+
+# ... edit files in the feature-1 worktree ...
+
+# 2. Commit. Equivalent to `git add -A && git commit -m ...` followed by an
+#    automatic `ezs sync --children` so any descendant branches get rebased
+#    onto the new tip. On a brand-new branch there are no children yet, so
+#    this is just: stage + commit.
+ezs commit -am "Add feature part 1"
+
+# 3. Stack a second branch on top of feature-1.
+#    - Creates branch `feature-2` pointing at feature-1 (not main)
+#    - Creates a second worktree at <worktree_base_dir>/feature-2/
+#    - Records parent=feature-1 in stacks.json
+#    - cd's into the feature-2 worktree
+ezs new feature-2 --parent feature-1
+
+# ... edit files in the feature-2 worktree ...
+
+ezs commit -am "Add feature part 2"
+
+# 4. Push the whole stack to the remote in one shot.
+#    - Walks the stack from root to leaf
+#    - For each branch: `git push --force-with-lease origin <branch>`
+#    - Sets upstream on the first push
+ezs push --stack
+
+# 5. Open a pull request for each branch. The base of each PR is the parent
+#    branch recorded in stacks.json, NOT main — so feature-2's PR targets
+#    feature-1, and only shows the feature-2 diff.
+ezs goto feature-1
+ezs pr create -t "Part 1: scaffolding"
+ezs goto feature-2
+ezs pr create -t "Part 2: wire it up"
+
+# 6. Write stack-navigation links into every PR description.
+#    - Fetches each PR body via `gh pr view`
+#    - Injects a managed block listing every branch in the stack with
+#      links and ✅ / 🔵 markers for merged / current
+#    - Pushes the updated bodies back with `gh pr edit`
+ezs pr stack
+```
+
+### Committing into the middle of an existing stack
+
+Dependent branches below you would normally get left behind on the old tip of
+`feature-1`. `ezs commit` handles this automatically.
+
+```bash
+ezs goto feature-1
+ezs commit -am "Address review comment on part 1"
+# What this does under the hood:
+#   - git add -A && git commit -m "..."
+#   - For each descendant (feature-2, feature-3, ...):
+#       git rebase --onto <new feature-1 tip> <old feature-1 tip> <descendant>
+#     so their worktrees now sit on top of the amended parent.
+#   - If the branch is already on the remote, it auto-force-pushes the branch
+#     and every descendant, so the open PRs update in one shot.
+```
+
+### After a Parent is Merged
+
+When an upstream PR (or a parent branch in the stack) lands on `main`, the
+descendants need to be re-rooted. `ezs sync` does the surgery.
+
+```bash
+# Case A: GitHub merged the PR (squash/rebase/merge — all handled).
+#   - Fetches origin/main
+#   - Detects that feature-1 has been merged (matching commit on main OR
+#     the PR's mergedAt field via `gh pr view --json`)
+#   - Drops feature-1 from the stack
+#   - Rebases feature-2 onto main: `git rebase --onto main <old feature-1> feature-2`
+#   - Updates stacks.json so feature-2's parent is now main
+#   - Deletes the merged local branch + worktree (unless you `cd`'d elsewhere)
+ezs sync --all
+
+# Case B: you want to merge from the CLI and keep the stack clean in one go.
+ezs goto feature-1
+ezs pr merge -m squash    # shells out to `gh pr merge --squash`
+ezs goto feature-2
+ezs sync --all            # same reparent-onto-main as Case A
+```
+
+### Navigating the Stack
+
+All navigation uses worktrees when `use_worktrees=true`, so switching branches
+never touches your working tree — it literally `cd`s into the other worktree
+directory. No stashes, no file churn.
+
+```bash
+ezs up               # parent:  `cd <worktree_base_dir>/<parent>`
+ezs down             # child:   `cd <worktree_base_dir>/<child>`
+ezs up 2             # grandparent (walks the stack twice)
+ezs goto feature-1   # any branch by name; accepts fzf when run with no arg
+```
+
+### Reviewing a Remote PR
+
+Pull down a teammate's PR into an isolated worktree so you can run it, poke at
+it, and still commit back if you have maintainer access — all without touching
+your own stack.
+
+```bash
+# Checkout someone else's branch into a fresh stack.
+#   - Runs `git fetch origin <branch>` (or the PR's head ref for fork PRs)
+#   - Creates a local branch tracking that ref
+#   - Creates a worktree for it
+#   - Looks up the PR via `gh pr view --json` and records it in stacks.json
+#     with its base branch as the stack root
+#   - Prints a summary panel (PR title, URL, state, review status, +/- diff)
+ezs new origin/feature-branch
+
+# The branch now shows up in `ezs ls` with a (remote) tag, and every ezs
+# command works on it — you can edit, `ezs commit`, `ezs push`, `ezs sync`.
+
+# For fork PRs, ezstack auto-detects maintainer-push capability:
+#   - If the PR has "Allow edits from maintainers" AND you have write access
+#     to the fork → adds the fork as a git remote and pushes there.
+#   - Otherwise → the branch is marked read-only so `ezs push` / `ezs sync`
+#     won't try to publish commits you can't land.
+
+# When you're done, blow away the worktree and the local branch in one call.
+ezs delete feature-branch
+```
+
+### Stacking on a Remote PR
+
+When you need to build on top of a teammate's in-flight PR without waiting for
+it to merge:
+
+```bash
+ezs stack
+# Launches an interactive picker:
+#   1. "Start a new stack from a remote PR"  → pick the PR via fzf
+#   2. Pick a local branch (or create one)   → it gets reparented onto the PR
+#
+# Result in stacks.json:
+#   <teammate-pr-branch>      parent=main      (remote, read-only)
+#     └── <your-branch>        parent=<teammate-pr-branch>
+#
+# Your branch is now rebased on top of their work, and `ezs sync --all` will
+# keep it up to date as they push new commits.
+```
+
+---
+
 ## Commands
 
 ### `ezs agent`
@@ -144,13 +504,44 @@ Options:
     --no-push            Set EZS_AGENT_NO_PUSH=1 in the spawned agent's environment
     --preset <name>      Append ~/.ezstack/agent-presets/<name>.md to the composed prompt
     --examples           Print example invocations and exit
+    --no-mcp             Do not auto-install/register ezs-mcp; embed docs in
+                         the prompt instead (escape hatch for non-claude CLIs
+                         or air-gapped environments)
 ```
+
+You can run `ezs agent` from any branch, including `main` or other non-stack branches. If you're not on a stack branch, ezstack auto-selects the stack when there is exactly one, or shows an interactive picker when there are multiple stacks. You can always skip the picker with `--stack` or `--branch`.
 
 **`--no-push` and `EZS_AGENT_NO_PUSH`.** When `--no-push` is passed, the child agent process is launched with `EZS_AGENT_NO_PUSH=1` in its environment. Tooling run inside the agent session (hooks, helper scripts, nested `ezs` calls) can check this variable and skip push steps. The variable is only set when `--no-push` is explicitly used; regular `ezs` commands never see it.
 
 **`--preset <name>`.** Looks up `~/.ezstack/agent-presets/<name>.md` and appends it to the end of the fully composed prompt under a `## Preset: <name>` header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.
 
 **`--save-prompt <file>`.** Writes the fully composed prompt (after all three layers and any `--preset`) to `<file>`. Most useful with `--dry-run` to inspect exactly what the agent would see without spawning it.
+
+#### Automatic MCP integration (Claude Code)
+
+When the configured agent CLI is `claude`, `ezs agent` automatically:
+
+1. **Ensures `ezs-mcp` is installed and version-aligned.** If the binary is
+   missing or was built against a different ezstack release, ezs runs
+   `go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@v<version>`,
+   falling back to `@latest` for untagged dev builds.
+2. **Registers `ezs-mcp` with Claude Code at user scope** (equivalent to
+   running `claude mcp add ezstack --scope user -- ezs-mcp` yourself), so
+   the full 21-tool ezstack surface is available to the agent from the
+   first message.
+3. **Swaps the shipped prompt for a short MCP stub** that tells the agent
+   to prefer MCP tools over shelling out to `ezs`. The large
+   `DOCUMENTATION.md` body is no longer pasted into context &mdash; the
+   agent gets the tool schemas directly via MCP, which is both cheaper and
+   more reliable than prose instructions.
+
+The result: `ezs agent` on a fresh machine with claude installed is a
+single command. No manual `go install`, no manual `claude mcp add`, no
+hand-maintained prompt about what commands exist.
+
+Opt out with `--no-mcp` (restores the legacy doc-paste prompt) or by
+setting `agent_command` to a non-`claude` CLI &mdash; MCP auto-install is
+only attempted when the CLI basename is `claude`.
 
 #### Prompt Composition
 
@@ -170,7 +561,6 @@ These files use template variables that are replaced at runtime:
 | `{{BRANCH_NAME}}` | Current branch name |
 | `{{PARENT_NAME}}` | Parent branch name |
 | `{{WORKTREE_PATH}}` | Path to the current worktree |
-| `{{EZS_COMMANDS}}` | Available ezs commands reference |
 | `{{EZS_DOCS}}` | Full ezstack documentation for AI agents |
 | `{{FEATURE_DESCRIPTION}}` | Feature description (feature mode only) |
 | `{{CUSTOM_INSTRUCTIONS}}` | Custom instructions slot |
@@ -463,6 +853,7 @@ Options:
     -t, --title <title>    PR title (defaults to branch name)
     -b, --body <body>      PR body/description
     -d, --draft            Create as draft PR
+    --branch <name>        Create PR for a specific branch (instead of current)
 ```
 
 #### `ezs pr draft`
@@ -474,7 +865,17 @@ Toggles the current branch's PR between draft and ready-for-review state.
 ```
 Options:
     -m, --method <method>      Merge method: merge, squash, rebase (default: interactive)
+    --branch <name>            Merge PR for a specific branch (instead of current)
     --no-delete-branch         Don't delete the remote branch after merge
+```
+
+#### `ezs pr stack`
+
+Update all PR descriptions in the stack with navigation links.
+
+```
+Options:
+    --branch <name>    Target a specific branch's stack (instead of current)
 ```
 
 ---
@@ -736,90 +1137,131 @@ ezs ls        # auto-removes orphaned branch from config
 
 ---
 
-## Workflows
-
-### Creating a Stacked PR
-
-```bash
-ezs new feature-1
-# make changes
-ezs commit -m "Add feature part 1"
-ezs new feature-2 --parent feature-1
-# make changes
-ezs commit -m "Add feature part 2"
-
-# Create PRs for the whole stack
-ezs pr create -t "Part 1: Add feature"
-ezs goto feature-2
-ezs pr create -t "Part 2: Add feature"
-
-# Update all PR descriptions with stack info
-ezs pr stack
-```
-
-### After Parent is Merged
-
-```bash
-# Sync will detect merged parents and rebase
-ezs sync -a
-
-# Or merge from the CLI and sync
-ezs pr merge -m squash
-ezs goto feature-2
-ezs sync -a
-```
-
-### Navigating the Stack
-
-```bash
-# Move between branches
-ezs up        # go to parent
-ezs down      # go to child
-ezs up 2      # go up two levels
-ezs goto feature-1   # jump to a specific branch
-```
-
-### Reviewing a Remote PR
-
-```bash
-# Checkout a teammate's branch into its own worktree
-# Registers a stack with the PR's base branch as root
-ezs new origin/feature-branch
-
-# ezstack fetches, creates a tracking worktree, and shows:
-#   PR #42: Add user authentication
-#   URL: https://github.com/you/repo/pull/42
-#   State: OPEN  Base: main
-#   Review: REVIEW_REQUIRED
-#   Diff vs main: +320 / -45 lines
-
-# The branch shows up in ezs ls with a (remote) tag
-# You can work on it, push changes, sync — all commands work
-
-# For fork PRs, ezstack auto-detects the fork remote:
-#   - If maintainer push is enabled AND you have access → adds fork remote, pushes there
-#   - Otherwise → marks branch read-only, skips push during sync
-
-# When you're done, clean up
-ezs delete feature-branch
-```
-
-### Stacking on a Remote PR
-
-```bash
-ezs stack
-# Select "Start a new stack from a remote PR"
-# Pick the PR, then pick your branch to stack on top
-```
-
----
-
 ## Editor & Desktop Integrations
 
-ezstack ships with three first-party clients that wrap the `ezs` CLI. They all
-read and write the same on-disk state (`~/.ezstack/stacks.json` and per-repo
-config), so you can mix and match them freely &mdash; the CLI, your editor, and
-the desktop app all stay in sync.
+ezstack ships with four first-party clients that wrap the `ezs` CLI: a VS Code
+extension, a Neovim plugin, a desktop app, and an MCP server for AI agents.
+They all read and write the same on-disk state (`~/.ezstack/stacks.json` and
+per-repo config), so you can mix and match them freely &mdash; the CLI, your
+editor, the desktop app, and Claude Code all stay in sync.
+
+### MCP Server (Claude Code & other MCP clients)
+
+Located in `cmd/ezs-mcp/`. A standalone Model Context Protocol server that
+exposes the full stack workflow as MCP tools. Point any MCP-compatible agent
+(Claude Code, Zed, etc.) at it and the agent can drive `ezs` directly &mdash;
+inspect, mutate, navigate, and manage pull requests without leaving the agent
+loop. 21 tools, one binary.
+
+**Install**
+
+```bash
+# Homebrew (ships alongside ezs)
+brew install KulkarniKaustubh/ezstack/ezstack
+
+# Go install
+go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
+
+# From source
+make install-mcp
+```
+
+**Register with Claude Code** (one registration, every repo):
+
+```bash
+claude mcp add ezstack --scope user -- ezs-mcp
+```
+
+`ezs-mcp` operates on whichever directory Claude Code launches it in, and
+Claude launches MCP servers with the current project's directory as their
+cwd — so a single user-scope registration works across every repo.
+
+If you open Claude Code at a monorepo root but your ezstack-configured repo
+is a subdirectory, Claude will launch `ezs-mcp` with the monorepo root as
+cwd, which won't match any sub-repo. In that case, register a per-subrepo
+entry with an absolute `--repo` path:
+
+```bash
+claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
+```
+
+**Tools**
+
+**Inspection**
+
+| Tool | Annotation | Description |
+|---|---|---|
+| `ezstack_status` | read-only | Current stack with PR and CI status. `all`, `branch`, `decorated`. |
+| `ezstack_list` | read-only | List all stacks and branches. `all`, `decorated`. |
+| `ezstack_diff` | read-only | Diff against parent branch as JSON numstat (default) or diffstat. `branch`, `stat`. |
+| `ezstack_log` | read-only | Commits since parent as JSON (hash, message, author, ISO date). `branch`. |
+| `ezstack_config_show` | read-only | Full ezstack configuration for the active repo. |
+
+**Branch management**
+
+| Tool | Annotation | Description |
+|---|---|---|
+| `ezstack_goto` | &mdash; | Switch to a branch. `branch` (required). |
+| `ezstack_new` | &mdash; | Create a new branch. `name` (required), `parent`. |
+| `ezstack_delete` | destructive | Delete a branch and its worktree. `branch` (required). |
+| `ezstack_reparent` | &mdash; | Move a branch to a new parent. `branch` and `new_parent` (both required). |
+| `ezstack_stack` | &mdash; | Add a standalone branch to a stack. `branch` (required), `parent` or `base`. |
+| `ezstack_unstack` | &mdash; | Remove a branch from ezstack tracking (leaves the git branch/worktree intact). `branch` (required). |
+
+**Committing & syncing**
+
+| Tool | Annotation | Description |
+|---|---|---|
+| `ezstack_commit` | destructive | Commit staged (or all) changes and auto-sync children. `message` (required), `all`, `merge`, `rebase`. Auto-pushes if the branch is already on the remote. |
+| `ezstack_amend` | destructive | Amend the last commit and auto-sync children. Optional `message` (otherwise `--no-edit`), `all`, `merge`, `rebase`. Force-pushes if the branch is already on the remote. |
+| `ezstack_sync` | destructive | Rebase (or merge) branches with their base. `stack`, `all`, `current`, `parent`, `children`, `merge`, `dry_run`, `resume` (maps to `--continue`). |
+| `ezstack_push` | destructive | Push current branch or entire stack. `branch`, `stack`, `force`. |
+
+**Pull requests**
+
+| Tool | Annotation | Description |
+|---|---|---|
+| `ezstack_pr_create` | &mdash; | Create a pull request. `branch`, `title`, `draft`. |
+| `ezstack_pr_update` | destructive | Push the latest commits and refresh the PR base branch / stack description. `branch`. |
+| `ezstack_pr_merge` | destructive | Merge the pull request for a branch. `branch`, `method`. |
+| `ezstack_pr_draft` | &mdash; | Toggle a PR between draft and ready-for-review. `branch`. |
+| `ezstack_pr_stack` | &mdash; | Update every PR description in the stack with navigation links. `branch`. |
+
+**Configuration**
+
+| Tool | Annotation | Description |
+|---|---|---|
+| `ezstack_config_set` | &mdash; | Set a config value. `key` and `value` (both required). Valid keys: `worktree_base_dir`, `default_base_branch`, `github_token`, `cd_after_new`, `use_worktrees`, `sync_strategy`, `agent_command`. |
+
+Read-only inspection tools return JSON by default; `ezstack_status` and
+`ezstack_list` accept `decorated=true` for terminal-styled output. Destructive
+tools are tagged with the MCP destructive annotation so the client prompts
+before running them. Branch-management tools mark their positional arguments as
+`Required` in the tool schema so the agent cannot trigger an interactive `fzf`
+selection that would hang in a no-terminal context. `ezstack_commit` requires
+an explicit `message` and `ezstack_amend` defaults to `--no-edit` so neither
+can ever launch `$EDITOR` and corrupt the JSON-RPC transport.
+
+**Branch targeting from non-stack branches** &mdash; most tools accept an
+optional `branch` parameter so they can be used when the MCP server's working
+directory is on a non-stack branch like `main`. Pass the target branch name
+explicitly and the tool resolves the stack from config instead of relying on
+`GetCurrentStack()`. For `ezstack_list`, pass `all=true` to discover all
+stacks. Tools that operate on the working tree (`ezstack_commit`,
+`ezstack_amend`) are inherently tied to the current worktree and should be
+invoked from the correct branch's directory.
+
+**Safety** &mdash; every tool handler acquires a process-wide mutex before
+running, since `ezs` operates on shared process state (stdout/stderr, the
+`ui.Backend`, `ui.YesMode`). Stdout and stderr are captured via concurrent pipe
+drainers started before the command runs, so large outputs can't block on the
+OS pipe buffer. Both behaviors are covered by unit tests under
+`cmd/ezs-mcp/*_test.go` and a stdio integration test under `itests/mcp_test.go`
+that boots the real binary.
+
+Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/mcp.html>.
+
+
 
 ### VS Code Extension
 
@@ -865,7 +1307,7 @@ Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/vscode.html>.
 
 ### Neovim Plugin
 
-Located in `neovim-plugin/`. Native Lua plugin for Neovim 0.10+. Exposes a
+Distributed as [`ezstack.nvim`](https://github.com/KulkarniKaustubh/ezstack.nvim). Native Lua plugin for Neovim 0.10+. Exposes a
 single `:Ezs` user command with subcommand and flag completion, plus a styled
 stack viewer buffer, Telescope pickers, and a statusline component.
 
@@ -873,8 +1315,7 @@ stack viewer buffer, Telescope pickers, and a statusline component.
 
 ```lua
 {
-  "KulkarniKaustubh/ezstack",
-  subdir = "neovim-plugin",
+  "KulkarniKaustubh/ezstack.nvim",
   cmd    = { "Ezs" },
   keys   = { { "<leader>ez", "<cmd>Ezs<cr>", desc = "Ezstack viewer" } },
   config = function()
@@ -885,7 +1326,8 @@ stack viewer buffer, Telescope pickers, and a statusline component.
 ```
 
 `packer.nvim` and a manual `runtimepath+=...` install also work &mdash; see
-`neovim-plugin/README.md` for the alternatives.
+the [ezstack.nvim README](https://github.com/KulkarniKaustubh/ezstack.nvim#readme)
+for the alternatives.
 
 **Key commands** (every `ezs` subcommand has a `:Ezs` mirror):
 
@@ -950,9 +1392,9 @@ from root)` header rather than being silently dropped. Press `q` to close.
 `User EzstackGoto` after a worktree switch. Hook your own logic in via
 `autocmd`. Run `:help ezstack` for the bundled vimdoc reference.
 
-**Tests** &mdash; a plenary.nvim busted suite lives in
-`neovim-plugin/tests/`. Run it with
-`nvim --headless --noplugin -u neovim-plugin/tests/minimal_init.lua -c "PlenaryBustedDirectory neovim-plugin/tests/ {minimal_init = 'neovim-plugin/tests/minimal_init.lua', sequential = true}"`.
+**Tests** &mdash; a plenary.nvim busted suite lives in the `ezstack.nvim` repo
+under `tests/`. From inside that repo, run:
+`nvim --headless --noplugin -u tests/minimal_init.lua -c "PlenaryBustedDirectory tests/ {minimal_init = 'tests/minimal_init.lua', sequential = true}"`.
 It covers subcommand-dispatch completeness, statusline formatters, graph
 rendering (including orphan handling), default-keymap installation, and
 welcome-marker idempotency.

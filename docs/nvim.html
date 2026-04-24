@@ -46,6 +46,7 @@
           <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
           <div class="nav-dropdown-menu">
             <a href="agent.html">AI Agent</a>
+            <a href="mcp.html">MCP Server</a>
             <a href="vscode.html">VS Code Extension</a>
             <a href="desktop.html">Desktop App</a>
             <a href="nvim.html">Neovim Plugin</a>
@@ -70,13 +71,13 @@
         <div class="hero-actions">
           <div class="install-cmd" id="hero-install">
             <span class="install-prompt">$</span>
-            <span class="install-text">{ "KulkarniKaustubh/ezstack", subdir = "neovim-plugin" }</span>
-            <button class="copy-btn" data-copy='{ "KulkarniKaustubh/ezstack", subdir = "neovim-plugin" }' aria-label="Copy to clipboard">
+            <span class="install-text">{ "KulkarniKaustubh/ezstack.nvim" }</span>
+            <button class="copy-btn" data-copy='{ "KulkarniKaustubh/ezstack.nvim" }' aria-label="Copy to clipboard">
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
               <span class="copy-label">Copy</span>
             </button>
           </div>
-          <a href="https://github.com/KulkarniKaustubh/ezstack/tree/main/neovim-plugin" target="_blank" rel="noopener" class="btn btn-secondary" style="margin-top: 1rem;">
+          <a href="https://github.com/KulkarniKaustubh/ezstack.nvim" target="_blank" rel="noopener" class="btn btn-secondary" style="margin-top: 1rem;">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44.3.0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44.3.00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/></svg>
             View on GitHub
           </a>
@@ -267,8 +268,7 @@
           <p>Lazy-load the plugin on first <code>:Ezs</code> with a single spec entry. <code>:Ezs</code> is also registered eagerly when the plugin is on the runtimepath, so it works without an explicit <code>setup()</code> call.</p>
           <div class="step-code">
             <pre><code>{
-  <span class="c-dim">"KulkarniKaustubh/ezstack"</span>,
-  <span class="c-cmd">subdir</span> = <span class="c-dim">"neovim-plugin"</span>,
+  <span class="c-dim">"KulkarniKaustubh/ezstack.nvim"</span>,
   <span class="c-cmd">cmd</span>    = { <span class="c-dim">"Ezs"</span> },
   <span class="c-cmd">keys</span>   = { { <span class="c-dim">"&lt;leader&gt;ez"</span>, <span class="c-dim">"&lt;cmd&gt;Ezs&lt;cr&gt;"</span> } },
   <span class="c-cmd">config</span> = <span class="c-cmd">function</span>()
@@ -280,11 +280,10 @@
         </div>
         <div class="prompt-card">
           <h3>packer.nvim</h3>
-          <p>Use the <code>rtp</code> field to point Packer at the <code>neovim-plugin/</code> subdirectory of the repo.</p>
+          <p>Point Packer at the standalone <code>ezstack.nvim</code> repository.</p>
           <div class="step-code">
             <pre><code><span class="c-cmd">use</span> {
-  <span class="c-dim">"KulkarniKaustubh/ezstack"</span>,
-  <span class="c-cmd">rtp</span>    = <span class="c-dim">"neovim-plugin"</span>,
+  <span class="c-dim">"KulkarniKaustubh/ezstack.nvim"</span>,
   <span class="c-cmd">config</span> = <span class="c-cmd">function</span>()
     <span class="c-cmd">require</span>(<span class="c-dim">"ezstack"</span>).setup()
   <span class="c-cmd">end</span>,
@@ -350,7 +349,7 @@
       </div>
 
       <div style="text-align: center; margin-top: 2.5rem;" data-animate>
-        <a href="https://github.com/KulkarniKaustubh/ezstack/tree/main/neovim-plugin" target="_blank" rel="noopener" class="btn btn-secondary">
+        <a href="https://github.com/KulkarniKaustubh/ezstack.nvim" target="_blank" rel="noopener" class="btn btn-secondary">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44.3.0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44.3.00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22"/></svg>
           Source on GitHub
         </a>
@@ -364,7 +363,7 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v4.3.5</span>
+          <span class="footer-meta">MIT License &middot; v4.5.1</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

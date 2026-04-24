@@ -23,10 +23,25 @@ builds:
       - -s -w
       - -X main.version={{.Version}}
 
+  - id: ezs-mcp
+    main: ./cmd/ezs-mcp
+    binary: ezs-mcp
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
 archives:
   - id: ezstack
     builds:
       - ezs
+      - ezs-mcp
     files:
       - README.md
       - LICENSE
@@ -62,10 +77,15 @@ brews:
     license: "MIT"
     install: |
       bin.install "ezs"
+      bin.install "ezs-mcp"
     caveats: |
       To enable shell integration (required for cd functionality), add to your shell config:
 
         eval "$(ezs --shell-init)"
+
+      To use ezstack from Claude Code, register the MCP server:
+
+        claude mcp add ezstack --scope user -- ezs-mcp
     test: |
       assert_match version.to_s, shell_output("#{bin}/ezs --version")
 

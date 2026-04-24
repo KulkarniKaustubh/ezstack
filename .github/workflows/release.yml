@@ -61,7 +61,13 @@ jobs:
           cd "$scratch"
           GOBIN="$scratch/bin" go install \
             github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@${{ github.ref_name }}
+          GOBIN="$scratch/bin" go install \
+            github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@${{ github.ref_name }}
           "$scratch/bin/ezs" --version
+          # ezs-mcp speaks JSON-RPC over stdio and has no --version flag; a
+          # successful `go install` plus an executable binary is enough to
+          # confirm the release is installable.
+          test -x "$scratch/bin/ezs-mcp"
 
   vsix:
     runs-on: ubuntu-latest
@@ -91,11 +97,14 @@ jobs:
     needs: release
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: true
 
       - name: Package Neovim plugin
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          # Stage as ezstack-nvim/ so users get a clean top-level dir on extract
+          # neovim-plugin/ is a submodule pointing at KulkarniKaustubh/ezstack.nvim.
+          # Stage as ezstack-nvim/ so users get a clean top-level dir on extract.
           mkdir -p dist
           rsync -a --exclude '.git' neovim-plugin/ "ezstack-nvim/"
           tar czf "dist/ezstack-nvim-${VERSION}.tar.gz" ezstack-nvim
@@ -213,7 +222,7 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           git add \
             VERSION \
-            cmd/ezs/main.go \
+            internal/version/version.go \
             vscode-extension/package.json \
             vscode-extension/package-lock.json \
             vscode-extension/README.md \

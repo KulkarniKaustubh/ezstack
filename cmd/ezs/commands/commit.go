@@ -21,7 +21,7 @@ func Commit(args []string) error {
 		fmt.Fprintf(os.Stderr, `%sCommit changes and auto-sync child branches%s
 
 %sUSAGE%s
-    ezs commit [git-commit-options] [--merge|--rebase]
+    ezs commit [git-commit-options] [--merge|--rebase] [--push [--push-children] | --no-push]
 
 %sDESCRIPTION%s
     Wraps 'git commit' and then automatically syncs any child branches
@@ -31,16 +31,26 @@ func Commit(args []string) error {
     Uses the configured sync_strategy (default: rebase). Override with
     --merge or --rebase.
 
+    By default, prompts whether to push the current branch (and, if the
+    branch has children in the stack, whether to push those too). Use
+    --push / --push-children / --no-push to skip the prompt.
+
 %sEXAMPLES%s
     ezs commit -m "Add feature"
     ezs commit -a -m "Fix bug"
     ezs commit --amend
     ezs commit -m "Fix" --merge
+    ezs commit -m "Fix" --push                    # non-interactive: push current only
+    ezs commit -m "Fix" --push --push-children    # non-interactive: push current + children
+    ezs commit -m "Fix" --no-push                 # non-interactive: don't push
 
 %sOPTIONS%s
-    --merge       Use git merge to sync children (overrides config)
-    --rebase      Use git rebase to sync children (overrides config)
-    -h, --help    Show this help message
+    --merge           Use git merge to sync children (overrides config)
+    --rebase          Use git rebase to sync children (overrides config)
+    --push            Push current branch (no prompt)
+    --push-children   Also push synced child branches (implies --push)
+    --no-push         Skip pushing (no prompt)
+    -h, --help        Show this help message
     All other flags are passed directly to git commit.
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 		return nil
@@ -55,7 +65,7 @@ func Amend(args []string) error {
 		fmt.Fprintf(os.Stderr, `%sAmend the last commit and auto-sync child branches%s
 
 %sUSAGE%s
-    ezs amend [git-commit-options] [--merge|--rebase]
+    ezs amend [git-commit-options] [--merge|--rebase] [--push [--push-children] | --no-push]
 
 %sDESCRIPTION%s
     Wraps 'git commit --amend' and then automatically syncs any child
@@ -64,21 +74,88 @@ func Amend(args []string) error {
     Uses the configured sync_strategy (default: rebase). Override with
     --merge or --rebase.
 
+    By default, prompts whether to force-push the current branch (and, if
+    the branch has children in the stack, whether to push those too). Use
+    --push / --push-children / --no-push to skip the prompt.
+
 %sEXAMPLES%s
-    ezs amend                        # amend with editor
-    ezs amend --no-edit              # amend without changing message
-    ezs amend -m "New message"       # amend with new message
+    ezs amend                                   # amend with editor
+    ezs amend --no-edit                         # amend without changing message
+    ezs amend -m "New message"                  # amend with new message
+    ezs amend --no-edit --push                  # non-interactive: force-push current only
+    ezs amend --no-edit --push --push-children  # non-interactive: force-push current + children
 
 %sOPTIONS%s
-    --merge       Use git merge to sync children (overrides config)
-    --rebase      Use git rebase to sync children (overrides config)
-    -h, --help    Show this help message
+    --merge           Use git merge to sync children (overrides config)
+    --rebase          Use git rebase to sync children (overrides config)
+    --push            Force-push current branch (no prompt)
+    --push-children   Also push synced child branches (implies --push)
+    --no-push         Skip pushing (no prompt)
+    -h, --help        Show this help message
     All other flags are passed directly to git commit --amend.
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 		return nil
 	}
 
 	return commitInternal(args, true)
+}
+
+// commitFlags holds the parsed ezs-specific flags for `ezs commit`/`ezs amend`.
+type commitFlags struct {
+	mergeOverride    bool
+	rebaseOverride   bool
+	pushFlag         bool
+	pushChildrenFlag bool
+	noPushFlag       bool
+	gitPassthrough   []string
+}
+
+// parseCommitArgs splits ezs-specific flags out of the argument list and
+// returns the remainder to pass through to `git commit`. It also validates
+// mutually exclusive combinations. The boundary between ezs flags and git
+// flags is subtle because some git options take a value (e.g. `-m foo`) that
+// could look like one of our flag names.
+func parseCommitArgs(args []string) (commitFlags, error) {
+	var f commitFlags
+	skipNext := false
+	for _, arg := range args {
+		if skipNext {
+			f.gitPassthrough = append(f.gitPassthrough, arg)
+			skipNext = false
+			continue
+		}
+		switch arg {
+		case "--merge":
+			f.mergeOverride = true
+		case "--rebase":
+			f.rebaseOverride = true
+		case "--push":
+			f.pushFlag = true
+		case "--push-children":
+			f.pushChildrenFlag = true
+		case "--no-push":
+			f.noPushFlag = true
+		default:
+			f.gitPassthrough = append(f.gitPassthrough, arg)
+			switch arg {
+			case "-m", "--message", "-F", "--file", "-c", "--reedit-message",
+				"-C", "--reuse-message", "--fixup", "--squash", "--author",
+				"--date", "--cleanup", "-t", "--template", "--trailer":
+				skipNext = true
+			}
+		}
+	}
+	if f.mergeOverride && f.rebaseOverride {
+		return f, fmt.Errorf("cannot use both --merge and --rebase")
+	}
+	if f.noPushFlag && (f.pushFlag || f.pushChildrenFlag) {
+		return f, fmt.Errorf("cannot combine --no-push with --push or --push-children")
+	}
+	// --push-children implies --push
+	if f.pushChildrenFlag {
+		f.pushFlag = true
+	}
+	return f, nil
 }
 
 // commitInternal handles the shared logic for commit and amend
@@ -90,38 +167,16 @@ func commitInternal(args []string, amend bool) error {
 
 	g := git.New(cwd)
 
-	// Extract --merge/--rebase flags before passing args to git.
-	// Skip args that are values of git flags that take a string argument
-	// (e.g., -m "--merge" should pass "--merge" as the commit message, not
-	// be interpreted as our flag).
-	var mergeOverride, rebaseOverride bool
-	var gitPassthroughArgs []string
-	skipNext := false
-	for _, arg := range args {
-		if skipNext {
-			gitPassthroughArgs = append(gitPassthroughArgs, arg)
-			skipNext = false
-			continue
-		}
-		switch arg {
-		case "--merge":
-			mergeOverride = true
-		case "--rebase":
-			rebaseOverride = true
-		default:
-			gitPassthroughArgs = append(gitPassthroughArgs, arg)
-			// These git flags take the next arg as a value — don't interpret it as our flag
-			switch arg {
-			case "-m", "--message", "-F", "--file", "-c", "--reedit-message",
-				"-C", "--reuse-message", "--fixup", "--squash", "--author",
-				"--date", "--cleanup", "-t", "--template", "--trailer":
-				skipNext = true
-			}
-		}
+	flags, err := parseCommitArgs(args)
+	if err != nil {
+		return err
 	}
-	if mergeOverride && rebaseOverride {
-		return fmt.Errorf("cannot use both --merge and --rebase")
-	}
+	mergeOverride := flags.mergeOverride
+	rebaseOverride := flags.rebaseOverride
+	pushFlag := flags.pushFlag
+	pushChildrenFlag := flags.pushChildrenFlag
+	noPushFlag := flags.noPushFlag
+	gitPassthroughArgs := flags.gitPassthrough
 
 	// Build git commit args
 	gitArgs := []string{"commit"}
@@ -156,11 +211,23 @@ func commitInternal(args []string, amend bool) error {
 		ui.Success(action)
 	}
 
+	// Load the stack manager before prompting so the push prompt can offer to
+	// push child branches in the same step.
+	var mgr *stack.Manager
+	var children []*config.Branch
+	if m, err := stack.NewManager(cwd); err == nil {
+		mgr = m
+		if _, stackBranch, err := mgr.GetCurrentStack(); err == nil {
+			children = mgr.GetChildren(stackBranch.Name)
+		}
+	}
+
+	pushChildren := false
 	currentBranch, _ := g.CurrentBranch()
 	if currentBranch != "" && g.RemoteBranchExists(currentBranch) {
 		// Look up the branch's configured remote
 		remote := "origin"
-		if mgr, err := stack.NewReadOnlyManager(cwd); err == nil {
+		if mgr != nil {
 			if b := mgr.GetBranch(currentBranch); b != nil {
 				remote = b.EffectiveRemote()
 			}
@@ -168,47 +235,69 @@ func commitInternal(args []string, amend bool) error {
 
 		if remote == config.RemoteNoPush {
 			// Fork branch where we can't push — skip push prompt
-		} else if amend {
-			// Amend rewrites history — regular push will always fail, so offer force push directly
-			if ui.ConfirmTUIWithDefault("Force push to remote? (amend rewrites history)", true) {
-				if err := g.PushForce(remote); err != nil {
-					ui.Warn(fmt.Sprintf("Force push failed: %v", err))
-				} else {
-					ui.Success("Pushed to remote")
+		} else {
+			pushCurrent := false
+			hasChildren := len(children) > 0
+			basePrompt := "Push to remote?"
+			if amend {
+				basePrompt = "Force push to remote? (amend rewrites history)"
+			}
+
+			switch {
+			case noPushFlag:
+				// user asked us to skip pushing entirely
+			case pushFlag:
+				pushCurrent = true
+				pushChildren = pushChildrenFlag && hasChildren
+			case hasChildren:
+				opts := []string{
+					"Yes — current and child branches",
+					"Yes — current branch only",
+					"No",
+				}
+				idx := ui.SelectTUI(opts, basePrompt, 0)
+				switch idx {
+				case 0:
+					pushCurrent = true
+					pushChildren = true
+				case 1:
+					pushCurrent = true
+				}
+			default:
+				if ui.ConfirmTUIWithDefault(basePrompt, true) {
+					pushCurrent = true
 				}
 			}
-		} else {
-			if ui.ConfirmTUIWithDefault("Push to remote?", true) {
-				if err := g.Push(false, remote); err != nil {
-					ui.Warn(fmt.Sprintf("Push failed: %v", err))
-					if ui.ConfirmTUI("Force push?") {
-						if err := g.PushForce(remote); err != nil {
-							ui.Warn(fmt.Sprintf("Force push failed: %v", err))
-						} else {
-							ui.Success("Pushed to remote")
-						}
+
+			if pushCurrent {
+				if amend {
+					if err := g.PushForce(remote); err != nil {
+						ui.Warn(fmt.Sprintf("Force push failed: %v", err))
+					} else {
+						ui.Success("Pushed to remote")
 					}
 				} else {
-					ui.Success("Pushed to remote")
+					if err := g.Push(false, remote); err != nil {
+						ui.Warn(fmt.Sprintf("Push failed: %v", err))
+						if ui.ConfirmTUI("Force push?") {
+							if err := g.PushForce(remote); err != nil {
+								ui.Warn(fmt.Sprintf("Force push failed: %v", err))
+							} else {
+								ui.Success("Pushed to remote")
+							}
+						}
+					} else {
+						ui.Success("Pushed to remote")
+					}
 				}
 			}
 		}
 	}
 
 	// Auto-sync children
-	mgr, err := stack.NewManager(cwd)
-	if err != nil {
-		// Not in a stack or can't load — that's fine, just skip
+	if mgr == nil {
 		return nil
 	}
-
-	_, stackBranch, err := mgr.GetCurrentStack()
-	if err != nil {
-		// Current branch not in a stack — nothing to sync
-		return nil
-	}
-
-	children := mgr.GetChildren(stackBranch.Name)
 	if len(children) == 0 {
 		return nil
 	}
@@ -235,6 +324,7 @@ func commitInternal(args []string, amend bool) error {
 		continueCmd = "git merge --continue"
 	}
 
+	var syncedChildren []stack.RebaseResult
 	for _, result := range results {
 		if result.HasConflict {
 			ui.Warn(fmt.Sprintf("Conflict in '%s': resolve in %s", result.Branch, result.WorktreePath))
@@ -244,8 +334,41 @@ func commitInternal(args []string, amend bool) error {
 			ui.Warn(fmt.Sprintf("Failed to sync '%s': %v", result.Branch, result.Error))
 		} else if result.Success {
 			ui.Success(fmt.Sprintf("Synced '%s'", result.Branch))
+			syncedChildren = append(syncedChildren, result)
 		}
 	}
 
+	if pushChildren && len(syncedChildren) > 0 {
+		// Rebase rewrites the child's history so we need --force-with-lease;
+		// merge only adds commits and a fast-forward push is enough.
+		pushChildBranches(g, syncedChildren, !useMerge)
+	}
+
 	return nil
+}
+
+// pushChildBranches pushes each synced child branch to its remote. Children
+// that have never been pushed are skipped so `ezs commit` never silently
+// publishes a branch the user hasn't shared before.
+func pushChildBranches(g *git.Git, synced []stack.RebaseResult, force bool) {
+	ui.Info(fmt.Sprintf("Pushing %d synced child branch(es)...", len(synced)))
+	for _, r := range synced {
+		remote := r.Remote
+		if remote == "" {
+			remote = "origin"
+		}
+		if remote == config.RemoteNoPush {
+			continue
+		}
+		// RemoteBranchExists only checks origin; for non-origin remotes we
+		// skip the existence check and let git decide.
+		if remote == "origin" && !g.RemoteBranchExists(r.Branch) {
+			continue
+		}
+		if err := g.PushBranch(r.Branch, force, remote); err != nil {
+			ui.Warn(fmt.Sprintf("Push of '%s' failed: %v", r.Branch, err))
+		} else {
+			ui.Success(fmt.Sprintf("Pushed '%s'", r.Branch))
+		}
+	}
 }

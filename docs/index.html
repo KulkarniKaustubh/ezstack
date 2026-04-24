@@ -78,6 +78,7 @@
           <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
           <div class="nav-dropdown-menu">
             <a href="agent.html">AI Agent</a>
+            <a href="mcp.html">MCP Server</a>
             <a href="vscode.html">VS Code Extension</a>
             <a href="desktop.html">Desktop App</a>
             <a href="nvim.html">Neovim Plugin</a>
@@ -94,7 +95,7 @@
     <div class="hero-glow"></div>
     <div class="container">
       <div class="hero-content">
-        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v4.3.5 &mdash; Latest Release</a>
+        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v4.5.1 &mdash; Latest Release</a>
         <h1>Stacked PRs.<br>Zero friction.</h1>
         <p class="hero-sub">Manage stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs &mdash; all from one CLI.</p>
         <div class="hero-actions">
@@ -389,7 +390,7 @@
     <div class="container">
       <div class="agent-showcase-inner">
         <h2 class="section-title" data-animate>Let AI build your stack</h2>
-        <p class="section-sub" data-animate>Launch an AI agent with full stack context injected. Work on a branch or describe a feature and let the agent build it as stacked PRs.</p>
+        <p class="section-sub" data-animate>Launch an AI agent with full stack context injected. Work on a branch or describe a feature and let the agent build it as stacked PRs. With Claude Code, the ezstack MCP server is auto-installed and registered on first launch &mdash; zero setup.</p>
 
         <div class="agent-modes" data-animate>
           <div class="agent-mode-card">
@@ -398,8 +399,10 @@
             <p>The agent sees your stack structure, worktree paths, and all ezstack commands. It works within a single branch.</p>
             <div class="step-code">
               <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span>
+<span class="c-dim">Installing ezs-mcp@v4.5.1... ✓</span>
+<span class="c-dim">Registering ezstack MCP with claude (user scope)... ✓</span>
 <span class="c-dim">Launching claude in ~/worktrees/auth-service...</span>
-<span class="c-dim">Stack context injected (3 branches, 2 PRs)</span>
+<span class="c-dim">Stack context injected (3 branches, 2 PRs, 21 MCP tools)</span>
 
 <span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--branch</span> auth-middleware
 <span class="c-dim">Launching claude in ~/worktrees/auth-middleware...</span></code></pre>
@@ -554,7 +557,7 @@
                 <li><code>agent-work-prompt.md</code> &mdash; Work session prompt</li>
                 <li><code>agent-feature-prompt.md</code> &mdash; Feature builder prompt</li>
               </ul>
-              <p>Prompts use template variables replaced at runtime: <code>{{STACK_JSON}}</code>, <code>{{BRANCH_NAME}}</code>, <code>{{PARENT_NAME}}</code>, <code>{{WORKTREE_PATH}}</code>, <code>{{EZS_COMMANDS}}</code>, <code>{{EZS_DOCS}}</code>, <code>{{FEATURE_DESCRIPTION}}</code>.</p>
+              <p>Prompts use template variables replaced at runtime: <code>{{STACK_JSON}}</code>, <code>{{BRANCH_NAME}}</code>, <code>{{PARENT_NAME}}</code>, <code>{{WORKTREE_PATH}}</code>, <code>{{EZS_DOCS}}</code>, <code>{{FEATURE_DESCRIPTION}}</code>.</p>
             </div>
           </div>
         </div>
@@ -607,7 +610,7 @@
           <div class="eco-install">
             <h4>Install</h4>
             <ol>
-              <li>Download <code>ezstack-4.3.5.vsix</code> from the release page</li>
+              <li>Download <code>ezstack-4.5.1.vsix</code> from the release page</li>
               <li>In VS Code: <code>Cmd+Shift+P</code> &rarr; "Install from VSIX" &rarr; select the file</li>
               <li>Open a repo with ezstack configured &mdash; the panel appears in the sidebar</li>
             </ol>
@@ -615,6 +618,30 @@
           <a href="vscode.html" class="btn btn-secondary eco-btn">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
             Learn More &amp; Download
+          </a>
+        </div>
+
+        <!-- MCP Server -->
+        <div class="eco-card" data-animate>
+          <div class="eco-header">
+            <div class="eco-icon">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 00-2 2v4"/><path d="M15 3h4a2 2 0 012 2v4"/><path d="M9 21H5a2 2 0 01-2-2v-4"/><path d="M15 21h4a2 2 0 002-2v-4"/><circle cx="12" cy="12" r="3"/></svg>
+            </div>
+            <span class="eco-badge eco-badge-new">New</span>
+          </div>
+          <h3>MCP Server</h3>
+          <p>Drive <code>ezs</code> from Claude Code and any MCP-compatible agent. Eleven stack operations exposed as Model Context Protocol tools &mdash; status, list, sync, push, PR create/merge, goto, new, delete, reparent. Destructive tools are annotated so clients can prompt before running.</p>
+          <div class="eco-install">
+            <h4>Install</h4>
+            <ol>
+              <li>Install via <code>brew install ezstack</code> (ships <code>ezs-mcp</code> alongside <code>ezs</code>), or <code>go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest</code></li>
+              <li>Register with Claude Code (one registration, every repo): <code>claude mcp add ezstack --scope user -- ezs-mcp</code></li>
+              <li>Requires the <code>ezs</code> CLI and an ezstack-configured repository</li>
+            </ol>
+          </div>
+          <a href="mcp.html" class="btn btn-secondary eco-btn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H5a2 2 0 00-2 2v4"/><path d="M15 3h4a2 2 0 012 2v4"/><path d="M9 21H5a2 2 0 01-2-2v-4"/><path d="M15 21h4a2 2 0 002-2v-4"/><circle cx="12" cy="12" r="3"/></svg>
+            Learn More &amp; Install
           </a>
         </div>
 
@@ -631,7 +658,7 @@
           <div class="eco-install">
             <h4>Install</h4>
             <ol>
-              <li>Install with lazy.nvim: <code>{ "KulkarniKaustubh/ezstack", subdir = "neovim-plugin" }</code></li>
+              <li>Install with lazy.nvim: <code>{ "KulkarniKaustubh/ezstack.nvim" }</code></li>
               <li>Run <code>:Ezs</code> to open the stack viewer, or <code>:Telescope ezstack branches</code> for fuzzy picking</li>
               <li>Requires <code>ezs</code> CLI installed, Neovim 0.10+, and optionally telescope.nvim</li>
             </ol>
@@ -652,7 +679,7 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v4.3.5</span>
+          <span class="footer-meta">MIT License &middot; v4.5.1</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

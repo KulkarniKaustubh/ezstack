@@ -39,6 +39,7 @@
       <div class="nav-links" id="nav-links">
         <a href="index.html#features">Features</a>
         <a href="documentation.html">Docs</a>
+        <a href="#mcp-auto">MCP Integration</a>
         <a href="#work-session">Work Session</a>
         <a href="#feature-builder">Feature Builder</a>
         <a href="#prompts">Prompts</a>
@@ -47,6 +48,7 @@
           <button class="nav-dropdown-toggle">Ecosystem <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 4L5 6.5L7.5 4"/></svg></button>
           <div class="nav-dropdown-menu">
             <a href="agent.html">AI Agent</a>
+            <a href="mcp.html">MCP Server</a>
             <a href="vscode.html">VS Code Extension</a>
             <a href="desktop.html">Desktop App</a>
             <a href="nvim.html">Neovim Plugin</a>
@@ -78,6 +80,80 @@
             </button>
           </div>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Automatic MCP Integration -->
+  <section class="workflow-section" id="mcp-auto">
+    <div class="container">
+      <div class="workflow-header" data-animate>
+        <span class="mode-label mode-label-feature">New in v4.4</span>
+        <h2>Zero-setup MCP when you launch with Claude</h2>
+        <p>When your agent CLI is <code>claude</code>, <code>ezs agent</code> automatically installs the <code>ezs-mcp</code> server and registers it with Claude Code before launching the session. The agent gets the full 21-tool ezstack surface natively &mdash; no <code>go install</code>, no <code>claude mcp add</code>, no embedded docs paste.</p>
+      </div>
+
+      <div class="workflow-steps">
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">1</div>
+          <h3>Binary check &amp; install</h3>
+          <p>On every launch, <code>ezs agent</code> checks that <code>ezs-mcp</code> is on <code>PATH</code> and that its version matches the running <code>ezs</code> binary. If it's missing or stale, ezs runs <code>go install</code> pinned to the current release tag, falling back to <code>@latest</code> for untagged dev builds.</p>
+          <div class="step-code">
+            <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span>
+<span class="c-dim">Installing github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@v4.5.1 (not installed)...</span>
+<span class="c-green">✓ ezs-mcp installed</span>
+<span class="c-dim">Registering ezstack MCP with claude (user scope)...</span>
+<span class="c-green">✓ registered</span>
+<span class="c-dim">Launching claude with stack context...</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">2</div>
+          <h3>Automatic registration with Claude Code</h3>
+          <p>If the ezstack MCP server isn't already registered, ezs runs the equivalent of <code>claude mcp add ezstack --scope user -- ezs-mcp</code> for you. User scope means one registration covers every repo you work in &mdash; ezstack's first-launch MCP setup is now a no-op after the very first time.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Equivalent to running this yourself — once, automatically:</span>
+<span class="c-prompt">$</span> <span class="c-cmd">claude mcp add</span> ezstack <span class="c-flag">--scope</span> user <span class="c-flag">--</span> ezs-mcp
+<span class="c-green">✓ added MCP server "ezstack" (user scope)</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">3</div>
+          <h3>Tools replace the doc-paste prompt</h3>
+          <p>With MCP active, the shipped prompt switches from the full <code>DOCUMENTATION.md</code> dump to a short stub that tells the agent to prefer MCP tools. The agent gets strict tool schemas (with <em>destructive</em> annotations on mutating operations) instead of prose instructions &mdash; cheaper in tokens, more reliable in behavior.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Before MCP: ~8KB of DOCUMENTATION.md embedded in every prompt</span>
+<span class="c-comment"># After MCP:  a short stub + 21 tool schemas delivered via MCP</span>
+
+<span class="c-prompt">→</span> <span class="c-cmd">ezstack_status</span> <span class="c-flag">{ "decorated": true }</span>
+<span class="c-prompt">→</span> <span class="c-cmd">ezstack_commit</span> <span class="c-flag">{ "message": "Add auth middleware" }</span>
+<span class="c-prompt">→</span> <span class="c-cmd">ezstack_pr_create</span> <span class="c-flag">{ "title": "Add auth middleware" }</span>
+<span class="c-dim">  — agents call tools directly instead of shelling out to ezs</span></code></pre>
+          </div>
+        </div>
+        <div class="workflow-connector"></div>
+        <div class="workflow-step" data-animate>
+          <div class="workflow-step-number workflow-step-number-purple">4</div>
+          <h3>Escape hatch: <code>--no-mcp</code></h3>
+          <p>If you'd rather skip MCP entirely &mdash; running in an air-gapped environment, debugging a shipped prompt, or using a non-claude CLI &mdash; pass <code>--no-mcp</code>. ezs skips the binary check, skips the registration, and falls back to embedding <code>DOCUMENTATION.md</code> in the prompt like the pre-4.4 flow.</p>
+          <div class="step-code">
+            <pre><code><span class="c-comment"># Legacy doc-paste flow, no claude mcp interaction</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--no-mcp</span>
+
+<span class="c-comment"># MCP is only attempted when the agent CLI is claude:</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs config set</span> agent_command aider
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span>   <span class="c-comment"># → skips MCP, uses embedded docs</span></code></pre>
+          </div>
+        </div>
+      </div>
+
+      <div style="text-align: center; margin-top: 2.5rem;" data-animate>
+        <a href="mcp.html" class="btn btn-secondary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>
+          Full MCP tool catalog
+        </a>
       </div>
     </div>
   </section>
@@ -115,15 +191,15 @@
         <div class="workflow-step" data-animate>
           <div class="workflow-step-number workflow-step-number-blue">1</div>
           <h3>Launch the agent</h3>
-          <p>Run <code>ezs agent</code> from any branch in a stack. The agent opens in that branch's worktree directory with full context.</p>
+          <p>Run <code>ezs agent</code> from any branch &mdash; including <code>main</code>. When you're on a stack branch, the agent scopes to that stack automatically. From a non-stack branch, it auto-selects the stack if there is exactly one, or shows a picker if there are multiple. You can always skip the picker with <code>--stack</code> or <code>--branch</code>.</p>
           <div class="step-code">
-            <pre><code><span class="c-comment"># Launch on current branch</span>
+            <pre><code><span class="c-comment"># Launch on current branch (or auto-pick stack from main)</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span>
 
-<span class="c-comment"># Or target a specific branch</span>
+<span class="c-comment"># Target a specific branch</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--branch</span> auth-middleware
 
-<span class="c-comment"># Or a specific stack</span>
+<span class="c-comment"># Target a specific stack</span>
 <span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">-s</span> a1b2c</code></pre>
           </div>
         </div>
@@ -131,15 +207,15 @@
         <div class="workflow-step" data-animate>
           <div class="workflow-step-number workflow-step-number-blue">2</div>
           <h3>Context is injected automatically</h3>
-          <p>The agent receives your stack structure as JSON, the current branch and parent names, worktree path, available ezs commands (with <code>-y</code> flags for non-interactive use), and the full ezstack documentation.</p>
+          <p>The agent receives your stack structure as JSON, the current branch and parent names, worktree path, and &mdash; when launched with <code>claude</code> &mdash; the full 21-tool ezstack MCP surface (auto-installed on first launch; see <a href="#mcp-auto">MCP Integration</a>). With <code>--no-mcp</code> or a non-claude CLI, the prompt embeds the full ezstack documentation as a fallback instead.</p>
           <div class="step-code">
             <pre><code><span class="c-comment"># What the agent sees (injected as the first message):</span>
 <span class="c-dim">Stack:       auth-feature [a1b2c]</span>
 <span class="c-dim">Branch:      auth-middleware</span>
 <span class="c-dim">Parent:      auth-service</span>
 <span class="c-dim">Worktree:    ~/worktrees/auth-middleware</span>
-<span class="c-dim">Commands:    ezs commit, ezs sync, ezs pr create...</span>
-<span class="c-dim">Docs:        full ezstack reference</span></code></pre>
+<span class="c-dim">MCP:         ezstack (21 tools via ezs-mcp)</span>
+<span class="c-dim">             → ezstack_status, ezstack_commit, ezstack_pr_create, …</span></code></pre>
           </div>
         </div>
         <div class="workflow-connector"></div>
@@ -295,10 +371,6 @@
               <td>Absolute path to the current branch's worktree directory</td>
             </tr>
             <tr>
-              <td>{{EZS_COMMANDS}}</td>
-              <td>Quick reference of key ezs commands with <code>-y</code> flag for non-interactive use</td>
-            </tr>
-            <tr>
               <td>{{EZS_DOCS}}</td>
               <td>Full ezstack documentation &mdash; concepts, commands, exit codes, workflows</td>
             </tr>
@@ -399,7 +471,10 @@
 <span class="c-prompt">$</span> <span class="c-cmd">ezs config set</span> agent_command my-ai-cli
 
 <span class="c-comment"># Override per-invocation</span>
-<span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--cmd</span> my-ai-cli</code></pre>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--cmd</span> my-ai-cli
+
+<span class="c-comment"># Skip MCP auto-install and embed docs in the prompt instead</span>
+<span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span> <span class="c-flag">--no-mcp</span></code></pre>
           </div>
         </div>
       </div>
@@ -419,7 +494,7 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v4.3.5</span>
+          <span class="footer-meta">MIT License &middot; v4.5.1</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

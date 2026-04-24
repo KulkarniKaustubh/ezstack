@@ -231,6 +231,10 @@ type BranchStatus struct {
 
 // SelectBranch uses fzf to select a branch from a list
 func SelectBranch(branches []*config.Branch, prompt string) (*config.Branch, error) {
+	return activeBackend.SelectBranch(branches, prompt)
+}
+
+func (t *TerminalBackend) SelectBranch(branches []*config.Branch, prompt string) (*config.Branch, error) {
 	return SelectBranchWithStacks(branches, nil, prompt)
 }
 
@@ -400,6 +404,10 @@ func SelectWorktreeWithStackPreview(worktrees []WorktreeInfo, stacks []*config.S
 
 // SelectStack uses fzf to select a stack
 func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
+	return activeBackend.SelectStack(stacks, prompt)
+}
+
+func (t *TerminalBackend) SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 	if len(stacks) == 0 {
 		return nil, fmt.Errorf("no stacks to select from")
 	}
@@ -1055,6 +1063,10 @@ func ConfirmTUI(prompt string) bool {
 		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ yes%s\n", Bold, Yellow, Reset, prompt, Green, Reset)
 		return true
 	}
+	return activeBackend.Confirm(prompt)
+}
+
+func (t *TerminalBackend) Confirm(prompt string) bool {
 	return confirmTUICore(prompt, true, false)
 }
 
@@ -1065,6 +1077,10 @@ func ConfirmTUIWithDefault(prompt string, defaultYes bool) bool {
 		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ yes%s\n", Bold, Yellow, Reset, prompt, Green, Reset)
 		return true
 	}
+	return activeBackend.ConfirmWithDefault(prompt, defaultYes)
+}
+
+func (t *TerminalBackend) ConfirmWithDefault(prompt string, defaultYes bool) bool {
 	return confirmTUICore(prompt, defaultYes, defaultYes)
 }
 
@@ -1074,6 +1090,10 @@ func ConfirmTUIWithDefault(prompt string, defaultYes bool) bool {
 // defaultIdx is the 0-based index of the default selected option
 // Returns the 0-based index of the selected option, or -1 if cancelled
 func SelectTUI(options []string, prompt string, defaultIdx int) int {
+	return activeBackend.Select(options, prompt, defaultIdx)
+}
+
+func (t *TerminalBackend) Select(options []string, prompt string, defaultIdx int) int {
 	if len(options) == 0 {
 		return -1
 	}
@@ -1199,6 +1219,10 @@ func Info(msg string) {
 // Prompt asks for text input with a prompt and optional default value
 // Returns the user input or the default if empty input is given
 func Prompt(prompt, defaultVal string) string {
+	return activeBackend.Prompt(prompt, defaultVal)
+}
+
+func (t *TerminalBackend) Prompt(prompt, defaultVal string) string {
 	var rlPrompt string
 	if defaultVal != "" {
 		rlPrompt = fmt.Sprintf("%s%s?%s %s [%s]: ", Bold, Yellow, Reset, prompt, defaultVal)
@@ -1339,6 +1363,10 @@ func pathCompleterFunc(prefix string) *readline.PrefixCompleter {
 
 // PromptRequired asks for text input and keeps asking until a non-empty value is provided
 func PromptRequired(prompt string) string {
+	return activeBackend.PromptRequired(prompt)
+}
+
+func (t *TerminalBackend) PromptRequired(prompt string) string {
 	for {
 		rl, err := readline.NewEx(&readline.Config{
 			Prompt:          fmt.Sprintf("%s%s?%s %s: ", Bold, Yellow, Reset, prompt),
@@ -1389,6 +1417,10 @@ func PromptRequired(prompt string) string {
 // SelectOption uses fzf to select from a list of options
 // Returns the 0-based index of the selected option
 func SelectOption(options []string, prompt string) (int, error) {
+	return activeBackend.SelectOption(options, prompt)
+}
+
+func (t *TerminalBackend) SelectOption(options []string, prompt string) (int, error) {
 	return SelectOptionWithSuggested(options, prompt, -1)
 }
 
@@ -1434,6 +1466,10 @@ func SelectOptionWithSuggested(options []string, prompt string, suggestedIdx int
 // Returns the 0-based index of the selected option, or ErrBack if back was selected.
 // The back option is displayed as an unnumbered "← back" at the end of the list.
 func SelectOptionWithBack(options []string, prompt string) (int, error) {
+	return activeBackend.SelectOptionWithBack(options, prompt)
+}
+
+func (t *TerminalBackend) SelectOptionWithBack(options []string, prompt string) (int, error) {
 	if len(options) == 0 {
 		return -1, fmt.Errorf("no options to select from")
 	}

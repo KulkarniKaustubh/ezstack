@@ -1096,8 +1096,21 @@ func CommandsWithExamples() []string {
 }
 
 // NavigateToBranch navigates to a branch by cd-ing to its worktree or checking out the branch.
+// If a worktreePath is recorded, we cd into it — but we also verify the branch is actually
+// checked out there. Secondary git worktrees are pinned to a branch (cd is sufficient), but
+// the main worktree is not: a recorded WorktreePath pointing at the main repo means `cd`
+// alone leaves whatever branch was previously checked out. In that case we also `git switch`
+// to the target branch. Switching to the already-checked-out branch is a no-op, so this is
+// safe for secondary worktrees too.
 func NavigateToBranch(g *git.Git, branchName, worktreePath string) error {
 	if worktreePath != "" {
+		wtGit := git.New(worktreePath)
+		if cur, err := wtGit.CurrentBranch(); err == nil && cur != branchName {
+			if err := wtGit.CheckoutBranch(branchName); err != nil {
+				return fmt.Errorf("failed to switch to branch '%s' in %s: %w", branchName, worktreePath, err)
+			}
+			ui.Success(fmt.Sprintf("Switched to branch '%s'", branchName))
+		}
 		EmitCd(worktreePath)
 		return nil
 	}

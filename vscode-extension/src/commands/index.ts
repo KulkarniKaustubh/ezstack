@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as vscode from "vscode";
 import { EzsCli } from "../ezsCli";
+import { buildParentPickChoices, ParentPickChoice } from "../parentPicker";
 import { StackTreeProvider, StackNode, BranchNode, RootRepoNode, StackTreeItem } from "../views/stackTreeProvider";
 import { StatusBarManager } from "../views/statusBarManager";
 
@@ -112,16 +113,20 @@ export function registerCommands(
               cli.listStacks(true).catch(() => []),
               cli.getLocalBranches().catch(() => []),
             ]);
-            const stackBranches = stacks.flatMap((s) => [
-              s.root,
-              ...s.branches.map((b) => b.name),
-            ]);
-            const unique = [...new Set([...stackBranches, ...gitBranches])];
-            if (unique.length > 0) {
-              parent = await vscode.window.showQuickPick(unique, {
+            const choices = buildParentPickChoices(stacks, gitBranches);
+            if (choices.length > 0) {
+              type Item = vscode.QuickPickItem & { choice: ParentPickChoice };
+              const items: Item[] = choices.map((c) => ({
+                label: c.branchName,
+                description: c.description,
+                choice: c,
+              }));
+              const picked = await vscode.window.showQuickPick(items, {
                 placeHolder:
-                  "Select parent branch (or Esc for current branch)",
+                  "Select parent branch (or Esc to use current branch)",
+                matchOnDescription: true,
               });
+              parent = picked?.choice.branchName;
             }
           }
         } catch {

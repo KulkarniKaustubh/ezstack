@@ -920,9 +920,11 @@ func prStack(args []string) error {
     ezs pr stack [options]
 
 %sOPTIONS%s
-    -h, --help    Show this help message
+    --branch <name>  Target a specific branch's stack (instead of current)
+    -h, --help       Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
+	branchFlag := fs.String("branch", "", "Target a specific branch's stack")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 	if err := fs.Parse(args); err != nil {
 		if err == pflag.ErrHelp {
@@ -946,9 +948,24 @@ func prStack(args []string) error {
 		return err
 	}
 
-	currentStack, branch, err := mgr.GetCurrentStack()
-	if err != nil {
-		return err
+	var currentStack *config.Stack
+	var branch *config.Branch
+
+	if *branchFlag != "" {
+		branch = mgr.GetBranch(*branchFlag)
+		if branch == nil {
+			return fmt.Errorf("branch '%s' is not tracked by ezstack", *branchFlag)
+		}
+		currentStack = mgr.GetStackForBranch(*branchFlag)
+		if currentStack == nil {
+			return fmt.Errorf("branch '%s' is not in any stack", *branchFlag)
+		}
+	} else {
+		var err error
+		currentStack, branch, err = mgr.GetCurrentStack()
+		if err != nil {
+			return err
+		}
 	}
 
 	gh, err := newGitHubClient(g)

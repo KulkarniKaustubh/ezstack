@@ -54,68 +54,6 @@ func TestRenderPromptUnusedVarsPreserved(t *testing.T) {
 	}
 }
 
-// TestRenderPromptDocsDoNotRecursivelyExpand is a regression test for the
-// bug fixed in v4.3.3. The embedded AGENTS.md and DOCUMENTATION.md files
-// both contain a reference table listing the template variables, so their
-// *bodies* contain literal tokens like `{{EZS_DOCS}}` and `{{EZS_COMMANDS}}`.
-//
-// The old renderPrompt used a sequential ReplaceAll loop over a map for the
-// pass-2 substitution. Because Go map iteration order is non-deterministic,
-// substituting EZS_COMMANDS first would splice AGENTS.md into the template,
-// and the next loop iteration would then find the literal {{EZS_DOCS}}
-// token *inside that just-injected content* and expand DOCUMENTATION.md
-// mid-reference-table — scrambling the prompt layout and multiplying its
-// length.
-//
-// The correct behavior: each late-pass substitution is a single scan of
-// the input, and tokens that end up inside the injected replacement text
-// are left as literal text.
-func TestRenderPromptDocsDoNotRecursivelyExpand(t *testing.T) {
-	template := `## Commands
-{{EZS_COMMANDS}}
-## Docs
-{{EZS_DOCS}}
-`
-	// Each doc value contains the *other* doc's token as literal text,
-	// mimicking the real AGENTS.md / DOCUMENTATION.md reference tables.
-	commands := "COMMANDS_BODY with literal {{EZS_DOCS}} reference"
-	docs := "DOCS_BODY with literal {{EZS_COMMANDS}} reference"
-
-	vars := map[string]string{
-		"EZS_COMMANDS": commands,
-		"EZS_DOCS":     docs,
-	}
-
-	// Run many iterations to defeat map-iteration-order non-determinism:
-	// the old buggy code would intermittently produce different outputs
-	// depending on which key the map yielded first.
-	var first string
-	for i := 0; i < 50; i++ {
-		result := renderPrompt(template, vars)
-		if i == 0 {
-			first = result
-		} else if result != first {
-			t.Fatalf("renderPrompt is non-deterministic; iteration %d differs from iteration 0", i)
-		}
-
-		// Each doc's body must appear exactly once.
-		if got := strings.Count(result, "COMMANDS_BODY"); got != 1 {
-			t.Errorf("expected COMMANDS_BODY exactly once, got %d\noutput:\n%s", got, result)
-		}
-		if got := strings.Count(result, "DOCS_BODY"); got != 1 {
-			t.Errorf("expected DOCS_BODY exactly once, got %d\noutput:\n%s", got, result)
-		}
-		// The literal tokens inside each doc's body must stay literal —
-		// pass 2 must not re-process replacement text.
-		if !strings.Contains(result, "COMMANDS_BODY with literal {{EZS_DOCS}} reference") {
-			t.Errorf("EZS_DOCS token inside commands body was unexpectedly expanded\noutput:\n%s", result)
-		}
-		if !strings.Contains(result, "DOCS_BODY with literal {{EZS_COMMANDS}} reference") {
-			t.Errorf("EZS_COMMANDS token inside docs body was unexpectedly expanded\noutput:\n%s", result)
-		}
-	}
-}
-
 // TestRenderPromptPass1ValuesNotReExpandedByDocs ensures that when pass 1
 // substitutes (e.g.) CUSTOM_INSTRUCTIONS with user-provided text, and that
 // text happens to contain the literal string "{{BRANCH_NAME}}", pass 2's
@@ -327,9 +265,6 @@ func TestBuildTemplateVars(t *testing.T) {
 	if vars["STACK_JSON"] != `{"hash":"abc1234"}` {
 		t.Errorf("expected STACK_JSON, got: %s", vars["STACK_JSON"])
 	}
-	if vars["EZS_COMMANDS"] == "" {
-		t.Error("expected EZS_COMMANDS to be non-empty")
-	}
 	if vars["EZS_DOCS"] == "" {
 		t.Error("expected EZS_DOCS to be non-empty")
 	}
@@ -339,7 +274,7 @@ func TestDefaultPromptTemplatesHaveAllVariables(t *testing.T) {
 	// Work branch template — scoped to a specific branch
 	workBranchVars := []string{
 		"{{STACK_JSON}}", "{{BRANCH_NAME}}", "{{PARENT_NAME}}",
-		"{{WORKTREE_PATH}}", "{{EZS_COMMANDS}}", "{{EZS_DOCS}}",
+		"{{WORKTREE_PATH}}", "{{EZS_DOCS}}",
 		"{{CUSTOM_INSTRUCTIONS}}", "{{REPO_INSTRUCTIONS}}",
 	}
 	for _, v := range workBranchVars {
@@ -350,7 +285,7 @@ func TestDefaultPromptTemplatesHaveAllVariables(t *testing.T) {
 
 	// Work stack template — works on entire stack, no branch-specific vars needed
 	workStackVars := []string{
-		"{{STACK_JSON}}", "{{EZS_COMMANDS}}", "{{EZS_DOCS}}",
+		"{{STACK_JSON}}", "{{EZS_DOCS}}",
 		"{{CUSTOM_INSTRUCTIONS}}", "{{REPO_INSTRUCTIONS}}",
 	}
 	for _, v := range workStackVars {
@@ -362,7 +297,7 @@ func TestDefaultPromptTemplatesHaveAllVariables(t *testing.T) {
 	// Feature template — no branch-specific or stack vars, has feature description
 	featureVars := []string{
 		"{{FEATURE_DESCRIPTION}}",
-		"{{EZS_COMMANDS}}", "{{EZS_DOCS}}",
+		"{{EZS_DOCS}}",
 		"{{CUSTOM_INSTRUCTIONS}}", "{{REPO_INSTRUCTIONS}}",
 	}
 	for _, v := range featureVars {
@@ -691,7 +626,7 @@ func TestBuildRenderedFeaturePrompt(t *testing.T) {
 	defer os.Setenv("EZSTACK_HOME", originalHome)
 	os.Setenv("EZSTACK_HOME", tmpDir)
 
-	prompt, err := buildRenderedFeaturePrompt("/path/to/repo", "Add JWT authentication", nil)
+	prompt, err := buildRenderedFeaturePrompt("/path/to/repo", "Add JWT authentication", nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -734,7 +669,7 @@ func TestBuildRenderedFeaturePromptWithExistingStack(t *testing.T) {
 		},
 	}
 
-	prompt, err := buildRenderedFeaturePrompt("/path/to/repo", "Add user management", existingStack)
+	prompt, err := buildRenderedFeaturePrompt("/path/to/repo", "Add user management", existingStack, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -779,7 +714,7 @@ func TestBuildRenderedFeaturePromptWithEmptyStack(t *testing.T) {
 		Root: "main",
 	}
 
-	prompt, err := buildRenderedFeaturePrompt("/path/to/repo", "Add feature", emptyStack)
+	prompt, err := buildRenderedFeaturePrompt("/path/to/repo", "Add feature", emptyStack, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
