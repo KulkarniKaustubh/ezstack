@@ -795,3 +795,70 @@ func TestPushForce_VariadicRemote(t *testing.T) {
 	_ = g.PushForce("custom-remote")
 	_ = g.PushForce("")
 }
+
+// TestPushBranch_PushesNamedBranchNotCurrent is a regression test for the
+// sync-pushes-main bug: OfferPush was calling g.Push(false, remote), which
+// derives the ref from CurrentBranch(). If HEAD in the worktree was main
+// (e.g. after syncViaCheckout restored it), that pushed main. PushBranch
+// names the branch explicitly and must push that specific branch regardless
+// of what HEAD is currently on.
+func TestPushBranch_PushesNamedBranchNotCurrent(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	// Create a sibling branch "feature" on top of the initial commit.
+	if out, err := exec.Command("git", "-C", dir, "branch", "feature").CombinedOutput(); err != nil {
+		t.Fatalf("create feature branch: %v: %s", err, out)
+	}
+	// Add a commit only on feature so we can distinguish it from main.
+	if err := exec.Command("git", "-C", dir, "checkout", "feature").Run(); err != nil {
+		t.Fatalf("checkout feature: %v", err)
+	}
+	featureFile := filepath.Join(dir, "feature.txt")
+	if err := os.WriteFile(featureFile, []byte("feature-only\n"), 0644); err != nil {
+		t.Fatalf("write feature.txt: %v", err)
+	}
+	exec.Command("git", "-C", dir, "add", ".").Run()
+	exec.Command("git", "-C", dir, "commit", "-m", "feature commit").Run()
+	// Leave HEAD on main so CurrentBranch() would return "main".
+	if err := exec.Command("git", "-C", dir, "checkout", "main").Run(); err != nil {
+		t.Fatalf("checkout main: %v", err)
+	}
+
+	// Create a bare remote.
+	bare, err := os.MkdirTemp("", "push-branch-remote-*")
+	if err != nil {
+		t.Fatalf("mkdtemp remote: %v", err)
+	}
+	defer os.RemoveAll(bare)
+	if err := exec.Command("git", "init", "--bare", "-b", "main", bare).Run(); err != nil {
+		t.Fatalf("init bare: %v", err)
+	}
+	if err := exec.Command("git", "-C", dir, "remote", "add", "origin", bare).Run(); err != nil {
+		t.Fatalf("add remote: %v", err)
+	}
+
+	// Sanity: HEAD is main.
+	g := New(dir)
+	cur, _ := g.CurrentBranch()
+	if cur != "main" {
+		t.Fatalf("test setup: expected HEAD on main, got %q", cur)
+	}
+
+	// Act: push "feature" explicitly.
+	if err := g.PushBranch("feature", false, "origin"); err != nil {
+		t.Fatalf("PushBranch(feature): %v", err)
+	}
+
+	// Assert: feature ref exists on remote.
+	if out, err := exec.Command("git", "-C", bare, "rev-parse", "--verify", "refs/heads/feature").CombinedOutput(); err != nil {
+		t.Errorf("feature was not pushed to remote: %v: %s", err, out)
+	}
+
+	// Assert: main ref does NOT exist on remote (we never pushed it — if
+	// PushBranch incorrectly used CurrentBranch, main would have been pushed
+	// instead).
+	if err := exec.Command("git", "-C", bare, "rev-parse", "--verify", "refs/heads/main").Run(); err == nil {
+		t.Error("main was pushed to remote despite PushBranch being called with 'feature'; regression: push used CurrentBranch() instead of the named branch")
+	}
+}

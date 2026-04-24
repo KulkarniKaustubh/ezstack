@@ -149,7 +149,10 @@ func OfferForcePush(branchName, worktreePath, remote string) bool {
 	ui.Warn("Force push required to update remote branch")
 	if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
 		ui.Info("Pushing...")
-		if err := g.PushForce(remote); err != nil {
+		// PushBranch explicitly names the branch — never trust CurrentBranch()
+		// of worktreePath, which can be main if we're pushing from the main
+		// repo dir after a syncViaCheckout restored HEAD.
+		if err := g.PushBranch(branchName, true, remote); err != nil {
 			ui.Error(fmt.Sprintf("Push failed: %v. Check your network connection and remote access", err))
 			return false
 		}
@@ -198,7 +201,7 @@ func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) st
 
 		if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
 			ui.Info(fmt.Sprintf("Pushing %s...", branchName))
-			if err := g.PushForce(remote); err != nil {
+			if err := g.PushBranch(branchName, true, remote); err != nil {
 				ui.Error(fmt.Sprintf("Push failed for %s: %v. Check remote access or try: git push --force-with-lease", branchName, err))
 			} else {
 				ui.Success(fmt.Sprintf("Pushed %s successfully", branchName))
@@ -237,11 +240,14 @@ func OfferPush(branchName, worktreePath, remote string) bool {
 	fmt.Fprintln(os.Stderr)
 	if ui.ConfirmTUI(fmt.Sprintf("Push %s to %s", branchName, remote)) {
 		ui.Info("Pushing...")
-		if err := g.Push(false, remote); err != nil {
+		// PushBranch explicitly names the branch — never trust CurrentBranch()
+		// of worktreePath, which can be main if we're pushing from the main
+		// repo dir after a syncViaCheckout restored HEAD.
+		if err := g.PushBranch(branchName, false, remote); err != nil {
 			// If regular push fails (e.g., diverged history from prior rebase), offer force push
 			ui.Warn(fmt.Sprintf("Push failed: %v", err))
 			if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
-				if err := g.PushForce(remote); err != nil {
+				if err := g.PushBranch(branchName, true, remote); err != nil {
 					ui.Error(fmt.Sprintf("Force push failed: %v", err))
 					return false
 				}
@@ -295,10 +301,10 @@ func OfferPushMultiple(branches []string, getBranchWorktree func(string) string,
 
 		if ui.ConfirmTUI(fmt.Sprintf("Push %s to %s", branchName, remote)) {
 			ui.Info(fmt.Sprintf("Pushing %s...", branchName))
-			if err := g.Push(false, remote); err != nil {
+			if err := g.PushBranch(branchName, false, remote); err != nil {
 				// Fall back to force push if regular push fails
 				ui.Warn(fmt.Sprintf("Push failed: %v. Trying force push...", err))
-				if err := g.PushForce(remote); err != nil {
+				if err := g.PushBranch(branchName, true, remote); err != nil {
 					ui.Error(fmt.Sprintf("Force push failed for %s: %v", branchName, err))
 				} else {
 					ui.Success(fmt.Sprintf("Pushed %s successfully (force)", branchName))

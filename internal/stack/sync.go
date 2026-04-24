@@ -9,6 +9,46 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/github"
 )
 
+// resolveBranchWorktree returns the effective worktree path for a branch,
+// healing drift between ezstack config and git's actual worktree list.
+//
+// If branch.WorktreePath is set in config, it's returned as-is. If it's empty,
+// we consult `git worktree list`: if git has a dedicated worktree for the
+// branch, we return that path and back-fill config. This prevents sync from
+// falling into syncViaCheckout when a worktree actually exists (which would
+// either collide with "branch is already used by worktree at …" or, on
+// success, restore main's HEAD in the main repo and subsequently push main).
+//
+// Returns empty string if no worktree exists for the branch (legitimate
+// checkout-based sync path).
+func (m *Manager) resolveBranchWorktree(branch *config.Branch) string {
+	if branch == nil {
+		return ""
+	}
+	if branch.WorktreePath != "" {
+		return branch.WorktreePath
+	}
+	worktrees, err := m.git.ListWorktrees()
+	if err != nil {
+		return ""
+	}
+	mainRepo := m.repoDir
+	for _, wt := range worktrees {
+		if wt.Branch != branch.Name {
+			continue
+		}
+		if wt.Path == mainRepo {
+			// Branch is checked out in the main repo itself — not a
+			// dedicated worktree; checkout-based sync is still appropriate.
+			return ""
+		}
+		// Heal config so future sync calls and persisted state reflect reality.
+		branch.WorktreePath = wt.Path
+		return wt.Path
+	}
+	return ""
+}
+
 // syncViaCheckout performs a rebase or merge for a branch that has no worktree.
 // It checks out the branch in the main repo, performs the operation, then checks
 // out the original branch. Returns a git.RebaseResult.
@@ -455,18 +495,21 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				continue
 			}
 
-			// Determine the working directory for git operations
+			// Determine the working directory for git operations.
 			// Branches with worktrees use their own directory; branches without
-			// use checkout-based sync in the main repo.
-			useCheckout := branch.WorktreePath == ""
+			// use checkout-based sync in the main repo. resolveBranchWorktree
+			// heals config/git drift: if config says no worktree but git has
+			// one, we use the git path and back-fill config.
+			worktreePath := m.resolveBranchWorktree(branch)
+			useCheckout := worktreePath == ""
 			var g *git.Git
 			if useCheckout {
 				g = m.git // will use syncViaCheckout for operations
 			} else {
-				g = git.New(branch.WorktreePath)
+				g = git.New(worktreePath)
 			}
 
-			workDir := branch.WorktreePath
+			workDir := worktreePath
 			if workDir == "" {
 				workDir = m.repoDir
 			}
@@ -868,16 +911,19 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 		return nil, fmt.Errorf("branch '%s' not found in any stack", branchName)
 	}
 
-	// Determine working directory and whether to use checkout-based sync
-	useCheckout := branch.WorktreePath == ""
+	// Determine working directory and whether to use checkout-based sync.
+	// resolveBranchWorktree heals config/git drift (see syncStackInternal
+	// for why — same bug where config says no worktree but git has one).
+	worktreePath := m.resolveBranchWorktree(branch)
+	useCheckout := worktreePath == ""
 	var g *git.Git
 	if useCheckout {
 		g = m.git
 	} else {
-		g = git.New(branch.WorktreePath)
+		g = git.New(worktreePath)
 	}
 
-	workDir := branch.WorktreePath
+	workDir := worktreePath
 	if workDir == "" {
 		workDir = m.repoDir
 	}
