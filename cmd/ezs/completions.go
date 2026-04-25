@@ -290,6 +290,14 @@ func printCompletions(args []string) {
 		return
 	}
 	if branchOrStackPositionalCommands[cmd] {
+		// `delete --stack` / `delete -s` narrows the positional to a stack
+		// hash (see delete.go); skip branches so the menu matches intent.
+		for _, a := range args[1 : len(args)-1] {
+			if a == "--stack" || a == "-s" {
+				printStackIdentifiers()
+				return
+			}
+		}
 		printBranchNames()
 		printStackIdentifiers()
 		return
@@ -327,7 +335,8 @@ func printBranchNames() {
 
 // printStackIdentifiers emits each stack's hash and (when set) its name.
 // Both forms are accepted by `ezs sync`/`ezs agent -s` so completing both is
-// useful. Best-effort: silent on lookup failure.
+// useful. De-dupes because Hash == Name (or two stacks sharing a name) would
+// otherwise emit the same string twice. Best-effort: silent on lookup failure.
 func printStackIdentifiers() {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -337,15 +346,22 @@ func printStackIdentifiers() {
 	if err != nil {
 		return
 	}
+	seen := map[string]struct{}{}
+	emit := func(id string) {
+		if id == "" {
+			return
+		}
+		if _, dup := seen[id]; dup {
+			return
+		}
+		seen[id] = struct{}{}
+		fmt.Println(id)
+	}
 	for _, s := range mgr.ListStacks() {
 		if s == nil {
 			continue
 		}
-		if s.Hash != "" {
-			fmt.Println(s.Hash)
-		}
-		if s.Name != "" {
-			fmt.Println(s.Name)
-		}
+		emit(s.Hash)
+		emit(s.Name)
 	}
 }

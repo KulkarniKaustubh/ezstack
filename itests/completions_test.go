@@ -239,22 +239,26 @@ func TestCompletions_SyncDashPDoesNotCompleteBranches(t *testing.T) {
 	}
 }
 
-// TestCompletions_DeleteStackFlagFallsThroughToPositional documents the
-// reviewer's correctness fix: --stack/-s is boolean for delete (delete.go
-// declares it BoolP). Pre-fix the flat stackValueLongFlags map fired the
-// value-of-flag router and emitted ONLY stack hashes after --stack. Post-
-// fix --stack falls through to delete's positional path which emits BOTH
-// branches and stacks (delete accepts either). Verify a real branch
-// surfaces — a clear signal that the fall-through path is firing rather
-// than the (now-fixed) wrong path.
-func TestCompletions_DeleteStackFlagFallsThroughToPositional(t *testing.T) {
+// TestCompletions_DeleteStackFlagNarrowsToStacks pins the narrowing: when
+// the user has typed `delete --stack` (or `-s`), the positional must be a
+// stack hash, so branch suggestions are noise and are suppressed. Without
+// the narrowing, a real branch like `feat-delstack` would leak through
+// delete's branchOrStack positional handler.
+func TestCompletions_DeleteStackFlagNarrowsToStacks(t *testing.T) {
 	env := SetupTestEnv(t)
 	defer env.Cleanup()
 	CreateBranchWithCommit(t, env, "feat-delstack", "main")
 
-	got := runCompletions(t, env, "delete", "--stack", "")
-	if !itestContains(got, "feat-delstack") {
-		t.Errorf("delete --stack <TAB> should fall through to positional (branches + stacks); got %v", got)
+	for _, flag := range []string{"--stack", "-s"} {
+		t.Run(flag, func(t *testing.T) {
+			got := runCompletions(t, env, "delete", flag, "")
+			if itestContains(got, "feat-delstack") {
+				t.Errorf("delete %s <TAB> must NOT emit branches (signal is stack-only); got %v", flag, got)
+			}
+			if len(got) == 0 {
+				t.Errorf("delete %s <TAB> should still emit at least one stack identifier; got nothing", flag)
+			}
+		})
 	}
 }
 
