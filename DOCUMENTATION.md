@@ -127,6 +127,10 @@ ezs config set sync_strategy rebase                # switch to rebase-based sync
 ezs config set agent_command aider                 # switch the agent CLI
 ezs config set default_base_branch master          # override the global default base
 ezs config set github_token ghp_...                # optional; otherwise falls back to `gh auth`
+
+# Multi-word values (or any value starting with `-`) MUST be quoted so the
+# shell collapses them to a single argument. Common case is agent_command:
+ezs config set agent_command "claude --dangerously-skip-permissions"
 ```
 
 ### 4. Create your first stacked branch
@@ -271,9 +275,9 @@ echo 'eval "$(ezs --shell-init)"' >> ~/.bashrc
 echo 'eval "$(ezs --shell-init)"' >> ~/.zshrc
 ```
 
-This enables automatic directory changes for `goto`, `new`, `delete`, `sync`, `up`, and `down` commands.
+This enables automatic directory changes for `goto`, `new`, `delete`, `sync`, `up`, and `down` commands. It also installs bash/zsh tab completion for ezs subcommands, flags, branch names, stack hashes/names, and `config set` keys — `ezs <TAB>` shows commands, `ezs goto <TAB>` lists branches, `ezs sync <TAB>` lists stacks, `ezs config set <TAB>` lists valid keys, and `ezs <cmd> --<TAB>` lists that command's flags.
 
-Without shell integration, commands that would change your directory will instead print a helpful message with the path to `cd` to manually.
+Without shell integration, commands that would change your directory will instead print a helpful message with the path to `cd` to manually, and tab completion is unavailable.
 
 ---
 
@@ -608,7 +612,16 @@ ezs agent prompt --reset --repo feature
 ```bash
 # Set the agent CLI (default: claude)
 ezs config set agent_command claude
+
+# Pass flags to the agent CLI by quoting the whole value as one shell arg:
+ezs config set agent_command "claude --dangerously-skip-permissions"
+ezs config set agent_command "aider --model gpt-4"
 ```
+
+> Multi-word values must be quoted. The CLI takes `<value>` as a single
+> positional argument and rejects anything trailing — this keeps typos like
+> `ezs config set worktree_base_dir /tmp/foo --bogus` from being silently
+> stored as the literal path `/tmp/foo --bogus`.
 
 ---
 

@@ -9,6 +9,7 @@ import (
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
+	"github.com/spf13/pflag"
 )
 
 // Doctor verifies that ezstack's runtime dependencies and config are healthy.
@@ -16,18 +17,33 @@ func Doctor(args []string) error {
 	if HasExamplesFlag("doctor", args) {
 		return nil
 	}
-	for _, a := range args {
-		if a == "-h" || a == "--help" {
-			fmt.Fprintf(os.Stderr, `%sCheck ezstack health%s
+	fs := pflag.NewFlagSet("doctor", pflag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `%sCheck ezstack health%s
 
 %sUSAGE%s
     ezs doctor
 
+%sOPTIONS%s
+    -h, --help    Show this help message
+
 Verifies required tools (git, gh, fzf) are installed and that the
 ezstack configuration is valid.
-`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset)
-			return nil
-		}
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
+	}
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
+	// pflag.ErrHelp is unreachable here because we registered our own --help
+	// flag (which sets *helpFlag instead of returning ErrHelp). Surface the
+	// help banner via the explicit *helpFlag branch below.
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *helpFlag {
+		fs.Usage()
+		return nil
+	}
+	if fs.NArg() > 0 {
+		return fmt.Errorf("unexpected argument: %s", fs.Arg(0))
 	}
 
 	fmt.Fprintf(os.Stderr, "%sezstack doctor%s\n\n", ui.Bold, ui.Reset)

@@ -25,7 +25,8 @@ func Goto(args []string) error {
     ezs go [branch-name] [options]
 
 %sOPTIONS%s
-    -h, --help    Show this help message
+    --search <substring>    Fuzzy-match a branch name by substring (non-interactive)
+    -h, --help              Show this help message
 
 %sNOTES%s
     If branch-name is omitted, shows interactive selection of all worktrees.

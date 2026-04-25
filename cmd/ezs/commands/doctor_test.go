@@ -188,6 +188,75 @@ func TestInfo_FallsBackToNotInstalledOnToolError(t *testing.T) {
 	}
 }
 
+// TestDoctor_RejectsUnknownFlag asserts that Doctor surfaces unknown flags as
+// errors instead of silently ignoring them. Before the pflag refactor, an
+// `ezs doctor --bogus` would run the full health check and exit 0 — masking
+// typos like `--debug` (intended for `list`) as success. This is the
+// regression gate.
+func TestDoctor_RejectsUnknownFlag(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("EZSTACK_HOME", tmp)
+
+	var err error
+	captureStdAndErr(t, func() {
+		err = Doctor([]string{"--bogus-flag"})
+	})
+
+	if err == nil {
+		t.Fatal("Doctor with unknown flag returned nil — must reject")
+	}
+	if !strings.Contains(err.Error(), "unknown flag") {
+		t.Errorf("error %q should mention 'unknown flag'", err.Error())
+	}
+}
+
+// TestDoctor_RejectsExtraPositional pins down that Doctor takes no positional
+// args. Before the fix, extras were silently dropped on the floor.
+func TestDoctor_RejectsExtraPositional(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("EZSTACK_HOME", tmp)
+
+	var err error
+	captureStdAndErr(t, func() {
+		err = Doctor([]string{"unexpected"})
+	})
+
+	if err == nil {
+		t.Fatal("Doctor with extra positional returned nil — must reject")
+	}
+	if !strings.Contains(err.Error(), "unexpected") {
+		t.Errorf("error %q should call out the unexpected argument", err.Error())
+	}
+}
+
+// TestDoctor_HelpFlagShortCircuits verifies the new pflag-driven --help path
+// returns nil without running the health checks (which would hit os.LookPath
+// and pollute stderr with the full report).
+func TestDoctor_HelpFlagShortCircuits(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("EZSTACK_HOME", tmp)
+
+	for _, flag := range []string{"-h", "--help"} {
+		t.Run(flag, func(t *testing.T) {
+			var err error
+			_, stderr := captureStdAndErr(t, func() {
+				err = Doctor([]string{flag})
+			})
+			if err != nil {
+				t.Errorf("Doctor %s returned error: %v", flag, err)
+			}
+			if !strings.Contains(stderr, "Check ezstack health") {
+				t.Errorf("Doctor %s should print help banner:\n%s", flag, stderr)
+			}
+			// Health checks must not run on the help path — their output
+			// would include "git:" or "gh:" markers.
+			if strings.Contains(stderr, "ezstack doctor\n") {
+				t.Errorf("Doctor %s ran health checks instead of just help:\n%s", flag, stderr)
+			}
+		})
+	}
+}
+
 // TestInfo_ReportsConfigPresent writes a minimal config and asserts Info
 // reads it back instead of reporting missing.
 func TestInfo_ReportsConfigPresent(t *testing.T) {
