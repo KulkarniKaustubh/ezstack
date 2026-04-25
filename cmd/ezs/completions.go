@@ -38,27 +38,47 @@ var configKeys = []string{
 // commandFlags lists the flags each command accepts. Source of truth lives
 // next to each command's pflag set; this map is a hand-maintained copy used
 // only for completion. When a command gains/loses a flag, update both spots.
+//
+// TestCompletions_FlagTableMatchesHelpOutput in itests/completions_test.go is
+// a drift gate: it runs `ezs <cmd> --help` for every entry below, parses the
+// OPTIONS section, and asserts every flag printed by the binary appears in
+// this table. So forgetting to update the table after adding a flag fails
+// the test instead of silently shipping incomplete completion. The test is
+// asymmetric on purpose — extra entries here are tolerated (some commands
+// document help-only flags or pass-throughs to git), but missing entries are
+// treated as drift.
 var commandFlags = map[string][]string{
 	"agent":    {"--cmd", "--stack", "-s", "--branch", "-b", "--dry-run", "--save-prompt", "--no-push", "--preset", "--no-mcp", "--help", "-h"},
 	"amend":    {"--merge", "--rebase", "--push", "--push-children", "--no-push", "--help", "-h"},
 	"commit":   {"--merge", "--rebase", "--push", "--push-children", "--no-push", "--help", "-h"},
 	"config":   {"--help", "-h"},
 	"delete":   {"--force", "-f", "--stack", "-s", "--cascade", "--help", "-h"},
-	"diff":     {"--stat", "--help", "-h"},
+	"diff":     {"--branch", "-b", "--stat", "--json", "--help", "-h"},
 	"doctor":   {"--help", "-h"},
 	"down":     {"--help", "-h"},
 	"goto":     {"--search", "--help", "-h"},
 	"list":     {"--all", "-a", "--json", "--debug", "-d", "--help", "-h"},
-	"log":      {"--help", "-h"},
-	"new":      {"--parent", "-p", "--worktree", "-w", "--cd", "-c", "--no-cd", "-C", "--from-worktree", "-f", "--from-remote", "-r", "--help", "-h"},
+	"log":      {"--branch", "-b", "--json", "--help", "-h"},
+	"new":      {"--parent", "-p", "--worktree", "-w", "--template", "--cd", "-c", "--no-cd", "-C", "--init-submodules", "-s", "--no-init-submodules", "-S", "--from-worktree", "-f", "--from-remote", "-r", "--help", "-h"},
 	"pr":       {"--help", "-h"},
-	"push":     {"--all", "-a", "--force", "-f", "--children", "--help", "-h"},
-	"reparent": {"--branch", "-b", "--parent", "-p", "--help", "-h"},
-	"stack":    {"--branch", "-b", "--parent", "-p", "--help", "-h"},
+	"push":     {"--all", "-a", "--stack", "-s", "--branch", "-b", "--children", "--force", "-f", "--verify", "--all-remotes", "--help", "-h"},
+	"reparent": {"--branch", "-b", "--parent", "-p", "--merge", "--rebase", "--no-rebase", "--help", "-h"},
+	"stack":    {"--branch", "-b", "--parent", "-p", "--base", "-B", "--help", "-h"},
 	"status":   {"--all", "-a", "--branch", "-b", "--debug", "-d", "--json", "--watch", "--help", "-h"},
 	"sync":     {"--stats", "--squash", "--stack", "-s", "--all", "-a", "--current", "-c", "--branch", "-b", "--parent", "-p", "--children", "-C", "--merge", "--rebase", "--no-delete-local", "--dry-run", "--continue", "--no-autostash", "--json", "--help", "-h"},
 	"unstack":  {"--branch", "-b", "--help", "-h"},
 	"up":       {"--help", "-h"},
+}
+
+// prSubcommandFlags lists the flags each `pr <subcommand>` accepts. Used so
+// `ezs pr create --<TAB>` surfaces create's flags rather than just the
+// top-level `--help`/`-h` from `pr` itself. Same drift-gate test applies.
+var prSubcommandFlags = map[string][]string{
+	"create": {"--stack", "-s", "--draft-all", "--title", "-t", "--body", "-b", "--draft", "-d", "--branch", "--help", "-h"},
+	"update": {"--branch", "--help", "-h"},
+	"merge":  {"--method", "-m", "--branch", "--no-delete-branch", "--help", "-h"},
+	"draft":  {"--branch", "--help", "-h"},
+	"stack":  {"--branch", "--help", "-h"},
 }
 
 // branchPositionalCommands take a branch name as their first positional arg.
@@ -86,20 +106,36 @@ var stackPositionalCommands = map[string]bool{
 	"sync": true,
 }
 
-// branchValueFlags are flags whose value is a branch name. After one of these
-// in the previous word we complete branches.
-var branchValueFlags = map[string]bool{
-	"-b":       true,
-	"--branch": true,
-	"-p":       true,
-	"--parent": true,
+// branchValueFlagsByCmd lists the flags whose value is a branch name, scoped
+// per command. Some flags share a name across commands but have different
+// types — e.g. `-p`/`--parent` is a string (parent branch) for `new`, `stack`,
+// and `reparent`, but a *boolean* (rebase onto parent) for `sync`. A flat map
+// would emit branch completions after `ezs sync -p`, where the next slot is
+// not a value at all. Same for `-b`/`--branch`: value-bearing for most
+// commands but never used boolean — kept per-command for consistency and to
+// avoid surprises if a future command repurposes the short form.
+var branchValueFlagsByCmd = map[string]map[string]bool{
+	"new":      {"-p": true, "--parent": true},
+	"stack":    {"-b": true, "--branch": true, "-p": true, "--parent": true},
+	"reparent": {"-b": true, "--branch": true, "-p": true, "--parent": true},
+	"unstack":  {"-b": true, "--branch": true},
+	"sync":     {"-b": true, "--branch": true}, // -p is BOOL for sync; do NOT add
+	"delete":   {"-b": true, "--branch": true},
+	"status":   {"-b": true, "--branch": true},
+	"list":     {"-b": true, "--branch": true},
+	"diff":     {"-b": true, "--branch": true},
+	"log":      {"-b": true, "--branch": true},
+	"push":     {"-b": true, "--branch": true},
+	"agent":    {"-b": true, "--branch": true},
 }
 
-// stackValueFlags are flags whose value is a stack hash/name. Note: `-s` is
-// boolean for sync/delete, only `agent -s <hash>` takes a value, so we keep
-// this map command-aware below rather than a flat lookup.
-var stackValueLongFlags = map[string]bool{
-	"--stack": true,
+// stackValueFlagsByCmd lists the flags whose value is a stack hash/name,
+// scoped per command. `--stack`/`-s` is a *boolean* for `sync`, `delete`, and
+// `push` (means "operate on the current stack" or "treat positional as
+// stack"), but a *string* (stack hash/name to target) for `agent`. The flat
+// previous map mistakenly fired stack completion in all four commands.
+var stackValueFlagsByCmd = map[string]map[string]bool{
+	"agent": {"-s": true, "--stack": true},
 }
 
 // printCompletions writes one candidate per line to stdout based on the
@@ -120,9 +156,17 @@ func printCompletions(args []string) {
 
 	cmd := args[0]
 	cur := args[len(args)-1]
+	// Bash splits on `=` per default COMP_WORDBREAKS, so `--branch=foo<TAB>`
+	// arrives as ("--branch", "=", "foo"). Look one further back when the
+	// previous word is "=" so the value-of-flag router still recognizes the
+	// underlying flag. `--branch=` (no value yet) lands the cursor on "" with
+	// prev="=" and prev-prev="--branch", which is exactly what we want.
 	prev := ""
 	if len(args) >= 2 {
 		prev = args[len(args)-2]
+		if prev == "=" && len(args) >= 3 {
+			prev = args[len(args)-3]
+		}
 	}
 
 	// Flag completion: when the user is typing a flag, show the flag set for
@@ -136,6 +180,18 @@ func printCompletions(args []string) {
 		if cmd == "config" && len(args) >= 4 && args[1] == "set" {
 			return
 		}
+		// `ezs pr <sub> --<TAB>` — surface the subcommand's own flags rather
+		// than the bare `--help`/`-h` from `pr` itself. Without this branch,
+		// `pr create --<TAB>` was emitting just `--help`/`-h` despite create
+		// having a rich flag set.
+		if cmd == "pr" && len(args) >= 3 {
+			if flags, ok := prSubcommandFlags[args[1]]; ok {
+				for _, f := range flags {
+					fmt.Println(f)
+				}
+				return
+			}
+		}
 		if flags, ok := commandFlags[cmd]; ok {
 			for _, f := range flags {
 				fmt.Println(f)
@@ -145,12 +201,15 @@ func printCompletions(args []string) {
 	}
 
 	// Value-of-flag completion: if the previous word is a flag whose value
-	// names a branch or stack, complete that.
-	if branchValueFlags[prev] {
+	// names a branch or stack, complete that. Per-command lookup so that
+	// flags that share a name across commands but differ in type (e.g. -p
+	// is string for `new`/`reparent` but bool for `sync`) don't surface
+	// false-positive completions.
+	if branchValueFlagsByCmd[cmd][prev] {
 		printBranchNames()
 		return
 	}
-	if stackValueLongFlags[prev] || (cmd == "agent" && prev == "-s") {
+	if stackValueFlagsByCmd[cmd][prev] {
 		printStackIdentifiers()
 		return
 	}

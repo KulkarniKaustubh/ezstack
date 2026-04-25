@@ -264,3 +264,142 @@ func TestPrintCompletions_NewExcludedFromBranchPositional(t *testing.T) {
 	}
 	_ = got
 }
+
+// TestPrintCompletions_SyncDashPNotBranchValue locks down that `-p`/`--parent`
+// is NOT routed to branch completion under `sync` — sync.go declares them
+// boolean (BoolP "Rebase onto parent"). The previous flat branchValueFlags
+// map fired branch completion regardless of command, which would have
+// surfaced false positives in a real repo.
+func TestPrintCompletions_SyncDashPNotBranchValue(t *testing.T) {
+	if branchValueFlagsByCmd["sync"]["-p"] {
+		t.Error("sync's -p must NOT be in branchValueFlagsByCmd['sync'] — it's a boolean flag in sync.go")
+	}
+	if branchValueFlagsByCmd["sync"]["--parent"] {
+		t.Error("sync's --parent must NOT be in branchValueFlagsByCmd['sync'] — it's a boolean flag in sync.go")
+	}
+	// And conversely, structural pin: `new`/`reparent`/`stack` SHOULD have
+	// it (they take a parent branch name as the value).
+	for _, cmd := range []string{"new", "reparent", "stack"} {
+		if !branchValueFlagsByCmd[cmd]["-p"] {
+			t.Errorf("%s's -p must be in branchValueFlagsByCmd[%q] — takes a branch value", cmd, cmd)
+		}
+		if !branchValueFlagsByCmd[cmd]["--parent"] {
+			t.Errorf("%s's --parent must be in branchValueFlagsByCmd[%q] — takes a branch value", cmd, cmd)
+		}
+	}
+}
+
+// TestPrintCompletions_StackFlagOnlyValueBearingForAgent locks down the
+// `--stack`/`-s` typing fix. agent.go uses StringP (value-bearing); sync,
+// delete, push use BoolP. The pre-fix flat stackValueLongFlags fired stack
+// completion in all four commands.
+func TestPrintCompletions_StackFlagOnlyValueBearingForAgent(t *testing.T) {
+	if !stackValueFlagsByCmd["agent"]["--stack"] {
+		t.Error("agent's --stack must be value-bearing (StringP in agent.go)")
+	}
+	if !stackValueFlagsByCmd["agent"]["-s"] {
+		t.Error("agent's -s must be value-bearing (StringP in agent.go)")
+	}
+	for _, cmd := range []string{"sync", "delete", "push"} {
+		if stackValueFlagsByCmd[cmd]["--stack"] {
+			t.Errorf("%s's --stack must NOT be value-bearing — it's BoolP in %s.go", cmd, cmd)
+		}
+		if stackValueFlagsByCmd[cmd]["-s"] {
+			t.Errorf("%s's -s must NOT be value-bearing — it's BoolP in %s.go", cmd, cmd)
+		}
+	}
+}
+
+// TestPrintCompletions_NewSurfacesAllFlags pins the regression that v1 of
+// this PR shipped: `--init-submodules`/`-s` and `--no-init-submodules`/`-S`
+// were defined in new.go:64-65 but missing from commandFlags["new"], so
+// `ezs new --<TAB>` silently dropped them. The integration-test drift
+// gate (TestCompletions_FlagTableMatchesHelpOutput) catches this for any
+// command going forward; this is the explicit case-by-case guard.
+func TestPrintCompletions_NewSurfacesAllFlags(t *testing.T) {
+	got := captureCompletions(t, []string{"new", "--"})
+	for _, want := range []string{
+		"--parent", "-p",
+		"--worktree", "-w",
+		"--cd", "-c",
+		"--no-cd", "-C",
+		"--init-submodules", "-s",
+		"--no-init-submodules", "-S",
+		"--from-worktree", "-f",
+		"--from-remote", "-r",
+		"--help", "-h",
+	} {
+		if !contains(got, want) {
+			t.Errorf("new --<TAB> missing %q; got %v", want, got)
+		}
+	}
+}
+
+// TestPrintCompletions_PRSubcommandFlagsSurface covers `ezs pr <sub> --<TAB>`.
+// Pre-fix this emitted only `--help`/`-h` (the bare pr commandFlags entry)
+// because the routing didn't know about per-subcommand flag sets.
+func TestPrintCompletions_PRSubcommandFlagsSurface(t *testing.T) {
+	tests := []struct {
+		sub  string
+		want []string
+	}{
+		{"create", []string{"--title", "-t", "--body", "-b", "--draft", "-d", "--stack", "-s", "--draft-all", "--branch"}},
+		{"update", []string{"--branch", "--help", "-h"}},
+		{"merge", []string{"--method", "-m", "--branch", "--no-delete-branch"}},
+		{"draft", []string{"--branch", "--help"}},
+		{"stack", []string{"--branch", "--help"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.sub, func(t *testing.T) {
+			got := captureCompletions(t, []string{"pr", tc.sub, "--"})
+			for _, w := range tc.want {
+				if !contains(got, w) {
+					t.Errorf("pr %s --<TAB> missing %q; got %v", tc.sub, w, got)
+				}
+			}
+		})
+	}
+}
+
+// TestPrintCompletions_BranchEqualsValueRoutesCorrectly covers the bash
+// COMP_WORDBREAKS-on-`=` quirk: `--branch=foo<TAB>` arrives as
+// (..., "--branch", "=", "foo"). The previous-word router must look one
+// further back when prev is "=" so it still fires branch completion.
+func TestPrintCompletions_BranchEqualsValueRoutesCorrectly(t *testing.T) {
+	// Out-of-repo, branch lookup is silent (best-effort), so we can't
+	// assert specific branch names. What we CAN assert is that we don't
+	// fall through to the wrong code path: stack hashes for sync, or
+	// pr subcommands, or anything else.
+	got := captureCompletions(t, []string{"sync", "--branch", "=", ""})
+	for _, leaked := range []string{
+		"--all", "--squash", "create", "draft", "set", "show", "feature",
+	} {
+		if contains(got, leaked) {
+			t.Errorf("`--branch=<TAB>` leaked %q (should be branch-completion path): %v", leaked, got)
+		}
+	}
+}
+
+// TestPrintCompletions_StackBoolFlagSyncFallsThrough: pre-fix, `sync --stack
+// <TAB>` fired the value-of-flag path (treated --stack as value-bearing) and
+// emitted stack hashes for the wrong reason. Post-fix, --stack is recognized
+// as boolean for sync, so we fall through to the positional path —
+// stackPositionalCommands["sync"] still emits stack hashes, just for the
+// right reason. We can't tell the two paths apart from output alone (both
+// emit stacks), so the structural test
+// TestPrintCompletions_StackFlagOnlyValueBearingForAgent above is the real
+// gate; this one just guards that we don't accidentally regress to emitting
+// branches (which the value-of-flag path never did, but which a future
+// refactor might wrongly add).
+func TestPrintCompletions_StackBoolFlagSyncFallsThrough(t *testing.T) {
+	// We deliberately don't seed branches here — out-of-repo, branch lookup
+	// is silent. The test value is asserting that no _other_ token leaks
+	// (e.g. flags or subcommand names) — a cleanliness check on the
+	// fall-through path.
+	got := captureCompletions(t, []string{"sync", "--stack", ""})
+	for _, leaked := range []string{"--all", "--squash", "create", "set", "feature", "prompt"} {
+		if contains(got, leaked) {
+			t.Errorf("sync --stack <TAB> leaked %q from a wrong path: %v", leaked, got)
+		}
+	}
+}
