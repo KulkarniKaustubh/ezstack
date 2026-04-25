@@ -12,9 +12,9 @@
 
 [Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows) · [Editor & Desktop Integrations](#editor--desktop-integrations)
 
-**Commands:** [agent](#ezs-agent) · [commit/amend](#ezs-commit--ezs-amend) · [config](#ezs-config) · [delete](#ezs-delete) · [diff](#ezs-diff) · [doctor](#ezs-doctor) · [down/up](#ezs-down--ezs-up) · [goto](#ezs-goto) · [list](#ezs-list) · [log](#ezs-log) · [new](#ezs-new) · [pr](#ezs-pr) · [push](#ezs-push) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [status](#ezs-status) · [sync](#ezs-sync) · [unstack](#ezs-unstack)
+**Commands:** [agent](#ezs-agent) · [commit/amend](#ezs-commit--ezs-amend) · [config](#ezs-config) · [delete](#ezs-delete) · [diff](#ezs-diff) · [doctor](#ezs-doctor) · [down/up](#ezs-down--ezs-up) · [goto](#ezs-goto) · [list](#ezs-list) · [log](#ezs-log) · [menu](#ezs-menu) · [new](#ezs-new) · [pr](#ezs-pr) · [push](#ezs-push) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [status](#ezs-status) · [sync](#ezs-sync) · [unstack](#ezs-unstack)
 
-**Extras:** [Hooks](#hooks) · [Discoverability](#discoverability-info---examples-did-you-mean)
+**Extras:** [Hooks](#hooks) · [Exit codes](#exit-codes) · [Discoverability](#discoverability-info---examples-did-you-mean)
 
 ---
 
@@ -46,7 +46,8 @@ want the MCP server) onto your `PATH` without cloning the repo.
 
 ```bash
 # Homebrew — macOS / Linux (installs ezs and ezs-mcp side by side)
-brew install KulkarniKaustubh/ezstack/ezstack
+brew tap KulkarniKaustubh/ezstack
+brew install ezstack
 
 # Go toolchain — Go 1.25+ required (matches the module's go directive)
 go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest
@@ -68,7 +69,7 @@ Verify the install:
 
 ```bash
 ezs --version
-# → ezstack version 4.3.5
+# → ezstack version 4.7.2
 ```
 
 ### 2. Wire up shell integration
@@ -1047,6 +1048,42 @@ Options:
 
 ---
 
+### `ezs menu`
+
+```
+ezs menu
+```
+
+Opens the interactive command launcher — an fzf-style picker that lists the
+common ezstack commands and runs the one you select. Useful when you don't
+remember the exact subcommand name. The picker covers: `config`, `delete`,
+`goto`, `help`, `new`, `pr`, `reparent`, `stack`, `status`, `sync`, and
+`unstack`. On exit (Esc or Ctrl-c) the menu returns without making any
+changes.
+
+---
+
+## Exit codes
+
+`ezs` returns these exit codes; each is wrapped via `ui.NewExitError` in
+`internal/ui/ui.go`. Use them to drive scripts and CI gates without parsing
+stderr.
+
+| Code | Meaning |
+|------|---------|
+| 0  | Success |
+| 1  | General error |
+| 2  | Usage / argument error |
+| 3  | Rebase conflict |
+| 4  | Not in a git repository |
+| 5  | Not in a stack |
+| 6  | GitHub authentication required |
+| 7  | Branch not found |
+| 8  | Network / remote error |
+| 10 | User cancelled |
+
+---
+
 ## Hooks
 
 ezstack runs optional user-defined shell hooks around certain commands. Hooks live in `~/.ezstack/hooks/` and follow a strict `{pre,post}-{commit,push,sync}` naming convention.
@@ -1176,7 +1213,8 @@ loop. 21 tools, one binary.
 
 ```bash
 # Homebrew (ships alongside ezs)
-brew install KulkarniKaustubh/ezstack/ezstack
+brew tap KulkarniKaustubh/ezstack
+brew install ezstack
 
 # Go install
 go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
@@ -1293,14 +1331,14 @@ checks, and review status) and a per-branch file browser. Auto-refreshes when
 
 ```bash
 # Pre-built (from the Releases page)
-code --install-extension ezstack-4.0.0.vsix
+code --install-extension ezstack-4.7.2.vsix
 
 # From source
 cd vscode-extension
 npm install
 npm run compile
 npx vsce package
-code --install-extension ezstack-4.0.0.vsix
+code --install-extension ezstack-4.7.2.vsix
 ```
 
 **Commands** are available under the `ezstack:` prefix in the command palette

@@ -526,6 +526,29 @@ pub fn list_connection_profiles() -> Result<Vec<ConnectionProfile>, String> {
     read_profiles()
 }
 
+/// Catch the most common foot-gun: typoed or stale key_path that points
+/// nowhere. Without this check the profile saves cleanly and the user
+/// only sees "permission denied (publickey)" on the first connect, which
+/// looks like an authentication problem rather than a missing file.
+/// Empty key_path is allowed — ssh-agent / default keys are valid setups.
+fn validate_key_path(key_path: &str) -> Result<(), String> {
+    if key_path.is_empty() {
+        return Ok(());
+    }
+    let key = std::path::Path::new(key_path);
+    match key.metadata() {
+        Ok(md) if md.is_file() => Ok(()),
+        Ok(_) => Err(format!(
+            "SSH key path is not a regular file: {}",
+            key_path
+        )),
+        Err(e) => Err(format!(
+            "SSH key path not accessible ({}): {}",
+            key_path, e
+        )),
+    }
+}
+
 #[tauri::command]
 pub fn save_connection_profile(profile: ConnectionProfile) -> Result<ConnectionProfile, String> {
     let mut profiles = read_profiles().unwrap_or_default();
@@ -536,6 +559,7 @@ pub fn save_connection_profile(profile: ConnectionProfile) -> Result<ConnectionP
     if profile.port == 0 {
         profile.port = 22;
     }
+    validate_key_path(&profile.key_path)?;
     // Dedupe by content tuple — two saves of the same (host,user,port,key,jump)
     // pair should overwrite each other rather than create duplicates.
     let content_match = profiles.iter().position(|p| {
@@ -661,5 +685,54 @@ impl DiagnosticStepExt for DiagnosticStep {
             self.message = format!("{} ({})", self.message, preview);
         }
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_key_path;
+    use std::io::Write;
+
+    #[test]
+    fn validate_key_path_accepts_empty_for_ssh_agent_setups() {
+        // Empty key_path is a legitimate config (user relies on ssh-agent or
+        // ~/.ssh/id_* defaults). Don't reject it.
+        assert!(validate_key_path("").is_ok());
+    }
+
+    #[test]
+    fn validate_key_path_accepts_existing_regular_file() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("id_test");
+        let mut f = std::fs::File::create(&path).expect("create");
+        writeln!(f, "fake-key-bytes").unwrap();
+        assert!(validate_key_path(path.to_str().unwrap()).is_ok());
+    }
+
+    #[test]
+    fn validate_key_path_rejects_missing_path() {
+        // Use a path inside a temp dir that we don't create — guarantees
+        // it doesn't exist and isn't owned by anything else on the system.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let missing = dir.path().join("does-not-exist");
+        let err = validate_key_path(missing.to_str().unwrap()).unwrap_err();
+        assert!(
+            err.contains("not accessible"),
+            "unexpected error message: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn validate_key_path_rejects_directory() {
+        // A path that exists but is a directory should be rejected — users
+        // sometimes paste the parent dir of a key by mistake.
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err = validate_key_path(dir.path().to_str().unwrap()).unwrap_err();
+        assert!(
+            err.contains("not a regular file"),
+            "unexpected error message: {}",
+            err
+        );
     }
 }

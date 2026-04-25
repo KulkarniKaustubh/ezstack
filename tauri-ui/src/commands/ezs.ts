@@ -218,6 +218,11 @@ export async function editAgentPrompts(
 }
 
 // ─── CLI bundle additions (doctor, draft-all, search, config ex/import) ──────
+// These bindings forward to Rust commands that already wrap the corresponding
+// CLI features end-to-end, but no React component calls them yet — the UI
+// integration (settings dialog, search modal, diagnostics panel) is intentional
+// future work. Don't remove the bindings; doing so would also strand the Rust
+// side, and the next UI change set will pick them up.
 
 /** Run `ezs doctor` and return the diagnostic report. */
 export async function doctor(repoPath: string): Promise<CommandResult> {

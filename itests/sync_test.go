@@ -1,12 +1,16 @@
 package itests
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 )
 
 // TestCommitsAhead tests counting commits ahead of base
@@ -285,4 +289,93 @@ func getHead(t *testing.T, dir string) string {
 		t.Fatalf("rev-parse HEAD: %v", err)
 	}
 	return string(out)
+}
+
+// TestSync_AutostashFailureReturnsError is the regression test for the
+// silent-stash bug in syncCurrentBranch (cmd/ezs/commands/sync.go). Before
+// the fix, a failing g.StashPush() was silently swallowed and sync proceeded
+// to rebase over the user's uncommitted changes. After the fix, the error
+// is wrapped with the "autostash failed" prefix and propagated, leaving the
+// working tree intact.
+//
+// Failure is forced deterministically by pre-creating a `.git/index.lock`
+// in the worktree's git dir (linked worktrees keep their own index in
+// `<main>/.git/worktrees/<name>/index.lock`). Git then refuses to write the
+// index and `git stash push` exits non-zero with "could not write index".
+func TestSync_AutostashFailureReturnsError(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	// Bare origin so Manager.Fetch() succeeds (instead of bailing on a
+	// missing remote and short-circuiting before we reach the autostash
+	// path).
+	bareDir := filepath.Join(env.TmpDir, "origin.git")
+	if err := exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run(); err != nil {
+		t.Fatalf("init bare: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "remote", "add", "origin", bareDir).Run(); err != nil {
+		t.Fatalf("add remote: %v", err)
+	}
+	if err := exec.Command("git", "-C", env.RepoDir, "push", "-u", "origin", "main").Run(); err != nil {
+		t.Fatalf("push main: %v", err)
+	}
+
+	// Stack: main -> feat-stash. Push feat-stash so the upstream exists.
+	CreateBranchWithCommit(t, env, "feat-stash", "main")
+	worktreePath := filepath.Join(env.WorktreeDir, "feat-stash")
+	worktreePath, _ = filepath.EvalSymlinks(worktreePath)
+	if err := exec.Command("git", "-C", worktreePath, "push", "-u", "origin", "feat-stash").Run(); err != nil {
+		t.Fatalf("push feat-stash: %v", err)
+	}
+
+	// Advance main so syncCurrentBranch has rebase work to do (and thus
+	// reaches the autostash branch instead of returning "up to date").
+	GitCommit(t, env.RepoDir, "main-update.txt", "main update", "Update main")
+	if err := exec.Command("git", "-C", env.RepoDir, "push", "origin", "main").Run(); err != nil {
+		t.Fatalf("push main update: %v", err)
+	}
+
+	// Make the worktree dirty so the autostash branch fires.
+	dirty := filepath.Join(worktreePath, "uncommitted.txt")
+	if err := os.WriteFile(dirty, []byte("not committed yet\n"), 0644); err != nil {
+		t.Fatalf("write dirty file: %v", err)
+	}
+
+	// Pre-occupy the linked-worktree's index lock. git stash push will
+	// then fail with "could not write index". Note the path: the linked
+	// worktree's git data lives under the *main* repo's .git/worktrees/.
+	lockPath := filepath.Join(env.RepoDir, ".git", "worktrees", "feat-stash", "index.lock")
+	if err := os.WriteFile(lockPath, []byte("squatter"), 0644); err != nil {
+		t.Fatalf("write index.lock: %v", err)
+	}
+	// Always remove the lock so the test env's Cleanup can also operate.
+	defer os.Remove(lockPath)
+
+	// Auto-confirm the "Sync current branch" TUI prompt. Save and restore
+	// the global so leaking YesMode doesn't poison subsequent tests.
+	prevYes := ui.YesMode
+	ui.YesMode = true
+	defer func() { ui.YesMode = prevYes }()
+
+	// Drive the actual sync.go path under test: chdir into the worktree
+	// and run `commands.Sync` with --current so we hit syncCurrentBranch.
+	oldWd, _ := os.Getwd()
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(worktreePath); err != nil {
+		t.Fatalf("chdir: %v", err)
+	}
+
+	err := commands.Sync([]string{"--current"})
+	if err == nil {
+		t.Fatal("Sync should fail when autostash fails, but returned nil")
+	}
+	if !strings.Contains(err.Error(), "autostash failed") {
+		t.Errorf("error should mention autostash failure (matches engine wrapping in internal/stack/sync.go); got: %v", err)
+	}
+
+	// The dirty file must still be present and unstaged — that's the
+	// whole point of refusing to rebase: don't lose the user's work.
+	if _, statErr := os.Stat(dirty); statErr != nil {
+		t.Errorf("uncommitted.txt was lost after failed sync: %v", statErr)
+	}
 }

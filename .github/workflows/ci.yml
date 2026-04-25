@@ -83,3 +83,89 @@ jobs:
       - name: Test
         working-directory: vscode-extension
         run: npx vitest run
+
+  nvim:
+    # Runs the plenary.nvim test suite that ships with the neovim-plugin
+    # submodule. Without this job the plugin code is never exercised in CI;
+    # a regression like the multi-word `config set` parser break (fixed in
+    # ezstack.nvim f2c5680) could land silently.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install Neovim
+        uses: rhysd/action-setup-vim@v1
+        with:
+          neovim: true
+          version: stable
+
+      - name: Vendor plenary.nvim
+        run: |
+          mkdir -p vendor
+          git clone --depth 1 https://github.com/nvim-lua/plenary.nvim vendor/plenary.nvim
+
+      - name: Run plenary busted suite
+        run: |
+          # plenary's runtimepath needs to include both the plugin and plenary
+          # itself. minimal_init.lua handles the plugin half; we wire plenary
+          # in via $XDG_DATA_HOME/nvim/site/pack/test/start.
+          # Note: we deliberately omit a trailing `-c qa!` — PlenaryBustedDirectory
+          # owns its own exit (cquit on failure, qall on success), and adding
+          # our own qa! racy-ly exits with status 1 even when tests pass.
+          export XDG_DATA_HOME="$PWD/vendor"
+          mkdir -p "$XDG_DATA_HOME/nvim/site/pack/test/start"
+          ln -sf "$PWD/vendor/plenary.nvim" \
+            "$XDG_DATA_HOME/nvim/site/pack/test/start/plenary.nvim"
+          nvim --headless --noplugin \
+            -u neovim-plugin/tests/minimal_init.lua \
+            -c "PlenaryBustedDirectory neovim-plugin/tests/ {minimal_init = 'neovim-plugin/tests/minimal_init.lua', sequential = true}"
+
+  tauri:
+    # Builds and tests the Tauri desktop app: Rust backend (cargo check
+    # + cargo test) and the React frontend (vitest). The release pipeline
+    # cuts the production bundles via tauri-action; this job just makes
+    # sure the source tree compiles and tests pass on every push.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            build-essential
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tauri-ui/src-tauri -> target
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: tauri-ui/package-lock.json
+
+      - name: Install frontend deps
+        working-directory: tauri-ui
+        run: npm ci
+
+      - name: Frontend tests
+        working-directory: tauri-ui
+        run: npm test
+
+      - name: Rust check
+        working-directory: tauri-ui/src-tauri
+        run: cargo check --locked
+
+      - name: Rust tests
+        working-directory: tauri-ui/src-tauri
+        run: cargo test --locked

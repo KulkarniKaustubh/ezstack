@@ -273,6 +273,7 @@ jobs:
             tauri-ui/src-tauri/tauri.conf.json \
             tauri-ui/src-tauri/Cargo.toml \
             tauri-ui/src-tauri/Cargo.lock \
+            DOCUMENTATION.md \
             docs/index.html \
             docs/vscode.html \
             docs/agent.html \

@@ -82,9 +82,11 @@ func TestListTools_Registered(t *testing.T) {
 	want := []string{
 		"ezstack_status",
 		"ezstack_list",
+		"ezstack_doctor",
 		"ezstack_sync",
 		"ezstack_push",
 		"ezstack_pr_create",
+		"ezstack_pr_draft_all",
 		"ezstack_pr_stack",
 		"ezstack_pr_merge",
 		"ezstack_pr_update",
@@ -101,6 +103,8 @@ func TestListTools_Registered(t *testing.T) {
 		"ezstack_unstack",
 		"ezstack_config_show",
 		"ezstack_config_set",
+		"ezstack_config_export",
+		"ezstack_config_import",
 	}
 	sort.Strings(want)
 	var got []string
@@ -133,6 +137,8 @@ func TestListTools_Registered(t *testing.T) {
 		{"ezstack_unstack", "branch"},
 		{"ezstack_config_set", "key"},
 		{"ezstack_config_set", "value"},
+		{"ezstack_config_export", "file"},
+		{"ezstack_config_import", "file"},
 	}
 	for _, rc := range requiredChecks {
 		tl, ok := byName[rc.tool]
@@ -154,27 +160,31 @@ func TestListTools_Registered(t *testing.T) {
 
 	// Destructive annotation — sync rewrites history and must be flagged.
 	destructiveWant := map[string]bool{
-		"ezstack_status":      false,
-		"ezstack_list":        false,
-		"ezstack_sync":        true,
-		"ezstack_push":        true,
-		"ezstack_pr_create":   false,
-		"ezstack_pr_stack":    false,
-		"ezstack_pr_merge":    true,
-		"ezstack_pr_update":   true,
-		"ezstack_pr_draft":    false,
-		"ezstack_goto":        false,
-		"ezstack_new":         false,
-		"ezstack_delete":      true,
-		"ezstack_reparent":    false,
-		"ezstack_commit":      true,
-		"ezstack_amend":       true,
-		"ezstack_diff":        false,
-		"ezstack_log":         false,
-		"ezstack_stack":       false,
-		"ezstack_unstack":     false,
-		"ezstack_config_show": false,
-		"ezstack_config_set":  false,
+		"ezstack_status":        false,
+		"ezstack_list":          false,
+		"ezstack_doctor":        false,
+		"ezstack_sync":          true,
+		"ezstack_push":          true,
+		"ezstack_pr_create":     false,
+		"ezstack_pr_draft_all":  false,
+		"ezstack_pr_stack":      false,
+		"ezstack_pr_merge":      true,
+		"ezstack_pr_update":     true,
+		"ezstack_pr_draft":      false,
+		"ezstack_goto":          false,
+		"ezstack_new":           false,
+		"ezstack_delete":        true,
+		"ezstack_reparent":      false,
+		"ezstack_commit":        true,
+		"ezstack_amend":         true,
+		"ezstack_diff":          false,
+		"ezstack_log":           false,
+		"ezstack_stack":         false,
+		"ezstack_unstack":       false,
+		"ezstack_config_show":   false,
+		"ezstack_config_set":    false,
+		"ezstack_config_export": false,
+		"ezstack_config_import": true,
 	}
 	for name, want := range destructiveWant {
 		tl, ok := byName[name]
@@ -260,9 +270,53 @@ func TestListTools_PrCreateHasTitleAndDraft(t *testing.T) {
 	if pr == nil {
 		t.Fatal("ezstack_pr_create not registered")
 	}
-	for _, field := range []string{"title", "draft"} {
+	// `body` rounds out the PR-create surface: agents need to be able to set
+	// the description, not just the title.
+	for _, field := range []string{"title", "body", "draft"} {
 		if _, ok := pr.InputSchema.Properties[field]; !ok {
 			t.Errorf("ezstack_pr_create missing %q param", field)
+		}
+	}
+}
+
+// TestListTools_OptionalParamsExposed verifies that recently-added optional
+// CLI flags surface as MCP parameters. Without these the MCP tool can't drive
+// the matching CLI behaviors at all (e.g. `delete --cascade`).
+func TestListTools_OptionalParamsExposed(t *testing.T) {
+	c := newInitializedClient(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	res, err := c.ListTools(ctx, mcp.ListToolsRequest{})
+	if err != nil {
+		t.Fatalf("ListTools: %v", err)
+	}
+	byName := map[string]mcp.Tool{}
+	for _, tl := range res.Tools {
+		byName[tl.Name] = tl
+	}
+
+	checks := []struct {
+		tool  string
+		field string
+	}{
+		{"ezstack_goto", "search"},
+		{"ezstack_delete", "cascade"},
+		{"ezstack_sync", "stats"},
+		{"ezstack_sync", "squash"},
+		{"ezstack_sync", "branch"},
+		{"ezstack_sync", "no_delete_local"},
+		{"ezstack_sync", "no_autostash"},
+		{"ezstack_sync", "rebase"},
+	}
+	for _, c := range checks {
+		tl, ok := byName[c.tool]
+		if !ok {
+			t.Errorf("tool %q not registered", c.tool)
+			continue
+		}
+		if _, ok := tl.InputSchema.Properties[c.field]; !ok {
+			t.Errorf("tool %q missing %q param", c.tool, c.field)
 		}
 	}
 }

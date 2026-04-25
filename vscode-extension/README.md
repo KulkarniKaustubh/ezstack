@@ -21,7 +21,7 @@ Manage stacked pull requests from the VS Code sidebar, powered by the `ezs` CLI.
 Download the `.vsix` file from the [latest release](https://github.com/KulkarniKaustubh/ezstack/releases) and install it:
 
 ```bash
-code --install-extension ezstack-4.7.1.vsix
+code --install-extension ezstack-4.7.2.vsix
 ```
 
 Or in VSCode: **Extensions** sidebar → `...` menu → **Install from VSIX...** → select the file.
@@ -32,8 +32,8 @@ Or in VSCode: **Extensions** sidebar → `...` menu → **Install from VSIX...**
 cd vscode-extension
 npm install
 npm run compile
-npx vsce package        # produces ezstack-4.7.1.vsix
-code --install-extension ezstack-4.7.1.vsix
+npx vsce package        # produces ezstack-4.7.2.vsix
+code --install-extension ezstack-4.7.2.vsix
 ```
 
 ### Development Mode
@@ -73,25 +73,77 @@ The status bar shows your current branch and stack name. Click it to quickly nav
 
 ### Commands
 
-All commands are available via the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`) under the **ezstack** category:
+All commands are available via the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+P`) under the **ezstack** category.
+
+**Branch & worktree**
 
 | Command | Description |
 |---------|-------------|
 | **ezstack: New Branch** | Create a new stacked branch (prompts for name and parent) |
-| **ezstack: Sync** | Sync branches — runs in terminal for interactive conflict resolution |
-| **ezstack: Push Branch** | Push the current branch |
-| **ezstack: Push Stack** | Push all branches in the current stack |
-| **ezstack: Create PR** | Create a GitHub PR (prompts for title and draft/ready) |
-| **ezstack: Update PR** | Update the current branch's PR base |
-| **ezstack: Merge PR** | Merge the current PR (prompts for squash/merge/rebase) |
-| **ezstack: Toggle PR Draft** | Toggle draft status on the current PR |
-| **ezstack: Update Stack Info in PRs** | Update the stack navigation table in all PR descriptions |
 | **ezstack: Go to Branch** | Navigate to a branch's worktree folder |
 | **ezstack: Go to Parent Branch** | Navigate up the stack |
 | **ezstack: Go to Child Branch** | Navigate down the stack |
-| **ezstack: Delete Branch** | Delete a branch and its worktree |
 | **ezstack: Reparent Branch** | Move a branch to a different parent |
+| **ezstack: Rename Stack** | Rename the current stack |
+| **ezstack: Delete Branch** | Delete a branch and its worktree |
+| **ezstack: Delete Branch and Descendants (Cascade)** | Delete a branch plus everything stacked beneath it |
+| **ezstack: Open in New Window** | Open a worktree folder in a new VSCode window |
+| **ezstack: Open in Terminal** | Open a worktree folder in an external terminal |
+
+**Sync, push, fetch**
+
+| Command | Description |
+|---------|-------------|
+| **ezstack: Sync** | Sync branches — runs in terminal for interactive conflict resolution |
+| **ezstack: Sync Branch** | Sync the current branch only |
+| **ezstack: Sync Stack with Options...** | Sync with explicit flag selection (squash, stats, merge, etc.) |
+| **ezstack: Push Branch** | Push the current branch |
+| **ezstack: Push Stack** | Push all branches in the current stack |
+| **ezstack: Push with Options...** | Push with explicit flag selection (force, all-remotes, verify, …) |
+| **ezstack: Fetch & Pull** | Fetch from origin and fast-forward the current branch |
+
+**Pull requests**
+
+| Command | Description |
+|---------|-------------|
+| **ezstack: Create PR** | Create a GitHub PR (prompts for title and draft/ready) |
+| **ezstack: Create Draft PRs for Stack** | Open draft PRs for every branch in the stack that doesn't have one |
+| **ezstack: Update PR** | Update the current branch's PR base |
+| **ezstack: Update Stack Info in PRs** | Update the stack navigation table in all PR descriptions |
+| **ezstack: Merge PR** | Merge the current PR (prompts for squash/merge/rebase) |
+| **ezstack: Toggle PR Draft** | Toggle draft status on the current PR |
+| **ezstack: Open PR in Browser** | Open the GitHub PR page for a branch |
+
+**Files & favorites (file-tree view)**
+
+| Command | Description |
+|---------|-------------|
+| **ezstack: Toggle Favorite** | Mark or unmark a file as favorite |
+| **ezstack: Filter by Favorites** / **Show All Files** | Toggle the file-tree filter |
+| **ezstack: Copy Path** / **Copy Relative Path** | Copy the absolute or worktree-relative path |
+| **ezstack: Reveal in Finder** / **Reveal in Explorer** | Reveal a file in the OS file manager / VSCode explorer |
+| **ezstack: Open in Integrated Terminal** | Open a terminal at the file's directory |
+| **ezstack: Open File in Next PR** / **Open File in Previous PR** | Jump to the same file in an adjacent stack branch |
+| **ezstack: Compare File with Previous PR** | Open a diff against the same file in the previous stack branch |
+
+**Agent (AI integrations)**
+
+| Command | Description |
+|---------|-------------|
+| **ezstack: Open Agent** | Launch the configured agent CLI scoped to a stack |
+| **ezstack: Build Feature with Agent** | Have the agent break a feature into stacked branches |
+| **ezstack: Open Agent with Options...** | Launch the agent with explicit flag selection |
+| **ezstack: Edit Agent Prompt** | Edit the prompt template the agent uses |
+
+**Diagnostics & config**
+
+| Command | Description |
+|---------|-------------|
+| **ezstack: Doctor (Health Check)** | Run `ezs doctor` and view the diagnostic report |
+| **ezstack: Export Config...** | Save the global ezstack config to a file |
+| **ezstack: Import Config...** | Replace the global ezstack config from a file |
 | **ezstack: Refresh** | Manually refresh the stack tree view |
+| **ezstack: Expand All** | Expand every node in the stack tree |
 
 ### Context Menus
 

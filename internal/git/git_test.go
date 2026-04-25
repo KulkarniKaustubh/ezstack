@@ -416,6 +416,42 @@ func TestValidateBranchName(t *testing.T) {
 	}
 }
 
+// TestStashPush_FailsOnLockedIndex documents the precondition behind the
+// autostash error-handling fix in cmd/ezs/commands/sync.go (syncCurrentBranch)
+// and internal/stack/sync.go: StashPush *can* fail in real-world conditions,
+// and callers must propagate that error rather than silently rebase over
+// uncommitted changes. The deterministic failure mode used here is a
+// pre-existing .git/index.lock — git refuses to write the index while another
+// process appears to hold the lock.
+func TestStashPush_FailsOnLockedIndex(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// Make the working tree dirty so stash has something to push.
+	filePath := filepath.Join(dir, "dirty.txt")
+	if err := os.WriteFile(filePath, []byte("uncommitted\n"), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	// Pre-create the index lock. git stash push tries to acquire it,
+	// finds it occupied, and bails out with "could not write index".
+	lockPath := filepath.Join(dir, ".git", "index.lock")
+	if err := os.WriteFile(lockPath, []byte("squatter"), 0644); err != nil {
+		t.Fatalf("write index.lock: %v", err)
+	}
+	defer os.Remove(lockPath)
+
+	err := g.StashPush()
+	if err == nil {
+		t.Fatal("StashPush should fail with a locked index, but returned nil")
+	}
+	// Don't pin the exact stderr (varies by git version) — just confirm
+	// the error surfaces. The point of this test is that callers cannot
+	// assume StashPush always succeeds on a dirty tree.
+}
+
 func TestFindEzstackStash_Found(t *testing.T) {
 	dir, cleanup := setupTestRepo(t)
 	defer cleanup()

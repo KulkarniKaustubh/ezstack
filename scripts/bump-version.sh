@@ -120,7 +120,21 @@ if [ -f "$FILE" ]; then
     changed+=("tauri-ui/src-tauri/Cargo.lock")
 fi
 
-# 11. Docs HTML files — rewrite any `vX.Y.Z` or `ezstack[-_]X.Y.Z` token to the new
+# 11. DOCUMENTATION.md — the source of truth for the rendered docs HTML. Match
+#     the `ezstack version X.Y.Z` example output and any `ezstack-X.Y.Z.vsix`
+#     install snippets. `make docs` regenerates docs/documentation.html from
+#     this file later in the release pipeline, so docs/documentation.html is
+#     intentionally re-bumped in step 12 even though docsgen will overwrite it.
+FILE="$REPO_ROOT/DOCUMENTATION.md"
+if [ -f "$FILE" ]; then
+    sed -i.bak \
+        -e "s/ezstack version $SV/ezstack version $NEW_VERSION/g" \
+        -e "s/\(ezstack[-_]\)$SV\.vsix/\1$NEW_VERSION.vsix/g" \
+        "$FILE"
+    changed+=("DOCUMENTATION.md")
+fi
+
+# 12. Docs HTML files — rewrite any `vX.Y.Z` or `ezstack[-_]X.Y.Z` token to the new
 #     version. Using a regex (instead of matching OLD_VERSION literally) means stale
 #     refs from prior skipped bumps get caught automatically on the next run.
 for doc in docs/index.html docs/vscode.html docs/agent.html docs/nvim.html docs/desktop.html docs/documentation.html; do

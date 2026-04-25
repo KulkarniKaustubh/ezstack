@@ -335,6 +335,20 @@ func registerTools(s *server.MCPServer) {
 		}),
 	)
 
+	s.AddTool(
+		mcp.NewTool("ezstack_doctor",
+			mcp.WithDescription("Run diagnostics: ezstack version, prerequisite versions (go/git/gh/fzf), config directory state, and the configured default base branch. Safe to paste into bug reports — no secrets are included."),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		// toolHandler (not readOnlyHandler) because `ezs doctor` has no
+		// --json mode — readOnlyHandler would inject `--json`, which the
+		// strict arg parser rejects.
+		toolHandler(commands.Doctor, func(req mcp.CallToolRequest) []string {
+			return nil
+		}),
+	)
+
 	// ---- Sync & push ----
 
 	s.AddTool(
@@ -347,9 +361,15 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithBoolean("stack", mcp.Description("Sync current stack (auto-detect)")),
 			mcp.WithBoolean("all", mcp.Description("Sync all stacks")),
 			mcp.WithBoolean("current", mcp.Description("Sync current branch only")),
+			mcp.WithString("branch", mcp.Description("Sync a specific branch by name")),
 			mcp.WithBoolean("parent", mcp.Description("Rebase current branch onto parent")),
 			mcp.WithBoolean("children", mcp.Description("Rebase children onto current branch")),
 			mcp.WithBoolean("merge", mcp.Description("Use merge instead of rebase")),
+			mcp.WithBoolean("rebase", mcp.Description("Use rebase instead of merge (overrides config)")),
+			mcp.WithBoolean("squash", mcp.Description("Squash each child's commits into one before rebase")),
+			mcp.WithBoolean("stats", mcp.Description("Print commits-per-branch summary after syncing")),
+			mcp.WithBoolean("no_delete_local", mcp.Description("Don't delete local branches after their PRs are merged")),
+			mcp.WithBoolean("no_autostash", mcp.Description("Don't stash uncommitted changes before rebase")),
 			mcp.WithBoolean("dry_run", mcp.Description("Preview what would be synced without making changes")),
 			mcp.WithBoolean("resume", mcp.Description("Resume a sync after the user has resolved rebase conflicts (maps to ezs sync --continue)")),
 		),
@@ -358,9 +378,15 @@ func registerTools(s *server.MCPServer) {
 			boolFlag(&args, req, "stack", "--stack")
 			boolFlag(&args, req, "all", "--all")
 			boolFlag(&args, req, "current", "--current")
+			stringFlag(&args, req, "branch", "--branch")
 			boolFlag(&args, req, "parent", "--parent")
 			boolFlag(&args, req, "children", "--children")
 			boolFlag(&args, req, "merge", "--merge")
+			boolFlag(&args, req, "rebase", "--rebase")
+			boolFlag(&args, req, "squash", "--squash")
+			boolFlag(&args, req, "stats", "--stats")
+			boolFlag(&args, req, "no_delete_local", "--no-delete-local")
+			boolFlag(&args, req, "no_autostash", "--no-autostash")
 			boolFlag(&args, req, "dry_run", "--dry-run")
 			boolFlag(&args, req, "resume", "--continue")
 			return args
@@ -391,6 +417,7 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithDescription("Create a pull request for a branch. Use branch to target a specific branch when not on a stack branch."),
 			mcp.WithString("branch", mcp.Description("Branch to create PR for (defaults to current branch)")),
 			mcp.WithString("title", mcp.Description("PR title (defaults to branch name)")),
+			mcp.WithString("body", mcp.Description("PR body / description")),
 			mcp.WithBoolean("draft", mcp.Description("Create as draft PR")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
@@ -398,8 +425,19 @@ func registerTools(s *server.MCPServer) {
 			args := []string{"create"}
 			stringFlag(&args, req, "branch", "--branch")
 			stringFlag(&args, req, "title", "--title")
+			stringFlag(&args, req, "body", "--body")
 			boolFlag(&args, req, "draft", "--draft")
 			return args
+		}),
+	)
+
+	s.AddTool(
+		mcp.NewTool("ezstack_pr_draft_all",
+			mcp.WithDescription("Create draft PRs for every branch in the current stack that doesn't already have one. Branches with an existing PR are left alone (use ezstack_pr_draft to toggle an existing PR's draft state)."),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		yesModeHandler(commands.PR, func(req mcp.CallToolRequest) []string {
+			return []string{"--draft-all"}
 		}),
 	)
 
@@ -440,15 +478,21 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_goto",
-			mcp.WithDescription("Switch to a branch in the stack."),
+			mcp.WithDescription("Switch to a branch in the stack. Pass branch for an exact name; when search is also provided, the CLI's --search takes precedence and branch becomes a fallback positional arg (use any value). Search must match exactly one branch — multiple matches would require interactive selection that hangs in MCP."),
 			mcp.WithString("branch",
-				mcp.Description("Branch name to switch to"),
+				mcp.Description("Exact branch name to switch to. Required so the CLI never falls through to its interactive fzf picker (which hangs in MCP). When using search-only, pass any placeholder."),
 				mcp.Required(),
 			),
+			mcp.WithString("search", mcp.Description("Optional: fuzzy-match a branch name by substring. Overrides branch when set. Must match exactly one branch.")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.Goto, func(req mcp.CallToolRequest) []string {
-			return []string{req.GetString("branch", "")}
+			var args []string
+			// --search must come before the positional branch arg so pflag
+			// associates the value with the flag, not as a second positional.
+			stringFlag(&args, req, "search", "--search")
+			args = append(args, req.GetString("branch", ""))
+			return args
 		}),
 	)
 
@@ -478,10 +522,13 @@ func registerTools(s *server.MCPServer) {
 				mcp.Description("Branch name to delete"),
 				mcp.Required(),
 			),
+			mcp.WithBoolean("cascade", mcp.Description("Also delete all descendant branches in the stack subtree")),
 			mcp.WithDestructiveHintAnnotation(true),
 		),
 		yesModeHandler(commands.Delete, func(req mcp.CallToolRequest) []string {
-			return []string{req.GetString("branch", "")}
+			args := []string{req.GetString("branch", "")}
+			boolFlag(&args, req, "cascade", "--cascade")
+			return args
 		}),
 	)
 
@@ -707,6 +754,34 @@ func registerTools(s *server.MCPServer) {
 				req.GetString("key", ""),
 				req.GetString("value", ""),
 			}
+		}),
+	)
+
+	s.AddTool(
+		mcp.NewTool("ezstack_config_export",
+			mcp.WithDescription("Export the global ezstack config (excluding the per-machine github_token) to a file. Safe to share — no secrets are included."),
+			mcp.WithString("file",
+				mcp.Description("Destination file path"),
+				mcp.Required(),
+			),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		toolHandler(commands.Config, func(req mcp.CallToolRequest) []string {
+			return []string{"export", req.GetString("file", "")}
+		}),
+	)
+
+	s.AddTool(
+		mcp.NewTool("ezstack_config_import",
+			mcp.WithDescription("Replace the global ezstack config with the contents of <file>. The import is validated against the schema before being applied; the existing local github_token is preserved. Confirmation is auto-accepted via the destructive annotation."),
+			mcp.WithString("file",
+				mcp.Description("Source file path"),
+				mcp.Required(),
+			),
+			mcp.WithDestructiveHintAnnotation(true),
+		),
+		yesModeHandler(commands.Config, func(req mcp.CallToolRequest) []string {
+			return []string{"import", req.GetString("file", "")}
 		}),
 	)
 }

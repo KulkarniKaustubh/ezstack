@@ -627,6 +627,8 @@
         <li><a href="#ezs-status" class="toc-h3">ezs status</a></li>
         <li><a href="#ezs-sync" class="toc-h3">ezs sync</a></li>
         <li><a href="#ezs-unstack" class="toc-h3">ezs unstack</a></li>
+        <li><a href="#ezs-menu" class="toc-h3">ezs menu</a></li>
+        <li><a href="#exit-codes">Exit codes</a></li>
         <li><a href="#hooks">Hooks</a></li>
         <li><a href="#installed-hook-names" class="toc-h3">Installed hook names</a></li>
         <li><a href="#install-a-hook" class="toc-h3">Install a hook</a></li>
@@ -676,7 +678,8 @@
       <p>Pick whichever fits your setup. Both drop <code>ezs</code> (and <code>ezs-mcp</code>, if you also
       want the MCP server) onto your <code>PATH</code> without cloning the repo.</p>
       <pre><code><span class="c-comment"># Homebrew — macOS / Linux (installs ezs and ezs-mcp side by side)</span>
-<span class="c-cmd">brew</span> <span class="c-flag">install</span> <span class="c-str">KulkarniKaustubh/ezstack/ezstack</span>
+<span class="c-cmd">brew</span> <span class="c-flag">tap</span> <span class="c-str">KulkarniKaustubh/ezstack</span>
+<span class="c-cmd">brew</span> <span class="c-flag">install</span> <span class="c-str">ezstack</span>
 
 <span class="c-comment"># Go toolchain — Go 1.25+ required (matches the module&#39;s go directive)</span>
 <span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest</span>
@@ -693,7 +696,7 @@
       (<code>gh</code>) for any PR-related commands.</p>
       <p>Verify the install:</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">--version</span>
-<span class="c-comment"># → ezstack version 4.3.5</span>
+<span class="c-comment"># → ezstack version 4.7.2</span>
 </code></pre>
       <h3 id="2-wire-up-shell-integration">2. Wire up shell integration</h3>
       <p>A handful of ezstack commands need to change your shell's working directory:
@@ -1506,6 +1509,72 @@ Options:
 Options:
     <span class="c-flag">-b,</span> <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>     <span class="c-dim">Branch to untrack</span>
 </code></pre>
+      <h3 id="ezs-menu"><code>ezs menu</code></h3>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">menu</span>
+</code></pre>
+      <p>Opens the interactive command launcher — an fzf-style picker that lists the
+      common ezstack commands and runs the one you select. Useful when you don't
+      remember the exact subcommand name. The picker covers: <code>config</code>, <code>delete</code>,
+      <code>goto</code>, <code>help</code>, <code>new</code>, <code>pr</code>, <code>reparent</code>, <code>stack</code>, <code>status</code>, <code>sync</code>, and
+      <code>unstack</code>. On exit (Esc or Ctrl-c) the menu returns without making any
+      changes.</p>
+      </section>
+
+      <section class="docs-section" id="exit-codes" data-heading="Exit codes">
+      <h2 id="exit-codes">Exit codes</h2>
+      <p><code>ezs</code> returns these exit codes; each is wrapped via <code>ui.NewExitError</code> in
+      <code>internal/ui/ui.go</code>. Use them to drive scripts and CI gates without parsing
+      stderr.</p>
+      <table>
+      <thead>
+      <tr>
+      <th>Code</th>
+      <th>Meaning</th>
+      </tr>
+      </thead>
+      <tbody>
+      <tr>
+      <td>0</td>
+      <td>Success</td>
+      </tr>
+      <tr>
+      <td>1</td>
+      <td>General error</td>
+      </tr>
+      <tr>
+      <td>2</td>
+      <td>Usage / argument error</td>
+      </tr>
+      <tr>
+      <td>3</td>
+      <td>Rebase conflict</td>
+      </tr>
+      <tr>
+      <td>4</td>
+      <td>Not in a git repository</td>
+      </tr>
+      <tr>
+      <td>5</td>
+      <td>Not in a stack</td>
+      </tr>
+      <tr>
+      <td>6</td>
+      <td>GitHub authentication required</td>
+      </tr>
+      <tr>
+      <td>7</td>
+      <td>Branch not found</td>
+      </tr>
+      <tr>
+      <td>8</td>
+      <td>Network / remote error</td>
+      </tr>
+      <tr>
+      <td>10</td>
+      <td>User cancelled</td>
+      </tr>
+      </tbody>
+      </table>
       </section>
 
       <section class="docs-section" id="hooks" data-heading="Hooks">
@@ -1662,7 +1731,8 @@ Options:
       loop. 21 tools, one binary.</p>
       <p><strong>Install</strong></p>
       <pre><code><span class="c-comment"># Homebrew (ships alongside ezs)</span>
-<span class="c-cmd">brew</span> <span class="c-flag">install</span> <span class="c-str">KulkarniKaustubh/ezstack/ezstack</span>
+<span class="c-cmd">brew</span> <span class="c-flag">tap</span> <span class="c-str">KulkarniKaustubh/ezstack</span>
+<span class="c-cmd">brew</span> <span class="c-flag">install</span> <span class="c-str">ezstack</span>
 
 <span class="c-comment"># Go install</span>
 <span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest</span>
@@ -1879,14 +1949,14 @@ Options:
       <code>~/.ezstack/stacks.json</code> changes.</p>
       <p><strong>Install</strong></p>
       <pre><code><span class="c-comment"># Pre-built (from the Releases page)</span>
-<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.0.0.vsix</span>
+<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.7.2.vsix</span>
 
 <span class="c-comment"># From source</span>
 <span class="c-cmd">cd</span> <span class="c-str">vscode-extension</span>
 <span class="c-cmd">npm</span> <span class="c-flag">install</span>
 <span class="c-cmd">npm</span> <span class="c-flag">run</span> <span class="c-str">compile</span>
 <span class="c-cmd">npx</span> <span class="c-flag">vsce</span> <span class="c-str">package</span>
-<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.0.0.vsix</span>
+<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.7.2.vsix</span>
 </code></pre>
       <p><strong>Commands</strong> are available under the <code>ezstack:</code> prefix in the command palette
       (<code>Cmd+Shift+P</code>):</p>
@@ -2146,7 +2216,7 @@ Options:
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License · v4.7.1</span>
+          <span class="footer-meta">MIT License · v4.7.2</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

@@ -1271,10 +1271,14 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 			ui.Info("Skipping autostash. Run 'git stash pop' in the worktree to restore, or 'git stash drop' to discard.")
 			// Don't create another stash on top — the old one already has the user's changes
 		} else if hasChanges, _ := g.HasChanges(); hasChanges {
-			if err := g.StashPush(); err == nil {
-				didStash = true
-				ui.Info("Stashed uncommitted changes")
+			// Mirror the engine's behavior in internal/stack/sync.go: refuse to
+			// rebase over uncommitted changes if stash fails, otherwise the
+			// rebase could clobber the user's work.
+			if err := g.StashPush(); err != nil {
+				return fmt.Errorf("autostash failed for %s: %w (refusing to rebase over uncommitted changes)", branch.Name, err)
 			}
+			didStash = true
+			ui.Info("Stashed uncommitted changes")
 		}
 	}
 
