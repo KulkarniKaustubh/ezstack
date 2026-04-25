@@ -140,6 +140,9 @@ A few other flags worth knowing about:
 - `ezs sync --stats` / `--squash` — print a commits-per-branch summary, or squash each child before rebasing onto its parent.
 - `ezs pr --draft-all` — create draft PRs across every branch in the current stack.
 - `ezs goto --search <query>` — fuzzy-match a branch by substring across all stacks.
+- `ezs delete --cascade` — delete a branch and every descendant in one shot (deepest-first; aborts on a dirty descendant unless `--force`).
+- `ezs config export <file>` / `ezs config import <file>` — back up the global ezstack config (token redacted, file written `0600`) and restore it on another machine.
+- `ezs agent --no-push` / `--preset <name>` / `--save-prompt <file>` — block downstream `ezs push` while the agent runs, overlay a saved persona from `~/.ezstack/agent-presets/<name>.md`, or dump the composed prompt to disk (pairs with `--dry-run`).
 
 ezstack also runs optional user hooks from `~/.ezstack/hooks/` around `commit`, `push`, and `sync`. See [DOCUMENTATION.md](DOCUMENTATION.md#hooks) for the full contract.
 
