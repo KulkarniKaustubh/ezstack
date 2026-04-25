@@ -1194,7 +1194,12 @@ Options:
       <h4 id="configuration-1">Configuration</h4>
       <pre><code><span class="c-comment"># Set the agent CLI (default: claude)</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">claude</span>
+
+<span class="c-comment"># Pass flags to the agent CLI by quoting the whole value as one shell arg:</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">"claude --dangerously-skip-permissions"</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">"aider --model gpt-4"</span>
 </code></pre>
+      <blockquote><p>Multi-word values must be quoted. The CLI takes <code>&lt;value&gt;</code> as a single positional argument and rejects anything trailing &mdash; this keeps typos like <code>ezs config set worktree_base_dir /tmp/foo --bogus</code> from being silently stored as the literal path.</p></blockquote>
       <h3 id="ezs-commit--ezs-amend"><code>ezs commit</code> / <code>ezs amend</code></h3>
       <p>Wrap <code>git commit</code> / <code>git commit --amend</code> and auto-sync child branches. Aliases: <code>ci</code></p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">commit</span> <span class="c-str">[git-commit-options]</span> <span class="c-str">[--merge|--rebase]</span>
