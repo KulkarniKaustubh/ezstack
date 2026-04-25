@@ -44,6 +44,11 @@ func captureStdAndErr(t *testing.T, fn func()) (stdout, stderr string) {
 // produces its header + the dependency-check lines for git/gh/fzf. It's a
 // smoke test — the branch that actually ships Doctor had zero test coverage
 // for the command itself.
+//
+// Doctor's output split: per-tool checks always go to stderr, but the final
+// verdict only reaches stderr on the success path ("No problems detected").
+// On the failure path the count goes only into the returned error — the
+// caller in main.go is responsible for printing it. This test handles both.
 func TestDoctor_RunsOnCleanEnvironment(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("EZSTACK_HOME", tmp)
@@ -67,14 +72,44 @@ func TestDoctor_RunsOnCleanEnvironment(t *testing.T) {
 			t.Errorf("Doctor stderr missing check for %q:\n%s", tool, stderr)
 		}
 	}
-	// Regardless of pass/fail, Doctor must have reached the final verdict line.
-	if !strings.Contains(stderr, "problem") && !strings.Contains(stderr, "No problems detected") {
-		t.Errorf("Doctor did not emit a final verdict line:\n%s", stderr)
+	// Doctor must always reach a terminal state. Two valid shapes:
+	//   - All checks passed: stderr contains "No problems detected", err is nil.
+	//   - At least one failed: err is non-nil and matches "N problem(s) detected".
+	// A panic or silent early-return shows up as neither.
+	switch {
+	case strings.Contains(stderr, "No problems detected") && err == nil:
+		// healthy environment — fine
+	case err != nil && strings.Contains(err.Error(), "problem(s) detected"):
+		// some tool was missing — also fine, expected on minimal CI runners
+	default:
+		t.Errorf(
+			"Doctor did not reach a verdict.\nstderr:\n%s\nerr: %v",
+			stderr, err,
+		)
 	}
-	// err is non-nil only when problems were detected; either is acceptable
-	// for a smoke test, but a panic or early exit would show as neither output
-	// nor a verdict line.
-	_ = err
+}
+
+// TestDoctor_ProblemDetectedReturnsError pins down the failure path
+// explicitly: when a required tool is missing, Doctor must return a
+// non-nil error whose message contains "problem(s) detected" so callers
+// (and CI gates, and shell scripts checking $?) can act on it. We force
+// the failure by setting PATH to "" so no required tool resolves.
+func TestDoctor_ProblemDetectedReturnsError(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("EZSTACK_HOME", tmp)
+	t.Setenv("PATH", "") // no git/gh/fzf reachable
+
+	var err error
+	captureStdAndErr(t, func() {
+		err = Doctor(nil)
+	})
+
+	if err == nil {
+		t.Fatal("Doctor returned nil with no tools on PATH — should report problems")
+	}
+	if !strings.Contains(err.Error(), "problem(s) detected") {
+		t.Errorf("error %q should contain 'problem(s) detected'", err.Error())
+	}
 }
 
 // TestDoctor_ExamplesShortCircuits covers the `--examples` shared-helper path
