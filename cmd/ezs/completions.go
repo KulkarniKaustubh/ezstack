@@ -40,13 +40,19 @@ var configKeys = []string{
 // only for completion. When a command gains/loses a flag, update both spots.
 //
 // TestCompletions_FlagTableMatchesHelpOutput in itests/completions_test.go is
-// a drift gate: it runs `ezs <cmd> --help` for every entry below, parses the
-// OPTIONS section, and asserts every flag printed by the binary appears in
-// this table. So forgetting to update the table after adding a flag fails
-// the test instead of silently shipping incomplete completion. The test is
-// asymmetric on purpose — extra entries here are tolerated (some commands
-// document help-only flags or pass-throughs to git), but missing entries are
-// treated as drift.
+// a *bidirectional* drift gate. For every command it asserts:
+//
+//  1. help ⊆ completion: every flag in `<cmd> --help` OPTIONS appears in
+//     this table. Catches "command grew a flag, table didn't".
+//  2. completion ⊆ help ∪ toleratedExtras: every flag this table emits is
+//     either documented in `<cmd> --help` OR explicitly allowlisted in the
+//     test's toleratedExtras map (for advanced flags that the parser
+//     accepts but the help banner intentionally omits, e.g. agent's
+//     internal --save-prompt/--no-push/--preset/--no-mcp).
+//
+// So both "missing entry" and "phantom entry" fail CI. Don't add a flag
+// here that the parser doesn't actually accept — it'll trip direction (2)
+// and confuse users who tab-complete to a flag the binary then rejects.
 var commandFlags = map[string][]string{
 	"agent":    {"--cmd", "--stack", "-s", "--branch", "-b", "--dry-run", "--save-prompt", "--no-push", "--preset", "--no-mcp", "--help", "-h"},
 	"amend":    {"--merge", "--rebase", "--push", "--push-children", "--no-push", "--help", "-h"},
