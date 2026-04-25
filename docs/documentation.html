@@ -904,7 +904,10 @@
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">&lt;key&gt;</span> <span class="c-str">&lt;value&gt;</span>    <span class="c-dim">Set a configuration value</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">show</span>                 <span class="c-dim">Show current configuration</span>
 </code></pre>
-      <p><strong>Available keys:</strong> <code>worktree_base_dir</code>, <code>default_base_branch</code>, <code>cd_after_new</code>, <code>use_worktrees</code>, <code>sync_strategy</code></p>
+      <p><strong>Available keys:</strong> <code>worktree_base_dir</code>, <code>default_base_branch</code>, <code>cd_after_new</code>, <code>use_worktrees</code>, <code>sync_strategy</code>, <code>init_submodules</code></p>
+      <ul>
+      <li><code>init_submodules</code> (per-repo, default <code>true</code>): when creating a new worktree, mirror the same set of initialized submodules that are active in the main worktree. Useful for monorepos (e.g. SONiC) where developers only init the submodules they actively work on. Overridable per-invocation with <code>ezs new --init-submodules</code> / <code>--no-init-submodules</code>.</li>
+      </ul>
       <p><strong>Global flags</strong></p>
       <p>These flags work with any command and can appear in any position:</p>
       <pre><code><span class="c-flag">-y,</span> <span class="c-flag">--yes</span>        <span class="c-dim">Auto-confirm all yes/no prompts (selection menus still show)</span>
@@ -1324,10 +1327,13 @@ Options:
     <span class="c-flag">-w,</span> <span class="c-flag">--worktree</span> <span class="c-str">&lt;path&gt;</span>     <span class="c-dim">Worktree path (defaults to configured base dir + branch name)</span>
     <span class="c-flag">-c,</span> <span class="c-flag">--cd</span>                  <span class="c-dim">Change to the new worktree after creation</span>
     <span class="c-flag">-C,</span> <span class="c-flag">--no-cd</span>               <span class="c-dim">Don&#39;t change to the new worktree (overrides config)</span>
+    <span class="c-flag">-s,</span> <span class="c-flag">--init-submodules</span>     <span class="c-dim">Mirror main worktree&#39;s initialized submodules (overrides config)</span>
+    <span class="c-flag">-S,</span> <span class="c-flag">--no-init-submodules</span>  <span class="c-dim">Skip submodule initialization (overrides config)</span>
     <span class="c-flag">-f,</span> <span class="c-flag">--from-worktree</span>       <span class="c-dim">Register an existing worktree as a stack root</span>
     <span class="c-flag">-r,</span> <span class="c-flag">--from-remote</span>         <span class="c-dim">Create a stack from a remote branch/PR</span>
     <span class="c-flag">--template</span> <span class="c-str">&lt;name&gt;</span>         <span class="c-dim">Seed the new worktree from ~/.ezstack/templates/&lt;name&gt;</span>
 </code></pre>
+      <p><strong>Submodule mirroring.</strong> By default, <code>ezs new</code> inspects the main worktree's initialized submodules (via <code>git submodule status</code>) and runs <code>git submodule update --init -- &lt;paths&gt;</code> on the same paths in the new worktree. Submodules that are deinit'd in the main worktree are left uninitialized in the new worktree too — which matches the monorepo workflow (e.g. SONiC) where developers only init the subset of submodules they work on. Mirroring can be disabled globally via <code>ezs config set init_submodules false</code>, and overridden per-invocation with <code>--init-submodules</code> / <code>--no-init-submodules</code>. A failure to mirror submodules is logged as a warning and does not fail branch creation.</p>
       <p><strong><code>--template &lt;name&gt;</code>.</strong> After the worktree is created, ezstack copies the contents of <code>~/.ezstack/templates/&lt;name&gt;/</code> into it as an overlay. Existing files in the worktree are overwritten, new directories are created, and file modes (including the executable bit) are preserved. The copy is guarded:</p>
       <ul>
       <li>The template root must be a real directory, never a symlink.</li>
@@ -2126,7 +2132,7 @@ Options:
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License · v4.5.1</span>
+          <span class="footer-meta">MIT License · v4.6.3</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

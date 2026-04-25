@@ -1091,3 +1091,100 @@ func TestSyncStack_PersistsMergedCacheOnConflict(t *testing.T) {
 
 	exec.Command("git", "-C", cPath, "rebase", "--abort").Run()
 }
+
+// TestResolveBranchWorktree_DetectsDrift verifies that resolveBranchWorktree
+// finds the actual git worktree for a branch when ezstack's config has drifted
+// to an empty WorktreePath. Regression test for the bug where sync fell into
+// syncViaCheckout in this case, colliding with the existing worktree or (on
+// success) pushing main to origin after restoring HEAD.
+func TestResolveBranchWorktree_DetectsDrift(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Create a branch with a dedicated worktree.
+	mgr, _ := NewManager(repoDir)
+	expectedWorktree := filepath.Join(worktreeBaseDir, "feat-x")
+	if _, err := mgr.CreateBranch("feat-x", "main", expectedWorktree, ""); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+	expectedWorktree, _ = filepath.EvalSymlinks(expectedWorktree)
+
+	// Simulate config drift: the worktree exists in git but ezstack config
+	// forgot about it. This can happen if a user manually edits config, or
+	// after certain error paths that leave config half-written.
+	mgr, _ = NewManager(repoDir)
+	branch := mgr.GetBranch("feat-x")
+	if branch == nil {
+		t.Fatalf("branch not found after create")
+	}
+	branch.WorktreePath = "" // drift
+
+	got := mgr.resolveBranchWorktree(branch)
+	if got == "" {
+		t.Fatalf("resolveBranchWorktree returned empty string; expected %q (git has the worktree)", expectedWorktree)
+	}
+	gotResolved, _ := filepath.EvalSymlinks(got)
+	if gotResolved != expectedWorktree {
+		t.Errorf("resolveBranchWorktree = %q, want %q", gotResolved, expectedWorktree)
+	}
+
+	// Config should be healed in-memory so subsequent callers use the right
+	// path without having to re-resolve via git.
+	if branch.WorktreePath == "" {
+		t.Error("resolveBranchWorktree did not back-fill branch.WorktreePath; config remained drifted")
+	}
+}
+
+// TestResolveBranchWorktree_NoWorktree verifies the helper returns empty
+// string when there's truly no worktree (legitimate checkout-based sync path).
+func TestResolveBranchWorktree_NoWorktree(t *testing.T) {
+	repoDir, _, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Create a branch without a worktree via CreateBranchNoWorktree
+	mgr, _ := NewManager(repoDir)
+	if _, err := mgr.CreateBranchNoWorktree("no-wt", "main", ""); err != nil {
+		t.Fatalf("CreateBranchNoWorktree: %v", err)
+	}
+
+	branch := mgr.GetBranch("no-wt")
+	if branch == nil {
+		t.Fatalf("branch not found")
+	}
+	// Belt-and-suspenders: force-clear WorktreePath in case the factory
+	// populated something.
+	branch.WorktreePath = ""
+
+	if got := mgr.resolveBranchWorktree(branch); got != "" {
+		t.Errorf("resolveBranchWorktree with no git worktree = %q, want empty", got)
+	}
+}
+
+// TestResolveBranchWorktree_IgnoresMainRepo verifies we don't misidentify the
+// main repo's own checkout as a dedicated worktree. If a branch happens to be
+// checked out in the main repo (e.g. by a user manually), checkout-based sync
+// is still the right path.
+func TestResolveBranchWorktree_IgnoresMainRepo(t *testing.T) {
+	repoDir, _, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Create a branch without an ezstack-managed worktree, then manually
+	// check it out in the main repo.
+	mgr, _ := NewManager(repoDir)
+	if _, err := mgr.CreateBranchNoWorktree("in-main", "main", ""); err != nil {
+		t.Fatalf("CreateBranchNoWorktree: %v", err)
+	}
+	if err := exec.Command("git", "-C", repoDir, "checkout", "in-main").Run(); err != nil {
+		t.Fatalf("checkout: %v", err)
+	}
+	// Switch back so the main repo is on main for the next assertion.
+	defer exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+
+	mgr, _ = NewManager(repoDir)
+	branch := mgr.GetBranch("in-main")
+	branch.WorktreePath = ""
+
+	if got := mgr.resolveBranchWorktree(branch); got != "" {
+		t.Errorf("resolveBranchWorktree when branch is checked out in main repo = %q, want empty (should fall through to checkout sync)", got)
+	}
+}

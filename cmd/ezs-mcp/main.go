@@ -275,6 +275,31 @@ func stringFlag(args *[]string, req mcp.CallToolRequest, key, flag string) {
 	}
 }
 
+// tristateBoolFlag appends flagTrue or flagFalse depending on the boolean
+// value when key is present in the request arguments. When key is absent,
+// nothing is appended — letting the underlying command use its config
+// default. Used to expose paired CLI flags like --foo / --no-foo through a
+// single tri-state MCP parameter.
+func tristateBoolFlag(args *[]string, req mcp.CallToolRequest, key, flagTrue, flagFalse string) {
+	raw := req.GetArguments()
+	if raw == nil {
+		return
+	}
+	v, ok := raw[key]
+	if !ok {
+		return
+	}
+	b, isBool := v.(bool)
+	if !isBool {
+		return
+	}
+	if b {
+		*args = append(*args, flagTrue)
+	} else {
+		*args = append(*args, flagFalse)
+	}
+}
+
 func registerTools(s *server.MCPServer) {
 	// ---- Read-only tools ----
 
@@ -435,11 +460,13 @@ func registerTools(s *server.MCPServer) {
 				mcp.Required(),
 			),
 			mcp.WithString("parent", mcp.Description("Parent branch (defaults to current branch)")),
+			mcp.WithBoolean("init_submodules", mcp.Description("Whether to mirror the main worktree's initialized submodules into the new worktree. Omit to use the configured default (true unless overridden).")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.New, func(req mcp.CallToolRequest) []string {
 			args := []string{req.GetString("name", "")}
 			stringFlag(&args, req, "parent", "--parent")
+			tristateBoolFlag(&args, req, "init_submodules", "--init-submodules", "--no-init-submodules")
 			return args
 		}),
 	)

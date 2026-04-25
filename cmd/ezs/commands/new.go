@@ -34,6 +34,8 @@ func New(args []string) error {
     -w, --worktree <path>     Worktree path (defaults to configured base dir + branch name)
     -c, --cd                  Change to the new worktree after creation
     -C, --no-cd               Don't change to the new worktree (overrides config)
+    -s, --init-submodules     Mirror main worktree's initialized submodules (overrides config)
+    -S, --no-init-submodules  Skip submodule initialization (overrides config)
     -f, --from-worktree       Register an existing worktree as a stack root
     -r, --from-remote         Create a stack from a remote branch/PR
     -h, --help                Show this help message
@@ -59,6 +61,8 @@ func New(args []string) error {
 	templateFlag := fs.String("template", "", "Seed the new worktree from ~/.ezstack/templates/<name>")
 	cdFlag := fs.BoolP("cd", "c", false, "Change to worktree")
 	noCdFlag := fs.BoolP("no-cd", "C", false, "Don't change to worktree")
+	initSubmodulesFlag := fs.BoolP("init-submodules", "s", false, "Mirror main worktree's initialized submodules")
+	noInitSubmodulesFlag := fs.BoolP("no-init-submodules", "S", false, "Skip submodule initialization")
 	fromWorktree := fs.BoolP("from-worktree", "f", false, "Register an existing worktree as a stack root")
 	fromRemote := fs.BoolP("from-remote", "r", false, "Create stack from remote branch")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
@@ -90,7 +94,7 @@ func New(args []string) error {
 	// This creates a local worktree tracking the remote branch directly,
 	// without creating a new branch on top or registering a stack.
 	if fs.NArg() >= 1 && strings.HasPrefix(fs.Arg(0), "origin/") {
-		return newFromRemoteRef(g, cwd, fs.Arg(0), *worktree, *cdFlag, *noCdFlag)
+		return newFromRemoteRef(g, cwd, fs.Arg(0), *worktree, *cdFlag, *noCdFlag, *initSubmodulesFlag, *noInitSubmodulesFlag)
 	}
 
 	if fs.NArg() == 0 && !useFromWorktree && !useFromRemote && *parent == "" {
@@ -237,6 +241,8 @@ func New(args []string) error {
 			return fmt.Errorf("failed to create worktree: %w", err)
 		}
 
+		mirrorSubmodulesIfEnabled(g, cfg, mgr.GetRepoDir(), worktreePath, *initSubmodulesFlag, *noInitSubmodulesFlag)
+
 		userBranch, err := mgr.AddBranchToStack(newBranchName, remote.Branch, worktreePath, remote.StackHash)
 		if err != nil {
 			return fmt.Errorf("failed to add branch to stack: %w", err)
@@ -340,6 +346,7 @@ func New(args []string) error {
 			if err := mgr.CreateWorktreeOnly(branchName, parentBranch, worktreePath); err != nil {
 				return err
 			}
+			mirrorSubmodulesIfEnabled(g, cfg, repoDir, worktreePath, *initSubmodulesFlag, *noInitSubmodulesFlag)
 			ui.Success(fmt.Sprintf("Created worktree '%s' at '%s' (not part of a stack)", branchName, worktreePath))
 			if shouldCd := getCdAfterNew(cfg, repoDir, *cdFlag, *noCdFlag); shouldCd {
 				EmitCd(worktreePath)
@@ -353,6 +360,8 @@ func New(args []string) error {
 		if err != nil {
 			return err
 		}
+
+		mirrorSubmodulesIfEnabled(g, cfg, repoDir, branch.WorktreePath, *initSubmodulesFlag, *noInitSubmodulesFlag)
 
 		if *templateFlag != "" {
 			if err := applyTemplate(*templateFlag, branch.WorktreePath); err != nil {
@@ -486,6 +495,41 @@ func getCdAfterNew(cfg *config.Config, repoDir string, cdFlag, noCdFlag bool) bo
 	return false
 }
 
+// shouldInitSubmodules resolves whether to mirror the main worktree's
+// initialized submodules into a newly-created worktree. --no-init-submodules
+// wins over --init-submodules; otherwise the config decides, with a default
+// of true.
+func shouldInitSubmodules(cfg *config.Config, repoDir string, flag, noFlag bool) bool {
+	if noFlag {
+		return false
+	}
+	if flag {
+		return true
+	}
+	if cfg != nil {
+		return cfg.GetInitSubmodules(repoDir)
+	}
+	return true
+}
+
+// mirrorSubmodulesIfEnabled mirrors the main worktree's initialized submodules
+// into destPath when enabled by flag or config. Failures are logged but not
+// returned — a worktree is usable without submodules, and failing `ezs new`
+// over this would be a regression in behavior.
+func mirrorSubmodulesIfEnabled(g *git.Git, cfg *config.Config, repoDir, destPath string, flag, noFlag bool) {
+	if !shouldInitSubmodules(cfg, repoDir, flag, noFlag) {
+		return
+	}
+	source, err := g.GetMainWorktree()
+	if err != nil || source == "" {
+		ui.Warn(fmt.Sprintf("Could not determine main worktree for submodule init: %v", err))
+		return
+	}
+	if err := git.MirrorSubmodules(source, destPath); err != nil {
+		ui.Warn(fmt.Sprintf("Submodule init skipped: %v", err))
+	}
+}
+
 // ValidateWorktreeBaseDir validates that the worktree base directory is not inside the repo.
 // Returns an error if the path is invalid, nil if valid.
 func ValidateWorktreeBaseDir(worktreeBaseDir, repoDir string) error {
@@ -576,7 +620,7 @@ func promptWorktreeBaseDir(repoDir string, cfg *config.Config) (string, error) {
 
 // newFromRemoteRef handles `ezs new origin/<branch>` — creates a local worktree
 // that tracks the remote branch directly and registers it in a stack.
-func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noCdFlag bool) error {
+func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noCdFlag, initSubmodulesFlag, noInitSubmodulesFlag bool) error {
 	remoteBranch := strings.TrimPrefix(ref, "origin/")
 	if remoteBranch == "" {
 		return fmt.Errorf("branch name cannot be empty (got %q)", ref)
@@ -635,6 +679,8 @@ func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noC
 		return fmt.Errorf("failed to create worktree: %w", err)
 	}
 
+	mirrorSubmodulesIfEnabled(g, cfg, repoDir, worktreePath, initSubmodulesFlag, noInitSubmodulesFlag)
+
 	ui.Success(fmt.Sprintf("Created worktree for '%s' at %s", remoteBranch, worktreePath))
 
 	// Look up PR info for registration and display
@@ -660,8 +706,17 @@ func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noC
 		}
 	}
 	if _, regErr := mgr.RegisterExistingBranch(remoteBranch, worktreePath, baseBranch); regErr == nil {
-		forkRemote := detectForkRemote(g, gh, pr)
-		mgr.MarkBranchRemote(remoteBranch, prURL, forkRemote)
+		// Only mark the branch as remote-contributor when we actually detected a fork
+		// (or a fork with push forbidden). detectForkRemote returns "" for same-repo PRs
+		// and for "no PR yet" — in those cases the branch is your own and should be
+		// pushed to origin like any other. Previously MarkBranchRemote was called
+		// unconditionally, which poisoned same-repo branches into the fork-detection
+		// path on every push.
+		if forkRemote := detectForkRemote(g, gh, pr); forkRemote != "" {
+			mgr.MarkBranchRemote(remoteBranch, prURL, forkRemote)
+		} else if pr != nil {
+			savePRToCache(mgr.GetRepoDir(), remoteBranch, pr.Number, prURL)
+		}
 	}
 
 	// Show PR info and diff stats

@@ -176,7 +176,10 @@ func OfferForcePush(branchName, worktreePath, remote string) bool {
 	ui.Warn("Force push required to update remote branch")
 	if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
 		ui.Info("Pushing...")
-		if err := g.PushForce(remote); err != nil {
+		// PushBranch explicitly names the branch — never trust CurrentBranch()
+		// of worktreePath, which can be main if we're pushing from the main
+		// repo dir after a syncViaCheckout restored HEAD.
+		if err := g.PushBranch(branchName, true, remote); err != nil {
 			ui.Error(fmt.Sprintf("Push failed: %v. Check your network connection and remote access", err))
 			return false
 		}
@@ -225,7 +228,7 @@ func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) st
 
 		if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
 			ui.Info(fmt.Sprintf("Pushing %s...", branchName))
-			if err := g.PushForce(remote); err != nil {
+			if err := g.PushBranch(branchName, true, remote); err != nil {
 				ui.Error(fmt.Sprintf("Push failed for %s: %v. Check remote access or try: git push --force-with-lease", branchName, err))
 			} else {
 				ui.Success(fmt.Sprintf("Pushed %s successfully", branchName))
@@ -264,11 +267,14 @@ func OfferPush(branchName, worktreePath, remote string) bool {
 	fmt.Fprintln(os.Stderr)
 	if ui.ConfirmTUI(fmt.Sprintf("Push %s to %s", branchName, remote)) {
 		ui.Info("Pushing...")
-		if err := g.Push(false, remote); err != nil {
+		// PushBranch explicitly names the branch — never trust CurrentBranch()
+		// of worktreePath, which can be main if we're pushing from the main
+		// repo dir after a syncViaCheckout restored HEAD.
+		if err := g.PushBranch(branchName, false, remote); err != nil {
 			// If regular push fails (e.g., diverged history from prior rebase), offer force push
 			ui.Warn(fmt.Sprintf("Push failed: %v", err))
 			if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
-				if err := g.PushForce(remote); err != nil {
+				if err := g.PushBranch(branchName, true, remote); err != nil {
 					ui.Error(fmt.Sprintf("Force push failed: %v", err))
 					return false
 				}
@@ -322,10 +328,10 @@ func OfferPushMultiple(branches []string, getBranchWorktree func(string) string,
 
 		if ui.ConfirmTUI(fmt.Sprintf("Push %s to %s", branchName, remote)) {
 			ui.Info(fmt.Sprintf("Pushing %s...", branchName))
-			if err := g.Push(false, remote); err != nil {
+			if err := g.PushBranch(branchName, false, remote); err != nil {
 				// Fall back to force push if regular push fails
 				ui.Warn(fmt.Sprintf("Push failed: %v. Trying force push...", err))
-				if err := g.PushForce(remote); err != nil {
+				if err := g.PushBranch(branchName, true, remote); err != nil {
 					ui.Error(fmt.Sprintf("Force push failed for %s: %v", branchName, err))
 				} else {
 					ui.Success(fmt.Sprintf("Pushed %s successfully (force)", branchName))
@@ -646,6 +652,23 @@ func resolveLocalRef(g *git.Git, name string) string {
 	return name
 }
 
+// upstreamRef returns origin/<name> when the remote-tracking ref exists,
+// falling back to resolveLocalRef otherwise. Use this for parents that are
+// upstream-tracked (the stack's base branch, or a remote PR target): the
+// local copy of such a branch can drift from origin between fetches, so
+// diffing against it would either hide upstream changes or, after a sync
+// that rebased children onto origin/<base>, include every commit that
+// landed upstream since the last local update.
+func upstreamRef(g *git.Git, name string) string {
+	if name == "" {
+		return name
+	}
+	if g.RemoteBranchExists(name) {
+		return "origin/" + name
+	}
+	return resolveLocalRef(g, name)
+}
+
 // fetchDiffStats computes diff stats for all branches in a stack using parallel local git ops.
 // This is fast (no network) and safe to call from ezs ls.
 func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
@@ -669,10 +692,10 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			// Always diff against the LOCAL parent and LOCAL branch so the
-			// stats reflect the user's working state, not stale origin refs.
-			// Fall back to origin/<ref> only if the local ref doesn't exist.
-			parentRef := resolveLocalRef(g, rootBase)
+			// rootBase is the PR target of the stack's root branch — always an
+			// upstream-tracked branch (e.g. main). Diff against origin/<rootBase>
+			// so the stats don't drift with the local copy between fetches.
+			parentRef := upstreamRef(g, rootBase)
 			branchRef := resolveLocalRef(g, s.Root)
 			added, removed, err := g.GetDiffStat(parentRef, branchRef)
 			if err != nil {
@@ -694,10 +717,20 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 			if b.IsMerged {
 				return
 			}
-			// Always diff against the LOCAL parent branch so the stats match
-			// what the user actually has checked out. Using origin/<parent>
-			// would hide local-only parent commits and misreport the diff.
-			parentRef := resolveLocalRef(g, b.Parent)
+			// When the parent is the stack's base (upstream-tracked: main,
+			// master, or a remote PR branch the stack sits on), diff against
+			// origin/<parent>. Local <parent> can be stale — sync rebases
+			// children onto origin/<base> without moving local <base>, which
+			// would otherwise make the diff include every upstream commit
+			// landed since the last local update. For non-base parents (other
+			// branches inside the stack) keep using the local ref so
+			// unpushed local commits aren't misreported as branch content.
+			var parentRef string
+			if b.Parent != "" && (b.Parent == s.Root || b.Parent == s.RootBase) {
+				parentRef = upstreamRef(g, b.Parent)
+			} else {
+				parentRef = resolveLocalRef(g, b.Parent)
+			}
 			branchRef := resolveLocalRef(g, b.Name)
 			added, removed, err := g.GetDiffStat(parentRef, branchRef)
 			if err != nil {
@@ -898,9 +931,12 @@ func detectForkRemote(g *git.Git, gh *github.Client, pr *github.PR) string {
 // ResolveBranchRemote returns the git remote that should receive pushes for branchName.
 // For branches that were registered as remote (fork) PRs but don't yet have a fork remote
 // recorded — typically because they predate fork detection or detection failed at register
-// time — this lazily re-runs detection, persists the result, and returns it. Returns
-// config.RemoteNoPush when detection fails or push is forbidden so callers will skip the
-// push instead of silently sending it to origin.
+// time — this lazily re-runs detection, persists the result, and returns it.
+//
+// Ambiguous outcomes (GitHub client init failed, no PR found yet) fall back to "origin"
+// without persisting anything: those signals are transient and must NOT latch the branch
+// into config.RemoteNoPush forever. Only a confirmed fork that forbids maintainer push
+// can produce a persisted _nopush sentinel, via detectForkRemote.
 func ResolveBranchRemote(g *git.Git, mgr *stack.Manager, branchName string) string {
 	if mgr == nil {
 		return "origin"
@@ -918,15 +954,13 @@ func ResolveBranchRemote(g *git.Git, mgr *stack.Manager, branchName string) stri
 	ui.Warn(fmt.Sprintf("Branch '%s' is tracked from a remote PR but has no fork remote configured — running fork detection now", branchName))
 	gh, ghErr := newGitHubClient(g)
 	if ghErr != nil {
-		ui.Warn(fmt.Sprintf("Could not init GitHub client for fork detection: %v — push will be skipped", ghErr))
-		_ = mgr.MarkBranchRemote(branchName, b.PRUrl, config.RemoteNoPush)
-		return config.RemoteNoPush
+		ui.Warn(fmt.Sprintf("Could not init GitHub client for fork detection: %v — pushing to origin", ghErr))
+		return "origin"
 	}
 	pr, prErr := gh.GetPRByBranch(branchName)
 	if prErr != nil || pr == nil {
-		ui.Warn(fmt.Sprintf("Could not look up PR for '%s': %v — push will be skipped", branchName, prErr))
-		_ = mgr.MarkBranchRemote(branchName, b.PRUrl, config.RemoteNoPush)
-		return config.RemoteNoPush
+		ui.Warn(fmt.Sprintf("No PR found for '%s' yet — pushing to origin", branchName))
+		return "origin"
 	}
 	forkRemote := detectForkRemote(g, gh, pr)
 	prURL := b.PRUrl

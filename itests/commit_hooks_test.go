@@ -2,7 +2,6 @@ package itests
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -11,16 +10,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
 )
 
-// mustRunGit runs a git command in the given directory, failing the test on
-// error. Local to this file — other itests use higher-level helpers.
-func mustRunGit(t *testing.T, dir string, args ...string) {
-	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git %v (dir=%q): %v\n%s", args, dir, err, out)
-	}
-}
+// mustRunGit is defined in remote_pickup_test.go in the same package.
 
 // installPassingHook writes a hook that records its invocation (by touching
 // `sentinel`) and exits 0. Useful for asserting that hooks ran.
