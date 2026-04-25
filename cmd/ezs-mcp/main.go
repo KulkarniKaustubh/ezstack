@@ -681,9 +681,8 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		// toolHandler (not readOnlyHandler) because `ezs config` has no
-		// --json mode — readOnlyHandler would inject an unknown flag that
-		// Config silently drops, leaving behavior correct-by-accident and
-		// the abstraction misleading.
+		// --json mode — readOnlyHandler would inject `--json`, which the
+		// strict Config arg parser now rejects as an unknown subcommand.
 		toolHandler(commands.Config, func(req mcp.CallToolRequest) []string {
 			return []string{"show"}
 		}),

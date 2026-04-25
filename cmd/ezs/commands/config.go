@@ -62,19 +62,27 @@ func Config(args []string) error {
 		printConfigUsage()
 		return nil
 	case "set":
-		if len(args) < 3 {
-			return fmt.Errorf("usage: ezs config set <key> <value>")
+		// Always exactly 3 args. The previous code joined trailing tokens
+		// into the value with strings.Join, which silently absorbed typos
+		// like `set worktree_base_dir /tmp/foo --bogus` into the stored
+		// value. Multi-word values (notably agent_command shell command
+		// lines) must now be quoted: `set agent_command "claude --flag"`.
+		if len(args) != 3 {
+			return fmt.Errorf("usage: ezs config set <key> <value>\n(if the value contains spaces or starts with '-', wrap it in quotes — e.g. ezs config set agent_command \"claude --dangerously-skip-permissions\")")
 		}
-		return configSet(args[1], strings.Join(args[2:], " "))
+		return configSet(args[1], args[2])
 	case "show":
+		if len(args) != 1 {
+			return fmt.Errorf("usage: ezs config show")
+		}
 		return configShow()
 	case "export":
-		if len(args) < 2 {
+		if len(args) != 2 {
 			return fmt.Errorf("usage: ezs config export <file>")
 		}
 		return configExport(args[1])
 	case "import":
-		if len(args) < 2 {
+		if len(args) != 2 {
 			return fmt.Errorf("usage: ezs config import <file>")
 		}
 		return configImport(args[1])

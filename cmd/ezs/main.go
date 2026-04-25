@@ -412,38 +412,3 @@ if [ -n "$ZSH_VERSION" ]; then
 fi
 `)
 }
-
-var topLevelCommands = []string{
-	"agent", "amend", "commit", "config", "delete", "diff", "down",
-	"goto", "list", "log", "menu", "new", "pr", "push",
-	"reparent", "stack", "status", "sync", "unstack", "up",
-}
-
-var prSubcommands = []string{"create", "draft", "merge", "stack", "update"}
-
-func printCompletions(args []string) {
-	if len(args) == 0 || (len(args) == 1 && args[0] == "") {
-		for _, cmd := range topLevelCommands {
-			fmt.Println(cmd)
-		}
-		return
-	}
-
-	cmd := args[0]
-	switch cmd {
-	case "pr":
-		for _, sub := range prSubcommands {
-			fmt.Println(sub)
-		}
-	case "agent":
-		if len(args) >= 2 && (args[1] == "prompt") {
-			fmt.Println("work")
-			fmt.Println("feature")
-			fmt.Println("feat")
-		} else {
-			fmt.Println("feature")
-			fmt.Println("feat")
-			fmt.Println("prompt")
-		}
-	}
-}
