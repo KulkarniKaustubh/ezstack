@@ -274,6 +274,67 @@ func TestCompletions_NewSurfacesInitSubmodulesFlag(t *testing.T) {
 	}
 }
 
+// TestCompletions_AgentPromptHasOwnFlags pins the per-subcommand flag fix
+// for `agent prompt`. The prompt subcommand declares its own flagset
+// (--shipped/--custom/--repo/--edit/--reset). Pre-fix `agent prompt --<TAB>`
+// fell through to commandFlags["agent"] and suggested --cmd / --stack /
+// --branch — flags from the work/feature flagset that prompt doesn't accept.
+func TestCompletions_AgentPromptHasOwnFlags(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	got := runCompletions(t, env, "agent", "prompt", "--")
+	for _, want := range []string{"--shipped", "--custom", "--repo", "--edit", "--reset"} {
+		if !itestContains(got, want) {
+			t.Errorf("agent prompt --<TAB> missing %q; got %v", want, got)
+		}
+	}
+	// Phantom check: agent's main-mode flags (--cmd/--stack/--branch/etc.)
+	// are not accepted by the prompt subcommand's flagset, so completing
+	// them here would lead users into a wrong invocation.
+	for _, phantom := range []string{"--cmd", "--stack", "--dry-run", "--save-prompt", "--no-push", "--preset", "--no-mcp"} {
+		if itestContains(got, phantom) {
+			t.Errorf("agent prompt --<TAB> leaked main-mode flag %q; got %v", phantom, got)
+		}
+	}
+}
+
+// TestCompletions_PRTopLevelHasDraftAll pins down that `ezs pr --<TAB>`
+// surfaces `--draft-all`. The flag is documented in pr.go's help text and
+// parsed in pr.go:49 — leaving it out of commandFlags["pr"] silently
+// dropped completion for the only top-level pr flag besides --help.
+func TestCompletions_PRTopLevelHasDraftAll(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	got := runCompletions(t, env, "pr", "--")
+	if !itestContains(got, "--draft-all") {
+		t.Errorf("pr --<TAB> missing --draft-all; got %v", got)
+	}
+}
+
+// TestCompletions_PushHasNoPhantoms guards the v2 fix where push had
+// phantom `--all`/`-a`/`--children` entries in the completion table.
+// push.go declares neither — completing them sent users to a runtime
+// "unknown flag" error.
+func TestCompletions_PushHasNoPhantoms(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	got := runCompletions(t, env, "push", "--")
+	for _, phantom := range []string{"--all", "-a", "--children"} {
+		if itestContains(got, phantom) {
+			t.Errorf("push --<TAB> emits phantom %q (push.go declares no such flag); got %v", phantom, got)
+		}
+	}
+	// Positive control: real flags must still be there.
+	for _, want := range []string{"--stack", "--branch", "--force", "--verify", "--all-remotes"} {
+		if !itestContains(got, want) {
+			t.Errorf("push --<TAB> dropped real flag %q; got %v", want, got)
+		}
+	}
+}
+
 // TestCompletions_PRSubcommandFlags pins down per-subcommand flag completion.
 // Pre-fix `ezs pr create --<TAB>` emitted only `--help`/`-h` (the bare `pr`
 // flag set) instead of create's actual flag list. Verify a representative
@@ -320,58 +381,134 @@ func TestCompletions_BranchEqualsValueSyntax(t *testing.T) {
 	}
 }
 
-// TestCompletions_FlagTableMatchesHelpOutput is the drift gate. For each
-// command in commandFlags, run `ezs <cmd> --help`, parse the OPTIONS lines,
-// and assert every flag printed by the binary appears in the table. This
-// catches the "command grew a flag, table didn't" failure mode that produced
-// the missing `--init-submodules`/`-s` regression in v1 of this PR.
+// TestCompletions_FlagTableMatchesHelpOutput is the bidirectional drift gate.
+// For each command we exercise BOTH directions:
 //
-// Asymmetric on purpose: extra entries in the table are tolerated (some help
-// text mentions help-only flags), missing entries are not.
+//  1. help ⊆ completion: every flag in `<cmd> --help` OPTIONS must appear in
+//     the completion table. This catches the v1 regression where `new` grew
+//     `--init-submodules` but the completion table forgot it.
+//  2. completion ⊆ help ∪ tolerated: every flag the completion table emits
+//     must either appear in `<cmd> --help` OR be in the per-command
+//     `toleratedExtras` allowlist below. This catches phantom flags — e.g.
+//     `push` previously had `--all`/`-a`/`--children` in the table even
+//     though push.go declares no such flags. Without the reverse check
+//     users tab-complete to a flag and then `push` rejects with
+//     "unknown flag" at runtime.
+//
+// The completion table is fetched live via `ezs --completions <cmd> --`
+// rather than re-listed in this test. That removes the duplicate-source-
+// of-truth problem (the v1 test had its own copy of the table that
+// drifted out of sync with completions.go).
+//
+// toleratedExtras documents flags that ARE registered with pflag but NOT
+// printed in the help OPTIONS section — typically advanced/internal flags.
+// Each entry must point at a real declaration in cmd/ezs/commands/*.go.
 func TestCompletions_FlagTableMatchesHelpOutput(t *testing.T) {
 	env := SetupTestEnv(t)
 	defer env.Cleanup()
 
-	tableFlags := map[string][]string{
-		"agent":    {"--cmd", "--stack", "-s", "--branch", "-b", "--dry-run", "--save-prompt", "--no-push", "--preset", "--no-mcp", "--help", "-h"},
-		"delete":   {"--force", "-f", "--stack", "-s", "--cascade", "--help", "-h"},
-		"diff":     {"--branch", "-b", "--stat", "--json", "--help", "-h"},
-		"doctor":   {"--help", "-h"},
-		"goto":     {"--search", "--help", "-h"},
-		"list":     {"--all", "-a", "--json", "--debug", "-d", "--help", "-h"},
-		"log":      {"--branch", "-b", "--json", "--help", "-h"},
-		"new":      {"--parent", "-p", "--worktree", "-w", "--template", "--cd", "-c", "--no-cd", "-C", "--init-submodules", "-s", "--no-init-submodules", "-S", "--from-worktree", "-f", "--from-remote", "-r", "--help", "-h"},
-		"push":     {"--all", "-a", "--stack", "-s", "--branch", "-b", "--children", "--force", "-f", "--verify", "--all-remotes", "--help", "-h"},
-		"reparent": {"--branch", "-b", "--parent", "-p", "--merge", "--rebase", "--no-rebase", "--help", "-h"},
-		"stack":    {"--branch", "-b", "--parent", "-p", "--base", "-B", "--help", "-h"},
-		"status":   {"--all", "-a", "--branch", "-b", "--debug", "-d", "--json", "--watch", "--help", "-h"},
-		"sync":     {"--stats", "--squash", "--stack", "-s", "--all", "-a", "--current", "-c", "--branch", "-b", "--parent", "-p", "--children", "-C", "--merge", "--rebase", "--no-delete-local", "--dry-run", "--continue", "--no-autostash", "--json", "--help", "-h"},
-		"unstack":  {"--branch", "-b", "--help", "-h"},
+	// Flags declared with pflag but intentionally not printed in --help
+	// OPTIONS. Listing them here keeps the bidirectional check honest
+	// without forcing every advanced flag to be documented in the help
+	// banner. If the underlying command stops registering one of these,
+	// remove the entry; if a new advanced flag is added, add it here.
+	toleratedExtras := map[string]map[string]bool{
+		"agent": {
+			// agent.go:93-96 declares these but the help banner only
+			// surfaces the user-facing subset.
+			"--save-prompt": true,
+			"--no-push":     true,
+			"--preset":      true,
+			"--no-mcp":      true,
+		},
+	}
+
+	// Commands whose flag completion path doesn't reach commandFlags
+	// (handled by a different code branch — config/menu have no flags
+	// other than --help; agent prompt/feature use their own subcommand
+	// table). They're skipped here and covered by their own tests.
+	commands := []string{
+		"agent", "delete", "diff", "doctor", "goto", "list", "log",
+		"new", "pr", "push", "reparent", "stack", "status", "sync",
+		"unstack",
 	}
 
 	bin := buildEzs(t)
-	for cmd, want := range tableFlags {
+	for _, cmd := range commands {
 		t.Run(cmd, func(t *testing.T) {
-			c := exec.Command(bin, cmd, "--help")
-			c.Dir = env.RepoDir
-			c.Env = append(c.Environ(), "EZSTACK_HOME="+env.ConfigDir)
-			out, err := c.CombinedOutput()
+			// Fetch the live completion output for `ezs <cmd> --<TAB>`.
+			compCmd := exec.Command(bin, "--completions", cmd, "--")
+			compCmd.Dir = env.RepoDir
+			compCmd.Env = append(compCmd.Environ(), "EZSTACK_HOME="+env.ConfigDir)
+			compOut, err := compCmd.CombinedOutput()
 			if err != nil {
-				t.Fatalf("ezs %s --help failed: %v\n%s", cmd, err, out)
+				t.Fatalf("ezs --completions %s -- failed: %v\n%s", cmd, err, compOut)
 			}
-			helpFlags := parseHelpOptionsFlags(string(out))
-			tableSet := map[string]bool{}
-			for _, f := range want {
-				tableSet[f] = true
+			compFlags := splitCompletionLines(compOut)
+
+			// Fetch help OPTIONS for the same command.
+			helpCmd := exec.Command(bin, cmd, "--help")
+			helpCmd.Dir = env.RepoDir
+			helpCmd.Env = append(helpCmd.Environ(), "EZSTACK_HOME="+env.ConfigDir)
+			helpOut, err := helpCmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("ezs %s --help failed: %v\n%s", cmd, err, helpOut)
 			}
+			helpFlags := parseHelpOptionsFlags(string(helpOut))
+
+			compSet := map[string]bool{}
+			for _, f := range compFlags {
+				compSet[f] = true
+			}
+			helpSet := map[string]bool{}
 			for _, f := range helpFlags {
-				if !tableSet[f] {
-					t.Errorf("flag %q in `ezs %s --help` output is missing from completion table; commandFlags[%q] needs updating",
+				helpSet[f] = true
+			}
+
+			// Direction 1 (missing): every help flag must appear in
+			// completion. Catches the "command grew a flag, table didn't"
+			// failure mode.
+			for _, f := range helpFlags {
+				if !compSet[f] {
+					t.Errorf("flag %q in `ezs %s --help` is missing from completion; commandFlags[%q] needs updating",
 						f, cmd, cmd)
 				}
 			}
+
+			// Direction 2 (phantom): every completion flag must appear
+			// in help OR the tolerated-extras allowlist. Catches phantom
+			// entries that don't actually exist in the parser. This is
+			// the check that catches `push` having phantom `--all` /
+			// `-a` / `--children` in the v2 table.
+			for _, f := range compFlags {
+				if helpSet[f] {
+					continue
+				}
+				if toleratedExtras[cmd][f] {
+					continue
+				}
+				t.Errorf("phantom flag %q: completion offers it but `ezs %s --help` doesn't list it and it's not in toleratedExtras[%q] — does the parser actually accept it?",
+					f, cmd, cmd)
+			}
 		})
 	}
+}
+
+// splitCompletionLines splits the stdout of `ezs --completions ...` into
+// non-empty trimmed entries. Used by the drift gate to consume completion
+// candidates without each test rebuilding the same parser.
+func splitCompletionLines(out []byte) []string {
+	body := strings.TrimRight(string(out), "\n")
+	if body == "" {
+		return nil
+	}
+	var flags []string
+	for _, line := range strings.Split(body, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			flags = append(flags, line)
+		}
+	}
+	return flags
 }
 
 // parseHelpOptionsFlags pulls flag tokens out of an ezs `--help` OPTIONS

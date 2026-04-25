@@ -24,9 +24,12 @@ func Doctor(args []string) error {
 %sUSAGE%s
     ezs doctor
 
+%sOPTIONS%s
+    -h, --help    Show this help message
+
 Verifies required tools (git, gh, fzf) are installed and that the
 ezstack configuration is valid.
-`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset)
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 	// pflag.ErrHelp is unreachable here because we registered our own --help

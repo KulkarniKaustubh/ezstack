@@ -60,8 +60,8 @@ var commandFlags = map[string][]string{
 	"list":     {"--all", "-a", "--json", "--debug", "-d", "--help", "-h"},
 	"log":      {"--branch", "-b", "--json", "--help", "-h"},
 	"new":      {"--parent", "-p", "--worktree", "-w", "--template", "--cd", "-c", "--no-cd", "-C", "--init-submodules", "-s", "--no-init-submodules", "-S", "--from-worktree", "-f", "--from-remote", "-r", "--help", "-h"},
-	"pr":       {"--help", "-h"},
-	"push":     {"--all", "-a", "--stack", "-s", "--branch", "-b", "--children", "--force", "-f", "--verify", "--all-remotes", "--help", "-h"},
+	"pr":       {"--draft-all", "--help", "-h"},
+	"push":     {"--stack", "-s", "--branch", "-b", "--force", "-f", "--verify", "--all-remotes", "--help", "-h"},
 	"reparent": {"--branch", "-b", "--parent", "-p", "--merge", "--rebase", "--no-rebase", "--help", "-h"},
 	"stack":    {"--branch", "-b", "--parent", "-p", "--base", "-B", "--help", "-h"},
 	"status":   {"--all", "-a", "--branch", "-b", "--debug", "-d", "--json", "--watch", "--help", "-h"},
@@ -79,6 +79,15 @@ var prSubcommandFlags = map[string][]string{
 	"merge":  {"--method", "-m", "--branch", "--no-delete-branch", "--help", "-h"},
 	"draft":  {"--branch", "--help", "-h"},
 	"stack":  {"--branch", "--help", "-h"},
+}
+
+// agentSubcommandFlags lists the flags `ezs agent prompt` accepts. Without
+// this, `agent prompt --<TAB>` falls through to commandFlags["agent"] and
+// suggests --cmd / --stack / --branch — flags from a different parser that
+// `prompt` doesn't accept. (`feature` / `feat` reuse the same flagset as
+// the default agent mode, so they pick up commandFlags["agent"] correctly.)
+var agentSubcommandFlags = map[string][]string{
+	"prompt": {"--shipped", "--custom", "--repo", "--edit", "--reset", "--help", "-h"},
 }
 
 // branchPositionalCommands take a branch name as their first positional arg.
@@ -186,6 +195,18 @@ func printCompletions(args []string) {
 		// having a rich flag set.
 		if cmd == "pr" && len(args) >= 3 {
 			if flags, ok := prSubcommandFlags[args[1]]; ok {
+				for _, f := range flags {
+					fmt.Println(f)
+				}
+				return
+			}
+		}
+		// `ezs agent prompt --<TAB>` — the prompt subcommand has its own
+		// flagset (--shipped/--custom/--repo/--edit/--reset). Without this
+		// branch we'd fall through to commandFlags["agent"] and suggest
+		// flags from the work/feature flagset that prompt doesn't accept.
+		if cmd == "agent" && len(args) >= 3 {
+			if flags, ok := agentSubcommandFlags[args[1]]; ok {
 				for _, f := range flags {
 					fmt.Println(f)
 				}
