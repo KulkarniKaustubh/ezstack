@@ -163,6 +163,36 @@ func TestFlagValidation_ListRejectsUnknownFlag(t *testing.T) {
 	}
 }
 
+// TestFlagValidation_UpHelpRejectsTrailingArg pins down the strict shape of
+// the navigate help short-circuit. The original code looked at args[0]
+// only, so `ezs up --help garbage` printed help and exited 0 — silently
+// dropping the trailing `garbage` token. After the v2 fix the help check
+// requires exactly one help token, so trailing junk is rejected.
+func TestFlagValidation_UpHelpRejectsTrailingArg(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	for _, tc := range []struct {
+		args []string
+	}{
+		{[]string{"up", "--help", "garbage"}},
+		{[]string{"up", "-h", "--bogus"}},
+		{[]string{"down", "--help", "junk"}},
+	} {
+		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
+			out, err := runEzs(t, env, tc.args...)
+			if err == nil {
+				t.Fatalf("%v with trailing arg must be rejected:\n%s", tc.args, out)
+			}
+			// And we must NOT have printed the help banner (which would
+			// signal the silent-help-then-drop-garbage regression).
+			if strings.Contains(out, "Navigate up the stack") || strings.Contains(out, "Navigate down the stack") {
+				t.Errorf("%v printed help banner despite extra junk:\n%s", tc.args, out)
+			}
+		})
+	}
+}
+
 // TestFlagValidation_HelpStillWorks asserts that the legitimate -h/--help
 // path still short-circuits. After the doctor refactor I want to confirm
 // it didn't accidentally become a hard error.

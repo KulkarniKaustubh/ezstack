@@ -14,7 +14,7 @@ import (
 
 // Up navigates to the parent branch in the stack
 func Up(args []string) error {
-	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+	if isNavigateHelpOnly(args) {
 		fmt.Fprintf(os.Stderr, `%sNavigate up the stack (toward parent/base)%s
 
 %sUSAGE%s
@@ -36,7 +36,7 @@ func Up(args []string) error {
 
 // Down navigates to a child branch in the stack
 func Down(args []string) error {
-	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+	if isNavigateHelpOnly(args) {
 		fmt.Fprintf(os.Stderr, `%sNavigate down the stack (toward children/leaves)%s
 
 %sUSAGE%s
@@ -54,6 +54,15 @@ func Down(args []string) error {
 		return err
 	}
 	return navigate("down", steps)
+}
+
+// isNavigateHelpOnly returns true iff args is exactly one of `-h` or `--help`.
+// We require an exact match so `ezs up --help garbage` falls through to
+// parseNavigateArgs and gets rejected — matching the strict-flag philosophy
+// of the rest of this PR. The previous check looked only at args[0], which
+// let `--help <junk>` silently print help and exit 0.
+func isNavigateHelpOnly(args []string) bool {
+	return len(args) == 1 && (args[0] == "-h" || args[0] == "--help")
 }
 
 // parseNavigateArgs validates that args contains at most a single positive

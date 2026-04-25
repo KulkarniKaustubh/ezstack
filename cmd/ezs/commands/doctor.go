@@ -29,10 +29,10 @@ ezstack configuration is valid.
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
+	// pflag.ErrHelp is unreachable here because we registered our own --help
+	// flag (which sets *helpFlag instead of returning ErrHelp). Surface the
+	// help banner via the explicit *helpFlag branch below.
 	if err := fs.Parse(args); err != nil {
-		if err == pflag.ErrHelp {
-			return nil
-		}
 		return err
 	}
 	if *helpFlag {

@@ -105,3 +105,30 @@ func TestParseNavigateArgs_DirectionAppearsInError(t *testing.T) {
 		t.Errorf("error %q should embed direction 'down'", err.Error())
 	}
 }
+
+// TestIsNavigateHelpOnly pins down the strict shape of the help short-circuit.
+// The original code looked at args[0] only, so `ezs up --help garbage` printed
+// help and exited 0 — silently dropping the `garbage` token. The whole point
+// of this PR is "no silent acceptance of garbage", so we now require the args
+// list to be exactly one help token.
+func TestIsNavigateHelpOnly(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"long help only", []string{"--help"}, true},
+		{"short help only", []string{"-h"}, true},
+		{"empty", nil, false},
+		{"step number", []string{"2"}, false},
+		{"help with extra positional", []string{"--help", "garbage"}, false},
+		{"help with extra flag", []string{"--help", "--bogus"}, false},
+		{"step then help", []string{"2", "--help"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isNavigateHelpOnly(tc.args); got != tc.want {
+				t.Errorf("isNavigateHelpOnly(%v) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
+	}
+}
