@@ -778,6 +778,10 @@
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">aider</span>                 <span class="c-comment"># switch the agent CLI</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">default_base_branch</span> <span class="c-str">master</span>          <span class="c-comment"># override the global default base</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">github_token</span> <span class="c-str">ghp_...</span>                <span class="c-comment"># optional; otherwise falls back to `gh auth`</span>
+
+<span class="c-comment"># Multi-word values (or any value starting with `-`) MUST be quoted so the</span>
+<span class="c-comment"># shell collapses them to a single argument. Common case is agent_command:</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">&#34;claude --dangerously-skip-permissions&#34;</span>
 </code></pre>
       <h3 id="4-create-your-first-stacked-branch">4. Create your first stacked branch</h3>
       <p><code>ezs new &lt;name&gt;</code> creates a branch whose parent defaults to <strong>your current
@@ -885,8 +889,8 @@
 <span class="c-comment"># zsh</span>
 <span class="c-cmd">echo</span> <span class="c-str">&#39;eval &#34;$(ezs --shell-init)&#34;&#39;</span> <span class="c-str">&gt;&gt;</span> <span class="c-str">~/.zshrc</span>
 </code></pre>
-      <p>This enables automatic directory changes for <code>goto</code>, <code>new</code>, <code>delete</code>, <code>sync</code>, <code>up</code>, and <code>down</code> commands.</p>
-      <p>Without shell integration, commands that would change your directory will instead print a helpful message with the path to <code>cd</code> to manually.</p>
+      <p>This enables automatic directory changes for <code>goto</code>, <code>new</code>, <code>delete</code>, <code>sync</code>, <code>up</code>, and <code>down</code> commands. It also installs bash/zsh tab completion for ezs subcommands, flags, branch names, stack hashes/names, and <code>config set</code> keys — <code>ezs &lt;TAB&gt;</code> shows commands, <code>ezs goto &lt;TAB&gt;</code> lists branches, <code>ezs sync &lt;TAB&gt;</code> lists stacks, <code>ezs config set &lt;TAB&gt;</code> lists valid keys, and <code>ezs &lt;cmd&gt; --&lt;TAB&gt;</code> lists that command's flags.</p>
+      <p>Without shell integration, commands that would change your directory will instead print a helpful message with the path to <code>cd</code> to manually, and tab completion is unavailable.</p>
       </section>
 
       <section class="docs-section" id="configuration" data-heading="Configuration">
@@ -1196,10 +1200,15 @@ Options:
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">claude</span>
 
 <span class="c-comment"># Pass flags to the agent CLI by quoting the whole value as one shell arg:</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">"claude --dangerously-skip-permissions"</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">"aider --model gpt-4"</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">&#34;claude --dangerously-skip-permissions&#34;</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">&#34;aider --model gpt-4&#34;</span>
 </code></pre>
-      <blockquote><p>Multi-word values must be quoted. The CLI takes <code>&lt;value&gt;</code> as a single positional argument and rejects anything trailing &mdash; this keeps typos like <code>ezs config set worktree_base_dir /tmp/foo --bogus</code> from being silently stored as the literal path.</p></blockquote>
+      <blockquote>
+      <p>Multi-word values must be quoted. The CLI takes <code>&lt;value&gt;</code> as a single
+      positional argument and rejects anything trailing — this keeps typos like
+      <code>ezs config set worktree_base_dir /tmp/foo --bogus</code> from being silently
+      stored as the literal path <code>/tmp/foo --bogus</code>.</p>
+      </blockquote>
       <h3 id="ezs-commit--ezs-amend"><code>ezs commit</code> / <code>ezs amend</code></h3>
       <p>Wrap <code>git commit</code> / <code>git commit --amend</code> and auto-sync child branches. Aliases: <code>ci</code></p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">commit</span> <span class="c-str">[git-commit-options]</span> <span class="c-str">[--merge|--rebase]</span>
@@ -1870,14 +1879,14 @@ Options:
       <code>~/.ezstack/stacks.json</code> changes.</p>
       <p><strong>Install</strong></p>
       <pre><code><span class="c-comment"># Pre-built (from the Releases page)</span>
-<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.7.1.vsix</span>
+<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.0.0.vsix</span>
 
 <span class="c-comment"># From source</span>
 <span class="c-cmd">cd</span> <span class="c-str">vscode-extension</span>
 <span class="c-cmd">npm</span> <span class="c-flag">install</span>
 <span class="c-cmd">npm</span> <span class="c-flag">run</span> <span class="c-str">compile</span>
 <span class="c-cmd">npx</span> <span class="c-flag">vsce</span> <span class="c-str">package</span>
-<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.7.1.vsix</span>
+<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.0.0.vsix</span>
 </code></pre>
       <p><strong>Commands</strong> are available under the <code>ezstack:</code> prefix in the command palette
       (<code>Cmd+Shift+P</code>):</p>
