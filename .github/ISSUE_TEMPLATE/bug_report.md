@@ -18,6 +18,8 @@ A clear and concise description of what you expected to happen.
 
 **Information (please complete the following information):**
 - Output of `ezs --version`
+- Output of `ezs --info`
+- Output of `ezs doctor`
 - Output of `ezs config show`
 - Markdown of the contents of `stacks.json` in `~/.ezstack` (just copy and paste the relevant section, or the entire file)
 
