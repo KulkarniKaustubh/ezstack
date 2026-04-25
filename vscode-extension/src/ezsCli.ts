@@ -458,4 +458,118 @@ export class EzsCli {
     }
     return this.runInTerminal(args);
   }
+
+  // ── Diagnostics ──
+
+  /** Run `ezs doctor` and return its full stderr/stdout output as a single string. */
+  async doctor(): Promise<string> {
+    return new Promise((resolve, reject) => {
+      execFile(
+        this.cliPath,
+        ["doctor"],
+        { cwd: this.workspaceRoot, timeout: 30_000 },
+        (error, stdout, stderr) => {
+          // doctor exits non-zero when problems are detected, but the diagnostic
+          // output we want to surface is on stderr regardless. Combine both
+          // and let the caller decide whether the (possibly non-zero) exit
+          // code matters.
+          const combined = EzsCli.stripAnsi(`${stderr}\n${stdout}`).trim();
+          if (error && combined === "") {
+            reject(new Error(error.message));
+            return;
+          }
+          resolve(combined);
+        },
+      );
+    });
+  }
+
+  // ── Sync extras ──
+
+  /** Sync the current stack with optional --stats / --squash. */
+  async syncStack(opts?: { stats?: boolean; squash?: boolean }): Promise<void> {
+    const args = ["sync", "-s"];
+    if (opts?.stats) {
+      args.push("--stats");
+    }
+    if (opts?.squash) {
+      args.push("--squash");
+    }
+    await this.execYes(args);
+  }
+
+  // ── PR draft-all ──
+
+  /** Create draft PRs for every branch in the current stack without one. */
+  async prDraftAll(): Promise<void> {
+    await this.execYes(["pr", "--draft-all"]);
+  }
+
+  // ── Delete with cascade ──
+
+  /** Delete a branch and all its descendants. */
+  async deleteBranchCascade(name: string): Promise<void> {
+    await this.execYes(["delete", name, "--cascade"]);
+  }
+
+  // ── Config export / import ──
+
+  /** Export the global ezstack config (token redacted) to the given path. */
+  async configExport(filePath: string): Promise<void> {
+    await this.exec(["config", "export", filePath]);
+  }
+
+  /** Import a previously-exported config file, replacing the current one. */
+  async configImport(filePath: string): Promise<void> {
+    await this.execYes(["config", "import", filePath]);
+  }
+
+  // ── Push extras ──
+
+  /**
+   * Push with optional --verify (require pre-push hook) and --all-remotes
+   * (push to origin AND configured fork remote).
+   */
+  async pushWithFlags(opts: {
+    branch?: string;
+    force?: boolean;
+    verify?: boolean;
+    allRemotes?: boolean;
+    stack?: boolean;
+  }): Promise<void> {
+    const args = ["push"];
+    if (opts.stack) {
+      args.push("-s");
+    }
+    if (opts.branch) {
+      args.push("--branch", opts.branch);
+    }
+    if (opts.force) {
+      args.push("--force");
+    }
+    if (opts.verify) {
+      args.push("--verify");
+    }
+    if (opts.allRemotes) {
+      args.push("--all-remotes");
+    }
+    await this.execYes(args);
+  }
+
+  // ── Agent extras ──
+
+  /** Open the agent on a stack with --no-push and/or --preset overlays. */
+  openAgentWithFlags(
+    stackHash: string,
+    opts?: { noPush?: boolean; preset?: string },
+  ): vscode.Terminal {
+    const args = ["agent", "-s", stackHash];
+    if (opts?.noPush) {
+      args.push("--no-push");
+    }
+    if (opts?.preset) {
+      args.push("--preset", opts.preset);
+    }
+    return this.runInTerminal(args);
+  }
 }

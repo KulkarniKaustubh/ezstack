@@ -822,4 +822,264 @@ export function registerCommands(
       },
     ),
   );
+
+  // ── Doctor ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ezstack.doctor", async () => {
+      try {
+        const report = await vscode.window.withProgress(
+          {
+            location: vscode.ProgressLocation.Notification,
+            title: "ezstack doctor...",
+          },
+          () => cli.doctor(),
+        );
+        outputChannel.clear();
+        outputChannel.appendLine("ezstack doctor");
+        outputChannel.appendLine("──────────────");
+        outputChannel.appendLine(report);
+        outputChannel.show();
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : String(e);
+        vscode.window.showErrorMessage(`ezs doctor failed: ${msg}`);
+      }
+    }),
+  );
+
+  // ── Sync Stack with Options ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ezstack.syncStackOptions", async () => {
+      const options = await vscode.window.showQuickPick(
+        [
+          { label: "Plain sync", description: "Rebase children onto parents" },
+          { label: "Sync + stats", description: "Print commits-ahead summary after sync", picked: false },
+          { label: "Sync + squash", description: "Squash each child to one commit before rebase" },
+          { label: "Sync + stats + squash", description: "Both" },
+        ],
+        { placeHolder: "Choose sync mode" },
+      );
+      if (!options) {
+        return;
+      }
+      const stats = options.label.includes("stats");
+      const squash = options.label.includes("squash");
+      await runWithFeedback(
+        "Syncing stack...",
+        "Stack synced.",
+        () => cli.syncStack({ stats, squash }),
+      );
+    }),
+  );
+
+  // ── PR Draft-All ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ezstack.prDraftAll", async () => {
+      const confirm = await vscode.window.showWarningMessage(
+        "Create draft PRs for every branch in the current stack that doesn't have one?",
+        { modal: true },
+        "Create Draft PRs",
+      );
+      if (confirm !== "Create Draft PRs") {
+        return;
+      }
+      await runWithFeedback(
+        "Creating draft PRs across stack...",
+        "Draft PRs created.",
+        () => cli.prDraftAll(),
+      );
+    }),
+  );
+
+  // ── Delete Cascade ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.deleteCascade",
+      async (node?: BranchNode) => {
+        let branchName: string | undefined;
+        if (node instanceof BranchNode) {
+          branchName = node.branch.name;
+        } else {
+          const stacks = await cli.listStacks(true);
+          const branches = stacks.flatMap((s) => s.branches);
+          if (branches.length === 0) {
+            vscode.window.showInformationMessage("No branches to delete.");
+            return;
+          }
+          const pick = await vscode.window.showQuickPick(
+            branches.map((b) => ({ label: b.name, detail: b.worktree_path })),
+            { placeHolder: "Branch to delete (with all descendants)" },
+          );
+          if (!pick) {
+            return;
+          }
+          branchName = pick.label;
+        }
+        const confirm = await vscode.window.showWarningMessage(
+          `Cascade-delete "${branchName}" and all of its descendants? This removes their worktrees and branches.`,
+          { modal: true },
+          "Cascade Delete",
+        );
+        if (confirm !== "Cascade Delete") {
+          return;
+        }
+        await runWithFeedback(
+          `Cascade-deleting "${branchName}"...`,
+          `Cascade-deleted "${branchName}".`,
+          () => cli.deleteBranchCascade(branchName!),
+        );
+      },
+    ),
+  );
+
+  // ── Config Export ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ezstack.configExport", async () => {
+      const uri = await vscode.window.showSaveDialog({
+        title: "Export ezstack config",
+        filters: { "JSON": ["json"] },
+        defaultUri: vscode.Uri.file("ezstack-config.json"),
+      });
+      if (!uri) {
+        return;
+      }
+      await runWithFeedback(
+        "Exporting config...",
+        `Config exported to ${uri.fsPath}.`,
+        () => cli.configExport(uri.fsPath),
+      );
+    }),
+  );
+
+  // ── Config Import ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ezstack.configImport", async () => {
+      const uris = await vscode.window.showOpenDialog({
+        title: "Import ezstack config",
+        canSelectMany: false,
+        canSelectFolders: false,
+        filters: { "JSON": ["json"] },
+      });
+      if (!uris || uris.length === 0) {
+        return;
+      }
+      const confirm = await vscode.window.showWarningMessage(
+        `Import config from ${uris[0].fsPath}? This replaces your current ezstack config.`,
+        { modal: true },
+        "Import",
+      );
+      if (confirm !== "Import") {
+        return;
+      }
+      await runWithFeedback(
+        "Importing config...",
+        "Config imported.",
+        () => cli.configImport(uris[0].fsPath),
+      );
+    }),
+  );
+
+  // ── Push with Options ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.pushWithOptions",
+      async (node?: BranchNode) => {
+        const stackPick = await vscode.window.showQuickPick(
+          [
+            { label: "Current branch", value: "current" },
+            { label: "Whole stack", value: "stack" },
+          ],
+          { placeHolder: "Push scope" },
+        );
+        if (!stackPick) {
+          return;
+        }
+        const flagPicks = await vscode.window.showQuickPick(
+          [
+            { label: "--force", description: "Force-with-lease overwrite" },
+            { label: "--verify", description: "Require pre-push hook to exist and pass" },
+            { label: "--all-remotes", description: "Push to origin AND configured fork remote" },
+          ],
+          { placeHolder: "Optional flags (Tab to multi-select)", canPickMany: true },
+        );
+        if (!flagPicks) {
+          return;
+        }
+        const flags = new Set(flagPicks.map((f) => f.label));
+        const branchOverride =
+          node instanceof BranchNode ? node.branch.name : undefined;
+        await runWithFeedback(
+          "Pushing...",
+          "Push complete.",
+          () =>
+            cli.pushWithFlags({
+              branch: stackPick.value === "current" ? branchOverride : undefined,
+              stack: stackPick.value === "stack",
+              force: flags.has("--force"),
+              verify: flags.has("--verify"),
+              allRemotes: flags.has("--all-remotes"),
+            }),
+        );
+      },
+    ),
+  );
+
+  // ── Open Agent with Options ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.openAgentWithOptions",
+      async (node?: StackNode | BranchNode) => {
+        let stackHash: string | undefined;
+        if (node instanceof StackNode) {
+          stackHash = node.stack.hash;
+        } else if (node instanceof BranchNode) {
+          stackHash = node.stackHash;
+        } else {
+          const stacks = await cli.listStacks();
+          if (stacks.length === 0) {
+            vscode.window.showInformationMessage("No stacks to open agent on.");
+            return;
+          }
+          if (stacks.length === 1) {
+            stackHash = stacks[0].hash;
+          } else {
+            const pick = await vscode.window.showQuickPick(
+              stacks.map((s) => ({
+                label: s.name || s.hash,
+                detail: s.branches.map((b) => b.name).join(" → "),
+                value: s.hash,
+              })),
+              { placeHolder: "Select stack" },
+            );
+            if (!pick) {
+              return;
+            }
+            stackHash = pick.value;
+          }
+        }
+
+        const noPushPick = await vscode.window.showQuickPick(
+          [
+            { label: "Allow push", value: false },
+            { label: "Block push (--no-push)", value: true },
+          ],
+          { placeHolder: "Push gate" },
+        );
+        if (!noPushPick) {
+          return;
+        }
+
+        const preset = await vscode.window.showInputBox({
+          prompt: "Preset name (~/.ezstack/agent-presets/<name>.md), or empty for none",
+          placeHolder: "reviewer",
+        });
+        if (preset === undefined) {
+          return; // user cancelled
+        }
+        cli.openAgentWithFlags(stackHash!, {
+          noPush: noPushPick.value,
+          preset: preset || undefined,
+        });
+      },
+    ),
+  );
 }

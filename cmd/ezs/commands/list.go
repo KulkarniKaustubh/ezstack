@@ -323,7 +323,10 @@ func Status(args []string) error {
 		}
 		// Throttle: GitHub's gh API isn't free. 2s is already aggressive
 		// for a stack with N branches × gh calls; anything lower is abuse.
+		// Surface the throttle so users notice their requested interval was
+		// overridden, rather than silently rewriting it.
 		if watchInterval < 2 {
+			ui.Warn(fmt.Sprintf("--watch interval %ds is below the 2s minimum; using 2s", watchInterval))
 			watchInterval = 2
 		}
 		return runStatusWatch(passthrough, watchInterval)

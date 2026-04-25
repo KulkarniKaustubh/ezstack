@@ -1127,17 +1127,25 @@ func spawnAgentProcess(agentCmd, workDir, prompt string, noPush bool) error {
 	return nil
 }
 
-// agentProcessEnv returns the env slice for the spawned agent, appending
-// EZS_AGENT_NO_PUSH=1 when noPush is set and passing the caller's env through
-// otherwise. Extracted for testability: nothing else about spawnAgentProcess
-// can be exercised without actually running an external command.
+// agentProcessEnv returns the env slice for the spawned agent. When noPush
+// is true, EZS_AGENT_NO_PUSH=1 is appended (and any pre-existing copy is
+// dropped to keep a single authoritative entry). When noPush is false, any
+// EZS_AGENT_NO_PUSH variable inherited from the parent is filtered out so a
+// nested agent session can't accidentally inherit a gate from an outer one
+// the user didn't ask to propagate. Extracted for testability: nothing else
+// about spawnAgentProcess can be exercised without running a real command.
 func agentProcessEnv(parentEnv []string, noPush bool) []string {
-	if !noPush {
-		return nil // exec.Cmd inherits parent's env when Env is nil
-	}
+	prefix := agentNoPushEnv + "="
 	env := make([]string, 0, len(parentEnv)+1)
-	env = append(env, parentEnv...)
-	env = append(env, agentNoPushEnv+"=1")
+	for _, kv := range parentEnv {
+		if strings.HasPrefix(kv, prefix) {
+			continue // either we'll re-add it or we want it gone
+		}
+		env = append(env, kv)
+	}
+	if noPush {
+		env = append(env, prefix+"1")
+	}
 	return env
 }
 

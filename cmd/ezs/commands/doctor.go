@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
@@ -94,21 +95,21 @@ func Info(version string) {
 	fmt.Printf("%sezstack diagnostic info%s\n\n", ui.Bold, ui.Reset)
 	fmt.Printf("ezstack version: %s\n", version)
 
-	if out, err := exec.Command("go", "version").Output(); err == nil {
-		fmt.Printf("go: %s", string(out))
-	}
-	if out, err := exec.Command("git", "--version").Output(); err == nil {
-		fmt.Printf("git: %s", string(out))
-	}
-	if out, err := exec.Command("gh", "--version").Output(); err == nil {
-		fmt.Printf("gh: %s", string(out))
-	} else {
-		fmt.Println("gh: not installed")
-	}
-	if out, err := exec.Command("fzf", "--version").Output(); err == nil {
-		fmt.Printf("fzf: %s", string(out))
-	} else {
-		fmt.Println("fzf: not installed")
+	for _, tool := range []struct{ name, flag string }{
+		{"go", "version"},
+		{"git", "--version"},
+		{"gh", "--version"},
+		{"fzf", "--version"},
+	} {
+		out, err := exec.Command(tool.name, tool.flag).Output()
+		if err != nil {
+			fmt.Printf("%s: not installed\n", tool.name)
+			continue
+		}
+		fmt.Printf("%s: %s", tool.name, string(out))
+		if !strings.HasSuffix(string(out), "\n") {
+			fmt.Println()
+		}
 	}
 
 	cfgDir, _ := config.ConfigDir()

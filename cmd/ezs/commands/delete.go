@@ -196,12 +196,20 @@ func Delete(args []string) error {
 				ui.Warn("Cancelled")
 				return nil
 			}
+			var failed []string
 			for _, d := range descendants {
 				if err := mgr.DeleteBranch(d, *force); err != nil {
 					ui.Warn(fmt.Sprintf("Failed to delete '%s': %v", d, err))
+					failed = append(failed, d)
 				} else {
 					ui.Success(fmt.Sprintf("Deleted '%s'", d))
 				}
+			}
+			// If any descendant survived, do NOT delete the root — the user
+			// asked for a cascade and a partial cascade is worse than a
+			// no-op. Surface the failures and let them retry.
+			if len(failed) > 0 {
+				return fmt.Errorf("cascade aborted: %d descendant(s) could not be deleted: %v", len(failed), failed)
 			}
 		}
 	}
@@ -242,10 +250,12 @@ func collectDescendants(mgr *stack.Manager, branchName string) []string {
 }
 
 // dirtyDescendants returns the subset of the given branch names whose
-// worktrees have uncommitted changes. Branches without a worktree or whose
-// dirty check errors out are reported as clean — we can't know they're
-// dirty, and the regular delete path will still refuse to remove a branch
-// with attached work.
+// worktrees have uncommitted changes OR whose dirty check errored out.
+// Conflating "errored" with "clean" used to silently let cascades blow
+// past worktrees we could not inspect (corrupt .git, perm-denied) — now
+// we treat the error as dirty so the user gets a clear refusal and can
+// investigate. Branches without a recorded worktree path are still
+// skipped because there's nothing to inspect.
 func dirtyDescendants(mgr *stack.Manager, names []string) []string {
 	var dirty []string
 	for _, name := range names {
@@ -255,7 +265,13 @@ func dirtyDescendants(mgr *stack.Manager, names []string) []string {
 		}
 		bg := git.New(b.WorktreePath)
 		hasChanges, err := bg.HasChanges()
-		if err == nil && hasChanges {
+		if err != nil {
+			// Cannot determine state — treat as dirty so cascade refuses.
+			ui.Warn(fmt.Sprintf("Could not check worktree state for '%s': %v (treating as dirty)", name, err))
+			dirty = append(dirty, name)
+			continue
+		}
+		if hasChanges {
 			dirty = append(dirty, name)
 		}
 	}

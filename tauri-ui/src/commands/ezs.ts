@@ -63,24 +63,43 @@ export async function createBranch(
 export async function syncBranch(
   repoPath: string,
   scope: "current" | "stack" | "all",
+  opts?: { stats?: boolean; squash?: boolean },
 ): Promise<CommandResult> {
-  return invoke<CommandResult>("sync_branch", { repoPath, scope });
+  return invoke<CommandResult>("sync_branch", {
+    repoPath,
+    scope,
+    stats: opts?.stats ?? false,
+    squash: opts?.squash ?? false,
+  });
 }
 
 export async function pushBranch(
   repoPath: string,
   stack: boolean = false,
   force: boolean = false,
+  opts?: { verify?: boolean; allRemotes?: boolean },
 ): Promise<CommandResult> {
-  return invoke<CommandResult>("push_branch", { repoPath, stack, force });
+  return invoke<CommandResult>("push_branch", {
+    repoPath,
+    stack,
+    force,
+    verify: opts?.verify ?? false,
+    allRemotes: opts?.allRemotes ?? false,
+  });
 }
 
 export async function deleteBranch(
   repoPath: string,
   branch: string,
   force: boolean = false,
+  opts?: { cascade?: boolean },
 ): Promise<CommandResult> {
-  return invoke<CommandResult>("delete_branch", { repoPath, branch, force });
+  return invoke<CommandResult>("delete_branch", {
+    repoPath,
+    branch,
+    force,
+    cascade: opts?.cascade ?? false,
+  });
 }
 
 export async function reparentBranch(
@@ -151,8 +170,15 @@ export async function openAgent(
   repoPath: string,
   stackHash?: string,
   branch?: string,
+  opts?: { noPush?: boolean; preset?: string },
 ): Promise<void> {
-  return invoke<void>("open_agent", { repoPath, stackHash, branch });
+  return invoke<void>("open_agent", {
+    repoPath,
+    stackHash,
+    branch,
+    noPush: opts?.noPush ?? false,
+    preset: opts?.preset ?? null,
+  });
 }
 
 export async function openAgentFeature(
@@ -189,6 +215,43 @@ export async function editAgentPrompts(
   repo: boolean = false,
 ): Promise<void> {
   return invoke<void>("edit_agent_prompts", { repoPath, which, repo });
+}
+
+// ─── CLI bundle additions (doctor, draft-all, search, config ex/import) ──────
+
+/** Run `ezs doctor` and return the diagnostic report. */
+export async function doctor(repoPath: string): Promise<CommandResult> {
+  return invoke<CommandResult>("doctor", { repoPath });
+}
+
+/** Create draft PRs for every branch in the current stack without one. */
+export async function prDraftAll(repoPath: string): Promise<CommandResult> {
+  return invoke<CommandResult>("pr_draft_all", { repoPath });
+}
+
+/** Run `ezs goto --search <query>`. Returns the CLI result; the frontend
+ *  parses the cd-line on success or shows the error on a no-match. */
+export async function gotoSearch(
+  repoPath: string,
+  query: string,
+): Promise<CommandResult> {
+  return invoke<CommandResult>("goto_search", { repoPath, query });
+}
+
+/** Export the global ezstack config (token redacted) to the given path. */
+export async function configExport(
+  repoPath: string,
+  filePath: string,
+): Promise<CommandResult> {
+  return invoke<CommandResult>("config_export", { repoPath, filePath });
+}
+
+/** Import a previously-exported config, replacing the current one. */
+export async function configImport(
+  repoPath: string,
+  filePath: string,
+): Promise<CommandResult> {
+  return invoke<CommandResult>("config_import", { repoPath, filePath });
 }
 
 // ─── Remote connection commands ──────────────────────────────────────────

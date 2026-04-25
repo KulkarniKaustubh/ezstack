@@ -34,6 +34,12 @@ pub fn run() {
             operations::get_agent_prompt_layer,
             operations::reset_agent_prompts,
             operations::edit_agent_prompts,
+            // CLI bundle additions
+            operations::doctor,
+            operations::pr_draft_all,
+            operations::goto_search,
+            operations::config_export,
+            operations::config_import,
             // PR operations
             pr::pr_create,
             pr::pr_update,

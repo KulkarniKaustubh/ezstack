@@ -130,6 +130,29 @@ func TestInfo_PrintsDiagnosticReport(t *testing.T) {
 	}
 }
 
+// TestInfo_FallsBackToNotInstalledOnToolError asserts every toolchain entry
+// (go, git, gh, fzf) prints either its `--version` line or "not installed".
+// The previous code silently dropped go/git failures, leaving a surprising
+// gap in bug reports. This test enforces the symmetric fallback.
+func TestInfo_FallsBackToNotInstalledOnToolError(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("EZSTACK_HOME", tmp)
+	// Empty PATH means none of the tools resolve. Every tool entry must
+	// then read "<name>: not installed".
+	t.Setenv("PATH", "")
+
+	stdout, _ := captureStdAndErr(t, func() {
+		Info("t")
+	})
+
+	for _, tool := range []string{"go", "git", "gh", "fzf"} {
+		want := tool + ": not installed"
+		if !strings.Contains(stdout, want) {
+			t.Errorf("Info missing fallback line %q with empty PATH:\n%s", want, stdout)
+		}
+	}
+}
+
 // TestInfo_ReportsConfigPresent writes a minimal config and asserts Info
 // reads it back instead of reporting missing.
 func TestInfo_ReportsConfigPresent(t *testing.T) {

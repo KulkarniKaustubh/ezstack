@@ -238,6 +238,49 @@
         "command": "ezstack.compareWithPreviousPR",
         "title": "Compare File with Previous PR",
         "category": "ezstack"
+      },
+      {
+        "command": "ezstack.doctor",
+        "title": "Doctor (Health Check)",
+        "category": "ezstack",
+        "icon": "$(stethoscope)"
+      },
+      {
+        "command": "ezstack.syncStackOptions",
+        "title": "Sync Stack with Options...",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.prDraftAll",
+        "title": "Create Draft PRs for Stack",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.deleteCascade",
+        "title": "Delete Branch and Descendants (Cascade)",
+        "category": "ezstack",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "ezstack.configExport",
+        "title": "Export Config...",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.configImport",
+        "title": "Import Config...",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.pushWithOptions",
+        "title": "Push with Options...",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.openAgentWithOptions",
+        "title": "Open Agent with Options...",
+        "category": "ezstack",
+        "icon": "$(hubot)"
       }
     ],
     "keybindings": [

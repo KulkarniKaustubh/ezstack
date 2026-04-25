@@ -1053,7 +1053,10 @@ func HasExamplesFlag(cmdName string, args []string) bool {
 			skipNext = false
 			continue
 		}
-		if a == "--examples" {
+		// Both bare `--examples` and the `--examples=anything` form trigger
+		// the help path. The =-form was previously slipping through to the
+		// command's own pflag parser as an unknown flag.
+		if a == "--examples" || strings.HasPrefix(a, "--examples=") {
 			PrintExamples(cmdName)
 			return true
 		}

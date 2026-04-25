@@ -50,9 +50,17 @@ pub fn sync_branch(
     state: State<'_, ConnectionState>,
     repo_path: String,
     scope: SyncScope,
+    stats: Option<bool>,
+    squash: Option<bool>,
 ) -> Result<CommandResult, String> {
     let conn = locked_conn(&state)?;
-    let args = vec!["-y", "sync", scope.flag()];
+    let mut args: Vec<&str> = vec!["-y", "sync", scope.flag()];
+    if stats.unwrap_or(false) {
+        args.push("--stats");
+    }
+    if squash.unwrap_or(false) {
+        args.push("--squash");
+    }
     run_ezs_auto(conn.as_ref(), &repo_path, &args)
 }
 
@@ -62,14 +70,22 @@ pub fn push_branch(
     repo_path: String,
     stack: bool,
     force: bool,
+    verify: Option<bool>,
+    all_remotes: Option<bool>,
 ) -> Result<CommandResult, String> {
     let conn = locked_conn(&state)?;
-    let mut args = vec!["-y", "push"];
+    let mut args: Vec<&str> = vec!["-y", "push"];
     if stack {
         args.push("-s");
     }
     if force {
         args.push("-f");
+    }
+    if verify.unwrap_or(false) {
+        args.push("--verify");
+    }
+    if all_remotes.unwrap_or(false) {
+        args.push("--all-remotes");
     }
     run_ezs_auto(conn.as_ref(), &repo_path, &args)
 }
@@ -80,11 +96,15 @@ pub fn delete_branch(
     repo_path: String,
     branch: String,
     force: bool,
+    cascade: Option<bool>,
 ) -> Result<CommandResult, String> {
     let conn = locked_conn(&state)?;
-    let mut args = vec!["-y", "delete"];
+    let mut args: Vec<&str> = vec!["-y", "delete"];
     if force {
         args.push("-f");
+    }
+    if cascade.unwrap_or(false) {
+        args.push("--cascade");
     }
     args.push(&branch);
     run_ezs_auto(conn.as_ref(), &repo_path, &args)
@@ -118,6 +138,8 @@ pub fn open_agent(
     repo_path: String,
     stack_hash: Option<String>,
     branch: Option<String>,
+    no_push: Option<bool>,
+    preset: Option<String>,
 ) -> Result<(), String> {
     let conn = locked_conn(&state)?;
     if conn.is_some() {
@@ -130,6 +152,15 @@ pub fn open_agent(
     } else if let Some(ref s) = stack_hash {
         args.push("-s".to_string());
         args.push(s.clone());
+    }
+    if no_push.unwrap_or(false) {
+        args.push("--no-push".to_string());
+    }
+    if let Some(p) = preset {
+        if !p.is_empty() {
+            args.push("--preset".to_string());
+            args.push(p);
+        }
     }
     crate::runner::open_in_terminal(&repo_path, &args)
 }
@@ -339,6 +370,66 @@ fn strip_ansi(s: &str) -> String {
         out.push(c);
     }
     out
+}
+
+/// Run `ezs doctor` and return the combined diagnostic report. doctor
+/// always exits with stdout/stderr we want to surface; non-zero exit just
+/// signals problems were found, which is information the caller wants.
+#[tauri::command]
+pub fn doctor(
+    state: State<'_, ConnectionState>,
+    repo_path: String,
+) -> Result<CommandResult, String> {
+    let conn = locked_conn(&state)?;
+    run_ezs_auto(conn.as_ref(), &repo_path, &["doctor"])
+}
+
+/// Run `ezs pr --draft-all` to create draft PRs for every branch in the
+/// current stack without one. Confirmation is handled by the caller.
+#[tauri::command]
+pub fn pr_draft_all(
+    state: State<'_, ConnectionState>,
+    repo_path: String,
+) -> Result<CommandResult, String> {
+    let conn = locked_conn(&state)?;
+    run_ezs_auto(conn.as_ref(), &repo_path, &["-y", "pr", "--draft-all"])
+}
+
+/// Run `ezs goto --search <query>`. Note that goto's success is "shell-eval'd
+/// `cd` line printed to stdout"; we surface the result as-is so the frontend
+/// can extract the path or fall back to listing matches.
+#[tauri::command]
+pub fn goto_search(
+    state: State<'_, ConnectionState>,
+    repo_path: String,
+    query: String,
+) -> Result<CommandResult, String> {
+    let conn = locked_conn(&state)?;
+    run_ezs_auto(conn.as_ref(), &repo_path, &["goto", "--search", &query])
+}
+
+/// Export the global ezstack config to a user-chosen path. The frontend
+/// supplies the path via Tauri's dialog plugin.
+#[tauri::command]
+pub fn config_export(
+    state: State<'_, ConnectionState>,
+    repo_path: String,
+    file_path: String,
+) -> Result<CommandResult, String> {
+    let conn = locked_conn(&state)?;
+    run_ezs_auto(conn.as_ref(), &repo_path, &["config", "export", &file_path])
+}
+
+/// Import a previously-exported config file, replacing the current global
+/// config. Confirmation is handled by the caller; -y suppresses the CLI's.
+#[tauri::command]
+pub fn config_import(
+    state: State<'_, ConnectionState>,
+    repo_path: String,
+    file_path: String,
+) -> Result<CommandResult, String> {
+    let conn = locked_conn(&state)?;
+    run_ezs_auto(conn.as_ref(), &repo_path, &["-y", "config", "import", &file_path])
 }
 
 #[cfg(test)]

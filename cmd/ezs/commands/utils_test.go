@@ -73,6 +73,27 @@ func TestHasExamplesFlag_MixedFlags(t *testing.T) {
 	}
 }
 
+func TestHasExamplesFlag_EqualsForm(t *testing.T) {
+	// `--examples=foo` should still trigger help. The previous detector
+	// only matched the bare token and let `--examples=` fall through to
+	// the per-command flag parser as an unknown flag.
+	var got bool
+	silenceStdout(t, func() {
+		got = HasExamplesFlag("commit", []string{"--examples=help"})
+	})
+	if !got {
+		t.Error("--examples=help should trigger the examples handler")
+	}
+}
+
+func TestHasExamplesFlag_EqualsFormConsumedAsValue(t *testing.T) {
+	// `-m "--examples=foo"` is still a commit-message value, not a help
+	// trigger. The flag-consumption walker must protect this.
+	if HasExamplesFlag("commit", []string{"-m", "--examples=hi"}) {
+		t.Error("--examples=hi consumed as -m value must not trigger help")
+	}
+}
+
 // setupBranchModeRepo creates a git repo with several branches sharing the main
 // worktree (pure branch mode — no secondary worktrees).
 func setupBranchModeRepo(t *testing.T, branches ...string) string {
