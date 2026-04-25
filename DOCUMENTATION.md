@@ -12,7 +12,7 @@
 
 [Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows) · [Editor & Desktop Integrations](#editor--desktop-integrations)
 
-**Commands:** [agent](#ezs-agent) · [new](#ezs-new) · [status](#ezs-status) · [list](#ezs-list) · [sync](#ezs-sync) · [goto](#ezs-goto) · [up/down](#ezs-up--ezs-down) · [pr](#ezs-pr) · [commit/amend](#ezs-commit--ezs-amend) · [push](#ezs-push) · [diff](#ezs-diff) · [delete](#ezs-delete) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [unstack](#ezs-unstack) · [config](#ezs-config) · [doctor](#ezs-doctor)
+**Commands:** [agent](#ezs-agent) · [commit/amend](#ezs-commit--ezs-amend) · [config](#ezs-config) · [delete](#ezs-delete) · [diff](#ezs-diff) · [doctor](#ezs-doctor) · [down/up](#ezs-down--ezs-up) · [goto](#ezs-goto) · [list](#ezs-list) · [log](#ezs-log) · [new](#ezs-new) · [pr](#ezs-pr) · [push](#ezs-push) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [status](#ezs-status) · [sync](#ezs-sync) · [unstack](#ezs-unstack)
 
 **Extras:** [Hooks](#hooks) · [Discoverability](#discoverability-info---examples-did-you-mean)
 
@@ -709,6 +709,24 @@ Shows the diff between a branch and its parent in the stack. Any arguments after
 
 ---
 
+### `ezs doctor`
+
+Check that ezstack's runtime dependencies and on-disk config are healthy.
+
+```
+ezs doctor
+```
+
+`doctor` does not require being inside a git repository — it's designed to be the first thing you run on a fresh machine. It reports:
+
+- Whether `git`, `gh`, and `fzf` are on `PATH` (all three are required; missing ones are flagged as errors).
+- Whether the config directory can be resolved and whether `config.json` loads cleanly.
+- For every configured repo: whether `worktree_base_dir` is set, whether that directory exists, and whether it passes the containment validation used by `ezs new`.
+
+Exit code is `0` when no problems are detected, non-zero with a one-line summary otherwise. Pair with `ezs --info` when filing bug reports.
+
+---
+
 ### `ezs down` / `ezs up`
 
 Navigate down (toward children/leaves) or up (toward parent/base) in the stack.
@@ -1013,24 +1031,6 @@ ezs unstack [branch] [options]
 Options:
     -b, --branch <name>     Branch to untrack
 ```
-
----
-
-### `ezs doctor`
-
-Check that ezstack's runtime dependencies and on-disk config are healthy.
-
-```
-ezs doctor
-```
-
-`doctor` does not require being inside a git repository — it's designed to be the first thing you run on a fresh machine. It reports:
-
-- Whether `git`, `gh`, and `fzf` are on `PATH` (all three are required; missing ones are flagged as errors).
-- Whether the config directory can be resolved and whether `config.json` loads cleanly.
-- For every configured repo: whether `worktree_base_dir` is set, whether that directory exists, and whether it passes the containment validation used by `ezs new`.
-
-Exit code is `0` when no problems are detected, non-zero with a one-line summary otherwise. Pair with `ezs --info` when filing bug reports.
 
 ---
 

@@ -111,8 +111,8 @@ ezs delete feature-branch
 | `commit` | `ci` | Commit and auto-sync child branches |
 | `config` | `cfg` | Configure ezstack (supports `export`/`import`) |
 | `delete` | `del`, `rm` | Delete a branch and its worktree (`--cascade` for descendants) |
-| `doctor` | | Check git/gh/fzf and config health |
 | `diff` | | Show diff against parent branch |
+| `doctor` | | Check git/gh/fzf and config health |
 | `down` | | Navigate down the stack (toward children) |
 | `goto` | `go` | Navigate to a branch worktree |
 | `list` | `ls` | List all stacks and branches |

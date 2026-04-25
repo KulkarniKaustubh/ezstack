@@ -614,6 +614,7 @@
         <li><a href="#ezs-config" class="toc-h3">ezs config</a></li>
         <li><a href="#ezs-delete" class="toc-h3">ezs delete</a></li>
         <li><a href="#ezs-diff" class="toc-h3">ezs diff</a></li>
+        <li><a href="#ezs-doctor" class="toc-h3">ezs doctor</a></li>
         <li><a href="#ezs-down--ezs-up" class="toc-h3">ezs down / ezs up</a></li>
         <li><a href="#ezs-goto" class="toc-h3">ezs goto</a></li>
         <li><a href="#ezs-list" class="toc-h3">ezs list</a></li>
@@ -626,7 +627,6 @@
         <li><a href="#ezs-status" class="toc-h3">ezs status</a></li>
         <li><a href="#ezs-sync" class="toc-h3">ezs sync</a></li>
         <li><a href="#ezs-unstack" class="toc-h3">ezs unstack</a></li>
-        <li><a href="#ezs-doctor" class="toc-h3">ezs doctor</a></li>
         <li><a href="#hooks">Hooks</a></li>
         <li><a href="#installed-hook-names" class="toc-h3">Installed hook names</a></li>
         <li><a href="#install-a-hook" class="toc-h3">Install a hook</a></li>
@@ -1285,6 +1285,17 @@ Options:
     <span class="c-flag">--json</span>               <span class="c-dim">Output file-level diff stats as JSON</span>
 </code></pre>
       <p>Shows the diff between a branch and its parent in the stack. Any arguments after <code>--</code> are passed directly to <code>git diff</code>. Use <code>--branch</code> to diff any branch without switching to it. Use <code>--json</code> for machine-readable output with per-file additions/deletions.</p>
+      <h3 id="ezs-doctor"><code>ezs doctor</code></h3>
+      <p>Check that ezstack's runtime dependencies and on-disk config are healthy.</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">doctor</span>
+</code></pre>
+      <p><code>doctor</code> does not require being inside a git repository — it's designed to be the first thing you run on a fresh machine. It reports:</p>
+      <ul>
+      <li>Whether <code>git</code>, <code>gh</code>, and <code>fzf</code> are on <code>PATH</code> (all three are required; missing ones are flagged as errors).</li>
+      <li>Whether the config directory can be resolved and whether <code>config.json</code> loads cleanly.</li>
+      <li>For every configured repo: whether <code>worktree_base_dir</code> is set, whether that directory exists, and whether it passes the containment validation used by <code>ezs new</code>.</li>
+      </ul>
+      <p>Exit code is <code>0</code> when no problems are detected, non-zero with a one-line summary otherwise. Pair with <code>ezs --info</code> when filing bug reports.</p>
       <h3 id="ezs-down--ezs-up"><code>ezs down</code> / <code>ezs up</code></h3>
       <p>Navigate down (toward children/leaves) or up (toward parent/base) in the stack.</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">down</span> <span class="c-str">[n]</span>    <span class="c-dim">Navigate n levels toward children (default: 1)</span>
@@ -1481,17 +1492,6 @@ Options:
 Options:
     <span class="c-flag">-b,</span> <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>     <span class="c-dim">Branch to untrack</span>
 </code></pre>
-      <h3 id="ezs-doctor"><code>ezs doctor</code></h3>
-      <p>Check that ezstack's runtime dependencies and on-disk config are healthy.</p>
-      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">doctor</span>
-</code></pre>
-      <p><code>doctor</code> does not require being inside a git repository — it's designed to be the first thing you run on a fresh machine. It reports:</p>
-      <ul>
-      <li>Whether <code>git</code>, <code>gh</code>, and <code>fzf</code> are on <code>PATH</code> (all three are required; missing ones are flagged as errors).</li>
-      <li>Whether the config directory can be resolved and whether <code>config.json</code> loads cleanly.</li>
-      <li>For every configured repo: whether <code>worktree_base_dir</code> is set, whether that directory exists, and whether it passes the containment validation used by <code>ezs new</code>.</li>
-      </ul>
-      <p>Exit code is <code>0</code> when no problems are detected, non-zero with a one-line summary otherwise. Pair with <code>ezs --info</code> when filing bug reports.</p>
       </section>
 
       <section class="docs-section" id="hooks" data-heading="Hooks">
