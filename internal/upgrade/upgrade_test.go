@@ -35,6 +35,12 @@ func TestCompareVersions(t *testing.T) {
 		{"4.6.3", "v4.6.4", -1},
 		{"", "0.0.1", -1},
 		{"0.0.0", "", 0},
+		// Build metadata (semver §10) is NOT ordering-relevant.
+		{"1.2.3+build.5", "1.2.3", 0},
+		{"1.2.3", "1.2.3+build.5", 0},
+		{"1.2.3+a", "1.2.3+b", 0},
+		{"1.2.3-rc.1+build.5", "1.2.3-rc.1", 0},
+		{"1.2.3-rc.1+x", "1.2.3", -1}, // pre-release still less than GA
 	}
 	for _, c := range cases {
 		got := CompareVersions(c.a, c.b)
@@ -229,6 +235,50 @@ func TestExtractBinariesAtCapBoundary(t *testing.T) {
 	}
 	if string(got) != body {
 		t.Errorf("body length got=%d want=%d", len(got), len(body))
+	}
+}
+
+// TestSnapshotForRollbackHardLink verifies that the backup remains
+// readable after the source is overwritten via os.Rename — the property
+// the rollback path relies on.
+func TestSnapshotForRollbackHardLink(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "live")
+	backup := filepath.Join(dir, ".live.bak")
+	if err := os.WriteFile(src, []byte("original"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := snapshotForRollback(src, backup); err != nil {
+		t.Fatalf("snapshotForRollback: %v", err)
+	}
+
+	// Overwrite src via rename; backup must still hold the original bytes.
+	newFile := filepath.Join(dir, "new")
+	if err := os.WriteFile(newFile, []byte("replaced"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(newFile, src); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+
+	got, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if string(got) != "original" {
+		t.Errorf("backup got %q, want %q", got, "original")
+	}
+
+	// Rollback: rename the backup back over src.
+	if err := os.Rename(backup, src); err != nil {
+		t.Fatalf("rollback rename: %v", err)
+	}
+	got, err = os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "original" {
+		t.Errorf("post-rollback src got %q, want %q", got, "original")
 	}
 }
 

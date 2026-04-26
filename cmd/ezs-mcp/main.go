@@ -39,7 +39,11 @@ func main() {
 		fmt.Println(version.Version)
 		return
 	}
-	if *doUpgrade || *upgradeCheck {
+	// --upgrade-tag / --upgrade-force are meaningless without --upgrade or
+	// --upgrade-check, so treat their presence as implying --upgrade rather
+	// than silently dropping them and booting the MCP server.
+	upgradeRequested := *doUpgrade || *upgradeCheck || *upgradeTag != "" || *upgradeForce
+	if upgradeRequested {
 		if err := runUpgrade(*upgradeCheck, *upgradeForce, *upgradeTag); err != nil {
 			fmt.Fprintf(os.Stderr, "ezs-mcp: %v\n", err)
 			os.Exit(1)

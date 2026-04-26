@@ -217,8 +217,14 @@ func CompareVersions(a, b string) int {
 func splitSemver(v string) ([3]int, string) {
 	var core [3]int
 	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	// Per semver §10, build metadata (everything after `+`) is NOT
+	// ordering-relevant — strip it before extracting the pre-release
+	// suffix so that `1.2.3+build.5` compares equal to `1.2.3`.
+	if i := strings.Index(v, "+"); i >= 0 {
+		v = v[:i]
+	}
 	var pre string
-	if i := strings.IndexAny(v, "-+"); i >= 0 {
+	if i := strings.Index(v, "-"); i >= 0 {
 		pre = v[i+1:]
 		v = v[:i]
 	}
@@ -306,9 +312,13 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return res, nil
 	}
 
-	if cmp > 0 {
+	switch {
+	case cmp > 0:
 		logf("downgrading from %s to %s", res.From, res.To)
-	} else {
+	case cmp == 0:
+		// Force-reinstall at the same version — don't claim "upgrading".
+		logf("reinstalling %s", res.From)
+	default:
 		logf("upgrading from %s to %s", res.From, res.To)
 	}
 
@@ -385,19 +395,128 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("extract: %w", err)
 	}
 
+	// Pre-flight: every wanted binary must be present in the tarball.
+	// Validate before touching the destination directory so we don't end
+	// up rolling back a partial swap because of a missing-entry error.
 	for _, name := range wantBins {
-		src, ok := staged[name]
-		if !ok {
+		if _, ok := staged[name]; !ok {
 			return nil, fmt.Errorf("tarball is missing %s", name)
 		}
-		dst := filepath.Join(binDir, name)
-		if err := atomicReplace(src, dst); err != nil {
-			return nil, fmt.Errorf("replace %s: %w", dst, err)
-		}
-		res.Updated = append(res.Updated, dst)
-		logf("replaced %s", dst)
 	}
+
+	// Multi-binary swaps need to be all-or-nothing: replacing `ezs` and
+	// then failing to replace `ezs-mcp` would leave the user with a
+	// version-skewed pair (the MCP protocol surface is sensitive to that).
+	// Strategy: hard-link each existing target to a backup name in the same
+	// directory, do all renames, restore from backups on any failure.
+	// Hard links are guaranteed same-fs since binDir == backup dir.
+	type swap struct{ src, dst, backup string }
+	plans := make([]swap, 0, len(wantBins))
+	for _, name := range wantBins {
+		dst := filepath.Join(binDir, name)
+		plans = append(plans, swap{
+			src:    staged[name],
+			dst:    dst,
+			backup: filepath.Join(binDir, "."+name+".ezs-upgrade-backup"),
+		})
+	}
+
+	// Phase 1: snapshot existing targets via hard link (or copy fallback
+	// for filesystems without hard-link support). Track what we created so
+	// we can clean up on failure.
+	type backup struct {
+		path    string
+		existed bool
+	}
+	var backups []backup
+	cleanupBackups := func() {
+		for _, b := range backups {
+			os.Remove(b.path)
+		}
+	}
+	for _, p := range plans {
+		if _, err := os.Stat(p.dst); err != nil {
+			// Target doesn't exist (e.g. a fresh ezs-mcp install) —
+			// nothing to back up. A failed swap of a non-existent
+			// target rolls back by simply unlinking the new file.
+			backups = append(backups, backup{path: p.backup, existed: false})
+			continue
+		}
+		// Remove any stale backup left behind by a previous interrupted
+		// upgrade so the link/copy below has a clean target.
+		os.Remove(p.backup)
+		if err := snapshotForRollback(p.dst, p.backup); err != nil {
+			cleanupBackups()
+			return nil, fmt.Errorf("snapshot %s: %w", p.dst, err)
+		}
+		backups = append(backups, backup{path: p.backup, existed: true})
+	}
+
+	// Phase 2: rename new binaries into place. On any failure, restore
+	// from backups and report the original error.
+	var swapped []swap
+	for i, p := range plans {
+		if err := atomicReplace(p.src, p.dst); err != nil {
+			// Roll back: restore each completed swap from its backup
+			// (or unlink the new file if there was no original).
+			for j, done := range swapped {
+				if backups[j].existed {
+					if rerr := os.Rename(done.backup, done.dst); rerr != nil {
+						logf("WARNING: rollback failed for %s: %v", done.dst, rerr)
+					}
+				} else {
+					os.Remove(done.dst)
+				}
+			}
+			// Also clean up the as-yet-unused backup for the failing
+			// swap (and any later plans that never ran).
+			for k := i; k < len(backups); k++ {
+				os.Remove(backups[k].path)
+			}
+			res.Updated = nil
+			return nil, fmt.Errorf("replace %s: %w", p.dst, err)
+		}
+		swapped = append(swapped, p)
+		res.Updated = append(res.Updated, p.dst)
+		logf("replaced %s", p.dst)
+	}
+
+	// Phase 3: success — drop backups.
+	cleanupBackups()
 	return res, nil
+}
+
+// snapshotForRollback creates a same-inode reference to src at backup so
+// that, after src is overwritten via os.Rename, the previous content is
+// still recoverable by renaming backup back over src. Falls back to a
+// byte copy when the filesystem rejects hard links.
+func snapshotForRollback(src, backup string) error {
+	if err := os.Link(src, backup); err == nil {
+		return nil
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return err
+	}
+	out, err := os.OpenFile(backup, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, info.Mode().Perm())
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		out.Close()
+		os.Remove(backup)
+		return err
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(backup)
+		return err
+	}
+	return nil
 }
 
 // ManagedInstallError signals that the binary is owned by a package
@@ -605,6 +724,13 @@ func extractBinaries(archivePath, dstDir string, want []string) (map[string]stri
 		if n > maxBinaryBytes {
 			dst.Close()
 			return nil, fmt.Errorf("entry %q exceeds %s cap", base, humanSize(maxBinaryBytes))
+		}
+		// Sync before close so a power loss between the eventual rename
+		// and the kernel flushing data blocks can't leave a zero-length
+		// binary in place. Matches what `download` does for the tarball.
+		if err := dst.Sync(); err != nil {
+			dst.Close()
+			return nil, err
 		}
 		if err := dst.Close(); err != nil {
 			return nil, err
