@@ -30,22 +30,27 @@ var knownCommands = map[string]bool{
 	"stack":   true,
 	"unstack": true,
 	"commit":  true, "ci": true,
-	"amend":  true,
-	"diff":   true,
-	"log":    true,
-	"push":   true,
-	"up":     true,
-	"down":   true,
-	"agent":  true,
-	"menu":   true,
-	"doctor": true,
+	"amend":   true,
+	"diff":    true,
+	"log":     true,
+	"push":    true,
+	"up":      true,
+	"down":    true,
+	"agent":   true,
+	"menu":    true,
+	"doctor":  true,
+	"upgrade": true, "update": true,
 }
 
 // commandNeedsRepoCheck returns true if the command needs the caller to be in
-// a git repository. doctor is intentionally excluded so users can run it on a
-// fresh machine before cloning anything.
+// a git repository. doctor and upgrade are intentionally excluded so users
+// can run them on a fresh machine before cloning anything.
 func commandNeedsRepoCheck(cmd string) bool {
-	return cmd != "doctor"
+	switch cmd {
+	case "doctor", "upgrade", "update":
+		return false
+	}
+	return true
 }
 
 // knownCommandNames returns the keys of knownCommands as a slice — needed by
@@ -67,7 +72,7 @@ func commandNeedsRepoConfig(cmd string) bool {
 		return false
 	}
 	switch cmd {
-	case "config", "cfg", "doctor":
+	case "config", "cfg", "doctor", "upgrade", "update":
 		return false
 	}
 	return true
@@ -244,6 +249,8 @@ func main() {
 		err = runInteractiveMenu()
 	case "doctor":
 		err = commands.Doctor(args)
+	case "upgrade", "update":
+		err = commands.Upgrade(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		if suggestion := ui.SuggestCommand(cmd, knownCommandNames()); suggestion != "" {
@@ -347,6 +354,7 @@ func printUsage() {
     sync          Sync stack with remote (accepts stack hash prefix, min 3 chars)
     unstack       Remove a branch from tracking (keeps git branch)
     up            Navigate up the stack (toward parent)
+    upgrade, update  Self-update ezs and ezs-mcp from the latest GitHub release
 
 %sOPTIONS%s
     -h, --help       Show this help message

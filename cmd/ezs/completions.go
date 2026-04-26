@@ -15,7 +15,7 @@ import (
 var topLevelCommands = []string{
 	"agent", "amend", "commit", "config", "delete", "diff", "doctor", "down",
 	"goto", "list", "log", "menu", "new", "pr", "push",
-	"reparent", "stack", "status", "sync", "unstack", "up",
+	"reparent", "stack", "status", "sync", "unstack", "up", "upgrade",
 }
 
 var prSubcommands = []string{"create", "draft", "merge", "stack", "update"}
@@ -74,6 +74,7 @@ var commandFlags = map[string][]string{
 	"sync":     {"--stats", "--squash", "--stack", "-s", "--all", "-a", "--current", "-c", "--branch", "-b", "--parent", "-p", "--children", "-C", "--merge", "--rebase", "--no-delete-local", "--dry-run", "--continue", "--no-autostash", "--json", "--help", "-h"},
 	"unstack":  {"--branch", "-b", "--help", "-h"},
 	"up":       {"--help", "-h"},
+	"upgrade":  {"--check", "--version", "--force", "--no-mcp", "--yes", "-y", "--help", "-h"},
 }
 
 // prSubcommandFlags lists the flags each `pr <subcommand>` accepts. Used so
