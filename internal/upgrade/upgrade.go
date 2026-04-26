@@ -180,35 +180,54 @@ func supportedPlatform(goos, goarch string) bool {
 }
 
 // CompareVersions compares two semver-ish strings (with optional leading v).
-// Returns -1 if a<b, 0 if equal, +1 if a>b. Non-numeric segments compare
-// lexicographically; invalid input never panics, it just sorts deterministically.
+// Returns -1 if a<b, 0 if equal, +1 if a>b. Pre-release suffixes follow
+// semver: a version with a pre-release is less than the same version
+// without one (so 4.6.3-rc.1 < 4.6.3), and pre-release identifiers are
+// compared lexicographically as a fallback. Invalid input never panics,
+// it just sorts deterministically.
 func CompareVersions(a, b string) int {
-	pa := splitSemver(a)
-	pb := splitSemver(b)
+	coreA, preA := splitSemver(a)
+	coreB, preB := splitSemver(b)
 	for i := 0; i < 3; i++ {
-		if pa[i] != pb[i] {
-			if pa[i] < pb[i] {
+		if coreA[i] != coreB[i] {
+			if coreA[i] < coreB[i] {
 				return -1
 			}
 			return 1
 		}
 	}
-	return 0
+	// Cores match. Per semver §11: a version without a pre-release
+	// outranks the same version with one.
+	switch {
+	case preA == "" && preB == "":
+		return 0
+	case preA == "":
+		return 1
+	case preB == "":
+		return -1
+	case preA < preB:
+		return -1
+	case preA > preB:
+		return 1
+	default:
+		return 0
+	}
 }
 
-func splitSemver(v string) [3]int {
-	var out [3]int
+func splitSemver(v string) ([3]int, string) {
+	var core [3]int
 	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
-	// Drop any pre-release/build metadata so "4.6.0-rc.1" still sorts.
+	var pre string
 	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		pre = v[i+1:]
 		v = v[:i]
 	}
 	parts := strings.SplitN(v, ".", 4)
 	for i := 0; i < 3 && i < len(parts); i++ {
 		n, _ := strconv.Atoi(parts[i])
-		out[i] = n
+		core[i] = n
 	}
-	return out
+	return core, pre
 }
 
 // DetectInstall classifies how the binary at execPath was installed.
@@ -314,9 +333,18 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("release %s is missing checksums.txt", rel.TagName)
 	}
 
-	tmp, err := os.MkdirTemp("", "ezstack-upgrade-*")
+	binDir := filepath.Dir(execPath)
+	wantBins := []string{"ezs"}
+	if opts.IncludeMCP && siblingExists(binDir, "ezs-mcp") {
+		wantBins = append(wantBins, "ezs-mcp")
+	}
+
+	// Stage inside binDir so the final replace is a same-filesystem
+	// rename (truly atomic on Unix), and so a missing-write-permission
+	// error surfaces *before* we burn bandwidth on the download.
+	tmp, err := os.MkdirTemp(binDir, ".ezstack-upgrade-*")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("cannot stage upgrade in %s (write access required): %w", binDir, err)
 	}
 	defer os.RemoveAll(tmp)
 
@@ -351,12 +379,6 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("checksum mismatch for %s: %w", assetName, err)
 	}
 	logf("verified sha-256 against checksums.txt")
-
-	binDir := filepath.Dir(execPath)
-	wantBins := []string{"ezs"}
-	if opts.IncludeMCP && siblingExists(binDir, "ezs-mcp") {
-		wantBins = append(wantBins, "ezs-mcp")
-	}
 
 	staged, err := extractBinaries(tarPath, tmp, wantBins)
 	if err != nil {
@@ -561,16 +583,28 @@ func extractBinaries(archivePath, dstDir string, want []string) (map[string]stri
 		if !wantSet[base] {
 			continue
 		}
+		if _, dup := out[base]; dup {
+			return nil, fmt.Errorf("tarball contains duplicate entry %q", base)
+		}
 		dstPath := filepath.Join(dstDir, base)
 		dst, err := os.OpenFile(dstPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 		if err != nil {
 			return nil, err
 		}
 		// Cap the per-file copy to defend against a tar bomb. 200 MiB is
-		// well above any single ezstack binary today.
-		if _, err := io.CopyN(dst, tr, 200<<20); err != nil && !errors.Is(err, io.EOF) {
+		// well above any single ezstack binary today. Read max+1 so we
+		// can distinguish "file fits" from "source still has more bytes
+		// after the cap" — io.CopyN by itself returns nil on a clean
+		// truncation, which would let an oversized payload through.
+		const maxBinaryBytes = 200 << 20
+		n, err := io.CopyN(dst, tr, maxBinaryBytes+1)
+		if err != nil && !errors.Is(err, io.EOF) {
 			dst.Close()
 			return nil, err
+		}
+		if n > maxBinaryBytes {
+			dst.Close()
+			return nil, fmt.Errorf("entry %q exceeds %s cap", base, humanSize(maxBinaryBytes))
 		}
 		if err := dst.Close(); err != nil {
 			return nil, err

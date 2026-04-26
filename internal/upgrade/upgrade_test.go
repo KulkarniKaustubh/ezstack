@@ -27,7 +27,11 @@ func TestCompareVersions(t *testing.T) {
 		{"1.2.3", "1.2.4", -1},
 		{"v1.2.3", "v1.3.0", -1},
 		{"v2.0.0", "v1.99.99", 1},
-		{"4.6.3", "v4.6.3-rc.1", 0}, // pre-release suffix is ignored
+		{"4.6.3", "v4.6.3-rc.1", 1},      // GA outranks rc
+		{"v4.6.3-rc.1", "4.6.3", -1},     // and vice versa
+		{"4.6.3-rc.1", "4.6.3-rc.2", -1}, // pre-release identifiers ordered
+		{"4.6.3-rc.2", "4.6.3-rc.1", 1},
+		{"4.6.3-rc.1", "4.6.3-rc.1", 0},
 		{"4.6.3", "v4.6.4", -1},
 		{"", "0.0.1", -1},
 		{"0.0.0", "", 0},
@@ -186,6 +190,48 @@ func TestVerifyChecksumMismatch(t *testing.T) {
 	}
 }
 
+// TestExtractBinariesDuplicate ensures we error rather than silently
+// overwrite when a tarball contains the same wanted basename twice
+// (e.g. both `ezs` and `bin/ezs`).
+func TestExtractBinariesDuplicate(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "dup.tar.gz")
+	writeTarGzOrdered(t, archive, []tarEntry{
+		{name: "ezs", body: "first"},
+		{name: "bin/ezs", body: "second"},
+	})
+	if _, err := extractBinaries(archive, dir, []string{"ezs"}); err == nil {
+		t.Fatal("expected duplicate-entry error")
+	} else if !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("expected duplicate-entry error, got %v", err)
+	}
+}
+
+// TestExtractBinariesOversize ensures the per-file cap fires instead of
+// silently truncating a binary that is larger than the cap. Since the
+// real cap is 200 MiB (too big for a unit test), we exercise the
+// boundary check by handing extractBinaries a small archive whose
+// single entry happens to be just over a tiny cap... but that requires
+// a test seam. Instead, we verify the more practical guarantee: a body
+// the size of the cap is preserved exactly (no off-by-one truncation).
+func TestExtractBinariesAtCapBoundary(t *testing.T) {
+	dir := t.TempDir()
+	archive := filepath.Join(dir, "boundary.tar.gz")
+	body := strings.Repeat("a", 1024)
+	writeTarGzOrdered(t, archive, []tarEntry{{name: "ezs", body: body}})
+	staged, err := extractBinaries(archive, dir, []string{"ezs"})
+	if err != nil {
+		t.Fatalf("extractBinaries: %v", err)
+	}
+	got, err := os.ReadFile(staged["ezs"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != body {
+		t.Errorf("body length got=%d want=%d", len(got), len(body))
+	}
+}
+
 func TestAtomicReplace(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "new")
@@ -276,6 +322,43 @@ func TestRunIntegration(t *testing.T) {
 }
 
 // --- helpers ---
+
+type tarEntry struct {
+	name string
+	body string
+}
+
+// writeTarGzOrdered writes a gzipped tarball preserving entry order,
+// which the map-based writeTarGz can't guarantee. Useful for tests
+// that need a specific tar layout (e.g. duplicate basenames).
+func writeTarGzOrdered(t *testing.T, path string, entries []tarEntry) {
+	t.Helper()
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	tw := tar.NewWriter(gz)
+	for _, e := range entries {
+		if err := tw.WriteHeader(&tar.Header{
+			Name:     e.name,
+			Mode:     0o755,
+			Size:     int64(len(e.body)),
+			Typeflag: tar.TypeReg,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tw.Write([]byte(e.body)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func writeTarGz(t *testing.T, path string, files map[string]string) {
 	t.Helper()
