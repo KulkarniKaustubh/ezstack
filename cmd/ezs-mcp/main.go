@@ -46,6 +46,10 @@ func main() {
 	if upgradeRequested {
 		if err := runUpgrade(*upgradeCheck, *upgradeForce, *upgradeTag); err != nil {
 			fmt.Fprintf(os.Stderr, "ezs-mcp: %v\n", err)
+			var net *upgrade.NetworkError
+			if errors.As(err, &net) {
+				os.Exit(8)
+			}
 			os.Exit(1)
 		}
 		return

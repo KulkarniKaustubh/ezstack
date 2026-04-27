@@ -32,12 +32,27 @@ const (
 	repoName  = "ezstack"
 )
 
+// apiBaseURL is the GitHub API root used for release lookups. It is a
+// var (not a const) so tests can point it at a local httptest.Server.
+// Production code must not reassign it.
+var apiBaseURL = "https://api.github.com"
+
 // httpClient is shared so connection pooling kicks in for the back-to-back
 // API + asset requests. No client-level Timeout — the per-request context
 // (set in Run with a 5-minute budget) is the single source of truth for
 // cancellation, since a slow tarball over a flaky connection legitimately
 // takes longer than any single request reasonably should.
 var httpClient = &http.Client{}
+
+// currentExecutableFn locates the running binary. It exists as an
+// override hook so tests can drive Run() against a fake binary path
+// without trying to clobber the test runner's own binary.
+var currentExecutableFn = currentExecutable
+
+// atomicReplaceFn does the new-binary-onto-old-binary swap. Override
+// hook so a rollback test can inject a controlled failure on a specific
+// destination.
+var atomicReplaceFn = atomicReplace
 
 // maxArchiveBytes caps the raw tarball download to defend against a
 // malicious or misconfigured release returning an unbounded body. 500 MiB
@@ -69,7 +84,6 @@ func (m InstallMethod) String() string {
 // Release is the trimmed GitHub release payload we care about.
 type Release struct {
 	TagName string  `json:"tag_name"`
-	Body    string  `json:"body"`
 	Assets  []Asset `json:"assets"`
 }
 
@@ -117,15 +131,28 @@ type Result struct {
 // platform-specific hint.
 var ErrNoMatchingAsset = errors.New("no release asset matches this platform")
 
+// NetworkError wraps any HTTP-level failure (GitHub API call or asset
+// download) so the CLI layer can route it to a network-specific exit
+// code. Use errors.As to extract.
+type NetworkError struct {
+	// Op is a short label describing the failing operation, e.g.
+	// "github api" or "download <url>".
+	Op  string
+	Err error
+}
+
+func (e *NetworkError) Error() string { return fmt.Sprintf("%s: %v", e.Op, e.Err) }
+func (e *NetworkError) Unwrap() error { return e.Err }
+
 // LatestRelease fetches the latest published (non-prerelease) release.
 func LatestRelease(ctx context.Context) (*Release, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/latest", repoOwner, repoName)
+	url := fmt.Sprintf("%s/repos/%s/%s/releases/latest", apiBaseURL, repoOwner, repoName)
 	return fetchRelease(ctx, url)
 }
 
 // ReleaseByTag fetches a specific tag. The tag must include the leading "v".
 func ReleaseByTag(ctx context.Context, tag string) (*Release, error) {
-	url := fmt.Sprintf("https://api.github.com/repos/%s/%s/releases/tags/%s", repoOwner, repoName, tag)
+	url := fmt.Sprintf("%s/repos/%s/%s/releases/tags/%s", apiBaseURL, repoOwner, repoName, tag)
 	return fetchRelease(ctx, url)
 }
 
@@ -142,23 +169,23 @@ func fetchRelease(ctx context.Context, url string) (*Release, error) {
 
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("github api: %w", err)
+		return nil, &NetworkError{Op: "github api", Err: err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("release not found at %s", url)
+		return nil, &NetworkError{Op: "github api", Err: fmt.Errorf("release not found at %s", url)}
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("github api %s: %s", resp.Status, strings.TrimSpace(string(body)))
+		return nil, &NetworkError{Op: "github api", Err: fmt.Errorf("%s: %s", resp.Status, strings.TrimSpace(string(body)))}
 	}
 
 	var rel Release
 	if err := json.NewDecoder(resp.Body).Decode(&rel); err != nil {
-		return nil, fmt.Errorf("decode release: %w", err)
+		return nil, &NetworkError{Op: "github api", Err: fmt.Errorf("decode release: %w", err)}
 	}
 	if rel.TagName == "" {
-		return nil, fmt.Errorf("release has no tag_name")
+		return nil, &NetworkError{Op: "github api", Err: fmt.Errorf("release has no tag_name")}
 	}
 	return &rel, nil
 }
@@ -282,7 +309,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		logf = func(string, ...any) {}
 	}
 
-	execPath, err := currentExecutable()
+	execPath, err := currentExecutableFn()
 	if err != nil {
 		return nil, fmt.Errorf("locate current binary: %w", err)
 	}
@@ -301,14 +328,29 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	res.To = strings.TrimPrefix(rel.TagName, "v")
 
 	cmp := CompareVersions(opts.CurrentVersion, rel.TagName)
-	if cmp >= 0 && !opts.Force {
-		res.AlreadyAtTip = true
-		logf("ezstack is already at the latest version (%s)", res.From)
+	pinned := opts.TargetTag != ""
+	// CheckOnly takes precedence over Force so that `--force --check` at the
+	// tip reports "already at latest" instead of a phantom "upgrade available".
+	if opts.CheckOnly {
+		switch {
+		case cmp >= 0 && pinned:
+			res.AlreadyAtTip = true
+			logf("ezstack %s is at or above pinned tag %s", res.From, rel.TagName)
+		case cmp >= 0:
+			res.AlreadyAtTip = true
+			logf("ezstack is already at the latest version (%s)", res.From)
+		default:
+			logf("upgrade available: %s → %s", res.From, res.To)
+		}
 		return res, nil
 	}
-
-	if opts.CheckOnly {
-		logf("upgrade available: %s → %s", res.From, res.To)
+	if cmp >= 0 && !opts.Force {
+		res.AlreadyAtTip = true
+		if pinned {
+			logf("ezstack %s is at or above pinned tag %s — use --force to reinstall", res.From, rel.TagName)
+		} else {
+			logf("ezstack is already at the latest version (%s)", res.From)
+		}
 		return res, nil
 	}
 
@@ -417,7 +459,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		plans = append(plans, swap{
 			src:    staged[name],
 			dst:    dst,
-			backup: filepath.Join(binDir, "."+name+".ezs-upgrade-backup"),
+			backup: filepath.Join(binDir, "."+name+".ezstack-upgrade-backup"),
 		})
 	}
 
@@ -456,7 +498,7 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	// from backups and report the original error.
 	var swapped []swap
 	for i, p := range plans {
-		if err := atomicReplace(p.src, p.dst); err != nil {
+		if err := atomicReplaceFn(p.src, p.dst); err != nil {
 			// Roll back: restore each completed swap from its backup
 			// (or unlink the new file if there was no original).
 			for j, done := range swapped {
@@ -579,6 +621,16 @@ func findAsset(rel *Release, name string) *Asset {
 // download streams url into dst, replacing whatever is already there. The
 // body is capped at maxBytes; pass 0 for "no application-level cap" (the
 // caller's context still applies). Returning an error rolls back dst.
+//
+// Errors are classified for the CLI exit-code mapping:
+//   - HTTP transport errors, non-200 responses, mid-stream copy errors,
+//     and over-cap responses are wrapped in *NetworkError (exit 8).
+//   - Local filesystem errors (Create, Sync) bubble through unwrapped
+//     so they map to general I/O exit 1.
+//
+// io.Copy errors are biased toward NetworkError because the source is
+// the response body — a disk-full failure during the copy is rare
+// compared to a connection drop.
 func download(ctx context.Context, url, dst string, maxBytes int64) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -587,11 +639,11 @@ func download(ctx context.Context, url, dst string, maxBytes int64) error {
 	req.Header.Set("User-Agent", "ezstack-upgrade")
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return err
+		return &NetworkError{Op: "download " + url, Err: err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("http %s", resp.Status)
+		return &NetworkError{Op: "download " + url, Err: fmt.Errorf("http %s", resp.Status)}
 	}
 	f, err := os.Create(dst)
 	if err != nil {
@@ -608,11 +660,11 @@ func download(ctx context.Context, url, dst string, maxBytes int64) error {
 	n, err := io.Copy(f, src)
 	if err != nil {
 		os.Remove(dst)
-		return err
+		return &NetworkError{Op: "download " + url, Err: err}
 	}
 	if maxBytes > 0 && n > maxBytes {
 		os.Remove(dst)
-		return fmt.Errorf("response exceeds maximum size of %s", humanSize(maxBytes))
+		return &NetworkError{Op: "download " + url, Err: fmt.Errorf("response exceeds maximum size of %s", humanSize(maxBytes))}
 	}
 	return f.Sync()
 }
@@ -753,7 +805,7 @@ func atomicReplace(src, dst string) error {
 	// Cross-device or permission rename failure: copy into the
 	// destination directory under a hidden temp name, then rename.
 	dir := filepath.Dir(dst)
-	tmp, err := os.CreateTemp(dir, ".ezs-upgrade-*")
+	tmp, err := os.CreateTemp(dir, ".ezstack-upgrade-*")
 	if err != nil {
 		return err
 	}

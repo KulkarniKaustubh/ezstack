@@ -4,9 +4,11 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCompareVersions(t *testing.T) {
@@ -213,13 +216,10 @@ func TestExtractBinariesDuplicate(t *testing.T) {
 	}
 }
 
-// TestExtractBinariesOversize ensures the per-file cap fires instead of
-// silently truncating a binary that is larger than the cap. Since the
-// real cap is 200 MiB (too big for a unit test), we exercise the
-// boundary check by handing extractBinaries a small archive whose
-// single entry happens to be just over a tiny cap... but that requires
-// a test seam. Instead, we verify the more practical guarantee: a body
-// the size of the cap is preserved exactly (no off-by-one truncation).
+// TestExtractBinariesAtCapBoundary verifies that a body up to the
+// per-file cap is preserved exactly (no off-by-one truncation). The
+// real cap is 200 MiB, too large for a unit test, so we exercise the
+// boundary condition with a small body that should round-trip cleanly.
 func TestExtractBinariesAtCapBoundary(t *testing.T) {
 	dir := t.TempDir()
 	archive := filepath.Join(dir, "boundary.tar.gz")
@@ -304,70 +304,302 @@ func TestAtomicReplace(t *testing.T) {
 	}
 }
 
-func TestRunIntegration(t *testing.T) {
-	if !supportedPlatform(runtime.GOOS, runtime.GOARCH) {
-		t.Skipf("skip on %s/%s", runtime.GOOS, runtime.GOARCH)
-	}
+// fakeRelease starts an httptest.Server pair (asset file server +
+// release JSON API) and points apiBaseURL at the API server for the
+// duration of the test. The returned binDir holds pre-existing "old"
+// ezs and ezs-mcp files that Run() will swap. currentExecutableFn is
+// also redirected so Run() classifies the install as Binary against
+// our fake binDir, not the test runner's own binary.
+//
+// Cleanup is registered with t.Cleanup so package-level overrides are
+// restored even if the test fails partway.
+func fakeRelease(t *testing.T, tag string, contents map[string]string) (binDir string, assetName string) {
+	t.Helper()
 
-	// Build a fake release: tarball with stub binaries + checksums.txt.
+	// Defensive: make sure DetectInstall doesn't mistake the temp dir
+	// for a Go-install path because of a stray developer GOBIN/GOPATH.
+	t.Setenv("GOBIN", "")
+	t.Setenv("GOPATH", "/var/empty/non-existent-gopath")
+
 	releaseDir := t.TempDir()
-	assetName := fmt.Sprintf("ezstack_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
+	assetName = fmt.Sprintf("ezstack_%s_%s.tar.gz", runtime.GOOS, runtime.GOARCH)
 	archive := filepath.Join(releaseDir, assetName)
-	writeTarGz(t, archive, map[string]string{
-		"ezs":     "fake-ezs-v9.9.9\n",
-		"ezs-mcp": "fake-mcp-v9.9.9\n",
-	})
+	writeTarGz(t, archive, contents)
+
 	sum := sha256OfFile(t, archive)
-	sums := filepath.Join(releaseDir, "checksums.txt")
-	if err := os.WriteFile(sums, []byte(sum+"  "+assetName+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(releaseDir, "checksums.txt"),
+		[]byte(sum+"  "+assetName+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	srv := httptest.NewServer(http.FileServer(http.Dir(releaseDir)))
-	defer srv.Close()
+	assetSrv := httptest.NewServer(http.FileServer(http.Dir(releaseDir)))
+	t.Cleanup(assetSrv.Close)
 
-	rel := &Release{
-		TagName: "v9.9.9",
+	rel := Release{
+		TagName: tag,
 		Assets: []Asset{
-			{Name: assetName, DownloadURL: srv.URL + "/" + assetName, Size: 100},
-			{Name: "checksums.txt", DownloadURL: srv.URL + "/checksums.txt", Size: 100},
+			{Name: assetName, DownloadURL: assetSrv.URL + "/" + assetName},
+			{Name: "checksums.txt", DownloadURL: assetSrv.URL + "/checksums.txt"},
 		},
 	}
-	relJSON, _ := json.Marshal(rel)
-
 	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write(relJSON)
+		_ = json.NewEncoder(w).Encode(&rel)
 	}))
-	defer apiSrv.Close()
+	t.Cleanup(apiSrv.Close)
 
-	// Drive Run via the lower-level pieces — we already test the HTTP
-	// fetch in isolation via fetchRelease, so here we just verify the
-	// extract + atomic-replace pipeline stitches together end to end.
-	binDir := t.TempDir()
-	for _, name := range []string{"ezs", "ezs-mcp"} {
-		if err := os.WriteFile(filepath.Join(binDir, name), []byte("old "+name), 0o755); err != nil {
+	oldBase := apiBaseURL
+	apiBaseURL = apiSrv.URL
+	t.Cleanup(func() { apiBaseURL = oldBase })
+
+	binDir = t.TempDir()
+	for name := range contents {
+		// Only seed the binDir with ezs/ezs-mcp; readme-style entries
+		// in the tarball stay only in the archive.
+		if name != "ezs" && name != "ezs-mcp" {
+			continue
+		}
+		if err := os.WriteFile(filepath.Join(binDir, name), []byte("old-"+name), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	staged, err := extractBinaries(archive, t.TempDir(), []string{"ezs", "ezs-mcp"})
-	if err != nil {
-		t.Fatalf("extract: %v", err)
+	fakeExe := filepath.Join(binDir, "ezs")
+	oldFn := currentExecutableFn
+	currentExecutableFn = func() (string, error) { return fakeExe, nil }
+	t.Cleanup(func() { currentExecutableFn = oldFn })
+
+	return binDir, assetName
+}
+
+// TestRunFullPipeline drives Run() end-to-end against a local httptest
+// release server. It verifies that the install dispatch, parallel
+// download, checksum verify, extract, and atomic-replace pipeline all
+// stitch together — the path that production users actually exercise.
+func TestRunFullPipeline(t *testing.T) {
+	if !supportedPlatform(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skip on %s/%s — no published asset", runtime.GOOS, runtime.GOARCH)
 	}
-	for _, name := range []string{"ezs", "ezs-mcp"} {
-		dst := filepath.Join(binDir, name)
-		if err := atomicReplace(staged[name], dst); err != nil {
-			t.Fatalf("replace %s: %v", name, err)
-		}
-		got, _ := os.ReadFile(dst)
-		want := "fake-" + strings.TrimPrefix(name, "ezs-") + "-v9.9.9\n"
-		if name == "ezs" {
-			want = "fake-ezs-v9.9.9\n"
+
+	binDir, _ := fakeRelease(t, "v9.9.9", map[string]string{
+		"ezs":     "new-ezs-v9.9.9\n",
+		"ezs-mcp": "new-mcp-v9.9.9\n",
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var logs []string
+	res, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+		Logf:           func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v\nlogs:\n%s", err, strings.Join(logs, "\n"))
+	}
+	if res.AlreadyAtTip {
+		t.Fatal("Run reported AlreadyAtTip but should have upgraded")
+	}
+	if res.Method != InstallBinary {
+		t.Errorf("Method = %v, want InstallBinary", res.Method)
+	}
+	if res.From != "1.0.0" || res.To != "9.9.9" {
+		t.Errorf("From/To = %q/%q, want 1.0.0/9.9.9", res.From, res.To)
+	}
+	if len(res.Updated) != 2 {
+		t.Fatalf("Updated = %v, want 2 entries", res.Updated)
+	}
+
+	for name, want := range map[string]string{
+		"ezs":     "new-ezs-v9.9.9\n",
+		"ezs-mcp": "new-mcp-v9.9.9\n",
+	} {
+		got, err := os.ReadFile(filepath.Join(binDir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
 		}
 		if string(got) != want {
 			t.Errorf("%s = %q, want %q", name, got, want)
 		}
+	}
+
+	// No leftover backup files in binDir after a successful upgrade.
+	for _, name := range []string{".ezs.ezstack-upgrade-backup", ".ezs-mcp.ezstack-upgrade-backup"} {
+		if _, err := os.Stat(filepath.Join(binDir, name)); err == nil {
+			t.Errorf("leftover backup %s after success", name)
+		}
+	}
+}
+
+// TestRunCheckOnlyAtTip verifies that --check on a binary already at
+// the published tag returns AlreadyAtTip and does not touch disk.
+func TestRunCheckOnlyAtTip(t *testing.T) {
+	if !supportedPlatform(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skip on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	binDir, _ := fakeRelease(t, "v1.2.3", map[string]string{
+		"ezs":     "new-ezs\n",
+		"ezs-mcp": "new-mcp\n",
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	res, err := Run(ctx, Options{
+		CurrentVersion: "1.2.3",
+		CheckOnly:      true,
+		IncludeMCP:     true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.AlreadyAtTip {
+		t.Error("expected AlreadyAtTip for matching version")
+	}
+	// Disk should be untouched: original "old-ezs" content still present.
+	got, _ := os.ReadFile(filepath.Join(binDir, "ezs"))
+	if string(got) != "old-ezs" {
+		t.Errorf("ezs was modified during --check: %q", got)
+	}
+}
+
+// TestRunPinnedAboveTipMessage verifies that --version + --check when
+// the running binary is newer than the pinned tag produces the
+// pinned-tag-aware message rather than the misleading "already at the
+// latest version" text.
+func TestRunPinnedAboveTipMessage(t *testing.T) {
+	if !supportedPlatform(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skip on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	fakeRelease(t, "v1.0.0", map[string]string{
+		"ezs":     "old-ezs\n",
+		"ezs-mcp": "old-mcp\n",
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var logs []string
+	res, err := Run(ctx, Options{
+		CurrentVersion: "9.9.9",
+		TargetTag:      "v1.0.0",
+		CheckOnly:      true,
+		IncludeMCP:     true,
+		Logf:           func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.AlreadyAtTip {
+		t.Error("expected AlreadyAtTip when current > pinned target")
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "pinned tag") {
+		t.Errorf("expected pinned-tag wording in log, got: %s", joined)
+	}
+	if strings.Contains(joined, "already at the latest version") {
+		t.Errorf("should not claim 'already at the latest version' for a pinned tag, got: %s", joined)
+	}
+}
+
+// TestRunRollbackOnSecondReplaceFail injects a controlled failure on
+// the ezs-mcp swap. The first swap (ezs) completes, then ezs-mcp fails,
+// so Run() must roll back ezs to its original content and surface the
+// error instead of leaving a version-skewed pair.
+func TestRunRollbackOnSecondReplaceFail(t *testing.T) {
+	if !supportedPlatform(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skip on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	binDir, _ := fakeRelease(t, "v9.9.9", map[string]string{
+		"ezs":     "new-ezs\n",
+		"ezs-mcp": "new-mcp\n",
+	})
+
+	// Inject a failure mode: succeed for ezs, fail for ezs-mcp.
+	oldReplace := atomicReplaceFn
+	atomicReplaceFn = func(src, dst string) error {
+		if filepath.Base(dst) == "ezs-mcp" {
+			return errors.New("synthetic failure")
+		}
+		return oldReplace(src, dst)
+	}
+	t.Cleanup(func() { atomicReplaceFn = oldReplace })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+	})
+	if err == nil {
+		t.Fatal("expected error from injected failure")
+	}
+	if !strings.Contains(err.Error(), "synthetic failure") {
+		t.Errorf("expected wrapped synthetic failure, got %v", err)
+	}
+
+	// Both targets must hold their original bytes after rollback.
+	for _, name := range []string{"ezs", "ezs-mcp"} {
+		got, err := os.ReadFile(filepath.Join(binDir, name))
+		if err != nil {
+			t.Fatalf("read %s after rollback: %v", name, err)
+		}
+		if string(got) != "old-"+name {
+			t.Errorf("%s = %q after rollback, want %q", name, got, "old-"+name)
+		}
+	}
+
+	// Backup files must be cleaned up after rollback.
+	for _, name := range []string{".ezs.ezstack-upgrade-backup", ".ezs-mcp.ezstack-upgrade-backup"} {
+		if _, err := os.Stat(filepath.Join(binDir, name)); err == nil {
+			t.Errorf("leftover backup %s after rollback", name)
+		}
+	}
+}
+
+// TestRunNetworkErrorClassified verifies that when the API server
+// returns a 500, Run() surfaces a *NetworkError so the CLI can route
+// it to ExitNetworkError.
+func TestRunNetworkErrorClassified(t *testing.T) {
+	if !supportedPlatform(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skip on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	t.Setenv("GOBIN", "")
+	t.Setenv("GOPATH", "/var/empty/non-existent-gopath")
+
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer apiSrv.Close()
+	oldBase := apiBaseURL
+	apiBaseURL = apiSrv.URL
+	t.Cleanup(func() { apiBaseURL = oldBase })
+
+	binDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(binDir, "ezs"), []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeExe := filepath.Join(binDir, "ezs")
+	oldFn := currentExecutableFn
+	currentExecutableFn = func() (string, error) { return fakeExe, nil }
+	t.Cleanup(func() { currentExecutableFn = oldFn })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := Run(ctx, Options{CurrentVersion: "1.0.0"})
+	if err == nil {
+		t.Fatal("expected error from API 500")
+	}
+	var net *NetworkError
+	if !errors.As(err, &net) {
+		t.Errorf("expected *NetworkError in chain, got %T: %v", err, err)
 	}
 }
 

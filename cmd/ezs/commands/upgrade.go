@@ -93,7 +93,11 @@ func Upgrade(args []string) error {
 			ui.Warn(managed.Error())
 			return nil
 		}
-		return ui.NewExitError(ui.ExitNetworkError, "%v", err)
+		var net *upgrade.NetworkError
+		if errors.As(err, &net) {
+			return ui.NewExitError(ui.ExitNetworkError, "%v", err)
+		}
+		return ui.NewExitError(ui.ExitGeneral, "%v", err)
 	}
 
 	switch {
