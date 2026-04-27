@@ -48,7 +48,7 @@ var categories = []category{
 	},
 	{
 		Label:    "Configuration & Utilities",
-		Commands: []string{"config"},
+		Commands: []string{"config", "doctor", "upgrade"},
 	},
 	{
 		Label:    "AI Agent",

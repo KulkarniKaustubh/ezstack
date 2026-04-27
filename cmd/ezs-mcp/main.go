@@ -3,15 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/upgrade"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
@@ -24,12 +27,31 @@ func main() {
 	fs := pflag.NewFlagSet("ezs-mcp", pflag.ContinueOnError)
 	repo := fs.String("repo", "", "Git repo root directory")
 	showVersion := fs.BoolP("version", "v", false, "Print version and exit")
+	doUpgrade := fs.Bool("upgrade", false, "Self-upgrade to the latest published release and exit")
+	upgradeCheck := fs.Bool("upgrade-check", false, "Print current vs latest version without modifying anything")
+	upgradeTag := fs.String("upgrade-tag", "", "Pin --upgrade to a specific release tag (e.g. v4.6.3)")
+	upgradeForce := fs.Bool("upgrade-force", false, "Reinstall even when already at the target")
 	if err := fs.Parse(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "ezs-mcp: %v\n", err)
 		os.Exit(2)
 	}
 	if *showVersion {
 		fmt.Println(version.Version)
+		return
+	}
+	// --upgrade-tag / --upgrade-force are meaningless without --upgrade or
+	// --upgrade-check, so treat their presence as implying --upgrade rather
+	// than silently dropping them and booting the MCP server.
+	upgradeRequested := *doUpgrade || *upgradeCheck || *upgradeTag != "" || *upgradeForce
+	if upgradeRequested {
+		if err := runUpgrade(*upgradeCheck, *upgradeForce, *upgradeTag); err != nil {
+			fmt.Fprintf(os.Stderr, "ezs-mcp: %v\n", err)
+			var net *upgrade.NetworkError
+			if errors.As(err, &net) {
+				os.Exit(8)
+			}
+			os.Exit(1)
+		}
 		return
 	}
 	if *repo != "" {
@@ -784,4 +806,39 @@ func registerTools(s *server.MCPServer) {
 			return []string{"import", req.GetString("file", "")}
 		}),
 	)
+}
+
+// runUpgrade performs a self-update of the ezs-mcp binary (and the
+// sibling ezs binary if present). It is a thin wrapper around
+// internal/upgrade.Run that wires output to stderr instead of the
+// MCP-aware ui backend, since this entry point runs before MCP starts.
+func runUpgrade(checkOnly, force bool, tag string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	res, err := upgrade.Run(ctx, upgrade.Options{
+		CurrentVersion: version.Version,
+		TargetTag:      tag,
+		Force:          force,
+		CheckOnly:      checkOnly,
+		IncludeMCP:     true,
+		// No interactive confirmation: the MCP binary is typically
+		// invoked headlessly by Claude Code, so any prompt would
+		// hang. The user opted in by running with --upgrade.
+		Confirm: nil,
+		Logf:    func(format string, args ...any) { fmt.Fprintf(os.Stderr, format+"\n", args...) },
+	})
+	if err != nil {
+		var managed *upgrade.ManagedInstallError
+		if errors.As(err, &managed) {
+			fmt.Fprintln(os.Stderr, managed.Error())
+			return nil
+		}
+		return err
+	}
+	if res.AlreadyAtTip || checkOnly {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "ezstack upgraded %s → %s (%d binaries replaced)\n", res.From, res.To, len(res.Updated))
+	return nil
 }

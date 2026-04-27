@@ -629,6 +629,7 @@
         <li><a href="#ezs-unstack" class="toc-h3">ezs unstack</a></li>
         <li><a href="#ezs-menu" class="toc-h3">ezs menu</a></li>
         <li><a href="#exit-codes">Exit codes</a></li>
+        <li><a href="#ezs-upgrade" class="toc-h3">ezs upgrade</a></li>
         <li><a href="#hooks">Hooks</a></li>
         <li><a href="#installed-hook-names" class="toc-h3">Installed hook names</a></li>
         <li><a href="#install-a-hook" class="toc-h3">Install a hook</a></li>
@@ -884,6 +885,14 @@
 <span class="c-cmd">cd</span> <span class="c-flag">ezstack</span>
 <span class="c-cmd">make</span> <span class="c-flag">install</span>
 </code></pre>
+      <p><strong>Updating</strong></p>
+      <p>For binary installs, ezstack can update itself in place:</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span>            <span class="c-comment"># download the latest release tarball, verify checksum, swap binaries</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span> <span class="c-flag">--check</span>    <span class="c-comment"># see whether an upgrade is available without downloading</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span> <span class="c-flag">--version</span> <span class="c-str">v4.6.0</span>   <span class="c-comment"># pin to a specific release tag</span>
+</code></pre>
+      <p><code>ezs upgrade</code> detects how the binary was installed: Homebrew users get the <code>brew upgrade ezstack</code> command printed instead of an in-place swap, and <code>go install</code> users get the <code>go install …@latest</code> command. The sibling <code>ezs-mcp</code> binary (if it lives in the same directory) is upgraded alongside <code>ezs</code>. Pass <code>--no-mcp</code> to leave it alone.</p>
+      <p><code>ezs-mcp</code> exposes the same flow under <code>--upgrade</code>, <code>--upgrade-check</code>, <code>--upgrade-tag</code>, and <code>--upgrade-force</code> for the rare case where it is installed without <code>ezs</code>.</p>
       <p><strong>Shell integration (recommended)</strong></p>
       <p>Add to your shell configuration:</p>
       <pre><code><span class="c-comment"># bash</span>
@@ -1575,6 +1584,32 @@ Options:
       </tr>
       </tbody>
       </table>
+      <h3 id="ezs-upgrade"><code>ezs upgrade</code></h3>
+      <p>Self-update the running <code>ezs</code> binary (and the sibling <code>ezs-mcp</code> if installed alongside it) to the latest published GitHub release.</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span> <span class="c-str">[options]</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">update</span>  <span class="c-dim">[options]    # alias</span>
+
+<span class="c-cmd">Options</span>
+  <span class="c-flag">--check</span>            <span class="c-dim">Print current vs latest version and exit (no download)</span>
+  <span class="c-flag">--version</span> <span class="c-str">&lt;tag&gt;</span>    <span class="c-dim">Pin to a specific release tag (e.g. v4.6.3)</span>
+  <span class="c-flag">--force</span>            <span class="c-dim">Reinstall even when already at the target version</span>
+  <span class="c-flag">--no-mcp</span>           <span class="c-dim">Skip the sibling ezs-mcp binary</span>
+  <span class="c-flag">-y,</span> <span class="c-flag">--yes</span>          <span class="c-dim">Skip the replace-binaries confirmation</span>
+</code></pre>
+      <p><code>upgrade</code> does not require being inside a git repository. It works in three steps:</p>
+      <ol>
+      <li>Resolves the running binary path with <code>os.Executable()</code> and classifies the install:
+      <ul>
+      <li><strong>Homebrew</strong> (<code>/opt/homebrew/Cellar/ezstack/...</code>, <code>/usr/local/Cellar/ezstack/...</code>, <code>/home/linuxbrew/.linuxbrew/Cellar/ezstack/...</code>) — prints <code>brew upgrade ezstack</code> and exits.</li>
+      <li><strong><code>go install</code></strong> (under <code>$GOBIN</code>, <code>$GOPATH/bin</code>, or <code>~/go/bin</code>) — prints the <code>go install …@latest</code> command and exits.</li>
+      <li>Otherwise — proceeds with an in-place swap.</li>
+      </ul>
+      </li>
+      <li>Hits the GitHub Releases API for the requested tag (default: <code>/releases/latest</code>), downloads <code>ezstack_&lt;os&gt;_&lt;arch&gt;.tar.gz</code> plus <code>checksums.txt</code>, and verifies the SHA-256.</li>
+      <li>Atomically renames the new binaries on top of the old ones in the same directory. On Unix this is safe even for the currently-running process: the kernel keeps the old inode alive until exit.</li>
+      </ol>
+      <p>Exit codes: <code>0</code> success, <code>1</code> general I/O / extraction failure, <code>2</code> usage error, <code>8</code> GitHub API or download failure, <code>10</code> user declined the confirm prompt.</p>
+      <p><code>ezs-mcp</code> exposes the same flow under <code>--upgrade</code>, <code>--upgrade-check</code>, <code>--upgrade-tag</code>, and <code>--upgrade-force</code> for installations that ship the MCP binary without the CLI.</p>
       </section>
 
       <section class="docs-section" id="hooks" data-heading="Hooks">

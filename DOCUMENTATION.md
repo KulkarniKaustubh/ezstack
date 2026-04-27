@@ -12,7 +12,7 @@
 
 [Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows) · [Editor & Desktop Integrations](#editor--desktop-integrations)
 
-**Commands:** [agent](#ezs-agent) · [commit/amend](#ezs-commit--ezs-amend) · [config](#ezs-config) · [delete](#ezs-delete) · [diff](#ezs-diff) · [doctor](#ezs-doctor) · [down/up](#ezs-down--ezs-up) · [goto](#ezs-goto) · [list](#ezs-list) · [log](#ezs-log) · [menu](#ezs-menu) · [new](#ezs-new) · [pr](#ezs-pr) · [push](#ezs-push) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [status](#ezs-status) · [sync](#ezs-sync) · [unstack](#ezs-unstack)
+**Commands:** [agent](#ezs-agent) · [commit/amend](#ezs-commit--ezs-amend) · [config](#ezs-config) · [delete](#ezs-delete) · [diff](#ezs-diff) · [doctor](#ezs-doctor) · [down/up](#ezs-down--ezs-up) · [goto](#ezs-goto) · [list](#ezs-list) · [log](#ezs-log) · [menu](#ezs-menu) · [new](#ezs-new) · [pr](#ezs-pr) · [push](#ezs-push) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [status](#ezs-status) · [sync](#ezs-sync) · [unstack](#ezs-unstack) · [upgrade](#ezs-upgrade)
 
 **Extras:** [Hooks](#hooks) · [Exit codes](#exit-codes) · [Discoverability](#discoverability-info---examples-did-you-mean)
 
@@ -263,6 +263,20 @@ git clone https://github.com/KulkarniKaustubh/ezstack.git
 cd ezstack
 make install
 ```
+
+**Updating**
+
+For binary installs, ezstack can update itself in place:
+
+```bash
+ezs upgrade            # download the latest release tarball, verify checksum, swap binaries
+ezs upgrade --check    # see whether an upgrade is available without downloading
+ezs upgrade --version v4.6.0   # pin to a specific release tag
+```
+
+`ezs upgrade` detects how the binary was installed: Homebrew users get the `brew upgrade ezstack` command printed instead of an in-place swap, and `go install` users get the `go install …@latest` command. The sibling `ezs-mcp` binary (if it lives in the same directory) is upgraded alongside `ezs`. Pass `--no-mcp` to leave it alone.
+
+`ezs-mcp` exposes the same flow under `--upgrade`, `--upgrade-check`, `--upgrade-tag`, and `--upgrade-force` for the rare case where it is installed without `ezs`.
 
 **Shell integration (recommended)**
 
@@ -1081,6 +1095,37 @@ stderr.
 | 7  | Branch not found |
 | 8  | Network / remote error |
 | 10 | User cancelled |
+
+---
+
+### `ezs upgrade`
+
+Self-update the running `ezs` binary (and the sibling `ezs-mcp` if installed alongside it) to the latest published GitHub release.
+
+```
+ezs upgrade [options]
+ezs update  [options]    # alias
+
+Options
+  --check            Print current vs latest version and exit (no download)
+  --version <tag>    Pin to a specific release tag (e.g. v4.6.3)
+  --force            Reinstall even when already at the target version
+  --no-mcp           Skip the sibling ezs-mcp binary
+  -y, --yes          Skip the replace-binaries confirmation
+```
+
+`upgrade` does not require being inside a git repository. It works in three steps:
+
+1. Resolves the running binary path with `os.Executable()` and classifies the install:
+   - **Homebrew** (`/opt/homebrew/Cellar/ezstack/...`, `/usr/local/Cellar/ezstack/...`, `/home/linuxbrew/.linuxbrew/Cellar/ezstack/...`) — prints `brew upgrade ezstack` and exits.
+   - **`go install`** (under `$GOBIN`, `$GOPATH/bin`, or `~/go/bin`) — prints the `go install …@latest` command and exits.
+   - Otherwise — proceeds with an in-place swap.
+2. Hits the GitHub Releases API for the requested tag (default: `/releases/latest`), downloads `ezstack_<os>_<arch>.tar.gz` plus `checksums.txt`, and verifies the SHA-256.
+3. Atomically renames the new binaries on top of the old ones in the same directory. On Unix this is safe even for the currently-running process: the kernel keeps the old inode alive until exit.
+
+Exit codes: `0` success, `1` general I/O / extraction failure, `2` usage error, `8` GitHub API or download failure, `10` user declined the confirm prompt.
+
+`ezs-mcp` exposes the same flow under `--upgrade`, `--upgrade-check`, `--upgrade-tag`, and `--upgrade-force` for installations that ship the MCP binary without the CLI.
 
 ---
 
