@@ -12,7 +12,7 @@
 
 [Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows) · [Editor & Desktop Integrations](#editor--desktop-integrations)
 
-**Commands:** [agent](#ezs-agent) · [commit/amend](#ezs-commit--ezs-amend) · [config](#ezs-config) · [delete](#ezs-delete) · [diff](#ezs-diff) · [doctor](#ezs-doctor) · [down/up](#ezs-down--ezs-up) · [goto](#ezs-goto) · [list](#ezs-list) · [log](#ezs-log) · [menu](#ezs-menu) · [new](#ezs-new) · [pr](#ezs-pr) · [push](#ezs-push) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [status](#ezs-status) · [sync](#ezs-sync) · [unstack](#ezs-unstack)
+**Commands:** [agent](#ezs-agent) · [commit/amend](#ezs-commit--ezs-amend) · [config](#ezs-config) · [delete](#ezs-delete) · [diff](#ezs-diff) · [doctor](#ezs-doctor) · [down/up](#ezs-down--ezs-up) · [goto](#ezs-goto) · [list](#ezs-list) · [log](#ezs-log) · [menu](#ezs-menu) · [new](#ezs-new) · [pr](#ezs-pr) · [push](#ezs-push) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [status](#ezs-status) · [sync](#ezs-sync) · [unstack](#ezs-unstack) · [upgrade](#ezs-upgrade)
 
 **Extras:** [Hooks](#hooks) · [Exit codes](#exit-codes) · [Discoverability](#discoverability-info---examples-did-you-mean)
 
@@ -276,7 +276,7 @@ ezs upgrade --version v4.6.0   # pin to a specific release tag
 
 `ezs upgrade` detects how the binary was installed: Homebrew users get the `brew upgrade ezstack` command printed instead of an in-place swap, and `go install` users get the `go install …@latest` command. The sibling `ezs-mcp` binary (if it lives in the same directory) is upgraded alongside `ezs`. Pass `--no-mcp` to leave it alone.
 
-`ezs-mcp` exposes the same flow under `--upgrade` / `--upgrade-check` for the rare case where it is installed without `ezs`.
+`ezs-mcp` exposes the same flow under `--upgrade`, `--upgrade-check`, `--upgrade-tag`, and `--upgrade-force` for the rare case where it is installed without `ezs`.
 
 **Shell integration (recommended)**
 

@@ -391,6 +391,21 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 		wantBins = append(wantBins, "ezs-mcp")
 	}
 
+	// Acquire a non-blocking exclusive lock on a sentinel file in
+	// binDir BEFORE staging anything. Two concurrent `ezs upgrade`
+	// processes would otherwise race on the fixed-name backup files
+	// (.ezs.ezstack-upgrade-backup): the loser's stale-backup cleanup
+	// in Phase 1 would clobber the winner's live hard-link backup,
+	// breaking rollback.
+	lock, err := acquireUpgradeLock(filepath.Join(binDir, ".ezstack-upgrade.lock"))
+	if err != nil {
+		if errors.Is(err, errLockHeld) {
+			return nil, fmt.Errorf("another ezstack upgrade is already in progress in %s — wait for it to finish or remove .ezstack-upgrade.lock if it is stale", binDir)
+		}
+		return nil, fmt.Errorf("acquire upgrade lock in %s: %w", binDir, err)
+	}
+	defer lock.release()
+
 	// Stage inside binDir so the final replace is a same-filesystem
 	// rename (truly atomic on Unix), and so a missing-write-permission
 	// error surfaces *before* we burn bandwidth on the download.

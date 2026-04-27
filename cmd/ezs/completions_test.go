@@ -403,3 +403,24 @@ func TestPrintCompletions_StackBoolFlagSyncFallsThrough(t *testing.T) {
 		}
 	}
 }
+
+// TestCompletionsKnownCommandsAlignment is a drift gate: every command
+// the tab-completer offers (topLevelCommands) and every command that
+// has a flag spec (commandFlags) MUST also be a real dispatch target
+// in knownCommands — otherwise tab-completing the entry would land on
+// the "Unknown command" handler. The two maps are declared in separate
+// files (main.go and completions.go), and the original PR for `ezs
+// upgrade` had to remember to update both; this gate makes the
+// invariant explicit so future commands can't silently regress.
+func TestCompletionsKnownCommandsAlignment(t *testing.T) {
+	for _, cmd := range topLevelCommands {
+		if !knownCommands[cmd] {
+			t.Errorf("topLevelCommands lists %q but knownCommands does not — typing it dispatches to 'Unknown command'", cmd)
+		}
+	}
+	for cmd := range commandFlags {
+		if !knownCommands[cmd] {
+			t.Errorf("commandFlags lists flags for %q but knownCommands does not — flag completion is unreachable", cmd)
+		}
+	}
+}

@@ -562,6 +562,47 @@ func TestRunRollbackOnSecondReplaceFail(t *testing.T) {
 	}
 }
 
+// TestRunRefusesConcurrentUpgrade verifies that a second invocation
+// fails fast with an "already in progress" message when the first one
+// is still holding the lock — prevents the rollback-corruption race
+// where two processes' fixed-name backup files clobber each other.
+func TestRunRefusesConcurrentUpgrade(t *testing.T) {
+	if !supportedPlatform(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skip on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	binDir, _ := fakeRelease(t, "v9.9.9", map[string]string{
+		"ezs":     "new-ezs\n",
+		"ezs-mcp": "new-mcp\n",
+	})
+
+	// Hold the lock manually to simulate a sibling upgrade in flight.
+	held, err := acquireUpgradeLock(filepath.Join(binDir, ".ezstack-upgrade.lock"))
+	if err != nil {
+		t.Fatalf("pre-acquire lock: %v", err)
+	}
+	defer held.release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err = Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+	})
+	if err == nil {
+		t.Fatal("expected lock-conflict error")
+	}
+	if !strings.Contains(err.Error(), "already in progress") {
+		t.Errorf("expected 'already in progress' message, got %v", err)
+	}
+	// Disk untouched: original "old-ezs" content still present.
+	got, _ := os.ReadFile(filepath.Join(binDir, "ezs"))
+	if string(got) != "old-ezs" {
+		t.Errorf("ezs was modified despite lock conflict: %q", got)
+	}
+}
+
 // TestRunNetworkErrorClassified verifies that when the API server
 // returns a 500, Run() surfaces a *NetworkError so the CLI can route
 // it to ExitNetworkError.

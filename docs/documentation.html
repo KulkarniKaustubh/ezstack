@@ -892,7 +892,7 @@
 <span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span> <span class="c-flag">--version</span> <span class="c-str">v4.6.0</span>   <span class="c-comment"># pin to a specific release tag</span>
 </code></pre>
       <p><code>ezs upgrade</code> detects how the binary was installed: Homebrew users get the <code>brew upgrade ezstack</code> command printed instead of an in-place swap, and <code>go install</code> users get the <code>go install …@latest</code> command. The sibling <code>ezs-mcp</code> binary (if it lives in the same directory) is upgraded alongside <code>ezs</code>. Pass <code>--no-mcp</code> to leave it alone.</p>
-      <p><code>ezs-mcp</code> exposes the same flow under <code>--upgrade</code> / <code>--upgrade-check</code> for the rare case where it is installed without <code>ezs</code>.</p>
+      <p><code>ezs-mcp</code> exposes the same flow under <code>--upgrade</code>, <code>--upgrade-check</code>, <code>--upgrade-tag</code>, and <code>--upgrade-force</code> for the rare case where it is installed without <code>ezs</code>.</p>
       <p><strong>Shell integration (recommended)</strong></p>
       <p>Add to your shell configuration:</p>
       <pre><code><span class="c-comment"># bash</span>
