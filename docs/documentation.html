@@ -619,6 +619,7 @@
         <li><a href="#ezs-goto" class="toc-h3">ezs goto</a></li>
         <li><a href="#ezs-list" class="toc-h3">ezs list</a></li>
         <li><a href="#ezs-log" class="toc-h3">ezs log</a></li>
+        <li><a href="#ezs-menu" class="toc-h3">ezs menu</a></li>
         <li><a href="#ezs-new" class="toc-h3">ezs new</a></li>
         <li><a href="#ezs-pr" class="toc-h3">ezs pr</a></li>
         <li><a href="#ezs-push" class="toc-h3">ezs push</a></li>
@@ -627,7 +628,6 @@
         <li><a href="#ezs-status" class="toc-h3">ezs status</a></li>
         <li><a href="#ezs-sync" class="toc-h3">ezs sync</a></li>
         <li><a href="#ezs-unstack" class="toc-h3">ezs unstack</a></li>
-        <li><a href="#ezs-menu" class="toc-h3">ezs menu</a></li>
         <li><a href="#ezs-upgrade" class="toc-h3">ezs upgrade</a></li>
         <li><a href="#exit-codes">Exit codes</a></li>
         <li><a href="#hooks">Hooks</a></li>
@@ -1355,6 +1355,15 @@ Options:
     <span class="c-flag">--json</span>               <span class="c-dim">Output as JSON</span>
 </code></pre>
       <p>Shows the commits that exist in a branch but not in its parent branch. Use <code>--branch</code> to view commits for any branch without switching to it. The <code>--json</code> flag outputs structured commit data (hash, message, author, date) for editor integrations.</p>
+      <h3 id="ezs-menu"><code>ezs menu</code></h3>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">menu</span>
+</code></pre>
+      <p>Opens the interactive command launcher — an fzf-style picker that lists the
+      common ezstack commands and runs the one you select. Useful when you don't
+      remember the exact subcommand name. The picker covers: <code>config</code>, <code>delete</code>,
+      <code>goto</code>, <code>help</code>, <code>new</code>, <code>pr</code>, <code>reparent</code>, <code>stack</code>, <code>status</code>, <code>sync</code>, and
+      <code>unstack</code>. On exit (Esc or Ctrl-c) the menu returns without making any
+      changes.</p>
       <h3 id="ezs-new"><code>ezs new</code></h3>
       <p>Create a new branch in the stack. Aliases: <code>n</code></p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">[branch-name]</span> <span class="c-str">[options]</span>
@@ -1518,15 +1527,6 @@ Options:
 Options:
     <span class="c-flag">-b,</span> <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>     <span class="c-dim">Branch to untrack</span>
 </code></pre>
-      <h3 id="ezs-menu"><code>ezs menu</code></h3>
-      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">menu</span>
-</code></pre>
-      <p>Opens the interactive command launcher — an fzf-style picker that lists the
-      common ezstack commands and runs the one you select. Useful when you don't
-      remember the exact subcommand name. The picker covers: <code>config</code>, <code>delete</code>,
-      <code>goto</code>, <code>help</code>, <code>new</code>, <code>pr</code>, <code>reparent</code>, <code>stack</code>, <code>status</code>, <code>sync</code>, and
-      <code>unstack</code>. On exit (Esc or Ctrl-c) the menu returns without making any
-      changes.</p>
       <h3 id="ezs-upgrade"><code>ezs upgrade</code></h3>
       <p>Self-update the running <code>ezs</code> binary (and the sibling <code>ezs-mcp</code> if installed alongside it) to the latest published GitHub release.</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span> <span class="c-str">[options]</span>

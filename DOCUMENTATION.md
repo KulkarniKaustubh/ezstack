@@ -818,6 +818,21 @@ Shows the commits that exist in a branch but not in its parent branch. Use `--br
 
 ---
 
+### `ezs menu`
+
+```
+ezs menu
+```
+
+Opens the interactive command launcher — an fzf-style picker that lists the
+common ezstack commands and runs the one you select. Useful when you don't
+remember the exact subcommand name. The picker covers: `config`, `delete`,
+`goto`, `help`, `new`, `pr`, `reparent`, `stack`, `status`, `sync`, and
+`unstack`. On exit (Esc or Ctrl-c) the menu returns without making any
+changes.
+
+---
+
 ### `ezs new`
 
 Create a new branch in the stack. Aliases: `n`
@@ -1059,21 +1074,6 @@ ezs unstack [branch] [options]
 Options:
     -b, --branch <name>     Branch to untrack
 ```
-
----
-
-### `ezs menu`
-
-```
-ezs menu
-```
-
-Opens the interactive command launcher — an fzf-style picker that lists the
-common ezstack commands and runs the one you select. Useful when you don't
-remember the exact subcommand name. The picker covers: `config`, `delete`,
-`goto`, `help`, `new`, `pr`, `reparent`, `stack`, `status`, `sync`, and
-`unstack`. On exit (Esc or Ctrl-c) the menu returns without making any
-changes.
 
 ---
 
