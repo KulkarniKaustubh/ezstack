@@ -1077,27 +1077,6 @@ changes.
 
 ---
 
-## Exit codes
-
-`ezs` returns these exit codes; each is wrapped via `ui.NewExitError` in
-`internal/ui/ui.go`. Use them to drive scripts and CI gates without parsing
-stderr.
-
-| Code | Meaning |
-|------|---------|
-| 0  | Success |
-| 1  | General error |
-| 2  | Usage / argument error |
-| 3  | Rebase conflict |
-| 4  | Not in a git repository |
-| 5  | Not in a stack |
-| 6  | GitHub authentication required |
-| 7  | Branch not found |
-| 8  | Network / remote error |
-| 10 | User cancelled |
-
----
-
 ### `ezs upgrade`
 
 Self-update the running `ezs` binary (and the sibling `ezs-mcp` if installed alongside it) to the latest published GitHub release.
@@ -1126,6 +1105,27 @@ Options
 Exit codes: `0` success, `1` general I/O / extraction failure, `2` usage error, `8` GitHub API or download failure, `10` user declined the confirm prompt.
 
 `ezs-mcp` exposes the same flow under `--upgrade`, `--upgrade-check`, `--upgrade-tag`, and `--upgrade-force` for installations that ship the MCP binary without the CLI.
+
+---
+
+## Exit codes
+
+`ezs` returns these exit codes; each is wrapped via `ui.NewExitError` in
+`internal/ui/ui.go`. Use them to drive scripts and CI gates without parsing
+stderr.
+
+| Code | Meaning |
+|------|---------|
+| 0  | Success |
+| 1  | General error |
+| 2  | Usage / argument error |
+| 3  | Rebase conflict |
+| 4  | Not in a git repository |
+| 5  | Not in a stack |
+| 6  | GitHub authentication required |
+| 7  | Branch not found |
+| 8  | Network / remote error |
+| 10 | User cancelled |
 
 ---
 
