@@ -962,6 +962,64 @@ pre code {
   margin-top: 2.5rem;
 }
 
+.install-upgrade {
+  max-width: 720px;
+  margin: 2rem auto 2.5rem;
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 1.25rem 1.5rem;
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.06) 0%, rgba(34, 197, 94, 0.02) 100%);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+  border-radius: var(--radius);
+}
+
+.install-upgrade-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 100px;
+  background: rgba(34, 197, 94, 0.12);
+  color: var(--green);
+  flex-shrink: 0;
+}
+
+.install-upgrade-body h3 {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.install-upgrade-body p {
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.install-upgrade-cmd {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+@media (max-width: 760px) {
+  .install-upgrade {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    text-align: left;
+  }
+  .install-upgrade-cmd {
+    width: 100%;
+  }
+}
+
 /* ========================================
    Ecosystem
    ======================================== */
