@@ -127,6 +127,7 @@ ezs delete feature-branch
 | `sync` | | Sync stack with remote (rebase or merge) |
 | `unstack` | | Remove a branch from tracking |
 | `up` | | Navigate up the stack (toward parent) |
+| `upgrade` | `update` | Self-update `ezs` and `ezs-mcp` from the latest GitHub release |
 
 **Global flags:** `-y, --yes` auto-confirm prompts · `-h, --help` · `-v, --version` · `--info` (diagnostic dump for bug reports)
 
@@ -143,6 +144,7 @@ A few other flags worth knowing about:
 - `ezs delete --cascade` — delete a branch and every descendant in one shot (deepest-first; aborts on a dirty descendant unless `--force`).
 - `ezs config export <file>` / `ezs config import <file>` — back up the global ezstack config (token redacted, file written `0600`) and restore it on another machine.
 - `ezs agent --no-push` / `--preset <name>` / `--save-prompt <file>` — block downstream `ezs push` while the agent runs, overlay a saved persona from `~/.ezstack/agent-presets/<name>.md`, or dump the composed prompt to disk (pairs with `--dry-run`).
+- `ezs upgrade` (alias `ezs update`) — self-update `ezs` and `ezs-mcp` to the latest published GitHub release. Homebrew and `go install` users get routed back to their package manager. The `ezs-mcp` companion is upgraded in lock-step: sibling first, then resolved via `PATH` so an `ezs-mcp` planted at `~/go/bin/` while `ezs` lives elsewhere is still picked up. Pass `--check` for a no-download version probe, or `--no-mcp` to skip the MCP binary.
 
 ezstack also runs optional user hooks from `~/.ezstack/hooks/` around `commit`, `push`, and `sync`. See [DOCUMENTATION.md](DOCUMENTATION.md#hooks) for the full contract.
 

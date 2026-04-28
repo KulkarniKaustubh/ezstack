@@ -69,7 +69,7 @@ Verify the install:
 
 ```bash
 ezs --version
-# → ezstack version 4.7.4
+# → ezstack version 4.7.5
 ```
 
 ### 2. Wire up shell integration
@@ -274,7 +274,7 @@ ezs upgrade --check    # see whether an upgrade is available without downloading
 ezs upgrade --version v4.6.0   # pin to a specific release tag
 ```
 
-`ezs upgrade` detects how the binary was installed: Homebrew users get the `brew upgrade ezstack` command printed instead of an in-place swap, and `go install` users get the `go install …@latest` command. The sibling `ezs-mcp` binary (if it lives in the same directory) is upgraded alongside `ezs`. Pass `--no-mcp` to leave it alone.
+`ezs upgrade` detects how the binary was installed: Homebrew users get the `brew upgrade ezstack` command printed instead of an in-place swap, and `go install` users get the `go install …@latest` command. The companion `ezs-mcp` binary is upgraded alongside `ezs` in lock-step — first by checking next to `ezs`, and then by falling back to `PATH` so a `go install`-only `ezs-mcp` (e.g. at `~/go/bin/ezs-mcp` while `ezs` lives in `~/.local/bin/`) is still picked up. A Homebrew-managed `ezs-mcp` resolved through `PATH` is left alone with a hint to run `brew upgrade ezstack` instead. Pass `--no-mcp` to skip it entirely.
 
 `ezs-mcp` exposes the same flow under `--upgrade`, `--upgrade-check`, `--upgrade-tag`, and `--upgrade-force` for the rare case where it is installed without `ezs`.
 
@@ -1079,7 +1079,7 @@ Options:
 
 ### `ezs upgrade`
 
-Self-update the running `ezs` binary (and the sibling `ezs-mcp` if installed alongside it) to the latest published GitHub release.
+Self-update the running `ezs` binary (and the companion `ezs-mcp` if installed) to the latest published GitHub release.
 
 ```
 ezs upgrade [options]
@@ -1089,7 +1089,7 @@ Options
   --check            Print current vs latest version and exit (no download)
   --version <tag>    Pin to a specific release tag (e.g. v4.6.3)
   --force            Reinstall even when already at the target version
-  --no-mcp           Skip the sibling ezs-mcp binary
+  --no-mcp           Skip the companion ezs-mcp binary
   -y, --yes          Skip the replace-binaries confirmation
 ```
 
@@ -1100,7 +1100,12 @@ Options
    - **`go install`** (under `$GOBIN`, `$GOPATH/bin`, or `~/go/bin`) — prints the `go install …@latest` command and exits.
    - Otherwise — proceeds with an in-place swap.
 2. Hits the GitHub Releases API for the requested tag (default: `/releases/latest`), downloads `ezstack_<os>_<arch>.tar.gz` plus `checksums.txt`, and verifies the SHA-256.
-3. Atomically renames the new binaries on top of the old ones in the same directory. On Unix this is safe even for the currently-running process: the kernel keeps the old inode alive until exit.
+3. Atomically renames the new binaries on top of the old ones (per binary, in their own directories — `ezs` and `ezs-mcp` can live in different bin dirs). On Unix this is safe even for the currently-running process: the kernel keeps the old inode alive until exit.
+
+`ezs-mcp` is resolved in two stages so a split-directory install layout still upgrades in lock-step:
+
+- **Sibling first.** If `ezs-mcp` lives next to the running `ezs`, that copy is swapped (the happy path for Homebrew, manual tarball, and "drop both binaries together" installs).
+- **`PATH` fallback.** Otherwise `exec.LookPath("ezs-mcp")` is consulted, so an `ezs-mcp` planted by `ezs agent`'s `go install` at `~/go/bin/ezs-mcp` is still updated when `ezs` itself was installed under, say, `~/.local/bin/`. A Homebrew-managed `ezs-mcp` resolved through `PATH` is intentionally skipped — the user is asked to run `brew upgrade ezstack` so brew's receipt of the install stays in sync. The swap is otherwise all-or-nothing across both binaries: a failed `ezs-mcp` rename rolls `ezs` back to its previous version.
 
 Exit codes: `0` success, `1` general I/O / extraction failure, `2` usage error, `8` GitHub API or download failure, `10` user declined the confirm prompt.
 
@@ -1376,14 +1381,14 @@ checks, and review status) and a per-branch file browser. Auto-refreshes when
 
 ```bash
 # Pre-built (from the Releases page)
-code --install-extension ezstack-4.7.4.vsix
+code --install-extension ezstack-4.7.5.vsix
 
 # From source
 cd vscode-extension
 npm install
 npm run compile
 npx vsce package
-code --install-extension ezstack-4.7.4.vsix
+code --install-extension ezstack-4.7.5.vsix
 ```
 
 **Commands** are available under the `ezstack:` prefix in the command palette
