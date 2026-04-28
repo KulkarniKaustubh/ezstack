@@ -19,8 +19,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -386,25 +388,73 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 
 	binDir := filepath.Dir(execPath)
-	wantBins := []string{"ezs"}
-	if opts.IncludeMCP && siblingExists(binDir, "ezs-mcp") {
-		wantBins = append(wantBins, "ezs-mcp")
+
+	// Build the swap plan up front. ezs always swaps next to itself.
+	// ezs-mcp is more flexible: if it sits in binDir we swap it there,
+	// otherwise we resolve it via PATH so an installation that landed
+	// in a separate directory (e.g. ~/go/bin/ezs-mcp planted by
+	// `ezs agent`'s `go install` while ezs lives in ~/.local/bin/) is
+	// still upgraded in lock-step. Homebrew-managed MCP siblings on PATH
+	// are skipped — those must be updated through `brew upgrade`.
+	type swap struct {
+		name   string
+		src    string // staged tmp path; populated after extract
+		dst    string // live target path
+		backup string // adjacent rollback backup; same dir as dst
+	}
+	makeBackup := func(dst string) string {
+		return filepath.Join(filepath.Dir(dst), "."+filepath.Base(dst)+".ezstack-upgrade-backup")
+	}
+	plans := []swap{{name: "ezs", dst: filepath.Join(binDir, "ezs")}}
+	plans[0].backup = makeBackup(plans[0].dst)
+	if opts.IncludeMCP {
+		mcpDst, skipReason, ok := resolveMCPTarget(binDir)
+		switch {
+		case ok:
+			plans = append(plans, swap{
+				name:   "ezs-mcp",
+				dst:    mcpDst,
+				backup: makeBackup(mcpDst),
+			})
+		case skipReason != "":
+			logf("%s", skipReason)
+		}
 	}
 
-	// Acquire a non-blocking exclusive lock on a sentinel file in
-	// binDir BEFORE staging anything. Two concurrent `ezs upgrade`
+	// Acquire non-blocking exclusive locks on every distinct destination
+	// directory BEFORE staging anything. Two concurrent `ezs upgrade`
 	// processes would otherwise race on the fixed-name backup files
 	// (.ezs.ezstack-upgrade-backup): the loser's stale-backup cleanup
 	// in Phase 1 would clobber the winner's live hard-link backup,
-	// breaking rollback.
-	lock, err := acquireUpgradeLock(filepath.Join(binDir, ".ezstack-upgrade.lock"))
-	if err != nil {
-		if errors.Is(err, errLockHeld) {
-			return nil, fmt.Errorf("another ezstack upgrade is already in progress in %s — wait for it to finish or remove .ezstack-upgrade.lock if it is stale", binDir)
+	// breaking rollback. Sorted so two runs that land on the same set of
+	// dirs can't AB/BA-deadlock.
+	seenLockDir := map[string]bool{}
+	var lockDirs []string
+	for _, p := range plans {
+		d := filepath.Dir(p.dst)
+		if seenLockDir[d] {
+			continue
 		}
-		return nil, fmt.Errorf("acquire upgrade lock in %s: %w", binDir, err)
+		seenLockDir[d] = true
+		lockDirs = append(lockDirs, d)
 	}
-	defer lock.release()
+	sort.Strings(lockDirs)
+	var locks []*upgradeLock
+	defer func() {
+		for _, l := range locks {
+			l.release()
+		}
+	}()
+	for _, d := range lockDirs {
+		l, err := acquireUpgradeLock(filepath.Join(d, ".ezstack-upgrade.lock"))
+		if err != nil {
+			if errors.Is(err, errLockHeld) {
+				return nil, fmt.Errorf("another ezstack upgrade is already in progress in %s — wait for it to finish or remove .ezstack-upgrade.lock if it is stale", d)
+			}
+			return nil, fmt.Errorf("acquire upgrade lock in %s: %w", d, err)
+		}
+		locks = append(locks, l)
+	}
 
 	// Stage inside binDir so the final replace is a same-filesystem
 	// rename (truly atomic on Unix), and so a missing-write-permission
@@ -447,6 +497,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	}
 	logf("verified sha-256 against checksums.txt")
 
+	wantBins := make([]string, 0, len(plans))
+	for _, p := range plans {
+		wantBins = append(wantBins, p.name)
+	}
 	staged, err := extractBinaries(tarPath, tmp, wantBins)
 	if err != nil {
 		return nil, fmt.Errorf("extract: %w", err)
@@ -455,27 +509,18 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 	// Pre-flight: every wanted binary must be present in the tarball.
 	// Validate before touching the destination directory so we don't end
 	// up rolling back a partial swap because of a missing-entry error.
-	for _, name := range wantBins {
-		if _, ok := staged[name]; !ok {
-			return nil, fmt.Errorf("tarball is missing %s", name)
-		}
-	}
-
 	// Multi-binary swaps need to be all-or-nothing: replacing `ezs` and
 	// then failing to replace `ezs-mcp` would leave the user with a
 	// version-skewed pair (the MCP protocol surface is sensitive to that).
-	// Strategy: hard-link each existing target to a backup name in the same
-	// directory, do all renames, restore from backups on any failure.
-	// Hard links are guaranteed same-fs since binDir == backup dir.
-	type swap struct{ src, dst, backup string }
-	plans := make([]swap, 0, len(wantBins))
-	for _, name := range wantBins {
-		dst := filepath.Join(binDir, name)
-		plans = append(plans, swap{
-			src:    staged[name],
-			dst:    dst,
-			backup: filepath.Join(binDir, "."+name+".ezstack-upgrade-backup"),
-		})
+	// Strategy: hard-link each existing target to a backup file in the
+	// same directory as the live binary, do all renames, restore from
+	// backups on any failure.
+	for i := range plans {
+		src, ok := staged[plans[i].name]
+		if !ok {
+			return nil, fmt.Errorf("tarball is missing %s", plans[i].name)
+		}
+		plans[i].src = src
 	}
 
 	// Phase 1: snapshot existing targets via hard link (or copy fallback
@@ -861,6 +906,54 @@ func siblingExists(dir, name string) bool {
 		return false
 	}
 	return !info.IsDir()
+}
+
+// resolveMCPTarget locates the ezs-mcp binary that should be swapped
+// alongside the running ezs. It prefers a sibling in binDir (the
+// happy path for Homebrew, manual tarball installs, and any other
+// "drop both binaries in the same directory" install layout). If no
+// sibling exists it falls back to PATH so a `go install`-only
+// ezs-mcp at ~/go/bin/ — common when `ezs agent` had to bootstrap it
+// on a machine where ezs itself was installed differently — is still
+// upgraded in lock-step.
+//
+// A Homebrew-managed ezs-mcp on PATH is intentionally skipped: the
+// user is expected to run `brew upgrade ezstack` to keep brew's
+// receipt of the install in sync. InstallGoInstall paths are NOT
+// skipped here — the user opted into in-place self-update by running
+// `ezs upgrade` against an unmanaged primary, and the cost of leaving
+// MCP version-skewed (silent JSON-RPC mismatches with Claude Code)
+// outweighs the cost of overwriting a binary that `go install` will
+// happily rewrite on the next run anyway.
+//
+// Returns:
+//
+//	(path, "", true)   — found and eligible for swap
+//	("",   reason, false) — found but skipped; reason is human-readable
+//	("",   "",     false) — no candidate found anywhere
+func resolveMCPTarget(binDir string) (dst, skipReason string, ok bool) {
+	if siblingExists(binDir, "ezs-mcp") {
+		return filepath.Join(binDir, "ezs-mcp"), "", true
+	}
+	p, err := exec.LookPath("ezs-mcp")
+	if err != nil {
+		return "", "", false
+	}
+	// Resolve symlinks ONLY for the install-method classification — a
+	// brew-managed binary often lives behind /usr/local/bin/ezs-mcp →
+	// /opt/homebrew/Cellar/.../ezs-mcp, and we need the resolved path
+	// to recognize the Cellar marker. The swap target itself stays as
+	// the LookPath result so we don't follow a user's intentional alias
+	// and rewrite the canonical file underneath them — same posture as
+	// the sibling branch above, which never resolves symlinks either.
+	classifyPath := p
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		classifyPath = r
+	}
+	if DetectInstall(classifyPath) == InstallHomebrew {
+		return "", fmt.Sprintf("skipping Homebrew-managed ezs-mcp at %s — run `brew upgrade ezstack` to update it", classifyPath), false
+	}
+	return p, "", true
 }
 
 func humanSize(n int64) string {

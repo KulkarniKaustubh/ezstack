@@ -644,6 +644,366 @@ func TestRunNetworkErrorClassified(t *testing.T) {
 	}
 }
 
+// TestResolveMCPTargetSibling verifies the happy path: when ezs-mcp
+// lives alongside ezs in binDir, that path is returned and PATH is
+// not consulted at all.
+func TestResolveMCPTargetSibling(t *testing.T) {
+	binDir := t.TempDir()
+	mcpPath := filepath.Join(binDir, "ezs-mcp")
+	if err := os.WriteFile(mcpPath, []byte("anything"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Even if PATH is empty, the sibling lookup must still succeed.
+	t.Setenv("PATH", "")
+	t.Setenv("GOBIN", "")
+	t.Setenv("GOPATH", "/var/empty/non-existent-gopath")
+
+	dst, reason, ok := resolveMCPTarget(binDir)
+	if !ok {
+		t.Fatalf("expected sibling to be found, got reason=%q", reason)
+	}
+	if dst != mcpPath {
+		t.Errorf("dst = %q, want %q", dst, mcpPath)
+	}
+	if reason != "" {
+		t.Errorf("expected empty reason for sibling, got %q", reason)
+	}
+}
+
+// TestResolveMCPTargetPATHFallback verifies the new behavior: when
+// ezs-mcp does NOT live next to ezs, exec.LookPath is consulted and
+// the path it returns is used as the swap destination — even when
+// that path lives under a directory that DetectInstall would
+// normally classify as InstallGoInstall (~/go/bin or $GOBIN).
+//
+// This is the bug the user hit: ezs at ~/.local/bin/ but ezs-mcp at
+// ~/go/bin/ (planted by `ezs agent`'s `go install`) was silently
+// skipped, leaving the pair version-skewed.
+func TestResolveMCPTargetPATHFallback(t *testing.T) {
+	binDir := t.TempDir()
+	mcpDir := t.TempDir()
+	mcpPath := filepath.Join(mcpDir, "ezs-mcp")
+	if err := os.WriteFile(mcpPath, []byte("anything"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	// PATH must contain mcpDir; clear GOBIN/GOPATH so DetectInstall
+	// doesn't accidentally classify the temp mcpDir as go-install.
+	t.Setenv("PATH", mcpDir)
+	t.Setenv("GOBIN", "")
+	t.Setenv("GOPATH", "/var/empty/non-existent-gopath")
+
+	dst, reason, ok := resolveMCPTarget(binDir)
+	if !ok {
+		t.Fatalf("expected PATH-resolved ezs-mcp to be eligible, got reason=%q", reason)
+	}
+	if dst != mcpPath {
+		t.Errorf("dst = %q, want %q", dst, mcpPath)
+	}
+	if reason != "" {
+		t.Errorf("expected empty reason, got %q", reason)
+	}
+}
+
+// TestResolveMCPTargetSkipsHomebrew verifies that a Homebrew-managed
+// ezs-mcp on PATH is reported as skipped, not swapped — brew's
+// receipt of the install would otherwise drift from the binary on
+// disk, breaking subsequent `brew upgrade` runs.
+func TestResolveMCPTargetSkipsHomebrew(t *testing.T) {
+	binDir := t.TempDir()
+	// Build a path that DetectInstall recognizes as Homebrew. The
+	// classifier lower-cases the path before checking, so the actual
+	// dir name capitalization doesn't matter for matching.
+	brewBin := filepath.Join(t.TempDir(), "Cellar", "ezstack", "1.0.0", "bin")
+	if err := os.MkdirAll(brewBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mcpPath := filepath.Join(brewBin, "ezs-mcp")
+	if err := os.WriteFile(mcpPath, []byte("anything"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", brewBin)
+	t.Setenv("GOBIN", "")
+	t.Setenv("GOPATH", "/var/empty/non-existent-gopath")
+
+	dst, reason, ok := resolveMCPTarget(binDir)
+	if ok {
+		t.Errorf("expected Homebrew-managed ezs-mcp to be skipped, got dst=%q", dst)
+	}
+	if reason == "" {
+		t.Error("expected non-empty skip reason for Homebrew-managed mcp")
+	}
+	if !strings.Contains(reason, "brew upgrade") {
+		t.Errorf("skip reason should mention `brew upgrade`, got %q", reason)
+	}
+}
+
+// TestResolveMCPTargetMissing verifies that when neither the sibling
+// nor PATH yields an ezs-mcp, the resolver returns false with no
+// reason — the caller treats that as "user has no MCP installed,
+// silently leave well enough alone".
+func TestResolveMCPTargetMissing(t *testing.T) {
+	binDir := t.TempDir()
+	emptyDir := t.TempDir()
+	t.Setenv("PATH", emptyDir)
+	t.Setenv("GOBIN", "")
+	t.Setenv("GOPATH", "/var/empty/non-existent-gopath")
+
+	dst, reason, ok := resolveMCPTarget(binDir)
+	if ok {
+		t.Errorf("expected no candidate, got dst=%q", dst)
+	}
+	if reason != "" {
+		t.Errorf("expected empty reason when nothing is found, got %q", reason)
+	}
+}
+
+// TestRunUpgradesMCPInSeparateDir is the end-to-end test for the
+// LookPath fallback. ezs lives in primary binDir; ezs-mcp lives in a
+// completely separate dir on PATH. After Run(), both binaries must
+// hold the new bytes and per-dir backups must be cleaned up.
+func TestRunUpgradesMCPInSeparateDir(t *testing.T) {
+	if !supportedPlatform(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skip on %s/%s — no published asset", runtime.GOOS, runtime.GOARCH)
+	}
+
+	binDir, _ := fakeRelease(t, "v9.9.9", map[string]string{
+		"ezs":     "new-ezs-v9.9.9\n",
+		"ezs-mcp": "new-mcp-v9.9.9\n",
+	})
+	// fakeRelease seeded ezs-mcp next to ezs; remove it so siblingExists
+	// returns false and the LookPath fallback kicks in.
+	if err := os.Remove(filepath.Join(binDir, "ezs-mcp")); err != nil {
+		t.Fatalf("remove sibling ezs-mcp: %v", err)
+	}
+
+	mcpDir := t.TempDir()
+	mcpPath := filepath.Join(mcpDir, "ezs-mcp")
+	if err := os.WriteFile(mcpPath, []byte("old-ezs-mcp-elsewhere"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", mcpDir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var logs []string
+	res, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+		Logf:           func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v\nlogs:\n%s", err, strings.Join(logs, "\n"))
+	}
+	if len(res.Updated) != 2 {
+		t.Fatalf("Updated = %v, want 2 entries", res.Updated)
+	}
+
+	gotEzs, _ := os.ReadFile(filepath.Join(binDir, "ezs"))
+	if string(gotEzs) != "new-ezs-v9.9.9\n" {
+		t.Errorf("ezs at %s = %q, want new bytes", binDir, gotEzs)
+	}
+	gotMCP, _ := os.ReadFile(mcpPath)
+	if string(gotMCP) != "new-mcp-v9.9.9\n" {
+		t.Errorf("ezs-mcp at %s = %q, want new bytes", mcpPath, gotMCP)
+	}
+
+	// No leftover backup in either directory after success.
+	for _, p := range []string{
+		filepath.Join(binDir, ".ezs.ezstack-upgrade-backup"),
+		filepath.Join(mcpDir, ".ezs-mcp.ezstack-upgrade-backup"),
+	} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("leftover backup %s after successful upgrade", p)
+		}
+	}
+}
+
+// TestRunSkipsHomebrewMCPOnPATH ensures the end-to-end pipeline routes
+// a Homebrew-managed ezs-mcp on PATH to a "skipping" log instead of
+// silently overwriting brew's binary. ezs (which lives in an
+// InstallBinary path) still upgrades.
+func TestRunSkipsHomebrewMCPOnPATH(t *testing.T) {
+	if !supportedPlatform(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skip on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	binDir, _ := fakeRelease(t, "v9.9.9", map[string]string{
+		"ezs":     "new-ezs-v9.9.9\n",
+		"ezs-mcp": "new-mcp-v9.9.9\n",
+	})
+	if err := os.Remove(filepath.Join(binDir, "ezs-mcp")); err != nil {
+		t.Fatalf("remove sibling ezs-mcp: %v", err)
+	}
+
+	brewBin := filepath.Join(t.TempDir(), "Cellar", "ezstack", "1.0.0", "bin")
+	if err := os.MkdirAll(brewBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mcpPath := filepath.Join(brewBin, "ezs-mcp")
+	if err := os.WriteFile(mcpPath, []byte("brew-old-mcp"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", brewBin)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var logs []string
+	res, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+		Logf:           func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v\nlogs:\n%s", err, strings.Join(logs, "\n"))
+	}
+	if len(res.Updated) != 1 {
+		t.Errorf("Updated = %v, want 1 entry (ezs only)", res.Updated)
+	}
+
+	gotMCP, _ := os.ReadFile(mcpPath)
+	if string(gotMCP) != "brew-old-mcp" {
+		t.Errorf("Homebrew-managed ezs-mcp was overwritten: %q", gotMCP)
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "Homebrew") || !strings.Contains(joined, "brew upgrade") {
+		t.Errorf("expected log about skipping Homebrew-managed mcp, got:\n%s", joined)
+	}
+}
+
+// TestRunLockOnSecondaryDirSurfacesConflict pre-acquires the lock in
+// the SECONDARY (mcp) directory and verifies Run() refuses fast with
+// the existing "already in progress" message. The primary directory
+// is untouched even though its lock was momentarily acquired —
+// rolling back the lock acquisition is essential to keep the user's
+// install in a consistent state when a sibling upgrade is in flight.
+func TestRunLockOnSecondaryDirSurfacesConflict(t *testing.T) {
+	if !supportedPlatform(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skip on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	binDir, _ := fakeRelease(t, "v9.9.9", map[string]string{
+		"ezs":     "new-ezs\n",
+		"ezs-mcp": "new-mcp\n",
+	})
+	if err := os.Remove(filepath.Join(binDir, "ezs-mcp")); err != nil {
+		t.Fatalf("remove sibling ezs-mcp: %v", err)
+	}
+
+	mcpDir := t.TempDir()
+	mcpPath := filepath.Join(mcpDir, "ezs-mcp")
+	if err := os.WriteFile(mcpPath, []byte("old-mcp-elsewhere"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", mcpDir)
+
+	// Hold the secondary lock to simulate a sibling upgrade still
+	// running in mcpDir while we attempt one for binDir.
+	held, err := acquireUpgradeLock(filepath.Join(mcpDir, ".ezstack-upgrade.lock"))
+	if err != nil {
+		t.Fatalf("pre-acquire secondary lock: %v", err)
+	}
+	defer held.release()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err = Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+	})
+	if err == nil {
+		t.Fatal("expected lock-conflict error")
+	}
+	if !strings.Contains(err.Error(), "already in progress") {
+		t.Errorf("expected 'already in progress' message, got %v", err)
+	}
+	if !strings.Contains(err.Error(), mcpDir) {
+		t.Errorf("expected error to name secondary dir %s, got %v", mcpDir, err)
+	}
+
+	// Both binaries untouched.
+	gotEzs, _ := os.ReadFile(filepath.Join(binDir, "ezs"))
+	if string(gotEzs) != "old-ezs" {
+		t.Errorf("ezs touched despite secondary-lock conflict: %q", gotEzs)
+	}
+	gotMCP, _ := os.ReadFile(mcpPath)
+	if string(gotMCP) != "old-mcp-elsewhere" {
+		t.Errorf("ezs-mcp touched despite secondary-lock conflict: %q", gotMCP)
+	}
+}
+
+// TestRunRollbackAcrossDirs verifies all-or-nothing semantics still
+// hold when ezs and ezs-mcp live in different directories: a failed
+// ezs-mcp swap must restore ezs from its backup, even though the
+// backup file lives in a different dir than the failing target.
+func TestRunRollbackAcrossDirs(t *testing.T) {
+	if !supportedPlatform(runtime.GOOS, runtime.GOARCH) {
+		t.Skipf("skip on %s/%s", runtime.GOOS, runtime.GOARCH)
+	}
+
+	binDir, _ := fakeRelease(t, "v9.9.9", map[string]string{
+		"ezs":     "new-ezs\n",
+		"ezs-mcp": "new-mcp\n",
+	})
+	if err := os.Remove(filepath.Join(binDir, "ezs-mcp")); err != nil {
+		t.Fatalf("remove sibling ezs-mcp: %v", err)
+	}
+
+	mcpDir := t.TempDir()
+	mcpPath := filepath.Join(mcpDir, "ezs-mcp")
+	if err := os.WriteFile(mcpPath, []byte("old-mcp-elsewhere"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", mcpDir)
+
+	// Inject a synthetic failure on the ezs-mcp swap; ezs must roll back.
+	oldReplace := atomicReplaceFn
+	atomicReplaceFn = func(src, dst string) error {
+		if filepath.Base(dst) == "ezs-mcp" {
+			return errors.New("synthetic failure")
+		}
+		return oldReplace(src, dst)
+	}
+	t.Cleanup(func() { atomicReplaceFn = oldReplace })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+	})
+	if err == nil {
+		t.Fatal("expected error from injected failure")
+	}
+	if !strings.Contains(err.Error(), "synthetic failure") {
+		t.Errorf("expected wrapped synthetic failure, got %v", err)
+	}
+
+	gotEzs, _ := os.ReadFile(filepath.Join(binDir, "ezs"))
+	if string(gotEzs) != "old-ezs" {
+		t.Errorf("ezs not rolled back: got %q, want old-ezs", gotEzs)
+	}
+	gotMCP, _ := os.ReadFile(mcpPath)
+	if string(gotMCP) != "old-mcp-elsewhere" {
+		t.Errorf("ezs-mcp unexpectedly modified: got %q", gotMCP)
+	}
+
+	// Backup files cleaned up in BOTH dirs.
+	for _, p := range []string{
+		filepath.Join(binDir, ".ezs.ezstack-upgrade-backup"),
+		filepath.Join(mcpDir, ".ezs-mcp.ezstack-upgrade-backup"),
+	} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("leftover backup %s after rollback", p)
+		}
+	}
+}
+
 // --- helpers ---
 
 type tarEntry struct {
