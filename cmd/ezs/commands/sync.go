@@ -36,7 +36,7 @@ func Sync(args []string) error {
     -b, --branch <name>    Sync a specific branch by name (rebase onto parent + cascade to children)
     -p, --parent           Rebase current branch onto its parent
     -C, --children         Rebase child branches onto current branch
-    --continue             Continue after resolving conflicts (completes rebase/merge, pushes, syncs children)
+    --continue             Continue after resolving conflicts (completes rebase/merge, pushes, then re-syncs the entire descendant subtree). Honors -s, -a, -c, -b, and positional <hash-prefix> to limit the scope.
     --merge                Use git merge instead of git rebase
     --rebase               Use git rebase (overrides sync_strategy config)
     --stats                Print commits-per-branch summary after syncing
@@ -152,12 +152,20 @@ func Sync(args []string) error {
 	// see the terminal state, and --squash must not run again either (the
 	// squash already happened on the original invocation).
 	if *continueFlag {
+		// Resolve the same scope flags as non-continue sync: -s, -a, -c, -b,
+		// positional hash. Without this, syncContinue defaulted to "all
+		// stacks", so `ezs sync -s --continue` (intended: current stack only)
+		// silently continued conflicts in unrelated stacks.
+		scope, err := resolveContinueScope(mgr, fs.Args(), *allFlag, *stackFlag, *currentFlag, *branchFlag)
+		if err != nil {
+			return err
+		}
 		defer func() {
 			if hookErr := hooks.Run("post-sync", hookCtx); hookErr != nil {
 				ui.Warn(hookErr.Error())
 			}
 		}()
-		return syncContinue(mgr, gh, useMerge)
+		return syncContinue(mgr, gh, useMerge, scope)
 	}
 
 	if jsonOutput && !dryRun {
@@ -926,13 +934,133 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 	return syncSpecificStacks(mgr, gh, cwd, deleteLocal, stacks, autostash, useMerge)
 }
 
-// syncContinue finds branches with in-progress rebase/merge conflicts across all stacks,
-// completes them, offers to push, and then re-syncs any children that were skipped.
-func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool) error {
-	stacks := mgr.ListStacks()
-	if len(stacks) == 0 {
-		ui.Info("No stacks found.")
+// continueScope captures the user-requested scope for `ezs sync --continue`.
+// Mirrors the dispatch shape of non-continue sync (-a / -s / -c / -b /
+// positional hash) so `--continue` honors the same selectors.
+type continueScope struct {
+	mode       continueMode
+	stack      *config.Stack
+	branchName string
+}
+
+type continueMode int
+
+const (
+	continueModeAll continueMode = iota
+	continueModeCurrentStack
+	continueModeSpecificStack
+	continueModeBranch
+)
+
+// ErrSyncIncomplete signals that `ezs sync --continue` finished but some
+// branches are still mid-conflict, or a re-synced child hit a new conflict.
+// The top-level error printer presents this as a warning rather than a stack
+// trace, but a non-zero exit still allows scripts to detect partial completion.
+var ErrSyncIncomplete = fmt.Errorf("sync continue incomplete: resolve remaining conflicts and re-run `ezs sync --continue`")
+
+// resolveContinueScope mirrors the scope-flag dispatch used by non-continue
+// sync (lines reading -a / -s / -c / -b / positional hash). Defaults: in a
+// stack worktree → currentStack; on main with no flags → all.
+func resolveContinueScope(mgr *stack.Manager, posArgs []string, allFlag, stackFlag, currentFlag bool, branchFlag string) (continueScope, error) {
+	// At most one explicit selector.
+	selectors := 0
+	if allFlag {
+		selectors++
+	}
+	if stackFlag {
+		selectors++
+	}
+	if currentFlag {
+		selectors++
+	}
+	if branchFlag != "" {
+		selectors++
+	}
+	if len(posArgs) > 0 {
+		selectors++
+	}
+	if selectors > 1 {
+		return continueScope{}, fmt.Errorf("--continue accepts at most one of: -a, -s, -c, -b <name>, <stack-hash>")
+	}
+
+	if branchFlag != "" {
+		if mgr.GetBranch(branchFlag) == nil {
+			return continueScope{}, fmt.Errorf("branch %q not found in any stack", branchFlag)
+		}
+		return continueScope{mode: continueModeBranch, branchName: branchFlag}, nil
+	}
+	if currentFlag {
+		_, branch, err := mgr.GetCurrentStack()
+		if err != nil {
+			return continueScope{}, fmt.Errorf("--current requires being in a stack worktree: %w", err)
+		}
+		return continueScope{mode: continueModeBranch, branchName: branch.Name}, nil
+	}
+	if len(posArgs) > 0 {
+		stk, err := mgr.GetStackByHash(posArgs[0])
+		if err != nil {
+			return continueScope{}, err
+		}
+		return continueScope{mode: continueModeSpecificStack, stack: stk}, nil
+	}
+	if stackFlag {
+		stk, _, err := mgr.GetCurrentStack()
+		if err != nil {
+			return continueScope{}, fmt.Errorf("-s requires being in a stack worktree: %w", err)
+		}
+		return continueScope{mode: continueModeCurrentStack, stack: stk}, nil
+	}
+	if allFlag {
+		return continueScope{mode: continueModeAll}, nil
+	}
+	// Default: if in a stack, current stack only; else all.
+	if stk, _, err := mgr.GetCurrentStack(); err == nil {
+		return continueScope{mode: continueModeCurrentStack, stack: stk}, nil
+	}
+	return continueScope{mode: continueModeAll}, nil
+}
+
+// stacksInScope returns the stacks that --continue should consider, given a
+// resolved scope. For branch / specificStack / currentStack it's a single
+// stack; for all it's every stack.
+func stacksInScope(mgr *stack.Manager, scope continueScope) []*config.Stack {
+	switch scope.mode {
+	case continueModeAll:
+		return mgr.ListStacks()
+	case continueModeCurrentStack, continueModeSpecificStack:
+		return []*config.Stack{scope.stack}
+	case continueModeBranch:
+		if stk := mgr.GetStackForBranch(scope.branchName); stk != nil {
+			return []*config.Stack{stk}
+		}
+	}
+	return nil
+}
+
+// syncContinue resumes any in-progress rebase or merge that's within the
+// given scope, then re-syncs the entire descendant subtree of each branch
+// whose continue completed cleanly. Returns ErrSyncIncomplete when one or
+// more branches are still in conflict — either because the original branch's
+// rebase paused on its next commit, or because a re-synced descendant hit a
+// new conflict.
+//
+// Topology:
+//   - Branches are processed parents-before-children so a parent's `--continue`
+//     reaches its terminal state before any child consults its PreSyncCommit.
+//   - Children that themselves have an in-progress rebase/merge are skipped
+//     during re-sync — they'll be picked up on the user's next `--continue`,
+//     after they've been resolved.
+//   - The full descendant subtree (not just immediate children) is walked, so
+//     deep stacks fully re-sync after a single root resolution.
+func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope continueScope) error {
+	scopedStacks := stacksInScope(mgr, scope)
+	if len(scopedStacks) == 0 {
+		ui.Info("No stacks in scope.")
 		return nil
+	}
+	scopedSet := make(map[string]bool, len(scopedStacks))
+	for _, s := range scopedStacks {
+		scopedSet[s.Hash] = true
 	}
 
 	type conflictBranch struct {
@@ -942,19 +1070,49 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool) error {
 		isMerge  bool
 	}
 
+	branchInProgress := func(b *config.Branch) (rebaseIP, mergeIP bool) {
+		workdir := b.WorktreePath
+		if workdir == "" {
+			workdir = mgr.GetRepoDir()
+		}
+		g := git.New(workdir)
+		rebaseIP, _ = g.IsRebaseInProgress()
+		mergeIP, _ = g.IsMergeInProgress()
+		return
+	}
+
+	// Collect in-progress branches across in-scope stacks. For "branch" mode
+	// only consider that branch (other in-progress branches are out of scope).
 	var found []conflictBranch
-	for _, s := range stacks {
-		for _, b := range s.Branches {
-			var g *git.Git
-			if b.WorktreePath != "" {
-				g = git.New(b.WorktreePath)
-			} else {
-				g = git.New(mgr.GetRepoDir())
+	for _, s := range scopedStacks {
+		ordered := topoOrderStackBranches(s)
+		for _, b := range ordered {
+			if scope.mode == continueModeBranch && b.Name != scope.branchName {
+				continue
 			}
-			rebaseIP, _ := g.IsRebaseInProgress()
-			mergeIP, _ := g.IsMergeInProgress()
+			rebaseIP, mergeIP := branchInProgress(b)
 			if rebaseIP || mergeIP {
 				found = append(found, conflictBranch{branch: b, stack: s, isRebase: rebaseIP, isMerge: mergeIP})
+			}
+		}
+	}
+
+	// Surface orphan ezstack autostashes for branches in scope that are NOT in
+	// conflict — they were left behind by a prior aborted sync. We don't
+	// auto-pop because the user may have edited the worktree after the stash
+	// was created, so popping could surprise them. Just inform.
+	inProgressSet := make(map[string]bool, len(found))
+	for _, cb := range found {
+		inProgressSet[cb.branch.Name] = true
+	}
+	for _, s := range scopedStacks {
+		for _, b := range s.Branches {
+			if inProgressSet[b.Name] || b.WorktreePath == "" {
+				continue
+			}
+			g := git.New(b.WorktreePath)
+			if _, ok := g.FindEzstackStash(b.Name); ok {
+				ui.Warn(fmt.Sprintf("Orphan ezstack autostash found for %s. Run `git -C %s stash pop` to restore, or `git stash drop` to discard.", b.Name, b.WorktreePath))
 			}
 		}
 	}
@@ -976,6 +1134,7 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool) error {
 	fmt.Fprintln(os.Stderr)
 
 	successCount := 0
+	stillInConflict := false
 	var continuedBranches []conflictBranch
 	for _, cb := range found {
 		branchWorkDir := cb.branch.WorktreePath
@@ -984,83 +1143,145 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool) error {
 		}
 		g := git.New(branchWorkDir)
 
-		// Check for unresolved conflicts
+		// Check for unresolved conflicts before attempting to continue.
 		hasConflicts, _ := g.HasUnresolvedConflicts()
 		if hasConflicts {
 			ui.Warn(fmt.Sprintf("Skipping %s: still has unresolved conflicts in %s", cb.branch.Name, branchWorkDir))
+			stillInConflict = true
 			continue
 		}
 
-		// Continue the rebase/merge
-		var err error
+		var res git.ContinueResult
 		if cb.isRebase {
 			ui.Info(fmt.Sprintf("Continuing rebase for %s...", cb.branch.Name))
-			err = g.RebaseContinue()
+			res = g.RebaseContinue()
 		} else {
 			ui.Info(fmt.Sprintf("Continuing merge for %s...", cb.branch.Name))
-			err = g.MergeContinue()
+			res = g.MergeContinue()
 		}
 
-		if err != nil {
-			ui.Error(fmt.Sprintf("Failed to continue %s: %v", cb.branch.Name, err))
-			continue
-		}
+		switch {
+		case res.Done:
+			ui.Success(fmt.Sprintf("Completed %s", cb.branch.Name))
+			successCount++
+			continuedBranches = append(continuedBranches, cb)
 
-		ui.Success(fmt.Sprintf("Completed %s", cb.branch.Name))
-		successCount++
-		continuedBranches = append(continuedBranches, cb)
-
-		// Pop autostash if one exists
-		if _, stashFound := g.FindEzstackStash(cb.branch.Name); stashFound {
-			if err := g.StashPop(); err != nil {
-				ui.Warn(fmt.Sprintf("Failed to pop autostash for %s: %v", cb.branch.Name, err))
-			} else {
-				ui.Info(fmt.Sprintf("Restored stashed changes for %s", cb.branch.Name))
+			// Pop this branch's autostash if one was created.
+			if _, stashFound := g.FindEzstackStash(cb.branch.Name); stashFound {
+				if err := g.StashPop(); err != nil {
+					ui.Warn(fmt.Sprintf("Failed to pop autostash for %s: %v", cb.branch.Name, err))
+				} else {
+					ui.Info(fmt.Sprintf("Restored stashed changes for %s", cb.branch.Name))
+				}
 			}
-		}
 
-		// Offer to push
-		if cb.isRebase {
-			OfferForcePush(cb.branch.Name, branchWorkDir, cb.branch.EffectiveRemote())
-		} else {
-			OfferPush(cb.branch.Name, branchWorkDir, cb.branch.EffectiveRemote())
+			// Offer to push the freshly-completed branch.
+			if cb.isRebase {
+				OfferForcePush(cb.branch.Name, branchWorkDir, cb.branch.EffectiveRemote())
+			} else {
+				OfferPush(cb.branch.Name, branchWorkDir, cb.branch.EffectiveRemote())
+			}
+		case res.StillInConflict:
+			ui.Warn(fmt.Sprintf("%s: paused on next commit's conflict — resolve in %s, then re-run `ezs sync --continue`", cb.branch.Name, branchWorkDir))
+			stillInConflict = true
+		default:
+			ui.Error(fmt.Sprintf("Failed to continue %s: %v", cb.branch.Name, res.Err))
+			stillInConflict = true
 		}
 	}
 
 	if successCount == 0 {
+		if stillInConflict {
+			return ErrSyncIncomplete
+		}
 		return nil
 	}
 
-	// Re-sync children of continued branches
+	// Re-sync the full descendant subtree of each continued branch in topo
+	// order. Skip descendants that are themselves mid-rebase — they'll be
+	// resumed by the user's next `--continue` invocation. Stop walking a
+	// subtree once any node hits a fresh conflict, since further descendants
+	// would just re-derive the same problem.
+	descendantConflict := false
 	for _, cb := range continuedBranches {
-		children := mgr.GetChildren(cb.branch.Name)
-		if len(children) == 0 {
+		descendants := mgr.GetDescendants(cb.branch.Name)
+		if len(descendants) == 0 {
+			continue
+		}
+		// Filter to in-scope descendants. (Cross-scope descendants exist when
+		// stacks share branches via reparenting; conservatively skip them in
+		// branch / single-stack modes.)
+		var inScope []*config.Branch
+		for _, d := range descendants {
+			ds := mgr.GetStackForBranch(d.Name)
+			if ds != nil && scopedSet[ds.Hash] {
+				inScope = append(inScope, d)
+			}
+		}
+		if len(inScope) == 0 {
 			continue
 		}
 
 		fmt.Fprintln(os.Stderr)
-		childNames := make([]string, len(children))
-		for i, c := range children {
-			childNames[i] = c.Name
+		names := make([]string, len(inScope))
+		for i, d := range inScope {
+			names[i] = d.Name
 		}
-		ui.Info(fmt.Sprintf("Re-syncing %d child branch(es) of %s: %s",
-			len(children), cb.branch.Name, strings.Join(childNames, ", ")))
+		ui.Info(fmt.Sprintf("Re-syncing %d descendant(s) of %s: %s",
+			len(inScope), cb.branch.Name, strings.Join(names, ", ")))
 
-		for _, child := range children {
+		// Track branches we've stopped descending into so we don't re-sync
+		// their further descendants.
+		stoppedSubtrees := make(map[string]bool)
+		for _, child := range inScope {
+			// Skip if any ancestor in this subtree was already stopped.
+			ancestorStopped := false
+			for parent := child.Parent; parent != ""; {
+				if stoppedSubtrees[parent] {
+					ancestorStopped = true
+					break
+				}
+				parentBranch := mgr.GetBranch(parent)
+				if parentBranch == nil {
+					break
+				}
+				parent = parentBranch.Parent
+			}
+			if ancestorStopped {
+				continue
+			}
+
+			// If the child is mid-rebase already, leave it for the user's next
+			// --continue. Don't try to start a new rebase on top.
+			rebaseIP, mergeIP := branchInProgress(child)
+			if rebaseIP || mergeIP {
+				ui.Warn(fmt.Sprintf("Skipping %s: already has its own in-progress rebase/merge — run `ezs sync --continue` after resolving", child.Name))
+				stillInConflict = true
+				stoppedSubtrees[child.Name] = true
+				continue
+			}
+
 			childResult, err := mgr.SyncBranch(child.Name, gh, useMerge)
 			if err != nil {
 				ui.Warn(fmt.Sprintf("Failed to sync %s: %v", child.Name, err))
+				stoppedSubtrees[child.Name] = true
+				descendantConflict = true
 				continue
 			}
 			childWorkDir := child.WorktreePath
 			if childWorkDir == "" {
 				childWorkDir = mgr.GetRepoDir()
 			}
-			if childResult.HasConflict {
-				ui.Warn(fmt.Sprintf("Conflict syncing %s — resolve in: %s", child.Name, childWorkDir))
-			} else if childResult.Error != nil {
+			switch {
+			case childResult.HasConflict:
+				ui.Warn(fmt.Sprintf("Conflict syncing %s — resolve in: %s, then re-run `ezs sync --continue`", child.Name, childWorkDir))
+				stoppedSubtrees[child.Name] = true
+				descendantConflict = true
+			case childResult.Error != nil:
 				ui.Warn(fmt.Sprintf("Failed to sync %s: %v", child.Name, childResult.Error))
-			} else if childResult.Success {
+				stoppedSubtrees[child.Name] = true
+				descendantConflict = true
+			case childResult.Success:
 				ui.Success(fmt.Sprintf("Synced %s", child.Name))
 				if useMerge {
 					OfferPush(child.Name, childWorkDir, child.EffectiveRemote())
@@ -1071,15 +1292,33 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool) error {
 		}
 	}
 
-	// Update PR metadata
+	// Update PR metadata for in-scope stacks.
 	if gh != nil {
-		for _, s := range stacks {
+		for _, s := range scopedStacks {
 			updatePRMetadata(gh, s, nil)
 		}
 	}
 
+	// If the entire scope is now fully resolved (no in-progress branches and
+	// no descendant conflicts), clear PreSyncCommits for every branch in the
+	// scope — the snapshots have served their purpose. Otherwise leave them
+	// for the next --continue.
+	if !stillInConflict && !descendantConflict {
+		var toClear []string
+		for _, s := range scopedStacks {
+			for _, b := range s.Branches {
+				toClear = append(toClear, b.Name)
+			}
+		}
+		mgr.ClearPreSyncCommits(toClear)
+	}
+
 	fmt.Fprintln(os.Stderr)
 	ui.Success(fmt.Sprintf("Continued %d branch(es)!", successCount))
+
+	if stillInConflict || descendantConflict {
+		return ErrSyncIncomplete
+	}
 	return nil
 }
 

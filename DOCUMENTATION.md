@@ -1043,7 +1043,7 @@ Options:
     --rebase               Use git rebase (overrides sync_strategy config)
     --no-delete-local      Don't delete local branches after their PRs are merged
     --dry-run              Preview what would be synced without making changes
-    --continue             Continue after resolving conflicts
+    --continue             Continue after resolving conflicts (honors -s, -a, -c, -b, and a positional <hash-prefix> to limit scope; re-syncs the entire descendant subtree)
     --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
     --json                 Output dry-run results as JSON (requires --dry-run)
     --stats                Print a commits-per-branch summary after syncing

@@ -1508,7 +1508,7 @@ Options:
     <span class="c-flag">--rebase</span>               <span class="c-dim">Use git rebase (overrides sync_strategy config)</span>
     <span class="c-flag">--no-delete-local</span>      <span class="c-dim">Don&#39;t delete local branches after their PRs are merged</span>
     <span class="c-flag">--dry-run</span>              <span class="c-dim">Preview what would be synced without making changes</span>
-    <span class="c-flag">--continue</span>             <span class="c-dim">Continue after resolving conflicts</span>
+    <span class="c-flag">--continue</span>             <span class="c-dim">Continue after resolving conflicts (honors -s, -a, -c, -b, and a positional &lt;hash-prefix&gt; to limit scope; re-syncs the entire descendant subtree)</span>
     <span class="c-flag">--no-autostash</span>         <span class="c-dim">Don&#39;t stash uncommitted changes before rebase (autostash is on by default)</span>
     <span class="c-flag">--json</span>                 <span class="c-dim">Output dry-run results as JSON (requires --dry-run)</span>
     <span class="c-flag">--stats</span>                <span class="c-dim">Print a commits-per-branch summary after syncing</span>
