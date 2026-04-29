@@ -460,6 +460,28 @@ func (m *Manager) GetChildren(branchName string) []*config.Branch {
 	return children
 }
 
+// GetDescendants returns every transitive descendant of branchName across all
+// stacks, in topological order (parents before children). Used by `ezs sync
+// --continue` to re-sync the entire subtree after a parent's rebase completes,
+// not just the immediate children.
+func (m *Manager) GetDescendants(branchName string) []*config.Branch {
+	visited := make(map[string]bool)
+	var out []*config.Branch
+	var walk func(name string)
+	walk = func(name string) {
+		for _, child := range m.GetChildren(name) {
+			if visited[child.Name] {
+				continue
+			}
+			visited[child.Name] = true
+			out = append(out, child)
+			walk(child.Name)
+		}
+	}
+	walk(branchName)
+	return out
+}
+
 // GetTreeChildren returns child branches based on the original tree structure (BaseBranch),
 // not the effective parent. This is used for navigation (up/down) where we want to
 // follow the tree hierarchy even when parents have been merged and children reparented.

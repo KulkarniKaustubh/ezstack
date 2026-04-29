@@ -505,6 +505,15 @@ func (g *Git) Rebase(target string) error {
 	return g.RunInteractive("rebase", target)
 }
 
+// RebaseOnto interactively rebases commits in `oldBase..HEAD` onto newBase.
+// Used by stack-aware callers that know the OLD parent SHA the current branch
+// was sitting on top of, so they can avoid replaying the parent's own commits
+// when the parent has been rewritten. When oldBase equals newBase this is
+// equivalent to plain `git rebase newBase`.
+func (g *Git) RebaseOnto(newBase, oldBase string) error {
+	return g.RunInteractive("rebase", "--onto", newBase, oldBase)
+}
+
 // MergeNonInteractive merges target into the current branch without interactive mode
 // Returns structured result for conflict handling, matching RebaseResult for compatibility
 func (g *Git) MergeNonInteractive(target string) RebaseResult {

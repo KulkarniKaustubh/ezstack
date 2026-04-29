@@ -1188,3 +1188,244 @@ func TestResolveBranchWorktree_IgnoresMainRepo(t *testing.T) {
 		t.Errorf("resolveBranchWorktree when branch is checked out in main repo = %q, want empty (should fall through to checkout sync)", got)
 	}
 }
+
+// TestSyncBranch_NoCascadingConflictAfterParentRebase reproduces the bug where
+// `ezs sync --continue`'s child re-sync (which calls SyncBranch) re-encounters
+// a conflict that was already resolved when the parent was rebased earlier in
+// the same sync session.
+//
+// Setup: main(M) → A(a1) → B(b1) → C(c1). M and a1 both modify the same region
+// of the same file so rebasing A onto main hits a conflict. B and C edit
+// different (well-separated) regions of the same file, so they should NOT
+// conflict against the resolved A.
+//
+// Edits are deliberately separated by more than git's default 3-line diff
+// context so adjacent-edit hunk overlap doesn't masquerade as a real cascade.
+// Without the fix (plain `git rebase A` from B's worktree), git computes
+// merge-base(B, new_A) = old_main, so it replays a1+b1 onto new_A and
+// re-encounters a1's conflict against the resolved a1' that's already in
+// new_A. With the fix, SyncBranch uses `--onto new_A old_A_SHA` so only b1 is
+// replayed.
+func TestSyncBranch_NoCascadingConflictAfterParentRebase(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// 12-line file gives every branch its own region with ≥3 lines of context.
+	baseLines := []string{
+		"line-1\n", "line-2\n", "line-3\n", "line-4\n",
+		"line-5\n", "line-6\n", "line-7\n", "line-8\n",
+		"line-9\n", "line-10\n", "line-11\n", "line-12\n",
+	}
+	join := func(lines []string) string {
+		out := ""
+		for _, l := range lines {
+			out += l
+		}
+		return out
+	}
+
+	sharedMain := filepath.Join(repoDir, "shared.txt")
+	if err := os.WriteFile(sharedMain, []byte(join(baseLines)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "seed shared.txt").Run()
+
+	// Bare origin so origin/main exists.
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+
+	mgr, _ := NewManager(repoDir)
+	mustCreate := func(name, parent string) string {
+		path := filepath.Join(worktreeBaseDir, name)
+		if _, err := mgr.CreateBranch(name, parent, path, ""); err != nil {
+			t.Fatalf("CreateBranch %s: %v", name, err)
+		}
+		mgr, _ = NewManager(repoDir)
+		return path
+	}
+
+	mutate := func(lines []string, idx int, newVal string) []string {
+		out := make([]string, len(lines))
+		copy(out, lines)
+		out[idx] = newVal + "\n"
+		return out
+	}
+
+	aPath := mustCreate("a", "main")
+	aLines := mutate(baseLines, 0, "line-1-A") // a1 edits line 1.
+	if err := os.WriteFile(filepath.Join(aPath, "shared.txt"), []byte(join(aLines)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", aPath, "add", ".").Run()
+	exec.Command("git", "-C", aPath, "commit", "-m", "a1: edit line 1").Run()
+
+	bPath := mustCreate("b", "a")
+	bLines := mutate(aLines, 5, "line-6-B") // b1 edits line 6 (≥3 lines of context away from line 1).
+	if err := os.WriteFile(filepath.Join(bPath, "shared.txt"), []byte(join(bLines)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", bPath, "add", ".").Run()
+	exec.Command("git", "-C", bPath, "commit", "-m", "b1: edit line 6").Run()
+
+	cPath := mustCreate("c", "b")
+	cLines := mutate(bLines, 10, "line-11-C") // c1 edits line 11.
+	if err := os.WriteFile(filepath.Join(cPath, "shared.txt"), []byte(join(cLines)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", cPath, "add", ".").Run()
+	exec.Command("git", "-C", cPath, "commit", "-m", "c1: edit line 11").Run()
+
+	// Update main to conflict with a1 on line 1.
+	mainLines := mutate(baseLines, 0, "line-1-MAIN")
+	if err := os.WriteFile(sharedMain, []byte(join(mainLines)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "main: edit line 1").Run()
+	exec.Command("git", "-C", repoDir, "push", "origin", "main").Run()
+
+	// Sync the stack from a's worktree. SyncStack walks branches and stops on
+	// a's conflict (a1 vs M). Subsequent branches are skipped pending a's
+	// resolution.
+	mgr, _ = NewManager(aPath)
+	results, err := mgr.SyncStack(nil, nil)
+	if err != nil {
+		t.Fatalf("SyncStack: %v", err)
+	}
+	if len(results) == 0 || !results[0].HasConflict || results[0].Branch != "a" {
+		t.Fatalf("expected a's rebase to conflict; got results=%+v", results)
+	}
+
+	// Simulate the user resolving a's conflict and continuing the rebase.
+	resolvedLines := mutate(baseLines, 0, "line-1-RESOLVED")
+	if err := os.WriteFile(filepath.Join(aPath, "shared.txt"), []byte(join(resolvedLines)), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", aPath, "add", ".").Run()
+	contCmd := exec.Command("git", "-C", aPath, "rebase", "--continue")
+	contCmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+	if out, err := contCmd.CombinedOutput(); err != nil {
+		t.Fatalf("rebase --continue failed: %v\n%s", err, string(out))
+	}
+
+	// Sanity: a's PreSyncCommit must still be set because the bulk sync left it
+	// for --continue's child re-sync to consume.
+	mgr, _ = NewManager(repoDir)
+	bcA := mgr.stackConfig.Cache.GetBranchCache("a")
+	if bcA == nil || bcA.PreSyncCommit == "" {
+		t.Fatalf("expected PreSyncCommit on 'a' to be persisted after conflict; got %+v", bcA)
+	}
+
+	// Now invoke SyncBranch on b — exactly what `ezs sync --continue` does for
+	// children of a continued branch. The bug would cause b to re-conflict on
+	// line-a; the fix uses --onto with a's PreSyncCommit so only b1 is replayed.
+	bMgr, _ := NewManager(bPath)
+	bResult, err := bMgr.SyncBranch("b", nil)
+	if err != nil {
+		t.Fatalf("SyncBranch(b): %v", err)
+	}
+	if bResult.HasConflict {
+		// Make rebase --abort so cleanup doesn't leave the worktree wedged.
+		exec.Command("git", "-C", bPath, "rebase", "--abort").Run()
+		t.Fatalf("BUG: SyncBranch(b) hit a cascading conflict — fix did not prevent re-replay of a's commits. Result: %+v", bResult)
+	}
+	if !bResult.Success {
+		t.Fatalf("SyncBranch(b) did not succeed: %+v", bResult)
+	}
+
+	// And c — same logic, two levels deep.
+	cMgr, _ := NewManager(cPath)
+	cResult, err := cMgr.SyncBranch("c", nil)
+	if err != nil {
+		t.Fatalf("SyncBranch(c): %v", err)
+	}
+	if cResult.HasConflict {
+		exec.Command("git", "-C", cPath, "rebase", "--abort").Run()
+		t.Fatalf("BUG: SyncBranch(c) hit a cascading conflict. Result: %+v", cResult)
+	}
+	if !cResult.Success {
+		t.Fatalf("SyncBranch(c) did not succeed: %+v", cResult)
+	}
+
+	// After every branch has rebased, b and c's worktrees should hold the
+	// resolved a1' content for line 1, plus their own edits.
+	wantB := join(mutate(resolvedLines, 5, "line-6-B"))
+	bShared, _ := os.ReadFile(filepath.Join(bPath, "shared.txt"))
+	if got := string(bShared); got != wantB {
+		t.Errorf("b's shared.txt mismatch.\n got: %q\nwant: %q", got, wantB)
+	}
+	wantC := join(mutate(mutate(resolvedLines, 5, "line-6-B"), 10, "line-11-C"))
+	cShared, _ := os.ReadFile(filepath.Join(cPath, "shared.txt"))
+	if got := string(cShared); got != wantC {
+		t.Errorf("c's shared.txt mismatch.\n got: %q\nwant: %q", got, wantC)
+	}
+
+	// PreSyncCommit is intentionally retained on individual SyncBranch
+	// successes — descendants might still need it. Cleanup is handled by bulk
+	// sync runs (end-of-run if no conflicts) and by `--continue`.
+}
+
+// TestSnapshotAndClearPreSyncSHAs verifies the persistence helpers' contract:
+// snapshot writes the current HEAD, clear removes it, and stale-cleanup removes
+// snapshots whose branch HEAD hasn't moved.
+func TestSnapshotAndClearPreSyncSHAs(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	if _, err := mgr.CreateBranch("feat-x", "main", filepath.Join(worktreeBaseDir, "feat-x"), ""); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+	xPath := filepath.Join(worktreeBaseDir, "feat-x")
+	if err := os.WriteFile(filepath.Join(xPath, "x.txt"), []byte("x\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", xPath, "add", ".").Run()
+	exec.Command("git", "-C", xPath, "commit", "-m", "x1").Run()
+
+	mgr, _ = NewManager(repoDir)
+	beforeSHA, _ := mgr.git.GetBranchCommit("feat-x")
+
+	mgr.snapshotPreSyncSHAs([]string{"feat-x"})
+	bc := mgr.stackConfig.Cache.GetBranchCache("feat-x")
+	if bc == nil || bc.PreSyncCommit != beforeSHA {
+		t.Fatalf("snapshot did not record HEAD: bc=%+v, want PreSyncCommit=%s", bc, beforeSHA)
+	}
+
+	// stale-cleanup should clear it because HEAD == snapshot and no rebase in progress.
+	mgr.cleanupStalePreSyncSHAs()
+	bc = mgr.stackConfig.Cache.GetBranchCache("feat-x")
+	if bc != nil && bc.PreSyncCommit != "" {
+		t.Errorf("cleanupStalePreSyncSHAs should clear unchanged-HEAD snapshot, got %q", bc.PreSyncCommit)
+	}
+
+	// snapshot, advance HEAD, then verify stale-cleanup leaves snapshot alone (HEAD moved).
+	mgr.snapshotPreSyncSHAs([]string{"feat-x"})
+	if err := os.WriteFile(filepath.Join(xPath, "x.txt"), []byte("x2\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", xPath, "add", ".").Run()
+	exec.Command("git", "-C", xPath, "commit", "-m", "x2").Run()
+
+	mgr.cleanupStalePreSyncSHAs()
+	bc = mgr.stackConfig.Cache.GetBranchCache("feat-x")
+	if bc == nil || bc.PreSyncCommit != beforeSHA {
+		t.Errorf("cleanupStalePreSyncSHAs should leave snapshot when HEAD has moved; bc=%+v want PreSyncCommit=%s", bc, beforeSHA)
+	}
+
+	// Explicit clear works.
+	mgr.clearPreSyncSHAs([]string{"feat-x"})
+	bc = mgr.stackConfig.Cache.GetBranchCache("feat-x")
+	if bc != nil && bc.PreSyncCommit != "" {
+		t.Errorf("clearPreSyncSHAs should clear, got %q", bc.PreSyncCommit)
+	}
+
+	// lookupPreSyncSHA should fall back to the live HEAD when no snapshot is set.
+	curSHA, _ := mgr.git.GetBranchCommit("feat-x")
+	if got := mgr.lookupPreSyncSHA("feat-x"); got != curSHA {
+		t.Errorf("lookupPreSyncSHA fallback = %q, want live HEAD %q", got, curSHA)
+	}
+}
