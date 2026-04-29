@@ -1058,6 +1058,14 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 		ui.Info("No stacks in scope.")
 		return nil
 	}
+
+	// Fetch so the descendant re-sync can pick up any commits that landed on
+	// origin/<branch> while the user was resolving the original conflict.
+	// Manager.Fetch is deduped per process, so this is cheap on subsequent
+	// internal calls.
+	if err := mgr.Fetch(); err != nil {
+		ui.Warn(fmt.Sprintf("fetch failed before --continue: %v (proceeding with cached refs)", err))
+	}
 	scopedSet := make(map[string]bool, len(scopedStacks))
 	for _, s := range scopedStacks {
 		scopedSet[s.Hash] = true

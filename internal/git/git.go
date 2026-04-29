@@ -306,6 +306,57 @@ func (g *Git) GetCommitsAhead(branch, target string) (int, error) {
 	return count, nil
 }
 
+// GetAheadBehind returns the divergence between two refs in a single git
+// invocation: ahead = commits in `local` not reachable from `remote`,
+// behind = commits in `remote` not reachable from `local`.
+//
+// Use this instead of two GetCommitsAhead/GetCommitsBehind calls when you
+// need both numbers — git computes them simultaneously here and the result
+// is consistent against a single snapshot of the object database.
+func (g *Git) GetAheadBehind(local, remote string) (ahead, behind int, err error) {
+	output, err := g.run("rev-list", "--left-right", "--count", local+"..."+remote)
+	if err != nil {
+		return 0, 0, err
+	}
+	parts := strings.Fields(strings.TrimSpace(output))
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("unexpected rev-list output: %q", output)
+	}
+	ahead, err = strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse ahead: %w", err)
+	}
+	behind, err = strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse behind: %w", err)
+	}
+	return ahead, behind, nil
+}
+
+// FastForwardMerge runs `git merge --ff-only target` in the current repo.
+// Used by sync's remote-integration step to advance a branch to its remote's
+// new tip when the local has no diverging commits. Returns RebaseResult so
+// callers can use the same conflict-handling shape as RebaseNonInteractive.
+//
+// The --ff-only flag rejects any merge that would require a real merge
+// commit, so this is safe to call even when the caller hasn't pre-checked
+// divergence — git will refuse rather than create unexpected history.
+func (g *Git) FastForwardMerge(target string) RebaseResult {
+	cmd := exec.Command("git", "merge", "--ff-only", target)
+	cmd.Dir = g.RepoDir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		combined := stdout.String() + stderr.String()
+		// --ff-only doesn't produce a CONFLICT in the merge sense — it just
+		// refuses on divergence — but a worktree-state error or refusal is
+		// still a real failure for our purposes.
+		return RebaseResult{Error: fmt.Errorf("fast-forward failed: %s", strings.TrimSpace(combined))}
+	}
+	return RebaseResult{Success: true}
+}
+
 // GetDiffStat returns the total lines added and removed between base and head.
 // Uses three-dot diff (merge-base) to show only changes introduced by head,
 // not changes on base that head doesn't have.
@@ -365,6 +416,13 @@ func (g *Git) IsLocalAheadOfOrigin(branch string) (bool, error) {
 func (g *Git) RemoteBranchExists(branch string) bool {
 	originBranch := "origin/" + branch
 	_, err := g.run("rev-parse", "--verify", originBranch)
+	return err == nil
+}
+
+// RefExists checks whether an arbitrary git ref resolves. Use for refs that
+// are not necessarily on `origin/` (e.g. fork remotes, raw SHAs).
+func (g *Git) RefExists(ref string) bool {
+	_, err := g.run("rev-parse", "--verify", ref)
 	return err == nil
 }
 

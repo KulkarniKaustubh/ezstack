@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
@@ -1366,6 +1367,260 @@ func TestSyncBranch_NoCascadingConflictAfterParentRebase(t *testing.T) {
 	// PreSyncCommit is intentionally retained on individual SyncBranch
 	// successes — descendants might still need it. Cleanup is handled by bulk
 	// sync runs (end-of-run if no conflicts) and by `--continue`.
+}
+
+// simulateCollaboratorCommit pushes a new commit to the bare origin repo on
+// the given branch, simulating a teammate's work without requiring a second
+// clone. Returns the new origin/branch HEAD SHA.
+func simulateCollaboratorCommit(t *testing.T, bareDir, branch, file, content, message string) string {
+	t.Helper()
+	collab, err := os.MkdirTemp("", "collab-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(collab)
+	if err := exec.Command("git", "clone", "-q", "-b", branch, bareDir, collab).Run(); err != nil {
+		t.Fatalf("clone for collaborator: %v", err)
+	}
+	exec.Command("git", "-C", collab, "config", "user.email", "collab@test.com").Run()
+	exec.Command("git", "-C", collab, "config", "user.name", "Collaborator").Run()
+	if err := os.WriteFile(filepath.Join(collab, file), []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", collab, "add", ".").Run()
+	if err := exec.Command("git", "-C", collab, "commit", "-q", "-m", message).Run(); err != nil {
+		t.Fatalf("collaborator commit: %v", err)
+	}
+	if err := exec.Command("git", "-C", collab, "push", "-q", "origin", branch).Run(); err != nil {
+		t.Fatalf("collaborator push: %v", err)
+	}
+	out, err := exec.Command("git", "-C", collab, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// TestSyncBranch_PullsCollaboratorCommits is the user-reported scenario:
+// you push a branch, a teammate adds a commit and pushes, you run `ezs
+// sync`. Without the remote-integration step, sync rebases onto the parent
+// and silently leaves origin/<branch>'s new commits unintegrated. With the
+// fix, the local branch is fast-forwarded to origin/<branch>'s tip first.
+func TestSyncBranch_PullsCollaboratorCommits(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Bare origin so origin/<branch> is real.
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+
+	mgr, _ := NewManager(repoDir)
+	featPath := filepath.Join(worktreeBaseDir, "feat")
+	if _, err := mgr.CreateBranch("feat", "main", featPath, ""); err != nil {
+		t.Fatalf("CreateBranch: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(featPath, "feat.txt"), []byte("local\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	exec.Command("git", "-C", featPath, "add", ".").Run()
+	exec.Command("git", "-C", featPath, "commit", "-m", "feat: initial").Run()
+	exec.Command("git", "-C", featPath, "push", "-u", "origin", "feat").Run()
+
+	// Capture local HEAD pre-collaborator-commit so we can assert advancement.
+	preLocal, _ := exec.Command("git", "-C", featPath, "rev-parse", "HEAD").Output()
+
+	// Simulate the collaborator: clone, add, push.
+	collabSHA := simulateCollaboratorCommit(t, bareDir, "feat", "collab.txt", "from-teammate\n", "collab: add a file")
+
+	// Re-fetch so origin/feat in the local repo points at the collab commit.
+	mgr, _ = NewManager(repoDir)
+	if err := mgr.Fetch(); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	// Now sync the branch. Expect local to fast-forward onto origin/feat.
+	mgr, _ = NewManager(featPath)
+	res, err := mgr.SyncBranch("feat", nil)
+	if err != nil {
+		t.Fatalf("SyncBranch: %v", err)
+	}
+	if res.HasConflict {
+		t.Fatalf("unexpected conflict: %+v", res)
+	}
+
+	postLocal, _ := exec.Command("git", "-C", featPath, "rev-parse", "HEAD").Output()
+	postLocalSHA := strings.TrimSpace(string(postLocal))
+	if postLocalSHA == strings.TrimSpace(string(preLocal)) {
+		t.Errorf("local HEAD did not advance after sync: still %s — collaborator's commit was not pulled", postLocalSHA)
+	}
+	if postLocalSHA != collabSHA {
+		t.Errorf("local HEAD = %s, want collab SHA %s — fast-forward did not match origin/feat", postLocalSHA, collabSHA)
+	}
+	if _, err := os.Stat(filepath.Join(featPath, "collab.txt")); err != nil {
+		t.Errorf("collab.txt not present in worktree after sync: %v", err)
+	}
+}
+
+// TestSyncBranch_SkipsRemotePullOnDivergence verifies the safety case: when
+// the local has unpushed commits AND the remote has different commits, the
+// pull step is skipped (auto-pulling could trash a local-only ezstack rebase).
+// The branch should still proceed through the rest of the sync flow.
+func TestSyncBranch_SkipsRemotePullOnDivergence(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+
+	mgr, _ := NewManager(repoDir)
+	featPath := filepath.Join(worktreeBaseDir, "feat")
+	mgr.CreateBranch("feat", "main", featPath, "")
+	mgr, _ = NewManager(repoDir)
+
+	os.WriteFile(filepath.Join(featPath, "feat.txt"), []byte("v1\n"), 0644)
+	exec.Command("git", "-C", featPath, "add", ".").Run()
+	exec.Command("git", "-C", featPath, "commit", "-m", "feat v1").Run()
+	exec.Command("git", "-C", featPath, "push", "-u", "origin", "feat").Run()
+
+	// Collaborator adds a commit on top.
+	simulateCollaboratorCommit(t, bareDir, "feat", "collab.txt", "from-teammate\n", "collab")
+
+	// Local also adds an unpushed commit on a different file.
+	os.WriteFile(filepath.Join(featPath, "local.txt"), []byte("local-only\n"), 0644)
+	exec.Command("git", "-C", featPath, "add", ".").Run()
+	exec.Command("git", "-C", featPath, "commit", "-m", "local v2").Run()
+
+	preLocal, _ := exec.Command("git", "-C", featPath, "rev-parse", "HEAD").Output()
+	preLocalSHA := strings.TrimSpace(string(preLocal))
+
+	mgr, _ = NewManager(repoDir)
+	if err := mgr.Fetch(); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	// Confirm setup actually produced divergence.
+	ahead, behind, err := mgr.git.GetAheadBehind("feat", "origin/feat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ahead == 0 || behind == 0 {
+		t.Fatalf("test setup error: expected divergence, got ahead=%d behind=%d", ahead, behind)
+	}
+
+	mgr, _ = NewManager(featPath)
+	res, err := mgr.SyncBranch("feat", nil)
+	if err != nil {
+		t.Fatalf("SyncBranch: %v", err)
+	}
+	if res.HasConflict {
+		t.Fatalf("unexpected conflict: %+v", res)
+	}
+
+	postLocal, _ := exec.Command("git", "-C", featPath, "rev-parse", "HEAD").Output()
+	if got := strings.TrimSpace(string(postLocal)); got != preLocalSHA {
+		t.Errorf("local HEAD changed despite divergence: %s → %s — pull should have been skipped", preLocalSHA, got)
+	}
+}
+
+// TestSyncBranch_NoRemoteTrackingIsNoOp verifies that an unpushed branch
+// (no origin/<branch> ref) doesn't trigger any pull-style work.
+func TestSyncBranch_NoRemoteTrackingIsNoOp(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+
+	mgr, _ := NewManager(repoDir)
+	featPath := filepath.Join(worktreeBaseDir, "feat")
+	mgr.CreateBranch("feat", "main", featPath, "")
+	mgr, _ = NewManager(repoDir)
+	os.WriteFile(filepath.Join(featPath, "feat.txt"), []byte("never-pushed\n"), 0644)
+	exec.Command("git", "-C", featPath, "add", ".").Run()
+	exec.Command("git", "-C", featPath, "commit", "-m", "feat").Run()
+
+	preLocal, _ := exec.Command("git", "-C", featPath, "rev-parse", "HEAD").Output()
+	preLocalSHA := strings.TrimSpace(string(preLocal))
+
+	mgr, _ = NewManager(featPath)
+	res, err := mgr.SyncBranch("feat", nil)
+	if err != nil {
+		t.Fatalf("SyncBranch: %v", err)
+	}
+	if res.HasConflict {
+		t.Fatalf("unexpected conflict: %+v", res)
+	}
+	postLocal, _ := exec.Command("git", "-C", featPath, "rev-parse", "HEAD").Output()
+	if got := strings.TrimSpace(string(postLocal)); got != preLocalSHA {
+		t.Errorf("local HEAD moved on a never-pushed branch: %s → %s", preLocalSHA, got)
+	}
+}
+
+// TestSyncStack_PullsCollaboratorThenRebasesOntoParent exercises the combined
+// path: parent (main) has new commits AND origin/<branch> has a collaborator
+// commit. After sync, the local branch should hold both the collaborator's
+// commit AND be rebased onto the new main — no commits dropped, no
+// duplicates.
+func TestSyncStack_PullsCollaboratorThenRebasesOntoParent(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+
+	mgr, _ := NewManager(repoDir)
+	featPath := filepath.Join(worktreeBaseDir, "feat")
+	mgr.CreateBranch("feat", "main", featPath, "")
+	mgr, _ = NewManager(repoDir)
+	os.WriteFile(filepath.Join(featPath, "feat.txt"), []byte("v1\n"), 0644)
+	exec.Command("git", "-C", featPath, "add", ".").Run()
+	exec.Command("git", "-C", featPath, "commit", "-m", "feat v1").Run()
+	exec.Command("git", "-C", featPath, "push", "-u", "origin", "feat").Run()
+
+	// Collaborator adds a commit to feat (well-separated from any subsequent main edits).
+	simulateCollaboratorCommit(t, bareDir, "feat", "collab.txt", "teammate\n", "collab")
+
+	// main also gets a new commit, on a different file so there's no conflict.
+	os.WriteFile(filepath.Join(repoDir, "main.txt"), []byte("from main\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "main update").Run()
+	exec.Command("git", "-C", repoDir, "push", "origin", "main").Run()
+
+	mgr, _ = NewManager(featPath)
+	results, err := mgr.SyncStack(nil, nil)
+	if err != nil {
+		t.Fatalf("SyncStack: %v", err)
+	}
+	for _, r := range results {
+		if r.HasConflict {
+			t.Fatalf("unexpected conflict: %+v", r)
+		}
+	}
+
+	// Both files must exist in feat after sync.
+	for _, f := range []string{"collab.txt", "main.txt"} {
+		if _, err := os.Stat(filepath.Join(featPath, f)); err != nil {
+			t.Errorf("%s missing in feat worktree after sync: %v", f, err)
+		}
+	}
+	// And feat's tip must be a descendant of origin/main.
+	mb, err := exec.Command("git", "-C", featPath, "merge-base", "feat", "origin/main").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	originMain, _ := exec.Command("git", "-C", featPath, "rev-parse", "origin/main").Output()
+	if strings.TrimSpace(string(mb)) != strings.TrimSpace(string(originMain)) {
+		t.Errorf("feat is not based on the new origin/main: merge-base=%s origin/main=%s",
+			strings.TrimSpace(string(mb)), strings.TrimSpace(string(originMain)))
+	}
 }
 
 // TestSnapshotAndClearPreSyncSHAs verifies the persistence helpers' contract:

@@ -263,6 +263,66 @@ func (m *Manager) cleanupStalePreSyncSHAs() {
 	}
 }
 
+// integrateRemoteForBranch fast-forwards a local branch to its remote tip
+// when the remote (e.g. origin/<branch>) has commits the local doesn't AND
+// the local has no diverging commits. This is what makes `ezs sync` pick up
+// a collaborator's pushes to a branch you also work on:
+//
+//	You:   parent + a1 (pushed)
+//	Them:  parent + a1 + a2 (pushed on top)
+//	You:   ezs sync → fast-forwards to parent + a1 + a2, then rebases onto
+//	       any new parent state.
+//
+// Behaviour by case:
+//   - No remote tracking ref (origin/<branch> doesn't exist, e.g. branch
+//     never pushed) — no-op, returns Success.
+//   - Already in sync (behind == 0) — no-op, returns Success.
+//   - Strict fast-forward (behind > 0, ahead == 0) → `git merge --ff-only`.
+//   - True divergence (both ahead and behind > 0) — skip with a warn line.
+//     Auto-pulling is dangerous: when local was just ezstack-rebased but
+//     not yet force-pushed, replaying local on top of the stale remote
+//     would re-introduce the pre-rebase parent commits and produce a
+//     duplicate history. Users with unpushed local commits should
+//     `git pull --rebase` themselves.
+//
+// Runs in the branch's worktree when one exists; otherwise falls through to
+// `syncViaCheckout` so checkout-based branches work the same way. The
+// fast-forward never creates a merge commit, so it's safe under both rebase
+// and merge sync strategies.
+func (m *Manager) integrateRemoteForBranch(branch *config.Branch) git.RebaseResult {
+	if !branch.CanPush() {
+		// _nopush branches have explicitly opted out of remote operations.
+		return git.RebaseResult{Success: true}
+	}
+	remote := branch.EffectiveRemote()
+	remoteRef := remote + "/" + branch.Name
+	// Generalised remote-ref existence check (RemoteBranchExists is hardcoded
+	// to "origin/" so it can't speak about fork remotes).
+	if !m.git.RefExists(remoteRef) {
+		return git.RebaseResult{Success: true}
+	}
+	ahead, behind, err := m.git.GetAheadBehind(branch.Name, remoteRef)
+	if err != nil || behind == 0 {
+		// Treat lookup failures as "nothing to do" — the rebase phase will
+		// surface any real branch-state issues.
+		return git.RebaseResult{Success: true}
+	}
+	if ahead > 0 {
+		fmt.Fprintf(os.Stderr, "  Note: %s diverged from %s (%d ahead, %d behind). Skipping remote pull; run `git pull --rebase` in the worktree if you want to integrate.\n",
+			branch.Name, remoteRef, ahead, behind)
+		return git.RebaseResult{Success: true}
+	}
+	// Strict fast-forward case.
+	workDir := m.resolveBranchWorktree(branch)
+	doFF := func(g *git.Git) git.RebaseResult {
+		return g.FastForwardMerge(remoteRef)
+	}
+	if workDir == "" {
+		return syncViaCheckout(m.git, branch.Name, doFF)
+	}
+	return doFF(git.New(workDir))
+}
+
 // lookupPreSyncSHA returns the recorded pre-sync SHA for a branch, or its
 // current HEAD when no snapshot is set. Falling back to the current HEAD makes
 // `git rebase --onto X X` equivalent to plain `git rebase X` — safe when the
@@ -736,6 +796,23 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 				return msg
 			}
 
+			// Integrate any commits a collaborator pushed to origin/<branch>
+			// before we touch the parent. Order matters: pulling first lets
+			// the subsequent --onto rebase replay the collaborator's commits
+			// onto the new parent in a single, consistent operation.
+			ffRes := m.integrateRemoteForBranch(branch)
+			if ffRes.Error != nil {
+				popStash()
+				result.Error = ffRes.Error
+				results = append(results, result)
+				saveState(sc)
+				if !allStacks {
+					return results, nil
+				}
+				stackHasConflict = true
+				continue
+			}
+
 			if branch.Parent == stack.Root {
 				behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
 				if err != nil || behindBy == 0 {
@@ -1126,6 +1203,15 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 	// Best-effort: enable git rerere so manually-resolved conflicts get
 	// auto-replayed on subsequent rebases. Idempotent.
 	_ = git.EnableRerere(m.repoDir)
+
+	// Pick up any new commits the remote has on origin/<branch> before we
+	// rebase onto the parent. See integrateRemoteForBranch for the case
+	// matrix; the short version is: strict fast-forward → pull, divergence
+	// → skip with a warn line, no remote → no-op.
+	if ffRes := m.integrateRemoteForBranch(branch); ffRes.Error != nil {
+		result.Error = ffRes.Error
+		return result, nil
+	}
 
 	if branch.Parent == stack.Root {
 		behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
