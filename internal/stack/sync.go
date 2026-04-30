@@ -295,6 +295,15 @@ func (m *Manager) integrateRemoteForBranch(branch *config.Branch) git.RebaseResu
 		return git.RebaseResult{Success: true}
 	}
 	remote := branch.EffectiveRemote()
+	// Make sure this remote has been fetched so its tracking refs are
+	// up-to-date. Manager.FetchRemote dedupes per remote across the Manager
+	// lifetime — origin's fetch is shared with the bulk Fetch() at sync
+	// start. Failures are non-fatal: an absent tracking ref just means we
+	// skip the FF below.
+	if err := m.FetchRemote(remote); err != nil {
+		fmt.Fprintf(os.Stderr, "  Warning: failed to fetch %s: %v (skipping remote integration for %s)\n", remote, err, branch.Name)
+		return git.RebaseResult{Success: true}
+	}
 	remoteRef := remote + "/" + branch.Name
 	// Generalised remote-ref existence check (RemoteBranchExists is hardcoded
 	// to "origin/" so it can't speak about fork remotes).
@@ -323,15 +332,33 @@ func (m *Manager) integrateRemoteForBranch(branch *config.Branch) git.RebaseResu
 	return doFF(git.New(workDir))
 }
 
-// lookupPreSyncSHA returns the recorded pre-sync SHA for a branch, or its
-// current HEAD when no snapshot is set. Falling back to the current HEAD makes
-// `git rebase --onto X X` equivalent to plain `git rebase X` — safe when the
-// branch has not been rewritten in any tracked session.
+// lookupPreSyncSHA returns a SHA suitable for use as `oldBase` in
+// `git rebase --onto newBase oldBase` for rebasing CHILDREN of branchName:
+//
+//  1. The persisted PreSyncCommit, if set AND the SHA still exists as a
+//     reachable git object (cat-file -e). This catches the rare case where
+//     a snapshot SHA has been garbage-collected since recording — passing a
+//     non-existent SHA to `git rebase --onto` produces a confusing error.
+//  2. The branch's current HEAD as a fallback. Makes `--onto X X`
+//     equivalent to plain `git rebase X` — safe when the branch hasn't
+//     been rewritten in any tracked session.
+//
+// Note: we do NOT check whether PreSyncCommit is an ancestor of branchName.
+// After a rebase, the old SHA is *not* in the rewritten branch's history,
+// but it IS still in the children's histories — and that's where it's used.
+//
+// Returns empty string only when the branch itself can't be resolved (e.g.
+// it was deleted), letting the caller degrade to plain rebase.
 func (m *Manager) lookupPreSyncSHA(branchName string) string {
 	if bc := m.stackConfig.Cache.GetBranchCache(branchName); bc != nil && bc.PreSyncCommit != "" {
-		return bc.PreSyncCommit
+		if m.git.RefExists(bc.PreSyncCommit) {
+			return bc.PreSyncCommit
+		}
+		// Snapshot SHA is gone (GC, or manual repo surgery). Drop it so it
+		// doesn't get used in subsequent ops.
+		bc.PreSyncCommit = ""
+		_ = m.stackConfig.Save(m.repoDir)
 	}
-	// For non-tracked refs (e.g. origin/main), fall through to git.
 	head, err := m.git.GetBranchCommit(branchName)
 	if err != nil || head == "" {
 		return ""
@@ -442,6 +469,31 @@ func (m *Manager) DetectSyncNeededForStacks(gh *github.Client, stacks []*config.
 func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly bool, specificStacks []*config.Stack) ([]SyncInfo, error) {
 	if err := m.Fetch(); err != nil {
 		return nil, err
+	}
+	// Fetch any non-origin remotes referenced by branches in scope, so the
+	// remote-ahead detection below can see fork-pushed commits. Best-effort:
+	// a slow/unreachable fork shouldn't block detection — failures just
+	// leave that remote's ahead-behind as 0 (same as no-fetch case).
+	scopeForFetch := specificStacks
+	if scopeForFetch == nil {
+		if currentStackOnly {
+			if cs, _, err := m.GetCurrentStack(); err == nil {
+				scopeForFetch = []*config.Stack{cs}
+			}
+		} else {
+			scopeForFetch = m.ListStacks()
+		}
+	}
+	seen := map[string]bool{"origin": true, "": true}
+	for _, s := range scopeForFetch {
+		for _, b := range s.Branches {
+			r := b.EffectiveRemote()
+			if seen[r] || !b.CanPush() {
+				continue
+			}
+			seen[r] = true
+			_ = m.FetchRemote(r)
+		}
 	}
 
 	var results []SyncInfo
@@ -1504,6 +1556,19 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 	var results []RebaseResult
 	children := m.GetChildren(currentBranch.Name)
 
+	// Snapshot all children upfront in a single disk write rather than once
+	// per loop iteration. Snapshots that turn out to be unused (e.g. for a
+	// child that the loop never rewrites because an earlier child failed)
+	// are harmless: they just record the current HEAD, which the next sync's
+	// stale-cleanup or overwrite handles correctly.
+	if len(children) > 0 {
+		names := make([]string, 0, len(children))
+		for _, c := range children {
+			names = append(names, c.Name)
+		}
+		m.snapshotPreSyncSHAs(names)
+	}
+
 	for _, child := range children {
 		useCheckout := child.WorktreePath == ""
 		var g *git.Git
@@ -1550,7 +1615,7 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 			// only replay the child's own commits and not the parent's, which
 			// would re-encounter conflicts already resolved upstream.
 			oldParentSHA := m.lookupPreSyncSHA(currentBranch.Name)
-			m.snapshotPreSyncSHAs([]string{child.Name})
+			// Per-child snapshot was already taken upfront — see batch above.
 
 			var syncResult git.RebaseResult
 			doOp := func(cg *git.Git) git.RebaseResult {

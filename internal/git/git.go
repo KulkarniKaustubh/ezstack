@@ -274,6 +274,28 @@ func (g *Git) GetLastCommitMessage() (string, error) {
 	return g.run("log", "-1", "--format=%s")
 }
 
+// IsAncestor checks whether `ancestor` is reachable from `descendant`. Wraps
+// `git merge-base --is-ancestor`. Returns (false, nil) when the answer is no
+// (exit code 1) and (false, err) for any other failure (bad refs, etc.).
+//
+// Used by lookupPreSyncSHA to detect snapshots that have been invalidated by
+// out-of-band history rewrites (e.g. a manual `git rebase` between ezstack
+// runs): if the recorded SHA is no longer reachable from the branch tip,
+// git's `--onto staleSHA` would compute a bogus commit range, so the caller
+// must discard the snapshot and fall back to plain rebase.
+func (g *Git) IsAncestor(ancestor, descendant string) (bool, error) {
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", ancestor, descendant)
+	cmd.Dir = g.RepoDir
+	err := cmd.Run()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // IsBranchMerged checks if a branch has been merged into target
 func (g *Git) IsBranchMerged(branch, target string) (bool, error) {
 	// Check if the branch commit is an ancestor of target
@@ -430,11 +452,20 @@ func (g *Git) RemoteBranchExists(branch string) bool {
 	return err == nil
 }
 
-// RefExists checks whether an arbitrary git ref resolves. Use for refs that
-// are not necessarily on `origin/` (e.g. fork remotes, raw SHAs).
+// RefExists checks whether an arbitrary git ref resolves to a real object
+// in the repository. Useful for symbolic refs (branches, tags). Combines
+// `rev-parse --verify` (parses the ref to a SHA) with `cat-file -e` (proves
+// the SHA names an actual object) — `rev-parse --verify` alone accepts any
+// 40-char hex string as a "valid" SHA even when the object doesn't exist,
+// which is too lenient for snapshot validity checks.
 func (g *Git) RefExists(ref string) bool {
-	_, err := g.run("rev-parse", "--verify", ref)
-	return err == nil
+	sha, err := g.run("rev-parse", "--verify", ref)
+	if err != nil {
+		return false
+	}
+	cmd := exec.Command("git", "cat-file", "-e", strings.TrimSpace(sha))
+	cmd.Dir = g.RepoDir
+	return cmd.Run() == nil
 }
 
 // ListLocalBranches returns all local branch names
@@ -766,9 +797,15 @@ func (g *Git) AddRemote(name, url string) error {
 	return err
 }
 
-// FetchRemote fetches from a specific remote
+// FetchRemote fetches from a specific named remote (e.g. a fork). Used by
+// integrate flows for non-origin remotes; the default Fetch() only handles
+// origin to avoid hanging on unreachable remotes by default. Adds --prune
+// so deleted remote branches stop showing as tracking refs.
 func (g *Git) FetchRemote(remote string) error {
-	_, err := g.run("fetch", remote)
+	if remote == "" {
+		return fmt.Errorf("FetchRemote: empty remote name")
+	}
+	_, err := g.runWithSpinner("Fetching from "+remote+"...", "fetch", remote, "--prune")
 	return err
 }
 

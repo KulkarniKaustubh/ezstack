@@ -13,12 +13,13 @@ import (
 
 // Manager handles stack operations
 type Manager struct {
-	git         *git.Git
-	config      *config.Config
-	repoConfig  *config.RepoConfig
-	stackConfig *config.StackConfig
-	repoDir     string
-	fetched     bool
+	git             *git.Git
+	config          *config.Config
+	repoConfig      *config.RepoConfig
+	stackConfig     *config.StackConfig
+	repoDir         string
+	fetched         bool
+	fetchedRemotes  map[string]bool // per-remote fetch dedupe (separate from origin's `fetched`)
 }
 
 // Fetch runs git fetch once per Manager lifetime. Subsequent calls are no-ops.
@@ -30,6 +31,29 @@ func (m *Manager) Fetch() error {
 		return fmt.Errorf("failed to fetch: %w", err)
 	}
 	m.fetched = true
+	return nil
+}
+
+// FetchRemote fetches a specific named remote (e.g. a fork) once per Manager
+// lifetime. Used by integrateRemoteForBranch when a branch's configured
+// remote isn't `origin` — `Fetch()` only handles origin to avoid hanging on
+// unreachable remotes by default. Best-effort: failures are returned but the
+// caller typically logs and proceeds, since a stale ref is better than a
+// failed sync.
+func (m *Manager) FetchRemote(remote string) error {
+	if remote == "" || remote == "origin" {
+		return m.Fetch()
+	}
+	if m.fetchedRemotes == nil {
+		m.fetchedRemotes = map[string]bool{}
+	}
+	if m.fetchedRemotes[remote] {
+		return nil
+	}
+	if err := m.git.FetchRemote(remote); err != nil {
+		return fmt.Errorf("failed to fetch %s: %w", remote, err)
+	}
+	m.fetchedRemotes[remote] = true
 	return nil
 }
 
@@ -501,6 +525,21 @@ func (m *Manager) GetDescendants(branchName string) []*config.Branch {
 	}
 	walk(branchName)
 	return out
+}
+
+// SetBranchRemote updates the cached `Remote` for a branch and persists.
+// Used by tests (and could be wired into a future `ezs config set
+// branch-remote` flag) to point ezstack at a fork remote when push/pull
+// should target somewhere other than `origin`. Returns nil on success.
+func (m *Manager) SetBranchRemote(branchName, remote string) error {
+	cache := m.stackConfig.Cache
+	bc := cache.GetBranchCache(branchName)
+	if bc == nil {
+		bc = &config.BranchCache{}
+	}
+	bc.Remote = remote
+	cache.SetBranchCache(branchName, bc)
+	return m.stackConfig.Save(m.repoDir)
 }
 
 // GetTreeChildren returns child branches based on the original tree structure (BaseBranch),

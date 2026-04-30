@@ -1499,6 +1499,14 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 	if err := mgr.Fetch(); err != nil {
 		return fmt.Errorf("failed to fetch from remote: %w. Check your network connection and that the remote is accessible", err)
 	}
+	// If this branch's configured remote isn't `origin` (e.g. a fork), also
+	// fetch that remote so the ahead-behind check below can see any commits
+	// a teammate pushed there. Failure is non-fatal: detection just can't
+	// flag a remote-pull, and the user gets an "up to date" message they
+	// can ignore by running `git fetch <remote>` themselves.
+	if r := branch.EffectiveRemote(); r != "" && r != "origin" && branch.CanPush() {
+		_ = mgr.FetchRemote(r)
+	}
 
 	g := git.New(cwd)
 	syncInfo := mgr.DetectSyncNeededForBranch(branch.Name, gh)
