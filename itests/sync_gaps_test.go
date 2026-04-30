@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
@@ -487,6 +488,38 @@ func TestSyncItest_RealBinaryExitCode(t *testing.T) {
 		}
 	} else {
 		t.Errorf("expected *exec.ExitError; got %T: %v", err, err)
+	}
+}
+
+// TestSyncItest_ConcurrentSyncRejected verifies the sync-level lock blocks
+// a second `ezs sync` invocation from racing with the first. Acquires the
+// lock manually (simulating an in-flight first sync) and asserts the second
+// call surfaces the "already running" error rather than racing.
+func TestSyncItest_ConcurrentSyncRejected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("flock-based lock is no-op on Windows")
+	}
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+	withYesMode(t)
+
+	CreateBranchWithCommit(t, env, "feat-lock", "main")
+	initBareRemote(t, env)
+
+	stacksPath := filepath.Join(env.ConfigDir, "stacks.json")
+	lock, err := config.AcquireSyncLock(stacksPath)
+	if err != nil {
+		t.Fatalf("acquire lock for test: %v", err)
+	}
+	defer lock.Release()
+
+	chdirOrFail(t, filepath.Join(env.WorktreeDir, "feat-lock"))
+	err = commands.Sync([]string{"-s"})
+	if err == nil {
+		t.Fatal("commands.Sync should reject when another sync holds the lock; returned nil")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("expected `already running` error; got: %v", err)
 	}
 }
 

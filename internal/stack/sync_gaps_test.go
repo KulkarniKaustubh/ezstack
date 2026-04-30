@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
@@ -333,5 +334,39 @@ func TestRebaseChildren_GrandchildrenCascade(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("grandchild's tree missing %q after RebaseChildren cascade: %q", want, got)
 		}
+	}
+}
+
+// TestDebugLog_FiresOnlyWhenEnvSet verifies the debugLog helper's gate:
+// EZSTACK_DEBUG unset → no output; set → tag + key=value lands on stderr.
+// Catches the typical regression where someone bypasses the gate.
+func TestDebugLog_FiresOnlyWhenEnvSet(t *testing.T) {
+	// Reset the cached gate so the env var is re-read at each call below.
+	debugOnce = sync.Once{}
+	defer func() { debugOnce = sync.Once{} }()
+
+	orig := os.Stderr
+	r, w, _ := os.Pipe()
+	os.Stderr = w
+	defer func() { os.Stderr = orig }()
+
+	os.Unsetenv("EZSTACK_DEBUG")
+	debugLog("test-tag", "k", "v") // should produce nothing
+
+	debugOnce = sync.Once{}
+	os.Setenv("EZSTACK_DEBUG", "1")
+	defer os.Unsetenv("EZSTACK_DEBUG")
+	debugLog("test-tag", "k", "v") // should produce one line
+
+	w.Close()
+	buf := make([]byte, 1024)
+	n, _ := r.Read(buf)
+	got := string(buf[:n])
+
+	if !strings.Contains(got, "[ezstack:test-tag] k=v") {
+		t.Errorf("debug log missing when env set; got %q", got)
+	}
+	if strings.Count(got, "[ezstack:test-tag]") != 1 {
+		t.Errorf("expected exactly one debug line; got %d in %q", strings.Count(got, "[ezstack:test-tag]"), got)
 	}
 }

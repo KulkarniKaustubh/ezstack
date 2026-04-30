@@ -130,6 +130,23 @@ func Sync(args []string) error {
 	autostash := !*noAutostashFlag
 	jsonOutput := *jsonFlag
 
+	// Acquire a sync-level lock so two `ezs sync` invocations on the same
+	// repo (e.g. accidental dual-terminal runs) can't race on snapshot
+	// reads/writes or fight over rebase state. Skipped for --dry-run since
+	// dry-run is read-only. Skipped for --continue since the user may run
+	// it from a separate shell while the original sync is still pending —
+	// the snapshot semantics handle that legitimate sequence.
+	if !dryRun && !*continueFlag {
+		cfgDir, cfgErr := config.ConfigDir()
+		if cfgErr == nil {
+			lock, lockErr := config.AcquireSyncLock(cfgDir + "/stacks.json")
+			if lockErr != nil {
+				return lockErr
+			}
+			defer lock.Release()
+		}
+	}
+
 	// Resolve merge vs rebase: flags override config
 	useMerge := false
 	if *mergeFlag && *rebaseFlag {

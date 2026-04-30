@@ -10,3 +10,10 @@ type fileLock struct{}
 func acquireFileLock(path string) (*fileLock, error) { return &fileLock{}, nil }
 
 func (l *fileLock) release() {}
+
+// SyncLock no-op for Windows.
+type SyncLock struct{}
+
+func AcquireSyncLock(stacksJSONPath string) (*SyncLock, error) { return &SyncLock{}, nil }
+
+func (s *SyncLock) Release() {}

@@ -292,6 +292,7 @@ func (m *Manager) cleanupStalePreSyncSHAs() {
 func (m *Manager) integrateRemoteForBranch(branch *config.Branch) git.RebaseResult {
 	if !branch.CanPush() {
 		// _nopush branches have explicitly opted out of remote operations.
+		debugLog("integrate-skip-nopush", "branch", branch.Name)
 		return git.RebaseResult{Success: true}
 	}
 	remote := branch.EffectiveRemote()
@@ -314,14 +315,17 @@ func (m *Manager) integrateRemoteForBranch(branch *config.Branch) git.RebaseResu
 	if err != nil || behind == 0 {
 		// Treat lookup failures as "nothing to do" — the rebase phase will
 		// surface any real branch-state issues.
+		debugLog("integrate-skip-uptodate", "branch", branch.Name, "ref", remoteRef)
 		return git.RebaseResult{Success: true}
 	}
 	if ahead > 0 {
+		debugLog("integrate-skip-diverged", "branch", branch.Name, "ahead", fmt.Sprintf("%d", ahead), "behind", fmt.Sprintf("%d", behind))
 		fmt.Fprintf(os.Stderr, "  Note: %s diverged from %s (%d ahead, %d behind). Skipping remote pull; run `git pull --rebase` in the worktree if you want to integrate.\n",
 			branch.Name, remoteRef, ahead, behind)
 		return git.RebaseResult{Success: true}
 	}
 	// Strict fast-forward case.
+	debugLog("integrate-fastforward", "branch", branch.Name, "ref", remoteRef, "behind", fmt.Sprintf("%d", behind))
 	workDir := m.resolveBranchWorktree(branch)
 	doFF := func(g *git.Git) git.RebaseResult {
 		return g.FastForwardMerge(remoteRef)
@@ -352,17 +356,21 @@ func (m *Manager) integrateRemoteForBranch(branch *config.Branch) git.RebaseResu
 func (m *Manager) lookupPreSyncSHA(branchName string) string {
 	if bc := m.stackConfig.Cache.GetBranchCache(branchName); bc != nil && bc.PreSyncCommit != "" {
 		if m.git.RefExists(bc.PreSyncCommit) {
+			debugLog("lookup-snapshot-hit", "branch", branchName, "sha", bc.PreSyncCommit)
 			return bc.PreSyncCommit
 		}
 		// Snapshot SHA is gone (GC, or manual repo surgery). Drop it so it
 		// doesn't get used in subsequent ops.
+		debugLog("lookup-snapshot-stale", "branch", branchName, "sha", bc.PreSyncCommit)
 		bc.PreSyncCommit = ""
 		_ = m.stackConfig.Save(m.repoDir)
 	}
 	head, err := m.git.GetBranchCommit(branchName)
 	if err != nil || head == "" {
+		debugLog("lookup-snapshot-empty", "branch", branchName)
 		return ""
 	}
+	debugLog("lookup-snapshot-fallback-livehead", "branch", branchName, "sha", head)
 	return head
 }
 
