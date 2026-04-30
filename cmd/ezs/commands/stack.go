@@ -123,7 +123,7 @@ func Stack(args []string) error {
 
 		if choice == 0 {
 			// Add to existing stack: pick branch first, then parent
-			branchName, err = selectUntrackedBranch(mgr)
+			branchName, err = selectUntrackedBranch(g, mgr)
 			if err != nil {
 				return err
 			}
@@ -138,7 +138,7 @@ func Stack(args []string) error {
 			if err != nil {
 				return err
 			}
-			branchName, err = selectUntrackedBranch(mgr, parentName)
+			branchName, err = selectUntrackedBranch(g, mgr, parentName)
 			if err != nil {
 				return err
 			}
@@ -149,7 +149,7 @@ func Stack(args []string) error {
 			if err != nil {
 				return err
 			}
-			branchName, err = selectUntrackedBranch(mgr, parentName)
+			branchName, err = selectUntrackedBranch(g, mgr, parentName)
 			if err != nil {
 				return err
 			}
@@ -159,7 +159,7 @@ func Stack(args []string) error {
 		}
 	} else {
 		if branchName == "" {
-			branchName, err = selectUntrackedBranch(mgr)
+			branchName, err = selectUntrackedBranch(g, mgr)
 			if err != nil {
 				return err
 			}
@@ -483,31 +483,73 @@ func selectBaseBranch(mgr *stack.Manager, g *git.Git, branchName, baseBranch str
 	return branchNames[selected], nil
 }
 
-// selectUntrackedBranch shows a selection UI for untracked worktrees.
-// excludeBranches are filtered out of the list (e.g. the base branch itself).
-func selectUntrackedBranch(mgr *stack.Manager, excludeBranches ...string) (string, error) {
-	unregistered, err := mgr.GetUnregisteredWorktrees()
-	if err != nil {
-		return "", err
-	}
+// UntrackedBranch represents a local branch eligible to be attached to a stack.
+// WorktreePath is empty for bare branches (no worktree).
+type UntrackedBranch struct {
+	Name         string
+	WorktreePath string
+}
 
+// CollectUntrackedBranches returns local branches that aren't tracked in any
+// stack and aren't the base branch — both unregistered worktrees and bare
+// local branches. Order: worktrees first (in git's listing order), then bare
+// branches (in git's listing order).
+func CollectUntrackedBranches(g *git.Git, mgr *stack.Manager, excludeBranches ...string) []UntrackedBranch {
 	exclude := make(map[string]bool, len(excludeBranches))
 	for _, b := range excludeBranches {
 		exclude[b] = true
 	}
 
-	var options []string
-	var branchNames []string
-	for _, wt := range unregistered {
-		if exclude[wt.Branch] {
-			continue
+	seen := make(map[string]bool)
+	var out []UntrackedBranch
+
+	if unregistered, err := mgr.GetUnregisteredWorktrees(); err == nil {
+		for _, wt := range unregistered {
+			if exclude[wt.Branch] || seen[wt.Branch] {
+				continue
+			}
+			seen[wt.Branch] = true
+			out = append(out, UntrackedBranch{Name: wt.Branch, WorktreePath: wt.Path})
 		}
-		options = append(options, fmt.Sprintf("%s (%s)", wt.Branch, wt.Path))
-		branchNames = append(branchNames, wt.Branch)
 	}
 
-	if len(options) == 0 {
-		return "", fmt.Errorf("no untracked branches found. All worktrees are already in stacks")
+	if localBranches, err := g.ListLocalBranches(); err == nil {
+		for _, lb := range localBranches {
+			if exclude[lb] || seen[lb] {
+				continue
+			}
+			if mgr.IsMainBranch(lb) {
+				continue
+			}
+			if mgr.GetBranch(lb) != nil {
+				continue
+			}
+			seen[lb] = true
+			out = append(out, UntrackedBranch{Name: lb})
+		}
+	}
+
+	return out
+}
+
+// selectUntrackedBranch shows a selection UI for branches not in any stack.
+// Includes both unregistered worktrees and bare local branches (no worktree),
+// so users can attach a branch they made with `git checkout -b` without first
+// having to materialize a worktree manually.
+// excludeBranches are filtered out of the list (e.g. the base branch itself).
+func selectUntrackedBranch(g *git.Git, mgr *stack.Manager, excludeBranches ...string) (string, error) {
+	candidates := CollectUntrackedBranches(g, mgr, excludeBranches...)
+	if len(candidates) == 0 {
+		return "", fmt.Errorf("no untracked branches found. All branches are already in stacks")
+	}
+
+	options := make([]string, len(candidates))
+	for i, c := range candidates {
+		if c.WorktreePath != "" {
+			options[i] = fmt.Sprintf("%s (%s)", c.Name, c.WorktreePath)
+		} else {
+			options[i] = fmt.Sprintf("%s [no worktree]", c.Name)
+		}
 	}
 
 	selected, err := ui.SelectOption(options, "Select branch to add to stack")
@@ -515,7 +557,7 @@ func selectUntrackedBranch(mgr *stack.Manager, excludeBranches ...string) (strin
 		return "", err
 	}
 
-	return branchNames[selected], nil
+	return candidates[selected].Name, nil
 }
 
 // selectRemotePR shows a selection UI for choosing a remote PR as the base of a new stack.

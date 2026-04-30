@@ -460,6 +460,9 @@ func Status(args []string) error {
 		if err := printOrJSON(stacks, statusMaps); err != nil {
 			return err
 		}
+		if !*jsonFlag {
+			printOrphanBranches(g, mgr)
+		}
 		if !*jsonFlag && ghAvailable {
 			offerFullyMergedStackCleanup(mgr, stacks)
 		}
@@ -522,6 +525,54 @@ func Status(args []string) error {
 	}
 
 	return nil
+}
+
+// printOrphanBranches lists local branches that aren't part of any stack and
+// aren't main/master/baseBranch. Surfaced under `ezs status -a` so users notice
+// branches they made with `git checkout -b` outside of ezs and learn how to
+// adopt them. No-op when there are no orphans.
+func printOrphanBranches(g *git.Git, mgr *stack.Manager) {
+	localBranches, err := g.ListLocalBranches()
+	if err != nil {
+		return
+	}
+
+	worktrees, _ := g.ListWorktrees()
+	wtByBranch := make(map[string]string, len(worktrees))
+	for _, wt := range worktrees {
+		if wt.Branch != "" {
+			wtByBranch[wt.Branch] = wt.Path
+		}
+	}
+
+	type orphan struct {
+		name         string
+		worktreePath string
+	}
+	var orphans []orphan
+	for _, b := range localBranches {
+		if mgr.IsMainBranch(b) {
+			continue
+		}
+		if mgr.GetBranch(b) != nil {
+			continue
+		}
+		orphans = append(orphans, orphan{name: b, worktreePath: wtByBranch[b]})
+	}
+
+	if len(orphans) == 0 {
+		return
+	}
+
+	fmt.Fprintf(os.Stderr, "%s%sBranches not in any stack:%s\n", ui.Bold, ui.Cyan, ui.Reset)
+	for _, o := range orphans {
+		suffix := "[no worktree]"
+		if o.worktreePath != "" {
+			suffix = fmt.Sprintf("(worktree at %s)", o.worktreePath)
+		}
+		fmt.Fprintf(os.Stderr, "  %s %s%s%s\n", o.name, ui.Gray, suffix, ui.Reset)
+	}
+	fmt.Fprintf(os.Stderr, "%sAdopt one with:%s ezs stack -b <branch> -p <parent>\n\n", ui.Gray, ui.Reset)
 }
 
 // runStatusWatch repeatedly clears the screen and runs status until the user
