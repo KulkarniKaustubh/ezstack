@@ -205,6 +205,17 @@ func (g *Git) ListWorktrees() ([]Worktree, error) {
 	return worktrees, nil
 }
 
+// BranchFromRebaseState returns the branch name recorded in this repo's
+// rebase-state files (.git/rebase-merge/head-name or .git/rebase-apply/head-name).
+// During a rebase HEAD is detached, so `git rev-parse --abbrev-ref HEAD`
+// returns "HEAD" — but ezstack still needs to know which branch the worktree
+// is "really" on so commands like `ezs sync -s --continue` can resolve the
+// current stack. Returns "" when no rebase is in progress or the file can't
+// be read.
+func (g *Git) BranchFromRebaseState() string {
+	return getBranchFromRebaseState(g.RepoDir)
+}
+
 // getBranchFromRebaseState tries to get the original branch name from rebase state files
 // This is useful when a worktree is in the middle of a rebase (detached HEAD)
 func getBranchFromRebaseState(worktreePath string) string {

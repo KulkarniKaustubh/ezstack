@@ -360,6 +360,12 @@ type SyncInfo struct {
 	BehindParent string // Non-empty if behind a non-main parent
 	StackRoot    string // The root branch of this branch's stack (e.g. "main", "develop")
 	NeedsSync    bool   // True if branch needs to be synced
+	// BehindRemote, if > 0, signals that origin/<branch> has commits the
+	// local doesn't (a teammate pushed). Sync will fast-forward via
+	// `git merge --ff-only` before rebasing onto the parent. May be set
+	// alongside other Behind* fields when a branch is both behind its parent
+	// AND behind its remote.
+	BehindRemote int
 }
 
 // MergedBranchInfo contains information about a branch whose PR has been merged
@@ -455,20 +461,42 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 		}
 	}
 
+	// remoteBehindFor returns the number of commits origin/<branch> has that
+	// the local doesn't, or 0 if the branch has no remote tracking ref or
+	// is _nopush. Surfaced via SyncInfo.BehindRemote so dry-run output
+	// reflects collaborator-pull work in addition to parent-rebase work.
+	remoteBehindFor := func(b *config.Branch) int {
+		if !b.CanPush() {
+			return 0
+		}
+		ref := b.EffectiveRemote() + "/" + b.Name
+		if !m.git.RefExists(ref) {
+			return 0
+		}
+		_, behind, err := m.git.GetAheadBehind(b.Name, ref)
+		if err != nil {
+			return 0
+		}
+		return behind
+	}
+
 	for _, stack := range stacksToCheck {
 		for _, branch := range stack.Branches {
 			if branch.IsMerged {
 				continue
 			}
 
+			remoteBehind := remoteBehindFor(branch)
+
 			if branch.Parent == stack.Root {
 				behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
-				if err == nil && behindBy > 0 {
+				if (err == nil && behindBy > 0) || remoteBehind > 0 {
 					results = append(results, SyncInfo{
-						Branch:    branch.Name,
-						BehindBy:  behindBy,
-						StackRoot: stack.Root,
-						NeedsSync: true,
+						Branch:       branch.Name,
+						BehindBy:     behindBy,
+						StackRoot:    stack.Root,
+						NeedsSync:    true,
+						BehindRemote: remoteBehind,
 					})
 				}
 				continue
@@ -498,18 +526,20 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 					MergedParent: branch.Parent,
 					StackRoot:    stack.Root,
 					NeedsSync:    true,
+					BehindRemote: remoteBehind,
 				})
 				continue
 			}
 
 			behindBy, err := m.git.GetCommitsBehind(branch.Name, parentRef)
-			if err == nil && behindBy > 0 {
+			if (err == nil && behindBy > 0) || remoteBehind > 0 {
 				results = append(results, SyncInfo{
 					Branch:       branch.Name,
 					BehindBy:     behindBy,
 					BehindParent: branch.Parent,
 					StackRoot:    stack.Root,
 					NeedsSync:    true,
+					BehindRemote: remoteBehind,
 				})
 			}
 		}
@@ -519,7 +549,13 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 }
 
 // DetectSyncNeededForBranch checks if a specific branch needs syncing
-// Returns SyncInfo if the branch needs syncing, nil otherwise
+// Returns SyncInfo if the branch needs syncing, nil otherwise.
+//
+// Reasons sync is needed (any of):
+//   - Branch is behind origin/<stack.Root> (parent is the stack root).
+//   - Parent was merged to origin/<stack.Root>.
+//   - Branch is behind its (non-root) parent (parent has new commits).
+//   - origin/<branch> has commits the local doesn't (teammate pushed).
 func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client) *SyncInfo {
 	branch := m.GetBranch(branchName)
 	if branch == nil || branch.IsMerged {
@@ -531,15 +567,31 @@ func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client
 		return nil
 	}
 
+	// Compute remote-ahead count once; surfaced via BehindRemote on whichever
+	// SyncInfo we end up returning, so a single "needs sync" reason is enough
+	// to capture both parent-relationship and remote-pull work.
+	remoteBehind := 0
+	if branch.CanPush() {
+		remote := branch.EffectiveRemote()
+		remoteRef := remote + "/" + branch.Name
+		if m.git.RefExists(remoteRef) {
+			if _, behind, err := m.git.GetAheadBehind(branch.Name, remoteRef); err == nil {
+				remoteBehind = behind
+			}
+		}
+	}
+
 	if branch.Parent == stack.Root {
 		behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
-		if err == nil && behindBy > 0 {
-			return &SyncInfo{
-				Branch:    branch.Name,
-				BehindBy:  behindBy,
-				StackRoot: stack.Root,
-				NeedsSync: true,
+		if (err == nil && behindBy > 0) || remoteBehind > 0 {
+			info := &SyncInfo{
+				Branch:       branch.Name,
+				BehindBy:     behindBy,
+				StackRoot:    stack.Root,
+				NeedsSync:    true,
+				BehindRemote: remoteBehind,
 			}
+			return info
 		}
 		return nil
 	}
@@ -568,17 +620,19 @@ func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client
 			MergedParent: branch.Parent,
 			StackRoot:    stack.Root,
 			NeedsSync:    true,
+			BehindRemote: remoteBehind,
 		}
 	}
 
 	behindBy, err := m.git.GetCommitsBehind(branch.Name, parentRef)
-	if err == nil && behindBy > 0 {
+	if (err == nil && behindBy > 0) || remoteBehind > 0 {
 		return &SyncInfo{
 			Branch:       branch.Name,
 			BehindBy:     behindBy,
 			BehindParent: branch.Parent,
 			StackRoot:    stack.Root,
 			NeedsSync:    true,
+			BehindRemote: remoteBehind,
 		}
 	}
 

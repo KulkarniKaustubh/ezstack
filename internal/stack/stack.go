@@ -403,18 +403,39 @@ func (m *Manager) FindStackForBranch(branchName string) *config.Stack {
 	return nil
 }
 
-// GetCurrentStack returns the stack for the current branch
+// GetCurrentStack returns the stack for the current branch.
+// Falls back to .git/rebase-merge/head-name when HEAD is detached due to an
+// in-progress rebase, so that `ezs sync -s --continue` (which resolves the
+// "current stack" from inside a conflicted worktree) finds the right stack
+// even though the rebase has detached HEAD.
 func (m *Manager) GetCurrentStack() (*config.Stack, *config.Branch, error) {
 	currentBranch, err := m.git.CurrentBranch()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	for _, stack := range m.stackConfig.Stacks {
-		for _, branch := range stack.Branches {
-			if branch.Name == currentBranch {
-				return stack, branch, nil
+	lookup := func(name string) (*config.Stack, *config.Branch, bool) {
+		for _, stack := range m.stackConfig.Stacks {
+			for _, branch := range stack.Branches {
+				if branch.Name == name {
+					return stack, branch, true
+				}
 			}
+		}
+		return nil, nil, false
+	}
+
+	if currentBranch != "HEAD" {
+		if s, b, ok := lookup(currentBranch); ok {
+			return s, b, nil
+		}
+	}
+	// Detached HEAD or branch not tracked — try the rebase head-name as a
+	// fallback. During `git rebase`, HEAD is detached but the original branch
+	// name is recorded in rebase-state files.
+	if rebaseBranch := m.git.BranchFromRebaseState(); rebaseBranch != "" {
+		if s, b, ok := lookup(rebaseBranch); ok {
+			return s, b, nil
 		}
 	}
 	return nil, nil, fmt.Errorf("current branch %s is not part of any stack", currentBranch)

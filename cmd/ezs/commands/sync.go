@@ -497,15 +497,28 @@ func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal
 func printSyncInfoList(syncNeeded []stack.SyncInfo) {
 	ui.Info(fmt.Sprintf("Found %d branch(es) that need syncing:", len(syncNeeded)))
 	for _, info := range syncNeeded {
-		if info.MergedParent != "" {
+		switch {
+		case info.MergedParent != "":
 			fmt.Fprintf(os.Stderr, "  %s %s%s%s: parent %s%s%s was merged to %s\n",
 				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset, info.StackRoot)
-		} else if info.BehindParent != "" {
+		case info.BehindParent != "":
 			fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind parent %s%s%s\n",
 				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
-		} else if info.BehindBy > 0 {
+		case info.BehindBy > 0:
 			fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind origin/%s\n",
 				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, info.StackRoot)
+		case info.BehindRemote > 0:
+			// Remote-only behind: branch is in sync with parent but a teammate
+			// pushed new commits to origin/<branch>.
+			fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s on origin/%s (collaborator pushed)\n",
+				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindRemote, ui.Reset, info.Branch)
+			continue
+		}
+		// If a branch is behind both its parent and its remote, append the
+		// remote count after the primary reason printed above.
+		if info.BehindRemote > 0 && (info.MergedParent != "" || info.BehindParent != "" || info.BehindBy > 0) {
+			fmt.Fprintf(os.Stderr, "      (also %s%d commits%s behind origin/%s)\n",
+				ui.Yellow, info.BehindRemote, ui.Reset, info.Branch)
 		}
 	}
 	fmt.Fprintln(os.Stderr)
@@ -518,6 +531,7 @@ type syncInfoJSON struct {
 	MergedParent string `json:"merged_parent,omitempty"`
 	BehindParent string `json:"behind_parent,omitempty"`
 	BehindBy     int    `json:"behind_by,omitempty"`
+	BehindRemote int    `json:"behind_remote,omitempty"`
 	StackRoot    string `json:"stack_root"`
 }
 
@@ -531,6 +545,7 @@ func printSyncInfoJSON(syncNeeded []stack.SyncInfo) error {
 			MergedParent: info.MergedParent,
 			BehindParent: info.BehindParent,
 			BehindBy:     info.BehindBy,
+			BehindRemote: info.BehindRemote,
 			StackRoot:    info.StackRoot,
 		})
 	}
@@ -1502,6 +1517,9 @@ func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Bra
 		ui.Info(fmt.Sprintf("Current branch is %d commits behind %s.", syncInfo.BehindBy, syncInfo.BehindParent))
 	} else if syncInfo.BehindBy > 0 {
 		ui.Info(fmt.Sprintf("Current branch is %d commits behind origin/%s.", syncInfo.BehindBy, syncInfo.StackRoot))
+	}
+	if syncInfo.BehindRemote > 0 {
+		ui.Info(fmt.Sprintf("Current branch is %d commits behind origin/%s (collaborator pushed). Will fast-forward.", syncInfo.BehindRemote, branch.Name))
 	}
 
 	if !ui.ConfirmTUI("Sync current branch") {
