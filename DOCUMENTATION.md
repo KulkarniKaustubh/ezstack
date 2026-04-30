@@ -1058,6 +1058,8 @@ Options:
 
 **Picking up collaborator commits.** Before rebasing each branch onto its parent, sync also fast-forwards the local branch to `origin/<branch>` when a teammate has pushed new commits there. Strict fast-forward only — if your local has unpushed commits *and* the remote has commits you don't, sync prints a `diverged` note and skips the pull (auto-pulling could re-introduce pre-rebase parent commits when the local was just ezstack-rebased). Run `git pull --rebase` in the worktree yourself in that case.
 
+**Cascading conflicts.** When the parent of a stacked chain conflicts with the new base, only the parent's rebase hits the conflict — children get rebased with `git rebase --onto newParent oldParentSHA`, replaying just their own commits. The pre-rebase SHA of every selected branch is snapshotted into `~/.ezstack/stacks.json` (field `pre_sync_commit`) before any rewriting starts, so a later `ezs sync --continue` (a separate process) can use it. `git rerere` is also auto-enabled on the repo on first sync as a safety net for hunks that recur across siblings.
+
 By default, sync uses git rebase. Use `--merge` to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with `ezs config set sync_strategy merge`. Use `--rebase` or `--merge` to override the configured strategy for a single run.
 
 You can sync a specific stack by passing its hash prefix (minimum 3 characters).

@@ -1138,18 +1138,19 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 		return results, fmt.Errorf("failed to save config: %w", err)
 	}
 
-	// If the run completed without any branch hitting a conflict, snapshots
-	// for the selected branches are no longer needed — clear them so the next
-	// sync starts fresh. Any branch left in conflict keeps its snapshot so
-	// `ezs sync --continue` (a separate invocation) can use it.
-	anyConflict := false
+	// If the run completed cleanly — every reported result is a success, no
+	// conflicts and no other errors — the snapshots are no longer needed and
+	// we clear them so the next sync starts fresh. If anything is mid-conflict
+	// or errored (e.g. autostash failure), we keep snapshots so `ezs sync
+	// --continue` (a separate invocation) or the user's retry can use them.
+	allClean := true
 	for _, r := range results {
-		if r.HasConflict {
-			anyConflict = true
+		if r.HasConflict || r.Error != nil {
+			allClean = false
 			break
 		}
 	}
-	if !anyConflict {
+	if allClean {
 		m.clearPreSyncSHAs(snapshotNames)
 	}
 
@@ -1524,7 +1525,10 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 				// Stop on error as well
 				return results, nil
 			}
-			m.clearPreSyncSHAs([]string{child.Name})
+			// Don't clear PreSyncCommit on the child here: the recursive
+			// RebaseChildren on this child's grandchildren (below) needs to
+			// look up this child's pre-rewrite SHA as the oldBase for *their*
+			// --onto. Cleanup happens at end-of-bulk-sync or `--continue`.
 			result.Success = true
 			results = append(results, result)
 		}
