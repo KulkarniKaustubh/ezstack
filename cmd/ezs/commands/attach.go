@@ -132,6 +132,15 @@ func attachOne(g *git.Git, mgr *stack.Manager, branchName, parentOverride, workt
 
 	// Already-tracked path: detect mismatch, sync metadata, no-op, or upgrade.
 	if tracked != nil {
+		// `-p` on an already-attached branch is ambiguous — the user almost
+		// certainly wants a reparent, but attach is not the reparent verb.
+		// Silently ignoring it would let stale metadata accumulate; routing
+		// it through reparent would surprise users who think they're running
+		// a no-op. Fail with a clear signpost instead.
+		if parentOverride != "" && parentOverride != tracked.Parent {
+			return fmt.Errorf("branch %q is already attached under %q\n\n  Change parent: ezs reparent %s -p %s",
+				branchName, tracked.Parent, branchName, parentOverride)
+		}
 		metaPath := tracked.WorktreePath
 		if metaPath != "" && actualWorktreePath != "" && metaPath != actualWorktreePath {
 			return fmt.Errorf("worktree mismatch for branch %q\n  metadata says: %s\n  git reports:   %s\n  Move with: git worktree move %s %s",
@@ -171,14 +180,24 @@ func attachOne(g *git.Git, mgr *stack.Manager, branchName, parentOverride, workt
 	if parentBranch == branchName {
 		return fmt.Errorf("parent cannot be the branch itself (%q)", branchName)
 	}
+	// Validate the parent ref before recording it. CreateWorktree won't catch a
+	// typo here: when the branch already exists locally (which is the only path
+	// into attach), `git branch <name> <parent>` short-circuits with "already
+	// exists" and `git worktree add <path> <branch>` ignores the parent
+	// entirely. So an invalid `-p` would land in metadata silently, breaking
+	// every later sync/reparent that walks parent refs.
+	if !g.BranchExists(parentBranch) && mgr.GetBranch(parentBranch) == nil {
+		return fmt.Errorf("parent branch %q does not exist", parentBranch)
+	}
 
 	var plannedWorktreePath string
 	worktreeAction := "none"
 	if useWorktrees {
 		if actualWorktreePath != "" {
-			if worktreeOverride != "" && helpers.ExpandPath(worktreeOverride) != actualWorktreePath {
+			expandedOverride := helpers.ExpandPath(worktreeOverride)
+			if worktreeOverride != "" && expandedOverride != actualWorktreePath {
 				return fmt.Errorf("branch %q already has a worktree at %s; refusing to create a second one at %s",
-					branchName, actualWorktreePath, worktreeOverride)
+					branchName, actualWorktreePath, expandedOverride)
 			}
 			plannedWorktreePath = actualWorktreePath
 			worktreeAction = "use existing"
@@ -382,10 +401,9 @@ func formatStackSuffix(s *config.Stack) string {
 	return fmt.Sprintf(" in stack '%s'", s.DisplayName())
 }
 
-// showAttachPlan prints the planned attach action and returns false if the
-// user had any reason to abort before the confirm. Always returns true today;
-// reserved for future "preflight failed" branches.
-func showAttachPlan(g *git.Git, mgr *stack.Manager, branchName, parentBranch string, detected bool, worktreePath, worktreeAction, baseBranch string) bool {
+// showAttachPlan prints the planned attach action so the user can confirm
+// against the full picture before any mutation runs.
+func showAttachPlan(g *git.Git, mgr *stack.Manager, branchName, parentBranch string, detected bool, worktreePath, worktreeAction, baseBranch string) {
 	commitsAhead, _ := g.GetCommitsAhead(branchName, parentBranch)
 
 	stackLabel := "(new stack)"
@@ -414,7 +432,6 @@ func showAttachPlan(g *git.Git, mgr *stack.Manager, branchName, parentBranch str
 	fmt.Fprintf(os.Stderr, "  Stack:    %s\n", stackLabel)
 	fmt.Fprintf(os.Stderr, "  Worktree: %s\n", worktreeNote)
 	fmt.Fprintln(os.Stderr)
-	return true
 }
 
 // attachInteractive shows the orphan-branch picker with each row's auto-
@@ -435,11 +452,11 @@ func attachInteractive(g *git.Git, mgr *stack.Manager, parentOverride, worktreeO
 	baseBranch := cfg.GetBaseBranch(mgr.GetRepoDir())
 
 	type candRow struct {
-		name       string
-		worktree   string
-		parent     string
-		detected   bool
-		commitsAhd int
+		name         string
+		worktree     string
+		parent       string
+		detected     bool
+		commitsAhead int
 	}
 	rows := make([]candRow, 0, len(candidates))
 	for _, c := range candidates {
@@ -452,7 +469,7 @@ func attachInteractive(g *git.Git, mgr *stack.Manager, parentOverride, worktreeO
 			row.detected = ok
 		}
 		if row.parent != "" {
-			row.commitsAhd, _ = g.GetCommitsAhead(c.Name, row.parent)
+			row.commitsAhead, _ = g.GetCommitsAhead(c.Name, row.parent)
 		}
 		rows = append(rows, row)
 	}
@@ -465,7 +482,7 @@ func attachInteractive(g *git.Git, mgr *stack.Manager, parentOverride, worktreeO
 		}
 		parentNote := ""
 		if r.parent != "" {
-			parentNote = fmt.Sprintf("  → would attach under %s (%d commit(s) ahead)", r.parent, r.commitsAhd)
+			parentNote = fmt.Sprintf("  → would attach under %s (%d commit(s) ahead)", r.parent, r.commitsAhead)
 			if !r.detected {
 				parentNote += " [fallback]"
 			}

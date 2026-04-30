@@ -54,15 +54,6 @@ func setRepoUseWorktrees(t *testing.T, env *TestEnv, useWorktrees bool) {
 	}
 }
 
-// commitOnBranch runs git commands to create a commit on a bare branch
-// without checking it out — used to simulate a user who created a branch via
-// `git checkout -b`, made commits, then went back to main without ezs ever
-// seeing the branch.
-func commitOnBranchInWorktree(t *testing.T, worktreeDir, filename, content string) {
-	t.Helper()
-	GitCommit(t, worktreeDir, filename, content, "commit on "+filepath.Base(worktreeDir))
-}
-
 // TestAttach_BareBranchInWorktreeMode covers the headline case: user has a
 // bare local branch (no ezs metadata, no worktree), repo is in worktree
 // mode. `ezs attach` should infer the parent, create the worktree, and
@@ -394,6 +385,76 @@ func TestAttach_TrackedNoWorktreeMaterializesOnSecondRun(t *testing.T) {
 	// Stack identity is preserved — attach only filled in the worktree path.
 	if got := mgr.GetStackForBranch("feature-x").Hash; got != stackHashBefore {
 		t.Errorf("stack hash changed: before=%q after=%q", stackHashBefore, got)
+	}
+}
+
+// TestAttach_AlreadyAttachedWithMismatchedParentErrors verifies that running
+// `ezs attach -p other` on a branch that's already attached under a different
+// parent fails with a signpost to `ezs reparent`. Without this, the override
+// would be silently ignored and stale metadata would creep in.
+func TestAttach_AlreadyAttachedWithMismatchedParentErrors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("worktree semantics")
+	}
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+	defer withYesMode(t)()
+
+	// Set up: feature-a tracked under main, feature-x bare branch, attach it
+	// once so it's tracked under main.
+	CreateBranchWithCommit(t, env, "feature-a", "main")
+	gitBareBranch(t, env.RepoDir, "feature-x", "main")
+	chdirForTest(t, env.RepoDir)
+	if err := commands.Attach([]string{"feature-x"}); err != nil {
+		t.Fatalf("first Attach: %v", err)
+	}
+
+	// Now attempt to attach again with a *different* parent.
+	err := commands.Attach([]string{"feature-x", "-p", "feature-a"})
+	if err == nil {
+		t.Fatalf("expected error when -p disagrees with current parent; got nil")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "already attached") {
+		t.Errorf("error should mention already attached; got: %s", msg)
+	}
+	if !strings.Contains(msg, "ezs reparent") {
+		t.Errorf("error should signpost `ezs reparent`; got: %s", msg)
+	}
+
+	// Re-running with the *same* parent should still be a no-op.
+	if err := commands.Attach([]string{"feature-x", "-p", "main"}); err != nil {
+		t.Errorf("attach with matching -p should be a no-op; got: %v", err)
+	}
+}
+
+// TestAttach_NonexistentParentErrors covers the parent-validation gap: when
+// the user passes `-p typo`, attach must reject up front rather than write
+// the typo into stack metadata. CreateWorktree silently ignores the parent
+// arg for already-existing branches, so without an explicit check the bad
+// parent would land in config and trip every later sync that walks parent
+// refs.
+func TestAttach_NonexistentParentErrors(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("worktree semantics")
+	}
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+	defer withYesMode(t)()
+
+	gitBareBranch(t, env.RepoDir, "feature-x", "main")
+
+	chdirForTest(t, env.RepoDir)
+	err := commands.Attach([]string{"feature-x", "-p", "definitely-not-a-branch"})
+	if err == nil {
+		t.Fatalf("expected error for nonexistent parent; got nil")
+	}
+	if !strings.Contains(err.Error(), "does not exist") {
+		t.Errorf("error should mention 'does not exist'; got: %s", err.Error())
+	}
+	mgr, _ := stack.NewManager(env.RepoDir)
+	if mgr.GetBranch("feature-x") != nil {
+		t.Errorf("feature-x should NOT have been registered with a bogus parent")
 	}
 }
 

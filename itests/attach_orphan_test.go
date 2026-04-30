@@ -124,7 +124,7 @@ func TestCollectUntrackedBranches_IncludesBareBranches(t *testing.T) {
 
 // TestStatus_OrphanSection verifies that `ezs status -a` surfaces local
 // branches that exist in git but aren't part of any stack, with the
-// adoption hint pointing at `ezs stack`.
+// adoption hint pointing at `ezs attach`.
 func TestStatus_OrphanSection(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("worktree semantics")
