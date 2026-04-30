@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
@@ -23,7 +24,9 @@ func printPRUsage() {
     create    Create a new pull request
     draft     Toggle PR between draft and ready
     merge     Merge a pull request
+    refresh   Reconcile cached PR state from GitHub
     stack     Update all PR descriptions with stack info
+    unlink    Clear cached PR association for a branch
     update    Push changes to existing PR
 
 %sOPTIONS%s
@@ -77,6 +80,10 @@ func PR(args []string) error {
 		return prDraft(args[1:])
 	case "stack":
 		return prStack(args[1:])
+	case "unlink":
+		return prUnlink(args[1:])
+	case "refresh":
+		return prRefresh(args[1:])
 	default:
 		return fmt.Errorf("unknown pr command: %s. Run 'ezs pr --help' for available subcommands", args[0])
 	}
@@ -170,6 +177,11 @@ func prInteractive() error {
 // prDraftAll creates draft PRs for every branch in the current stack that
 // doesn't already have one. It is the --draft-all entry point for `ezs pr`.
 func prDraftAll() error {
+	return prDraftAllForce(false)
+}
+
+// prDraftAllForce is the --draft-all entry point with explicit --force handling.
+func prDraftAllForce(force bool) error {
 	if err := github.CheckAuth(); err != nil {
 		return ui.NewExitError(ui.ExitAuthRequired, "%v", err)
 	}
@@ -185,15 +197,33 @@ func prDraftAll() error {
 	if err != nil {
 		return err
 	}
-	return prCreateAllDraft(currentStack, true)
+	return prCreateAllDraft(currentStack, true, force)
 }
 
 // prCreateAll creates PRs for all branches in the stack that don't have PRs
 func prCreateAll(currentStack *config.Stack) error {
-	return prCreateAllDraft(currentStack, false)
+	return prCreateAllDraft(currentStack, false, false)
 }
 
-func prCreateAllDraft(currentStack *config.Stack, draft bool) error {
+// prCreateAllForce mirrors prCreateAll but threads the --force flag through.
+func prCreateAllForce(currentStack *config.Stack, force bool) error {
+	return prCreateAllDraft(currentStack, false, force)
+}
+
+// prCreateAllDraft handles `pr create --stack` and `pr --draft-all`.
+//
+// Branch eligibility (per branch in the stack):
+//   - is_merged or PRState == "MERGED" / "CLOSED" → terminal cache; treat as
+//     having no live PR. Reconcile against GitHub. If GitHub agrees, queue
+//     for new-PR creation. If GitHub still reports a live PR, adopt it.
+//   - PRNumber > 0 with non-terminal cache state → query GitHub. If still
+//     live, skip (or queue with warning when --force is set). If terminal,
+//     queue for create.
+//   - PRNumber == 0 → existing behavior: query GitHub, adopt if a live PR
+//     exists, else queue.
+//
+// commitsAhead == 0 always disqualifies a branch — there's nothing to PR.
+func prCreateAllDraft(currentStack *config.Stack, draft, force bool) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -209,32 +239,63 @@ func prCreateAllDraft(currentStack *config.Stack, draft bool) error {
 
 	branchesToCreate := []*config.Branch{}
 	for _, b := range currentStack.Branches {
-		if b.IsMerged {
+		cacheClaimsLive := b.PRNumber > 0 && !b.IsMerged && (b.PRState == "OPEN" || b.PRState == "DRAFT")
+
+		// Fast path: cache says PR is live and we're not forcing. Skip
+		// without burning a GitHub roundtrip — preserves the original
+		// performance on the common case. Users wanting to refresh stale
+		// state should run `ezs pr refresh` (or pass --force here).
+		if cacheClaimsLive && !force {
+			ui.Info(fmt.Sprintf("Branch '%s' already has PR #%d (skipping)", b.Name, b.PRNumber))
 			continue
 		}
-		if b.PRNumber == 0 {
-			// Check GitHub for an existing open PR (handles stale cache)
-			existingPR, err := gh.GetPRByBranch(b.Name)
-			if err == nil && existingPR != nil && !existingPR.Merged && existingPR.State != "CLOSED" {
-				b.PRNumber = existingPR.Number
-				b.PRUrl = existingPR.URL
-				savePRToCache(mainWorktree, b.Name, existingPR.Number, existingPR.URL)
-				ui.Info(fmt.Sprintf("Branch '%s' already has PR #%d (updated local cache)", b.Name, existingPR.Number))
-				continue
-			}
 
-			// Check if branch has commits ahead of its base
-			commitsAhead, err := g.GetCommitsAhead(b.Name, b.Parent)
-			if err != nil {
-				ui.Warn(fmt.Sprintf("Could not check commits for %s: %v (skipping)", b.Name, err))
-				continue
+		// Slow path: ambiguous cache or --force. Reconcile against GitHub.
+		// refreshPRStateFromGitHub returns (nil, nil) when no PR exists,
+		// (pr, nil) when a PR is found, and (nil, err) on transient errors.
+		var livePR *github.PR
+		if b.PRNumber > 0 || b.IsMerged {
+			pr, refreshErr := refreshPRStateFromGitHub(gh, mainWorktree, b)
+			if refreshErr != nil {
+				ui.Warn(fmt.Sprintf("Could not refresh PR state for %s: %v (using cache)", b.Name, refreshErr))
+			} else {
+				livePR = pr
 			}
-			if commitsAhead == 0 {
-				ui.Warn(fmt.Sprintf("Skipping %s: no commits ahead of '%s'", b.Name, b.Parent))
-				continue
+		} else {
+			// No cached PR number — replicate the original head-branch lookup.
+			pr, brErr := gh.GetPRByBranch(b.Name)
+			if brErr == nil && pr != nil {
+				livePR = pr
+				b.PRNumber = pr.Number
+				b.PRUrl = pr.URL
+				b.PRState = prStateFromGitHub(pr)
+				b.IsMerged = pr.Merged
+				savePRToCache(mainWorktree, b.Name, pr)
 			}
-			branchesToCreate = append(branchesToCreate, b)
 		}
+
+		liveOpen := livePR != nil && !livePR.Merged && livePR.State != "CLOSED"
+		if liveOpen {
+			if !force {
+				ui.Info(fmt.Sprintf("Branch '%s' already has open PR #%d (skipping)", b.Name, livePR.Number))
+				continue
+			}
+			// --force: warn but still queue. Final confirmation happens in
+			// the shared "create all PRs?" prompt below.
+			ui.Warn(fmt.Sprintf("--force: will create a new PR for '%s' even though PR #%d is open", b.Name, livePR.Number))
+		}
+
+		// Check if branch has commits ahead of its base
+		commitsAhead, err := g.GetCommitsAhead(b.Name, b.Parent)
+		if err != nil {
+			ui.Warn(fmt.Sprintf("Could not check commits for %s: %v (skipping)", b.Name, err))
+			continue
+		}
+		if commitsAhead == 0 {
+			ui.Warn(fmt.Sprintf("Skipping %s: no commits ahead of '%s'", b.Name, b.Parent))
+			continue
+		}
+		branchesToCreate = append(branchesToCreate, b)
 	}
 
 	if len(branchesToCreate) == 0 {
@@ -273,7 +334,9 @@ func prCreateAllDraft(currentStack *config.Stack, draft bool) error {
 
 		b.PRNumber = pr.Number
 		b.PRUrl = pr.URL
-		savePRToCache(mainWorktree, b.Name, pr.Number, pr.URL)
+		b.PRState = prStateFromGitHub(pr)
+		b.IsMerged = pr.Merged
+		savePRToCache(mainWorktree, b.Name, pr)
 		created++
 		ui.Success(fmt.Sprintf("Created PR #%d for %s: %s", pr.Number, b.Name, pr.URL))
 	}
@@ -307,6 +370,9 @@ func prCreate(args []string) error {
     -b, --body <body>      PR body/description
     -d, --draft            Create as draft PR
     --branch <name>        Create PR for a specific branch (instead of current)
+    -f, --force            Create a new PR even if one already exists for the branch
+                           (alias: --recreate). When the existing PR is still
+                           live on GitHub, you'll be prompted to confirm.
     -h, --help             Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
@@ -316,6 +382,8 @@ func prCreate(args []string) error {
 	body := fs.StringP("body", "b", "", "PR body")
 	draft := fs.BoolP("draft", "d", false, "Create as draft PR")
 	branchFlag := fs.String("branch", "", "Create PR for a specific branch")
+	force := fs.BoolP("force", "f", false, "Create a new PR even if one already exists")
+	recreate := fs.Bool("recreate", false, "Alias for --force")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -339,18 +407,20 @@ func prCreate(args []string) error {
 		return err
 	}
 
+	forceCreate := *force || *recreate
+
 	if *draftAll {
 		if *title != "" || *body != "" || *branchFlag != "" {
 			ui.Warn("--draft-all creates one PR per branch with auto-generated titles; -t/-b/--branch are ignored")
 		}
-		return prDraftAll()
+		return prDraftAllForce(forceCreate)
 	}
 	if *stackFlag {
 		currentStack, _, err := mgr.GetCurrentStack()
 		if err != nil {
 			return err
 		}
-		return prCreateAll(currentStack)
+		return prCreateAllForce(currentStack, forceCreate)
 	}
 
 	g := git.New(cwd)
@@ -376,10 +446,6 @@ func prCreate(args []string) error {
 		}
 	}
 
-	if branch.PRNumber > 0 {
-		return fmt.Errorf("branch '%s' already has PR #%d: %s\nTo push updates, use: ezs pr update", branch.Name, branch.PRNumber, branch.PRUrl)
-	}
-
 	commitsAhead, err := g.GetCommitsAhead(branch.Name, branch.Parent)
 	if err != nil {
 		// If we can't determine, continue anyway (might be a new branch)
@@ -402,15 +468,40 @@ func prCreate(args []string) error {
 		return err
 	}
 
-	// Check if a PR already exists on GitHub for this branch (handles stale cache)
-	existingPR, err := gh.GetPRByBranch(branch.Name)
-	if err == nil && existingPR != nil && !existingPR.Merged && existingPR.State != "CLOSED" {
-		// Update local cache with the existing PR
-		branch.PRNumber = existingPR.Number
-		branch.PRUrl = existingPR.URL
-		savePRToCache(getMainWorktreePath(g), branch.Name, existingPR.Number, existingPR.URL)
-		return fmt.Errorf("branch '%s' already has an open PR #%d: %s\nLocal cache has been updated. To push updates, use: ezs pr update", branch.Name, existingPR.Number, existingPR.URL)
+	// Reconcile local cache against GitHub before deciding whether to refuse.
+	// Issue #22: previously a cached PR (in any state) blocked recreation
+	// outright. We now trust GitHub as source of truth — a terminal-state PR
+	// (MERGED/CLOSED) lets the new PR proceed silently, a still-live PR
+	// requires --force.
+	mainWorktree := getMainWorktreePath(g)
+	livePR, refreshErr := refreshPRStateFromGitHub(gh, mainWorktree, branch)
+	switch {
+	case refreshErr != nil:
+		// Couldn't reach GitHub (or the branch genuinely has no PR — the
+		// real github.Client surfaces both as errors). Only nag when there
+		// was something cached to lose: a fresh branch with no PR shouldn't
+		// see "couldn't check PR state" warnings on its first `pr create`.
+		if branch.PRNumber > 0 {
+			ui.Warn(fmt.Sprintf("Could not check PR state on GitHub: %v", refreshErr))
+			if !forceCreate && !branch.IsMerged && branch.PRState != "CLOSED" && branch.PRState != "MERGED" {
+				return fmt.Errorf("branch '%s' has cached PR #%d (%s): %s\nGitHub is unreachable so the cache cannot be verified. Use 'ezs pr update' to push to the existing PR, or 'ezs pr create --force' to create a new one anyway", branch.Name, branch.PRNumber, displayPRState(branch.PRState), branch.PRUrl)
+			}
+		}
+	case livePR != nil && !livePR.Merged && livePR.State != "CLOSED":
+		// PR is live on GitHub.
+		if !forceCreate {
+			return fmt.Errorf("branch '%s' already has an open PR #%d: %s\nUse 'ezs pr update' to push changes to it, or 'ezs pr create --force' to create a new PR (the existing one will stay open)", branch.Name, livePR.Number, livePR.URL)
+		}
+		ui.Warn(fmt.Sprintf("Branch '%s' already has an open PR #%d: %s", branch.Name, livePR.Number, livePR.URL))
+		ui.Warn("--force will leave the existing PR open and create a new one. GitHub may refuse this as a duplicate.")
+		if !ui.ConfirmTUI("Create a new PR anyway?") {
+			ui.Warn("Cancelled")
+			return nil
+		}
 	}
+	// Reaching here means: no live PR (terminal state or never existed), or
+	// --force was confirmed. The branch cache has been reconciled by
+	// refreshPRStateFromGitHub. Proceed to create.
 
 	prTitle := *title
 	if prTitle == "" {
@@ -510,8 +601,10 @@ func prCreate(args []string) error {
 
 	branch.PRNumber = pr.Number
 	branch.PRUrl = pr.URL
+	branch.PRState = prStateFromGitHub(pr)
+	branch.IsMerged = pr.Merged
 
-	savePRToCache(getMainWorktreePath(g), branch.Name, pr.Number, pr.URL)
+	savePRToCache(getMainWorktreePath(g), branch.Name, pr)
 
 	ui.Success(fmt.Sprintf("Created %s #%d: %s", prType, pr.Number, pr.URL))
 
@@ -551,8 +644,10 @@ func prUpdate(args []string) error {
     ezs pr update [options]
 
 %sDESCRIPTION%s
-    Pushes code changes and also updates the PR base branch and stack
-    descriptions to match the current stack structure.
+    Reconciles cached PR state from GitHub, then pushes code changes and
+    updates the PR base branch and stack descriptions to match the current
+    stack structure. If the PR has been merged or closed externally, this
+    refuses to push and reports the new state.
 
 %sOPTIONS%s
     --branch <name>    Update PR for a specific branch (instead of current)
@@ -605,6 +700,27 @@ func prUpdate(args []string) error {
 
 	if branch.PRNumber == 0 {
 		return fmt.Errorf("no PR exists for this branch. Create one with: ezs pr create")
+	}
+
+	// Reconcile cache from GitHub before deciding whether to push. Without
+	// this, an externally-merged or externally-closed PR stays cached as
+	// OPEN forever and `ezs pr update` silently no-ops or pushes pointlessly.
+	// Issue #22: pr_update never re-queries GitHub on the no-push code path.
+	originalPRNumber := branch.PRNumber
+	if gh, ghErr := newGitHubClient(g); ghErr == nil {
+		livePR, refreshErr := refreshPRStateFromGitHub(gh, getMainWorktreePath(g), branch)
+		switch {
+		case refreshErr != nil:
+			// Transient error — warn and proceed with the cached state.
+			// Better to attempt a useful push than to bail on a flaky network.
+			ui.Warn(fmt.Sprintf("Could not refresh PR state from GitHub: %v (using cache)", refreshErr))
+		case livePR == nil:
+			return fmt.Errorf("PR #%d is no longer on GitHub. Run 'ezs pr unlink' to forget the cached association, or 'ezs pr create' to make a new one", originalPRNumber)
+		case livePR.Merged:
+			return fmt.Errorf("PR #%d is already merged: %s\nUse 'ezs pr create --force' to recreate, or 'ezs pr unlink' to forget the association", livePR.Number, livePR.URL)
+		case livePR.State == "CLOSED":
+			return fmt.Errorf("PR #%d is closed: %s\nReopen it on GitHub, or use 'ezs pr create --force' to make a new PR", livePR.Number, livePR.URL)
+		}
 	}
 
 	// Check if remote branch exists and detect divergence
@@ -991,5 +1107,299 @@ func prStack(args []string) error {
 	}
 
 	ui.Success("Stack descriptions updated in all PRs")
+	return nil
+}
+
+// prRefresh reconciles the local PR cache for one or more branches by
+// querying GitHub. Companion to issue #22 — `pr update` already does an
+// implicit refresh before pushing, but users sometimes want explicit
+// reconciliation (e.g., after manually closing a PR via the GitHub UI).
+func prRefresh(args []string) error {
+	fs := pflag.NewFlagSet("pr refresh", pflag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `%sReconcile PR cache from GitHub%s
+
+%sUSAGE%s
+    ezs pr refresh [options]
+
+%sDESCRIPTION%s
+    Queries GitHub for the current state of one or more PRs and updates
+    the local cache to match. Use after PRs have been merged, closed, or
+    re-targeted via the GitHub UI to bring 'ezs ls' back in sync.
+
+%sOPTIONS%s
+    --branch <name>    Refresh a specific branch (instead of current)
+    -s, --stack        Refresh every PR in the current stack
+    -h, --help         Show this help message
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
+	}
+	branchFlag := fs.String("branch", "", "Refresh a specific branch")
+	stackFlag := fs.BoolP("stack", "s", false, "Refresh every PR in the current stack")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
+	if err := fs.Parse(args); err != nil {
+		if err == pflag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	if *helpFlag {
+		fs.Usage()
+		return nil
+	}
+	if *stackFlag && *branchFlag != "" {
+		return fmt.Errorf("--stack and --branch are mutually exclusive")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	g := git.New(cwd)
+	mgr, err := stack.NewManager(cwd)
+	if err != nil {
+		return err
+	}
+	gh, err := newGitHubClient(g)
+	if err != nil {
+		return err
+	}
+
+	mainWorktree := getMainWorktreePath(g)
+
+	// Collect targets.
+	var branches []*config.Branch
+	if *stackFlag {
+		currentStack, _, err := mgr.GetCurrentStack()
+		if err != nil {
+			return err
+		}
+		for _, b := range currentStack.Branches {
+			if b.PRNumber > 0 {
+				branches = append(branches, b)
+			}
+		}
+		if len(branches) == 0 {
+			ui.Info("No branches in the current stack have a cached PR.")
+			return nil
+		}
+	} else {
+		var b *config.Branch
+		if *branchFlag != "" {
+			b = mgr.GetBranch(*branchFlag)
+			if b == nil {
+				return fmt.Errorf("branch '%s' is not tracked by ezstack", *branchFlag)
+			}
+		} else {
+			_, b, err = mgr.GetCurrentStack()
+			if err != nil {
+				return err
+			}
+		}
+		if b.PRNumber == 0 && b.PRUrl == "" {
+			ui.Info(fmt.Sprintf("Branch '%s' has no cached PR association.", b.Name))
+			return nil
+		}
+		branches = append(branches, b)
+	}
+
+	type result struct {
+		name     string
+		oldNum   int
+		oldState string
+		newPR    *github.PR
+		err      error
+	}
+	results := make([]result, len(branches))
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 10)
+	for i, b := range branches {
+		wg.Add(1)
+		go func(idx int, br *config.Branch) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			oldNum := br.PRNumber
+			oldState := br.PRState
+			pr, refreshErr := refreshPRStateFromGitHub(gh, mainWorktree, br)
+			results[idx] = result{name: br.Name, oldNum: oldNum, oldState: oldState, newPR: pr, err: refreshErr}
+		}(i, b)
+	}
+	wg.Wait()
+
+	changed := 0
+	for _, r := range results {
+		switch {
+		case r.err != nil:
+			ui.Warn(fmt.Sprintf("%s: refresh failed (%v)", r.name, r.err))
+		case r.newPR == nil:
+			fmt.Fprintf(os.Stderr, "  %s %s: PR #%d no longer on GitHub (cache cleared)\n", ui.IconBullet, r.name, r.oldNum)
+			changed++
+		default:
+			newState := prStateFromGitHub(r.newPR)
+			if r.oldNum == r.newPR.Number && r.oldState == newState {
+				fmt.Fprintf(os.Stderr, "  %s %s: PR #%d unchanged (%s)\n", ui.IconBullet, r.name, r.newPR.Number, newState)
+				continue
+			}
+			if r.oldNum == 0 {
+				fmt.Fprintf(os.Stderr, "  %s %s: discovered PR #%d (%s)\n", ui.IconBullet, r.name, r.newPR.Number, newState)
+			} else if r.oldNum != r.newPR.Number {
+				fmt.Fprintf(os.Stderr, "  %s %s: PR #%d -> #%d (%s)\n", ui.IconBullet, r.name, r.oldNum, r.newPR.Number, newState)
+			} else {
+				fmt.Fprintf(os.Stderr, "  %s %s: PR #%d %s -> %s\n", ui.IconBullet, r.name, r.newPR.Number, displayPRState(r.oldState), newState)
+			}
+			changed++
+		}
+	}
+	if changed > 0 {
+		ui.Success(fmt.Sprintf("Refreshed %d branch(es)", changed))
+	} else {
+		ui.Info("All branches already in sync with GitHub.")
+	}
+	return nil
+}
+
+// prUnlink clears the cached PR association for one or more branches without
+// touching GitHub. Recovery primitive for issue #22 — when local cache and
+// GitHub disagree and the user wants to start fresh, this is the scripted
+// way to forget a stale association without hand-editing stacks.json.
+func prUnlink(args []string) error {
+	fs := pflag.NewFlagSet("pr unlink", pflag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprintf(os.Stderr, `%sClear cached PR association for a branch%s
+
+%sUSAGE%s
+    ezs pr unlink [options]
+
+%sDESCRIPTION%s
+    Removes the local cache entry that links a branch to a GitHub PR
+    (pr_url, pr_state, is_merged). Does not touch GitHub — the PR itself is
+    unaffected. Use when the cached association has gone stale and you want
+    'ezs pr create' to make a fresh PR for the branch.
+
+%sOPTIONS%s
+    --branch <name>    Unlink a specific branch (instead of current)
+    --all              Unlink every branch in the current stack
+    -y, --yes          Skip the confirmation prompt
+    -h, --help         Show this help message
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
+	}
+	branchFlag := fs.String("branch", "", "Unlink a specific branch")
+	allFlag := fs.Bool("all", false, "Unlink every branch in the current stack")
+	yes := fs.BoolP("yes", "y", false, "Skip confirmation")
+	helpFlag := fs.BoolP("help", "h", false, "Show help")
+	if err := fs.Parse(args); err != nil {
+		if err == pflag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	if *helpFlag {
+		fs.Usage()
+		return nil
+	}
+	if *allFlag && *branchFlag != "" {
+		return fmt.Errorf("--all and --branch are mutually exclusive")
+	}
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	g := git.New(cwd)
+	mgr, err := stack.NewManager(cwd)
+	if err != nil {
+		return err
+	}
+
+	mainWorktree := getMainWorktreePath(g)
+
+	// Collect targets.
+	type target struct {
+		name     string
+		prNumber int
+		prURL    string
+		prState  string
+	}
+	var targets []target
+
+	if *allFlag {
+		currentStack, _, err := mgr.GetCurrentStack()
+		if err != nil {
+			return err
+		}
+		for _, b := range currentStack.Branches {
+			if b.PRNumber == 0 && b.PRUrl == "" {
+				continue
+			}
+			targets = append(targets, target{name: b.Name, prNumber: b.PRNumber, prURL: b.PRUrl, prState: b.PRState})
+		}
+		if len(targets) == 0 {
+			ui.Info("No branches in the current stack have a cached PR.")
+			return nil
+		}
+	} else {
+		var b *config.Branch
+		if *branchFlag != "" {
+			b = mgr.GetBranch(*branchFlag)
+			if b == nil {
+				return fmt.Errorf("branch '%s' is not tracked by ezstack", *branchFlag)
+			}
+		} else {
+			_, b, err = mgr.GetCurrentStack()
+			if err != nil {
+				return err
+			}
+		}
+		if b.PRNumber == 0 && b.PRUrl == "" {
+			ui.Info(fmt.Sprintf("Branch '%s' has no cached PR association.", b.Name))
+			return nil
+		}
+		targets = append(targets, target{name: b.Name, prNumber: b.PRNumber, prURL: b.PRUrl, prState: b.PRState})
+	}
+
+	// Show what will be cleared.
+	if len(targets) == 1 {
+		t := targets[0]
+		if t.prNumber > 0 {
+			ui.Info(fmt.Sprintf("Will unlink PR #%d (%s) from branch '%s'", t.prNumber, displayPRState(t.prState), t.name))
+		} else {
+			ui.Info(fmt.Sprintf("Will clear cached PR URL %q from branch '%s'", t.prURL, t.name))
+		}
+	} else {
+		ui.Info(fmt.Sprintf("Will unlink cached PR associations from %d branch(es):", len(targets)))
+		for _, t := range targets {
+			if t.prNumber > 0 {
+				fmt.Fprintf(os.Stderr, "  %s %s -> PR #%d (%s)\n", ui.IconBullet, t.name, t.prNumber, displayPRState(t.prState))
+			} else {
+				fmt.Fprintf(os.Stderr, "  %s %s -> %s\n", ui.IconBullet, t.name, t.prURL)
+			}
+		}
+	}
+
+	if !*yes {
+		if !ui.ConfirmTUI("Proceed?") {
+			ui.Warn("Cancelled")
+			return nil
+		}
+	}
+
+	cleared := 0
+	for _, t := range targets {
+		if err := clearPRFromCache(mainWorktree, t.name); err != nil {
+			ui.Warn(fmt.Sprintf("Failed to unlink %s: %v", t.name, err))
+			continue
+		}
+		// Also clear in-memory mirror so subsequent commands in this process
+		// see the unlinked state.
+		if b := mgr.GetBranch(t.name); b != nil {
+			b.PRNumber = 0
+			b.PRUrl = ""
+			b.PRState = ""
+			b.IsMerged = false
+		}
+		cleared++
+	}
+	ui.Success(fmt.Sprintf("Unlinked %d branch(es)", cleared))
 	return nil
 }

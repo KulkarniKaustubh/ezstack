@@ -903,7 +903,9 @@ Subcommands:
     create    Create a new pull request
     draft     Toggle PR between draft and ready
     merge     Merge a pull request
+    refresh   Reconcile cached PR state from GitHub
     stack     Update all PR descriptions with stack info
+    unlink    Clear cached PR association for a branch
     update    Push changes and update PR metadata (base branch, descriptions)
 
 Top-level flags:
@@ -913,15 +915,27 @@ Top-level flags:
 
 **`--draft-all`.** Walks every branch in the current stack and, for any branch that doesn't already have an associated PR, creates a new draft PR against its parent. Branches that already have a PR are left alone (use `ezs pr draft` to toggle an existing PR into draft state). This is the fastest way to seed a full stack of draft PRs for early-visibility review.
 
+**Cache reconciliation.** ezstack caches per-branch PR metadata (`pr_url`, `pr_state`, `is_merged`) in `~/.ezstack/stacks.json`. The `pr` subcommands keep that cache in sync with GitHub:
+
+- `pr create` queries GitHub before refusing to create. If the cached PR is in a terminal state (`MERGED` / `CLOSED`), a new PR is allowed silently. If the PR is still live on GitHub, `pr create` refuses unless `--force` (alias `--recreate`) is passed.
+- `pr update` queries GitHub before pushing. If the PR has been merged or closed externally, it refuses to push and updates the cache.
+- `pr refresh` and `pr unlink` are the explicit recovery primitives — useful when GitHub state has changed in ways ezstack didn't initiate.
+
 #### `ezs pr create`
 
 ```
 Options:
+    -s, --stack            Create PRs for all branches in the current stack
+    --draft-all            Create draft PRs across the whole stack (implies --stack --draft)
     -t, --title <title>    PR title (defaults to branch name)
     -b, --body <body>      PR body/description
     -d, --draft            Create as draft PR
     --branch <name>        Create PR for a specific branch (instead of current)
+    -f, --force            Create a new PR even if one already exists
+                           (alias: --recreate)
 ```
+
+**`--force`.** Bypasses the existing-PR guard. When the cached PR has been merged or closed, this is a no-op (the cached terminal state already lets create proceed). When the cached PR is still live on GitHub, you'll be prompted to confirm — the existing PR is not closed, and GitHub may reject the new PR as a duplicate.
 
 #### `ezs pr draft`
 
@@ -936,6 +950,16 @@ Options:
     --no-delete-branch         Don't delete the remote branch after merge
 ```
 
+#### `ezs pr refresh`
+
+Queries GitHub for the current state of one or more PRs and updates the local cache. Use after PRs have been merged, closed, or re-targeted via the GitHub UI to bring `ezs ls` and other commands back in sync without pushing or recreating anything.
+
+```
+Options:
+    --branch <name>    Refresh a specific branch (instead of current)
+    -s, --stack        Refresh every PR in the current stack (parallelized)
+```
+
 #### `ezs pr stack`
 
 Update all PR descriptions in the stack with navigation links.
@@ -943,6 +967,26 @@ Update all PR descriptions in the stack with navigation links.
 ```
 Options:
     --branch <name>    Target a specific branch's stack (instead of current)
+```
+
+#### `ezs pr unlink`
+
+Clears the cached PR association (`pr_url`, `pr_state`, `is_merged`) for one or more branches. Does not touch GitHub — the PR itself is unaffected. Use when the cached association has gone stale and you want `ezs pr create` to make a fresh PR for the branch.
+
+```
+Options:
+    --branch <name>    Unlink a specific branch (instead of current)
+    --all              Unlink every branch in the current stack
+    -y, --yes          Skip the confirmation prompt
+```
+
+#### `ezs pr update`
+
+Reconciles cached PR state from GitHub, then pushes code changes and updates the PR base branch and stack descriptions to match the current stack structure. If the PR has been merged or closed externally, refuses to push and reports the new state.
+
+```
+Options:
+    --branch <name>    Update PR for a specific branch (instead of current)
 ```
 
 ---

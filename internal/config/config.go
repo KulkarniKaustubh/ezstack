@@ -207,6 +207,17 @@ type BranchCache struct {
 	Remote       string `json:"remote,omitempty"` // git remote to push to (e.g. fork remote); defaults to "origin"
 }
 
+// ClearPRFields zeroes the PR-association fields on this BranchCache while
+// preserving worktree, fork-remote, and is_remote metadata. Used by `ezs pr
+// unlink` and by recovery paths that detect a cached PR is no longer on
+// GitHub.
+func (bc *BranchCache) ClearPRFields() {
+	bc.PRNumber = 0
+	bc.PRUrl = ""
+	bc.PRState = ""
+	bc.IsMerged = false
+}
+
 // CacheConfig holds cached branch metadata for a repo
 type CacheConfig struct {
 	Branches map[string]*BranchCache `json:"branches"`
