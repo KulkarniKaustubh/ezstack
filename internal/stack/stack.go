@@ -13,13 +13,13 @@ import (
 
 // Manager handles stack operations
 type Manager struct {
-	git             *git.Git
-	config          *config.Config
-	repoConfig      *config.RepoConfig
-	stackConfig     *config.StackConfig
-	repoDir         string
-	fetched         bool
-	fetchedRemotes  map[string]bool // per-remote fetch dedupe (separate from origin's `fetched`)
+	git            *git.Git
+	config         *config.Config
+	repoConfig     *config.RepoConfig
+	stackConfig    *config.StackConfig
+	repoDir        string
+	fetched        bool
+	fetchedRemotes map[string]bool // per-remote fetch dedupe (separate from origin's `fetched`)
 }
 
 // Fetch runs git fetch once per Manager lifetime. Subsequent calls are no-ops.

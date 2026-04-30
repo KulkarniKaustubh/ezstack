@@ -522,4 +522,3 @@ func TestSyncItest_ConcurrentSyncRejected(t *testing.T) {
 		t.Errorf("expected `already running` error; got: %v", err)
 	}
 }
-

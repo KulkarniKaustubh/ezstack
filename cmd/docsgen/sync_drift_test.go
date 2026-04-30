@@ -82,9 +82,9 @@ func extractFlagsFromBlock(t *testing.T, path, start, end string) map[string]boo
 	return out
 }
 
-// extractDocSyncFlags pulls the `--flag` set out of DOCUMENTATION.md's
-// `### \`ezs sync\`` Options block. The doc has multiple commands each with
-// their own Options block, so we anchor on the section heading first.
+// extractDocSyncFlags pulls the --flag set out of DOCUMENTATION.md's
+// "ezs sync" Options block. The doc has multiple commands each with their
+// own Options block, so we anchor on the section heading first.
 func extractDocSyncFlags(t *testing.T, path string) map[string]bool {
 	t.Helper()
 	raw, err := os.ReadFile(path)
