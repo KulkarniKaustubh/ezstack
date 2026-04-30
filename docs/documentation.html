@@ -889,9 +889,9 @@
       <p>For binary installs, ezstack can update itself in place:</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span>            <span class="c-comment"># download the latest release tarball, verify checksum, swap binaries</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span> <span class="c-flag">--check</span>    <span class="c-comment"># see whether an upgrade is available without downloading</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span> <span class="c-flag">--version</span> <span class="c-str">v4.6.0</span>   <span class="c-comment"># pin to a specific release tag</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span> <span class="c-flag">--version</span> <span class="c-str">v4.7.6</span>   <span class="c-comment"># pin to a specific release tag</span>
 </code></pre>
-      <p><code>ezs upgrade</code> detects how the binary was installed: Homebrew users get the <code>brew upgrade ezstack</code> command printed instead of an in-place swap, and <code>go install</code> users get the <code>go install …@latest</code> command. The companion <code>ezs-mcp</code> binary is upgraded alongside <code>ezs</code> in lock-step — first by checking next to <code>ezs</code>, and then by falling back to <code>PATH</code> so a <code>go install</code>-only <code>ezs-mcp</code> (e.g. at <code>~/go/bin/ezs-mcp</code> while <code>ezs</code> lives in <code>~/.local/bin/</code>) is still picked up. A Homebrew-managed <code>ezs-mcp</code> resolved through <code>PATH</code> is left alone with a hint to run <code>brew upgrade ezstack</code> instead. Pass <code>--no-mcp</code> to skip it entirely.</p>
+      <p><code>ezs upgrade</code> detects how the binary was installed and routes to the right channel: a manual binary install gets an in-place atomic swap, a <code>go install</code> install is re-installed by re-running <code>go install …@&lt;tag&gt;</code> so the toolchain stays the source of truth for the install location, and a Homebrew install is left alone with a hint to run <code>brew upgrade ezstack</code> (so brew's receipt of the install stays in sync). The companion <code>ezs-mcp</code> binary is upgraded alongside <code>ezs</code> in lock-step — first by checking next to <code>ezs</code>, and then by falling back to <code>PATH</code> so a <code>go install</code>-only <code>ezs-mcp</code> (e.g. at <code>~/go/bin/ezs-mcp</code> while <code>ezs</code> lives in <code>~/.local/bin/</code>) is still picked up. A Homebrew-managed <code>ezs-mcp</code> resolved through <code>PATH</code> is left alone with the same brew hint. Pass <code>--no-mcp</code> to skip it entirely.</p>
       <p><code>ezs-mcp</code> exposes the same flow under <code>--upgrade</code>, <code>--upgrade-check</code>, <code>--upgrade-tag</code>, and <code>--upgrade-force</code> for the rare case where it is installed without <code>ezs</code>.</p>
       <p><strong>Shell integration (recommended)</strong></p>
       <p>Add to your shell configuration:</p>
@@ -1534,7 +1534,7 @@ Options:
 
 <span class="c-cmd">Options</span>
   <span class="c-flag">--check</span>            <span class="c-dim">Print current vs latest version and exit (no download)</span>
-  <span class="c-flag">--version</span> <span class="c-str">&lt;tag&gt;</span>    <span class="c-dim">Pin to a specific release tag (e.g. v4.6.3)</span>
+  <span class="c-flag">--version</span> <span class="c-str">&lt;tag&gt;</span>    <span class="c-dim">Pin to a specific release tag (e.g. v4.7.6)</span>
   <span class="c-flag">--force</span>            <span class="c-dim">Reinstall even when already at the target version</span>
   <span class="c-flag">--no-mcp</span>           <span class="c-dim">Skip the companion ezs-mcp binary</span>
   <span class="c-flag">-y,</span> <span class="c-flag">--yes</span>          <span class="c-dim">Skip the replace-binaries confirmation</span>
@@ -1543,12 +1543,12 @@ Options:
       <ol>
       <li>Resolves the running binary path with <code>os.Executable()</code> and classifies the install:
       <ul>
-      <li><strong>Homebrew</strong> (<code>/opt/homebrew/Cellar/ezstack/...</code>, <code>/usr/local/Cellar/ezstack/...</code>, <code>/home/linuxbrew/.linuxbrew/Cellar/ezstack/...</code>) — prints <code>brew upgrade ezstack</code> and exits.</li>
-      <li><strong><code>go install</code></strong> (under <code>$GOBIN</code>, <code>$GOPATH/bin</code>, or <code>~/go/bin</code>) — prints the <code>go install …@latest</code> command and exits.</li>
+      <li><strong>Homebrew</strong> (<code>/opt/homebrew/Cellar/ezstack/...</code>, <code>/usr/local/Cellar/ezstack/...</code>, <code>/home/linuxbrew/.linuxbrew/Cellar/ezstack/...</code>) — prints <code>brew upgrade ezstack</code> and exits (so brew's receipt of the install stays in sync with the binary on disk).</li>
+      <li><strong><code>go install</code></strong> (under <code>$GOBIN</code>, <code>$GOPATH/bin</code>, or <code>~/go/bin</code>) — re-runs <code>go install github.com/KulkarniKaustubh/ezstack/v&lt;major&gt;/cmd/ezs@&lt;tag&gt;</code> (and <code>cmd/ezs-mcp@&lt;tag&gt;</code> when an existing <code>ezs-mcp</code> is present) so the Go toolchain stays the source of truth for the install location. The major-version segment is derived from the resolved release tag.</li>
       <li>Otherwise — proceeds with an in-place swap.</li>
       </ul>
       </li>
-      <li>Hits the GitHub Releases API for the requested tag (default: <code>/releases/latest</code>), downloads <code>ezstack_&lt;os&gt;_&lt;arch&gt;.tar.gz</code> plus <code>checksums.txt</code>, and verifies the SHA-256.</li>
+      <li>Hits the GitHub Releases API for the requested tag (default: <code>/releases/latest</code>), downloads <code>ezstack_&lt;os&gt;_&lt;arch&gt;.tar.gz</code> plus <code>checksums.txt</code>, and verifies the SHA-256. The <code>go install</code> path skips this step — the toolchain hashes the module against <code>go.sum</code> itself.</li>
       <li>Atomically renames the new binaries on top of the old ones (per binary, in their own directories — <code>ezs</code> and <code>ezs-mcp</code> can live in different bin dirs). On Unix this is safe even for the currently-running process: the kernel keeps the old inode alive until exit.</li>
       </ol>
       <p><code>ezs-mcp</code> is resolved in two stages so a split-directory install layout still upgrades in lock-step:</p>
@@ -1989,14 +1989,14 @@ Options:
       <code>~/.ezstack/stacks.json</code> changes.</p>
       <p><strong>Install</strong></p>
       <pre><code><span class="c-comment"># Pre-built (from the Releases page)</span>
-<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.7.5.vsix</span>
+<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.7.6.vsix</span>
 
 <span class="c-comment"># From source</span>
 <span class="c-cmd">cd</span> <span class="c-str">vscode-extension</span>
 <span class="c-cmd">npm</span> <span class="c-flag">install</span>
 <span class="c-cmd">npm</span> <span class="c-flag">run</span> <span class="c-str">compile</span>
 <span class="c-cmd">npx</span> <span class="c-flag">vsce</span> <span class="c-str">package</span>
-<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.7.5.vsix</span>
+<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.7.6.vsix</span>
 </code></pre>
       <p><strong>Commands</strong> are available under the <code>ezstack:</code> prefix in the command palette
       (<code>Cmd+Shift+P</code>):</p>
@@ -2256,7 +2256,7 @@ Options:
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License · v4.7.5</span>
+          <span class="footer-meta">MIT License · v4.7.6</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

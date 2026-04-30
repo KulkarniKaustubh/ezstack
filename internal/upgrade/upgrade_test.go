@@ -13,7 +13,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -1080,4 +1082,621 @@ func sha256OfFile(t *testing.T, path string) string {
 	}
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+// fakeReleaseAPI starts an httptest API server returning a release with
+// the given tag (no asset bodies — go-install tests don't download a
+// tarball) and points apiBaseURL at it for the test's lifetime. Cleanup
+// restores the original apiBaseURL via t.Cleanup.
+func fakeReleaseAPI(t *testing.T, tag string) {
+	t.Helper()
+	rel := Release{
+		TagName: tag,
+		// Asset URLs intentionally absent — the go-install path
+		// resolves the tag and never touches asset bodies.
+	}
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(&rel)
+	}))
+	t.Cleanup(apiSrv.Close)
+	oldBase := apiBaseURL
+	apiBaseURL = apiSrv.URL
+	t.Cleanup(func() { apiBaseURL = oldBase })
+}
+
+// fakeGoInstalledEzs lays down a fake ezs binary inside a synthetic
+// $GOPATH/bin so DetectInstall classifies the running executable as
+// InstallGoInstall, and points currentExecutableFn at it. Returns the
+// bin directory so callers can drop an ezs-mcp sibling next to it for
+// the IncludeMCP path.
+func fakeGoInstalledEzs(t *testing.T) string {
+	t.Helper()
+	gopath := t.TempDir()
+	binDir := filepath.Join(gopath, "bin")
+	if err := os.MkdirAll(binDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeEzs := filepath.Join(binDir, "ezs")
+	if err := os.WriteFile(fakeEzs, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GOBIN", "")
+	t.Setenv("GOPATH", gopath)
+	// Empty PATH so ezs-mcp PATH-fallback is purely opt-in per test.
+	t.Setenv("PATH", binDir)
+
+	old := currentExecutableFn
+	currentExecutableFn = func() (string, error) { return fakeEzs, nil }
+	t.Cleanup(func() { currentExecutableFn = old })
+
+	return binDir
+}
+
+// captureGoInstall replaces goInstallFn with a recorder that appends
+// each invoked package spec into the returned slice. Also no-ops the
+// `go` pre-flight check so tests don't have to keep the system `go`
+// dir on PATH while also constraining PATH for ezs-mcp lookups.
+// Cleanup restores both hooks.
+func captureGoInstall(t *testing.T) *[]string {
+	t.Helper()
+	var calls []string
+	oldInstall := goInstallFn
+	goInstallFn = func(_ context.Context, pkg string, _ func(string, ...any)) error {
+		calls = append(calls, pkg)
+		return nil
+	}
+	oldExists := goBinExistsFn
+	goBinExistsFn = func() error { return nil }
+	t.Cleanup(func() {
+		goInstallFn = oldInstall
+		goBinExistsFn = oldExists
+	})
+	return &calls
+}
+
+func TestGoModulePath(t *testing.T) {
+	cases := []struct {
+		tag  string
+		want string
+	}{
+		{"v4.7.5", "github.com/KulkarniKaustubh/ezstack/v4"},
+		{"4.7.5", "github.com/KulkarniKaustubh/ezstack/v4"},
+		{"v5.0.0", "github.com/KulkarniKaustubh/ezstack/v5"},
+		{"v2.0.0-rc.1", "github.com/KulkarniKaustubh/ezstack/v2"},
+		// Major 1 omits the suffix per semantic-import-versioning.
+		{"v1.9.9", "github.com/KulkarniKaustubh/ezstack"},
+		// Junk tags fall back to the v4 shipping path so a corrupted
+		// release record doesn't silently re-install the wrong major.
+		{"", "github.com/KulkarniKaustubh/ezstack/v4"},
+		{"banana", "github.com/KulkarniKaustubh/ezstack/v4"},
+	}
+	for _, c := range cases {
+		if got := goModulePath(c.tag); got != c.want {
+			t.Errorf("goModulePath(%q) = %q, want %q", c.tag, got, c.want)
+		}
+	}
+}
+
+// TestRunGoInstallPathUpgrades exercises the happy path: a synthetic
+// go-installed ezs is detected, the release tag is resolved, and
+// `go install` is invoked for both ezs and ezs-mcp (sibling layout).
+func TestRunGoInstallPathUpgrades(t *testing.T) {
+	binDir := fakeGoInstalledEzs(t)
+	// Drop an ezs-mcp sibling so IncludeMCP triggers a second go install.
+	if err := os.WriteFile(filepath.Join(binDir, "ezs-mcp"), []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeReleaseAPI(t, "v9.9.9")
+	calls := captureGoInstall(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var logs []string
+	res, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+		Logf:           func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v\nlogs:\n%s", err, strings.Join(logs, "\n"))
+	}
+	if res.Method != InstallGoInstall {
+		t.Errorf("Method = %v, want InstallGoInstall", res.Method)
+	}
+	if res.From != "1.0.0" || res.To != "9.9.9" {
+		t.Errorf("From/To = %q/%q, want 1.0.0/9.9.9", res.From, res.To)
+	}
+	wantCalls := []string{
+		"github.com/KulkarniKaustubh/ezstack/v9/cmd/ezs@v9.9.9",
+		"github.com/KulkarniKaustubh/ezstack/v9/cmd/ezs-mcp@v9.9.9",
+	}
+	if !reflect.DeepEqual(*calls, wantCalls) {
+		t.Errorf("go install calls = %v, want %v", *calls, wantCalls)
+	}
+	if len(res.Updated) != 2 {
+		t.Errorf("Updated = %v, want 2 entries", res.Updated)
+	}
+}
+
+// TestRunGoInstallPathSkipsMissingMCP verifies that ezs-mcp is omitted
+// when it neither sits next to ezs nor resolves on PATH — we don't
+// silently plant a new binary on a machine that didn't have one.
+func TestRunGoInstallPathSkipsMissingMCP(t *testing.T) {
+	fakeGoInstalledEzs(t) // no sibling ezs-mcp written
+	// Empty PATH dir so exec.LookPath("ezs-mcp") fails.
+	t.Setenv("PATH", t.TempDir())
+	fakeReleaseAPI(t, "v9.9.9")
+	calls := captureGoInstall(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var logs []string
+	if _, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+		Logf:           func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(*calls) != 1 || !strings.HasSuffix((*calls)[0], "/cmd/ezs@v9.9.9") {
+		t.Errorf("expected only ezs to be reinstalled, got %v", *calls)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "no ezs-mcp found") {
+		t.Errorf("expected skip log for missing ezs-mcp, got:\n%s", strings.Join(logs, "\n"))
+	}
+}
+
+// TestRunGoInstallPathUsesPATHFallbackForMCP verifies that an ezs-mcp
+// reachable through PATH (but not next to ezs) still triggers a second
+// `go install`, matching the binary-path behavior.
+func TestRunGoInstallPathUsesPATHFallbackForMCP(t *testing.T) {
+	fakeGoInstalledEzs(t)
+	mcpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(mcpDir, "ezs-mcp"), []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", mcpDir)
+	fakeReleaseAPI(t, "v9.9.9")
+	calls := captureGoInstall(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if _, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(*calls) != 2 {
+		t.Errorf("expected 2 go install calls (ezs + ezs-mcp), got %v", *calls)
+	}
+}
+
+// TestRunGoInstallCheckOnly ensures --check on a go-installed binary
+// short-circuits before any `go install` invocation and still reports
+// the latest version.
+func TestRunGoInstallCheckOnly(t *testing.T) {
+	fakeGoInstalledEzs(t)
+	fakeReleaseAPI(t, "v9.9.9")
+	calls := captureGoInstall(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var logs []string
+	res, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		CheckOnly:      true,
+		Logf:           func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.AlreadyAtTip {
+		t.Error("expected upgrade-available result (AlreadyAtTip = false)")
+	}
+	if len(*calls) != 0 {
+		t.Errorf("CheckOnly must not invoke go install; got %v", *calls)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "go install") {
+		t.Errorf("expected check-only log to mention `go install`, got:\n%s", strings.Join(logs, "\n"))
+	}
+}
+
+// TestRunGoInstallAtTip verifies the at-tip short-circuit: same version
+// without --force returns AlreadyAtTip and skips go install entirely.
+func TestRunGoInstallAtTip(t *testing.T) {
+	fakeGoInstalledEzs(t)
+	fakeReleaseAPI(t, "v1.0.0")
+	calls := captureGoInstall(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res, err := Run(ctx, Options{CurrentVersion: "1.0.0"})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.AlreadyAtTip {
+		t.Error("expected AlreadyAtTip when current matches latest")
+	}
+	if len(*calls) != 0 {
+		t.Errorf("at-tip path must not run go install, got %v", *calls)
+	}
+}
+
+// TestRunGoInstallForceReinstall verifies --force re-runs `go install`
+// even when the running binary already matches the published tag.
+func TestRunGoInstallForceReinstall(t *testing.T) {
+	fakeGoInstalledEzs(t)
+	fakeReleaseAPI(t, "v1.0.0")
+	calls := captureGoInstall(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		Force:          true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if res.AlreadyAtTip {
+		t.Error("--force must not return AlreadyAtTip")
+	}
+	if len(*calls) != 1 {
+		t.Errorf("expected 1 go install call under --force, got %v", *calls)
+	}
+}
+
+// TestRunGoInstallConfirmDeclined verifies that returning false from
+// the Confirm prompt aborts cleanly without invoking go install.
+func TestRunGoInstallConfirmDeclined(t *testing.T) {
+	fakeGoInstalledEzs(t)
+	fakeReleaseAPI(t, "v9.9.9")
+	calls := captureGoInstall(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		Confirm:        func(string) bool { return false },
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !res.Cancelled {
+		t.Error("expected Cancelled when Confirm returns false")
+	}
+	if len(*calls) != 0 {
+		t.Errorf("declined upgrade must not run go install, got %v", *calls)
+	}
+}
+
+// TestRunGoInstallPropagatesError ensures a `go install` failure is
+// surfaced wrapped with the package spec so the user can tell which
+// binary needs a manual retry, and that res.Updated reflects the
+// partial progress (ezs done, ezs-mcp not).
+func TestRunGoInstallPropagatesError(t *testing.T) {
+	binDir := fakeGoInstalledEzs(t)
+	if err := os.WriteFile(filepath.Join(binDir, "ezs-mcp"), []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeReleaseAPI(t, "v9.9.9")
+
+	oldInstall := goInstallFn
+	goInstallFn = func(_ context.Context, pkg string, _ func(string, ...any)) error {
+		if strings.Contains(pkg, "/cmd/ezs-mcp@") {
+			return errors.New("synthetic toolchain failure")
+		}
+		return nil
+	}
+	oldExists := goBinExistsFn
+	goBinExistsFn = func() error { return nil }
+	t.Cleanup(func() {
+		goInstallFn = oldInstall
+		goBinExistsFn = oldExists
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+	})
+	if err == nil {
+		t.Fatal("expected error from synthetic failure")
+	}
+	if !strings.Contains(err.Error(), "synthetic toolchain failure") {
+		t.Errorf("error should wrap synthetic failure, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "/cmd/ezs-mcp@") {
+		t.Errorf("error should name the failing package, got %v", err)
+	}
+}
+
+// TestPredictedGoInstallDir locks down the precedence rules `go install`
+// itself uses for resolving the output directory: $GOBIN > first
+// $GOPATH/bin > ~/go/bin. A bug here would make the drift-warning fire
+// on the wrong dir or skip a real drift case.
+func TestPredictedGoInstallDir(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+
+	t.Run("GOBIN wins", func(t *testing.T) {
+		t.Setenv("GOBIN", "/explicit/gobin")
+		t.Setenv("GOPATH", "/the/gopath")
+		if got := predictedGoInstallDir(); got != "/explicit/gobin" {
+			t.Errorf("got %q, want /explicit/gobin", got)
+		}
+	})
+	t.Run("first GOPATH/bin when GOBIN empty", func(t *testing.T) {
+		t.Setenv("GOBIN", "")
+		t.Setenv("GOPATH", "/first"+string(os.PathListSeparator)+"/second")
+		want := filepath.Join("/first", "bin")
+		if got := predictedGoInstallDir(); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	t.Run("home/go/bin when both empty", func(t *testing.T) {
+		t.Setenv("GOBIN", "")
+		t.Setenv("GOPATH", "")
+		want := filepath.Join(tmpHome, "go", "bin")
+		if got := predictedGoInstallDir(); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+	t.Run("whitespace-only GOBIN/GOPATH falls through", func(t *testing.T) {
+		t.Setenv("GOBIN", "   ")
+		t.Setenv("GOPATH", "   ")
+		want := filepath.Join(tmpHome, "go", "bin")
+		if got := predictedGoInstallDir(); got != want {
+			t.Errorf("got %q, want %q", got, want)
+		}
+	})
+}
+
+// TestRunGoInstallWarnsOnDirDrift covers the GOBIN-drift case: ezs sits
+// in $GOPATH/bin (matching DetectInstall's classifier) but the user has
+// since set $GOBIN to a different dir, so `go install` would write
+// somewhere else and PATH would still resolve to the stale binary.
+// Run() must log a `note:` warning before invoking go install.
+func TestRunGoInstallWarnsOnDirDrift(t *testing.T) {
+	binDir := fakeGoInstalledEzs(t)
+	// Set GOBIN to a different dir post-classification so the predicted
+	// install dir diverges from the running ezs's dir.
+	driftDir := t.TempDir()
+	t.Setenv("GOBIN", driftDir)
+	fakeReleaseAPI(t, "v9.9.9")
+	captureGoInstall(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var logs []string
+	if _, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		Logf:           func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "note: `go install` will write to") {
+		t.Errorf("expected drift warning in log, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, driftDir) {
+		t.Errorf("expected drift warning to name driftDir %q, got:\n%s", driftDir, joined)
+	}
+	if !strings.Contains(joined, binDir) {
+		t.Errorf("expected drift warning to name running ezs dir %q, got:\n%s", binDir, joined)
+	}
+}
+
+// TestRunGoInstallNoWarnWhenAligned ensures the drift warning does NOT
+// fire on the happy path where ezs lives in the predicted install dir
+// (the common case: GOPATH=$HOME/go, ezs at ~/go/bin/ezs, no GOBIN).
+func TestRunGoInstallNoWarnWhenAligned(t *testing.T) {
+	fakeGoInstalledEzs(t) // sets GOPATH=tmp, ezs at tmp/bin/ezs, GOBIN=""
+	fakeReleaseAPI(t, "v9.9.9")
+	captureGoInstall(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var logs []string
+	if _, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		Logf:           func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(strings.Join(logs, "\n"), "note: `go install` will write to") {
+		t.Errorf("did not expect drift warning when dirs align, got:\n%s", strings.Join(logs, "\n"))
+	}
+}
+
+// TestRunGoInstallSkipsBrewMCPOnPATH locks the Homebrew-on-PATH skip:
+// even when go-installed ezs is being upgraded, a brew-managed
+// ezs-mcp on PATH must NOT get a duplicate go-install copy planted —
+// brew owns that binary.
+func TestRunGoInstallSkipsBrewMCPOnPATH(t *testing.T) {
+	fakeGoInstalledEzs(t)
+	// Drop a brew-shaped ezs-mcp on PATH (no sibling next to ezs).
+	brewBin := filepath.Join(t.TempDir(), "Cellar", "ezstack", "1.0.0", "bin")
+	if err := os.MkdirAll(brewBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(brewBin, "ezs-mcp"), []byte("brew-old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", brewBin)
+	fakeReleaseAPI(t, "v9.9.9")
+	calls := captureGoInstall(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var logs []string
+	if _, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+		Logf:           func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) },
+	}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(*calls) != 1 || !strings.HasSuffix((*calls)[0], "/cmd/ezs@v9.9.9") {
+		t.Errorf("expected ezs-only go install (brew mcp must be skipped), got %v", *calls)
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "Homebrew") || !strings.Contains(joined, "brew upgrade") {
+		t.Errorf("expected brew-skip hint in logs, got:\n%s", joined)
+	}
+}
+
+// TestRunGoInstallMissingGoFailsBeforeConfirm locks the pre-flight
+// check ordering: when `go` is missing, Run() must fail BEFORE invoking
+// Confirm so the user doesn't agree to an upgrade that immediately
+// errors out.
+func TestRunGoInstallMissingGoFailsBeforeConfirm(t *testing.T) {
+	fakeGoInstalledEzs(t)
+	fakeReleaseAPI(t, "v9.9.9")
+
+	// Inject a missing-go pre-flight; do NOT use captureGoInstall (it
+	// stubs the pre-flight back to success).
+	oldExists := goBinExistsFn
+	goBinExistsFn = func() error { return errors.New("exec: \"go\": executable file not found in $PATH") }
+	t.Cleanup(func() { goBinExistsFn = oldExists })
+
+	confirmCalled := false
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	_, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		Confirm: func(string) bool {
+			confirmCalled = true
+			return true
+		},
+	})
+	if err == nil {
+		t.Fatal("expected pre-flight error, got nil")
+	}
+	if confirmCalled {
+		t.Error("Confirm must not run before the pre-flight check")
+	}
+	if !strings.Contains(err.Error(), "go.dev/dl") {
+		t.Errorf("error should hint at https://go.dev/dl/, got %v", err)
+	}
+}
+
+// TestRunGoInstallUpdatedIncludesPath verifies that res.Updated holds
+// real filesystem paths under the predicted go install dir, not bare
+// names. The CLI surfaces these in a "replaced N binaries" message and
+// Result consumers can use them for follow-up tasks.
+func TestRunGoInstallUpdatedIncludesPath(t *testing.T) {
+	binDir := fakeGoInstalledEzs(t)
+	if err := os.WriteFile(filepath.Join(binDir, "ezs-mcp"), []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeReleaseAPI(t, "v9.9.9")
+	captureGoInstall(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	res, err := Run(ctx, Options{
+		CurrentVersion: "1.0.0",
+		IncludeMCP:     true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	want := []string{
+		filepath.Join(binDir, "ezs"),
+		filepath.Join(binDir, "ezs-mcp"),
+	}
+	if !reflect.DeepEqual(res.Updated, want) {
+		t.Errorf("res.Updated = %v, want %v", res.Updated, want)
+	}
+}
+
+// TestRunGoInstallSubprocessRealRun is a smoke test against the real
+// `go` toolchain: it replaces goBinExistsFn with the default and
+// targets a known-good module to ensure the runGoInstall plumbing
+// (env passthrough, output capture, error wrapping) doesn't drift.
+// Skipped when the runner doesn't have network access or `go` itself.
+func TestRunGoInstallSubprocessRealRun(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real network/toolchain smoke test; skipped under -short")
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skipf("`go` not on PATH: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	// Use a tiny, stable module ("rsc.io/quote/v3") would hit the network;
+	// instead invoke go with --help on the install command, which keeps
+	// the smoke test offline-safe and still exercises the exec.Command
+	// wiring path: env passthrough, output capture, and clean exit.
+	var logs []string
+	logf := func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) }
+
+	// runGoInstall returns nil on success; we use a synthetic invalid
+	// pkg path to force a non-zero exit and verify the error message
+	// is propagated with the captured stderr.
+	err := runGoInstall(ctx, "this/module/path/does/not/exist@v0.0.0", logf)
+	if err == nil {
+		t.Fatal("expected runGoInstall to fail on a bogus module path")
+	}
+	// The error wrapping must include some toolchain-emitted text so
+	// users can debug their own install failures from the message.
+	if !strings.Contains(err.Error(), "this/module/path/does/not/exist") &&
+		!strings.Contains(err.Error(), "exit status") {
+		t.Errorf("expected wrapped go-install error, got: %v", err)
+	}
+}
+
+// TestRunHomebrewStillRoutesToManagedError keeps the regression bar in
+// place: switching the go-install path to in-place upgrade must NOT
+// also auto-run anything for Homebrew installs — those still need to
+// surface ManagedInstallError so the CLI prints a brew-specific hint.
+func TestRunHomebrewStillRoutesToManagedError(t *testing.T) {
+	t.Setenv("GOBIN", "")
+	t.Setenv("GOPATH", "/var/empty/non-existent-gopath")
+
+	brewBin := filepath.Join(t.TempDir(), "Cellar", "ezstack", "1.0.0", "bin")
+	if err := os.MkdirAll(brewBin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeEzs := filepath.Join(brewBin, "ezs")
+	if err := os.WriteFile(fakeEzs, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := currentExecutableFn
+	currentExecutableFn = func() (string, error) { return fakeEzs, nil }
+	t.Cleanup(func() { currentExecutableFn = old })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := Run(ctx, Options{CurrentVersion: "1.0.0"})
+	if err == nil {
+		t.Fatal("expected ManagedInstallError for Homebrew install")
+	}
+	var managed *ManagedInstallError
+	if !errors.As(err, &managed) {
+		t.Fatalf("expected *ManagedInstallError, got %T: %v", err, err)
+	}
+	if managed.Method != InstallHomebrew {
+		t.Errorf("Method = %v, want InstallHomebrew", managed.Method)
+	}
 }

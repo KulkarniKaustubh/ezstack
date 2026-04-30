@@ -14,9 +14,9 @@ import (
 )
 
 // Upgrade replaces the running ezs (and sibling ezs-mcp) binary with the
-// matching artifact from the latest GitHub release. Homebrew and
-// `go install` users are routed back to their installer instead of an
-// in-place swap.
+// matching artifact from the latest GitHub release. `go install` users
+// are upgraded by re-running `go install` against the resolved tag;
+// Homebrew users are routed back to `brew upgrade ezstack`.
 func Upgrade(args []string) error {
 	fs := pflag.NewFlagSet("upgrade", pflag.ContinueOnError)
 	fs.Usage = func() {
@@ -30,10 +30,13 @@ func Upgrade(args []string) error {
     Downloads the matching release tarball from GitHub, verifies the
     SHA-256 against checksums.txt, and atomically replaces the running
     ezs binary on disk. If an ezs-mcp binary lives in the same directory
-    it is upgraded too.
+    (or on PATH), it is upgraded too.
 
-    Homebrew and 'go install' installations are detected and the matching
-    upgrade command is printed instead of an in-place swap.
+    'go install' installations are upgraded by re-invoking 'go install'
+    against the resolved tag (so the toolchain stays the source of truth
+    for the install location). Homebrew installations are routed back to
+    'brew upgrade ezstack' so brew's receipt of the install stays in
+    sync with the binary on disk.
 
 %sOPTIONS%s
     --check              Print current vs latest version and exit

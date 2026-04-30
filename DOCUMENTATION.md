@@ -69,7 +69,7 @@ Verify the install:
 
 ```bash
 ezs --version
-# → ezstack version 4.7.5
+# → ezstack version 4.7.6
 ```
 
 ### 2. Wire up shell integration
@@ -274,7 +274,7 @@ ezs upgrade --check    # see whether an upgrade is available without downloading
 ezs upgrade --version v4.6.0   # pin to a specific release tag
 ```
 
-`ezs upgrade` detects how the binary was installed: Homebrew users get the `brew upgrade ezstack` command printed instead of an in-place swap, and `go install` users get the `go install …@latest` command. The companion `ezs-mcp` binary is upgraded alongside `ezs` in lock-step — first by checking next to `ezs`, and then by falling back to `PATH` so a `go install`-only `ezs-mcp` (e.g. at `~/go/bin/ezs-mcp` while `ezs` lives in `~/.local/bin/`) is still picked up. A Homebrew-managed `ezs-mcp` resolved through `PATH` is left alone with a hint to run `brew upgrade ezstack` instead. Pass `--no-mcp` to skip it entirely.
+`ezs upgrade` detects how the binary was installed and routes to the right channel: a manual binary install gets an in-place atomic swap, a `go install` install is re-installed by re-running `go install …@<tag>` so the toolchain stays the source of truth for the install location, and a Homebrew install is left alone with a hint to run `brew upgrade ezstack` (so brew's receipt of the install stays in sync). The companion `ezs-mcp` binary is upgraded alongside `ezs` in lock-step — first by checking next to `ezs`, and then by falling back to `PATH` so a `go install`-only `ezs-mcp` (e.g. at `~/go/bin/ezs-mcp` while `ezs` lives in `~/.local/bin/`) is still picked up. A Homebrew-managed `ezs-mcp` resolved through `PATH` is left alone with the same brew hint. Pass `--no-mcp` to skip it entirely.
 
 `ezs-mcp` exposes the same flow under `--upgrade`, `--upgrade-check`, `--upgrade-tag`, and `--upgrade-force` for the rare case where it is installed without `ezs`.
 
@@ -1096,10 +1096,10 @@ Options
 `upgrade` does not require being inside a git repository. It works in three steps:
 
 1. Resolves the running binary path with `os.Executable()` and classifies the install:
-   - **Homebrew** (`/opt/homebrew/Cellar/ezstack/...`, `/usr/local/Cellar/ezstack/...`, `/home/linuxbrew/.linuxbrew/Cellar/ezstack/...`) — prints `brew upgrade ezstack` and exits.
-   - **`go install`** (under `$GOBIN`, `$GOPATH/bin`, or `~/go/bin`) — prints the `go install …@latest` command and exits.
+   - **Homebrew** (`/opt/homebrew/Cellar/ezstack/...`, `/usr/local/Cellar/ezstack/...`, `/home/linuxbrew/.linuxbrew/Cellar/ezstack/...`) — prints `brew upgrade ezstack` and exits (so brew's receipt of the install stays in sync with the binary on disk).
+   - **`go install`** (under `$GOBIN`, `$GOPATH/bin`, or `~/go/bin`) — re-runs `go install github.com/KulkarniKaustubh/ezstack/v<major>/cmd/ezs@<tag>` (and `cmd/ezs-mcp@<tag>` when an existing `ezs-mcp` is present) so the Go toolchain stays the source of truth for the install location. The major-version segment is derived from the resolved release tag.
    - Otherwise — proceeds with an in-place swap.
-2. Hits the GitHub Releases API for the requested tag (default: `/releases/latest`), downloads `ezstack_<os>_<arch>.tar.gz` plus `checksums.txt`, and verifies the SHA-256.
+2. Hits the GitHub Releases API for the requested tag (default: `/releases/latest`), downloads `ezstack_<os>_<arch>.tar.gz` plus `checksums.txt`, and verifies the SHA-256. The `go install` path skips this step — the toolchain hashes the module against `go.sum` itself.
 3. Atomically renames the new binaries on top of the old ones (per binary, in their own directories — `ezs` and `ezs-mcp` can live in different bin dirs). On Unix this is safe even for the currently-running process: the kernel keeps the old inode alive until exit.
 
 `ezs-mcp` is resolved in two stages so a split-directory install layout still upgrades in lock-step:
@@ -1381,14 +1381,14 @@ checks, and review status) and a per-branch file browser. Auto-refreshes when
 
 ```bash
 # Pre-built (from the Releases page)
-code --install-extension ezstack-4.7.5.vsix
+code --install-extension ezstack-4.7.6.vsix
 
 # From source
 cd vscode-extension
 npm install
 npm run compile
 npx vsce package
-code --install-extension ezstack-4.7.5.vsix
+code --install-extension ezstack-4.7.6.vsix
 ```
 
 **Commands** are available under the `ezstack:` prefix in the command palette

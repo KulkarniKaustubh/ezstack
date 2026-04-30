@@ -1,6 +1,6 @@
 [package]
 name = "ezstack-desktop"
-version = "4.7.5"
+version = "4.7.6"
 description = "Desktop UI for ezstack - stacked PR management"
 authors = ["you"]
 edition = "2021"
