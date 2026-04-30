@@ -1463,6 +1463,74 @@ func TestSyncBranch_PullsCollaboratorCommits(t *testing.T) {
 	}
 }
 
+// TestIntegrateRemoteForBranch_DirtyWorktreeSkipped verifies that
+// integrateRemoteForBranch does NOT attempt a fast-forward when the
+// branch's worktree has uncommitted changes. `git merge --ff-only` would
+// otherwise refuse with an opaque "would be overwritten" error; the new
+// dirty-check skips with a clearer note and lets the (clean) caller's
+// autostash handle the rebase phase.
+//
+// Without the dirty-check, the call to integrate would error out and
+// SyncBranch would return result.Error, which is a regression from the
+// "no-op when nothing to integrate" contract.
+func TestIntegrateRemoteForBranch_DirtyWorktreeSkipped(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+
+	mgr, _ := NewManager(repoDir)
+	featPath := filepath.Join(worktreeBaseDir, "feat")
+	mgr.CreateBranch("feat", "main", featPath, "")
+	mgr, _ = NewManager(repoDir)
+	os.WriteFile(filepath.Join(featPath, "feat.txt"), []byte("v1\n"), 0644)
+	exec.Command("git", "-C", featPath, "add", ".").Run()
+	exec.Command("git", "-C", featPath, "commit", "-m", "feat v1").Run()
+	exec.Command("git", "-C", featPath, "push", "-u", "origin", "feat").Run()
+
+	// Teammate pushes a new commit that would overwrite the same file the
+	// local user is about to dirty — this is the "git would refuse FF"
+	// case, the most user-hostile failure mode.
+	simulateCollaboratorCommit(t, bareDir, "feat", "feat.txt", "from-teammate\n", "collab")
+
+	// Now dirty the file locally (no commit). git merge --ff-only would
+	// refuse: "Your local changes to the following files would be
+	// overwritten by merge: feat.txt".
+	os.WriteFile(filepath.Join(featPath, "feat.txt"), []byte("v1-DIRTY-LOCAL\n"), 0644)
+
+	preLocal, _ := exec.Command("git", "-C", featPath, "rev-parse", "HEAD").Output()
+	preLocalSHA := strings.TrimSpace(string(preLocal))
+
+	mgr, _ = NewManager(repoDir)
+	if err := mgr.Fetch(); err != nil {
+		t.Fatalf("Fetch: %v", err)
+	}
+
+	branch := mgr.GetBranch("feat")
+	res := mgr.integrateRemoteForBranch(branch)
+	if res.Error != nil {
+		t.Errorf("integrate must not surface an error on dirty worktree; got %v", res.Error)
+	}
+	if !res.Success {
+		t.Errorf("integrate should return Success=true (skip with note) on dirty worktree; got %+v", res)
+	}
+
+	// Local HEAD must NOT have moved — the FF was skipped, not silently applied.
+	postLocal, _ := exec.Command("git", "-C", featPath, "rev-parse", "HEAD").Output()
+	if got := strings.TrimSpace(string(postLocal)); got != preLocalSHA {
+		t.Errorf("local HEAD moved on dirty-tree integrate: %s → %s (FF must be skipped)", preLocalSHA, got)
+	}
+
+	// And the dirty edit must still be present (not stashed/discarded).
+	dirtyContent, _ := os.ReadFile(filepath.Join(featPath, "feat.txt"))
+	if !strings.Contains(string(dirtyContent), "v1-DIRTY-LOCAL") {
+		t.Errorf("dirty local edit was lost during integrate; content=%q", string(dirtyContent))
+	}
+}
+
 // TestSyncBranch_SkipsRemotePullOnDivergence verifies the safety case: when
 // the local has unpushed commits AND the remote has different commits, the
 // pull step is skipped (auto-pulling could trash a local-only ezstack rebase).
@@ -1680,7 +1748,7 @@ func TestSnapshotAndClearPreSyncSHAs(t *testing.T) {
 
 	// lookupPreSyncSHA should fall back to the live HEAD when no snapshot is set.
 	curSHA, _ := mgr.git.GetBranchCommit("feat-x")
-	if got := mgr.lookupPreSyncSHA("feat-x"); got != curSHA {
+	if got := mgr.lookupPreSyncSHA("feat-x", ""); got != curSHA {
 		t.Errorf("lookupPreSyncSHA fallback = %q, want live HEAD %q", got, curSHA)
 	}
 }

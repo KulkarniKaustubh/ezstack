@@ -522,3 +522,35 @@ func TestSyncItest_ConcurrentSyncRejected(t *testing.T) {
 		t.Errorf("expected `already running` error; got: %v", err)
 	}
 }
+
+// TestSyncItest_ConcurrentContinueRejected verifies that --continue also
+// participates in the sync lock, so two simultaneous --continue invocations
+// can't race on snapshot cleanup or PR-metadata updates. Earlier behavior
+// skipped the lock for --continue, which permitted that race.
+func TestSyncItest_ConcurrentContinueRejected(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("flock-based lock is no-op on Windows")
+	}
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+	withYesMode(t)
+
+	CreateBranchWithCommit(t, env, "feat-clock", "main")
+	initBareRemote(t, env)
+
+	stacksPath := filepath.Join(env.ConfigDir, "stacks.json")
+	lock, err := config.AcquireSyncLock(stacksPath)
+	if err != nil {
+		t.Fatalf("acquire lock for test: %v", err)
+	}
+	defer lock.Release()
+
+	chdirOrFail(t, filepath.Join(env.WorktreeDir, "feat-clock"))
+	err = commands.Sync([]string{"-s", "--continue"})
+	if err == nil {
+		t.Fatal("commands.Sync --continue should reject when another sync holds the lock; returned nil")
+	}
+	if !strings.Contains(err.Error(), "already running") {
+		t.Errorf("expected `already running` error from --continue; got: %v", err)
+	}
+}

@@ -213,6 +213,11 @@ type BranchCache struct {
 	// invocation) can use it. Cleared when the branch's sync completes cleanly;
 	// left set while a rebase/merge is in progress.
 	PreSyncCommit string `json:"pre_sync_commit,omitempty"`
+	// PreSyncCommitAt is the Unix epoch second at which PreSyncCommit was last
+	// recorded. Used by stale-snapshot cleanup to age out snapshots from prior
+	// runs that no longer have a worktree to introspect — without this, a
+	// crashed checkout-based sync would leave its snapshot in cache forever.
+	PreSyncCommitAt int64 `json:"pre_sync_commit_at,omitempty"`
 }
 
 // CacheConfig holds cached branch metadata for a repo

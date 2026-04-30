@@ -3,6 +3,7 @@ package stack
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
@@ -149,28 +150,55 @@ func (sc *syncCache) save() error {
 // `ezs sync --continue` (a separate invocation) can use the snapshots when
 // re-syncing children of a freshly-rebased parent.
 //
-// Existing snapshots are NOT overwritten if the branch's current HEAD already
-// equals the recorded snapshot — that means a prior partial run set this and we
-// haven't actually rewritten the branch yet, so the prior snapshot is still
-// accurate. If HEAD has moved since the recorded snapshot, the branch was
-// rewritten between runs, and we overwrite with the new pre-rewrite SHA.
+// Overwrite policy:
+//   - If HEAD already equals the recorded snapshot, no-op (already accurate).
+//   - If a prior snapshot exists AND that snapshot is still an ancestor of
+//     at least one descendant's tip, PRESERVE the older snapshot. Reason:
+//     descendants haven't been re-synced yet and still need the original
+//     SHA as their --onto base. Overwriting with the post-rebase HEAD would
+//     point future descendant rebases at a SHA that isn't on their history,
+//     making `--onto newHead oldSnapshot` walk a wrong commit range.
+//   - Otherwise (no prior snapshot, or prior snapshot no longer needed by
+//     any descendant), overwrite with the new pre-rewrite SHA.
+//
+// Also stamps PreSyncCommitAt with the current Unix time so
+// cleanupStalePreSyncSHAs can age out abandoned snapshots regardless of
+// worktree availability.
 func (m *Manager) snapshotPreSyncSHAs(branchNames []string) {
 	cache := m.stackConfig.Cache
 	dirty := false
+	now := time.Now().Unix()
 	for _, name := range branchNames {
 		head, err := m.git.GetBranchCommit(name)
 		if err != nil || head == "" {
 			continue
 		}
 		bc := cache.GetBranchCache(name)
-		if bc == nil {
-			bc = &config.BranchCache{}
+		existing := ""
+		if bc != nil {
+			existing = bc.PreSyncCommit
 		}
-		if bc.PreSyncCommit == head {
+		if existing == head {
 			// Already snapshotted at this exact SHA — nothing to do.
 			continue
 		}
+
+		// Preserve an existing snapshot when it's still load-bearing for a
+		// descendant. This is the "rebased twice without children being
+		// re-synced" case: the older snapshot is exactly the SHA the
+		// descendant's tip sits on top of and is still the correct --onto
+		// base. RefExists guards against a snapshot that's been GC'd; we
+		// don't preserve a SHA git can no longer resolve.
+		if existing != "" && m.git.RefExists(existing) && m.snapshotStillNeededByDescendant(name, existing) {
+			debugLog("snapshot-preserve-for-descendant", "branch", name, "existing", existing, "head", head)
+			continue
+		}
+
+		if bc == nil {
+			bc = &config.BranchCache{}
+		}
 		bc.PreSyncCommit = head
+		bc.PreSyncCommitAt = now
 		cache.SetBranchCache(name, bc)
 		dirty = true
 	}
@@ -179,6 +207,22 @@ func (m *Manager) snapshotPreSyncSHAs(branchNames []string) {
 			fmt.Fprintf(os.Stderr, "  Warning: failed to persist pre-sync snapshots: %v\n", err)
 		}
 	}
+}
+
+// snapshotStillNeededByDescendant reports whether `sha` is reachable from at
+// least one transitive descendant of `parentName`. When true, the descendant's
+// tip is built on top of `sha` and a future `--onto newParent sha` rebase of
+// that descendant will replay only the descendant's own commits — exactly
+// what the snapshot exists for. When false, no descendant is anchored at
+// `sha`, so overwriting it loses no useful information.
+func (m *Manager) snapshotStillNeededByDescendant(parentName, sha string) bool {
+	for _, d := range m.GetDescendants(parentName) {
+		isAnc, err := m.git.IsAncestor(sha, d.Name)
+		if err == nil && isAnc {
+			return true
+		}
+	}
+	return false
 }
 
 // ClearPreSyncCommits is the exported wrapper around clearPreSyncSHAs for
@@ -191,16 +235,19 @@ func (m *Manager) ClearPreSyncCommits(branchNames []string) {
 
 // clearPreSyncSHAs removes PreSyncCommit on the given branches. Called when a
 // sync run completes cleanly so the next run starts fresh, and on `--continue`
-// completion to release snapshots that are no longer needed.
+// completion to release snapshots that are no longer needed. Also resets
+// PreSyncCommitAt so age-based cleanup doesn't misfire on a future zero-SHA
+// + non-zero-timestamp edge state.
 func (m *Manager) clearPreSyncSHAs(branchNames []string) {
 	cache := m.stackConfig.Cache
 	dirty := false
 	for _, name := range branchNames {
 		bc := cache.GetBranchCache(name)
-		if bc == nil || bc.PreSyncCommit == "" {
+		if bc == nil || (bc.PreSyncCommit == "" && bc.PreSyncCommitAt == 0) {
 			continue
 		}
 		bc.PreSyncCommit = ""
+		bc.PreSyncCommitAt = 0
 		dirty = true
 	}
 	if dirty {
@@ -210,49 +257,85 @@ func (m *Manager) clearPreSyncSHAs(branchNames []string) {
 	}
 }
 
-// cleanupStalePreSyncSHAs scans every branch's cache entry. If the branch's
-// current HEAD equals the stored PreSyncCommit AND there's no rebase/merge in
-// progress for it, the snapshot is from a crashed or interrupted prior run
-// where no rewrite ever happened — clear it so it doesn't stick around as
-// noise. Conservative: any branch with an in-progress rebase keeps its snapshot.
+// preSyncSnapshotMaxAge bounds how long a PreSyncCommit can persist before
+// stale-cleanup ages it out. Set to 14 days because:
+//
+//   - The intended lifetime is one sync run plus an optional `--continue`
+//     pass, both of which complete in seconds-to-minutes.
+//   - 14 days is far longer than any plausible "I'll come back to this
+//     conflict next week" workflow, so we won't drop snapshots a user is
+//     still relying on.
+//   - Bounded staleness is the only protection for snapshots whose owning
+//     branch has no worktree (cleanupStalePreSyncSHAs can't introspect
+//     rebase state without a worktree, so the per-run heuristic doesn't
+//     apply to them).
+const preSyncSnapshotMaxAge = 14 * 24 * time.Hour
+
+// cleanupStalePreSyncSHAs prunes snapshots that no longer carry useful
+// information. A snapshot is stale when any of:
+//
+//  1. (Worktree case) The branch's current HEAD equals the snapshot AND
+//     no rebase/merge is in progress in its worktree — the prior sync was
+//     interrupted before any rewrite happened, so the snapshot is just
+//     noise.
+//  2. (Age fallback) PreSyncCommitAt is older than preSyncSnapshotMaxAge.
+//     This catches checkout-based branches (no worktree to introspect) and
+//     long-abandoned snapshots from crashed runs that never came back.
+//
+// In-progress rebases/merges are always preserved regardless of age — the
+// snapshot is in active use.
 func (m *Manager) cleanupStalePreSyncSHAs() {
 	cache := m.stackConfig.Cache
 	if cache == nil || cache.Branches == nil {
 		return
 	}
 	dirty := false
+	now := time.Now()
 	for name, bc := range cache.Branches {
 		if bc == nil || bc.PreSyncCommit == "" {
 			continue
 		}
-		// Determine the worktree git instance for this branch so we can check
-		// its in-progress state. Fall back to the main repo's git for branches
-		// without a dedicated worktree.
+
+		// Determine the worktree git instance for this branch, if any. A
+		// nil g means we can't introspect rebase/merge state cheaply —
+		// we'll fall through to age-based cleanup only.
 		var g *git.Git
 		if bc.WorktreePath != "" {
 			if _, err := os.Stat(bc.WorktreePath); err == nil {
 				g = git.New(bc.WorktreePath)
 			}
 		}
-		if g == nil {
-			// For branches without a worktree we can't reliably check
-			// rebase/merge state without checking out, which is too invasive
-			// during cleanup. Skip; the snapshot is harmless if stale because
-			// the lookup fallback collapses to plain rebase when oldBase ==
-			// newBase.
-			continue
+
+		// Always preserve a snapshot whose worktree is mid-rebase/merge —
+		// it's actively being used.
+		if g != nil {
+			rebaseIP, _ := g.IsRebaseInProgress()
+			mergeIP, _ := g.IsMergeInProgress()
+			if rebaseIP || mergeIP {
+				continue
+			}
 		}
-		rebaseIP, _ := g.IsRebaseInProgress()
-		mergeIP, _ := g.IsMergeInProgress()
-		if rebaseIP || mergeIP {
-			continue
+
+		// Heuristic 1: worktree case — HEAD equals snapshot means the
+		// branch was never actually rewritten, so the snapshot is noise.
+		if g != nil {
+			head, err := m.git.GetBranchCommit(name)
+			if err == nil && head != "" && head == bc.PreSyncCommit {
+				bc.PreSyncCommit = ""
+				bc.PreSyncCommitAt = 0
+				dirty = true
+				continue
+			}
 		}
-		head, err := m.git.GetBranchCommit(name)
-		if err != nil || head == "" {
-			continue
-		}
-		if head == bc.PreSyncCommit {
+
+		// Heuristic 2: age fallback — applies regardless of worktree
+		// availability. PreSyncCommitAt of 0 means "no timestamp recorded"
+		// (older config that predates this field); treat as ancient and
+		// clear so we don't carry uninspectable snapshots forever.
+		if bc.PreSyncCommitAt == 0 || now.Sub(time.Unix(bc.PreSyncCommitAt, 0)) > preSyncSnapshotMaxAge {
+			debugLog("snapshot-cleanup-age", "branch", name, "sha", bc.PreSyncCommit, "age_days", fmt.Sprintf("%.1f", now.Sub(time.Unix(bc.PreSyncCommitAt, 0)).Hours()/24))
 			bc.PreSyncCommit = ""
+			bc.PreSyncCommitAt = 0
 			dirty = true
 		}
 	}
@@ -325,8 +408,31 @@ func (m *Manager) integrateRemoteForBranch(branch *config.Branch) git.RebaseResu
 		return git.RebaseResult{Success: true}
 	}
 	// Strict fast-forward case.
-	debugLog("integrate-fastforward", "branch", branch.Name, "ref", remoteRef, "behind", fmt.Sprintf("%d", behind))
 	workDir := m.resolveBranchWorktree(branch)
+
+	// Refuse to fast-forward over a dirty worktree. `git merge --ff-only`
+	// itself rejects FFs that would overwrite uncommitted changes ("error:
+	// Your local changes ... would be overwritten by merge"), so we'd fail
+	// either way; bailing out here keeps the failure scoped to the
+	// integrate step (with a clear, actionable message) instead of
+	// surfacing as a generic FF failure. The subsequent rebase phase has
+	// its own dirty-tree handling — autostash protection in callers that
+	// opted in, or git's own complaint elsewhere.
+	//
+	// Only checked when a dedicated worktree exists. Checkout-based sync
+	// already requires the main repo to be clean (an existing constraint
+	// of syncViaCheckout), so the same dirty case there manifests at the
+	// checkout step rather than here.
+	if workDir != "" {
+		if hasChanges, _ := git.New(workDir).HasChanges(); hasChanges {
+			debugLog("integrate-skip-dirty", "branch", branch.Name, "ref", remoteRef)
+			fmt.Fprintf(os.Stderr, "  Note: %s has uncommitted changes; skipping remote pull from %s. Stash or commit your changes and re-run sync to integrate them.\n",
+				branch.Name, remoteRef)
+			return git.RebaseResult{Success: true}
+		}
+	}
+
+	debugLog("integrate-fastforward", "branch", branch.Name, "ref", remoteRef, "behind", fmt.Sprintf("%d", behind))
 	doFF := func(g *git.Git) git.RebaseResult {
 		return g.FastForwardMerge(remoteRef)
 	}
@@ -337,40 +443,61 @@ func (m *Manager) integrateRemoteForBranch(branch *config.Branch) git.RebaseResu
 }
 
 // lookupPreSyncSHA returns a SHA suitable for use as `oldBase` in
-// `git rebase --onto newBase oldBase` for rebasing CHILDREN of branchName:
+// `git rebase --onto newBase oldBase` when rebasing `descendantName` onto
+// (a possibly-rewritten) `parentName`.
 //
-//  1. The persisted PreSyncCommit, if set AND the SHA still exists as a
-//     reachable git object (cat-file -e). This catches the rare case where
-//     a snapshot SHA has been garbage-collected since recording — passing a
-//     non-existent SHA to `git rebase --onto` produces a confusing error.
-//  2. The branch's current HEAD as a fallback. Makes `--onto X X`
-//     equivalent to plain `git rebase X` — safe when the branch hasn't
-//     been rewritten in any tracked session.
+// Resolution order:
 //
-// Note: we do NOT check whether PreSyncCommit is an ancestor of branchName.
-// After a rebase, the old SHA is *not* in the rewritten branch's history,
-// but it IS still in the children's histories — and that's where it's used.
+//  1. The persisted PreSyncCommit on parentName, if set, still resolves to
+//     a real git object, AND — when descendantName is non-empty — is still
+//     an ancestor of descendantName's tip. The ancestor check rejects the
+//     "parent rebased twice without descendants being touched" case, where
+//     the snapshot was overwritten to a SHA that's no longer on the
+//     descendant's history; using such a SHA as `--onto`'s `oldBase` would
+//     compute a wrong commit range. (The overwrite-prevention in
+//     snapshotPreSyncSHAs is the primary line of defence; this is
+//     defence-in-depth for cross-process and partial-state scenarios.)
 //
-// Returns empty string only when the branch itself can't be resolved (e.g.
+//  2. The parent's current HEAD as a fallback. Makes `--onto X X`
+//     equivalent to plain `git rebase X` — safe when no rewrite has
+//     happened in any tracked session.
+//
+// Returns empty string only when the parent itself can't be resolved (e.g.
 // it was deleted), letting the caller degrade to plain rebase.
-func (m *Manager) lookupPreSyncSHA(branchName string) string {
-	if bc := m.stackConfig.Cache.GetBranchCache(branchName); bc != nil && bc.PreSyncCommit != "" {
-		if m.git.RefExists(bc.PreSyncCommit) {
-			debugLog("lookup-snapshot-hit", "branch", branchName, "sha", bc.PreSyncCommit)
+//
+// Pass an empty descendantName to skip the ancestor check (used by callers
+// that don't have a specific descendant in scope, e.g. dry-run inspection).
+func (m *Manager) lookupPreSyncSHA(parentName, descendantName string) string {
+	if bc := m.stackConfig.Cache.GetBranchCache(parentName); bc != nil && bc.PreSyncCommit != "" {
+		if !m.git.RefExists(bc.PreSyncCommit) {
+			// Snapshot SHA is gone (GC, or manual repo surgery). Drop it
+			// so it doesn't get used in subsequent ops.
+			debugLog("lookup-snapshot-stale-gone", "parent", parentName, "sha", bc.PreSyncCommit)
+			bc.PreSyncCommit = ""
+			bc.PreSyncCommitAt = 0
+			_ = m.stackConfig.Save(m.repoDir)
+		} else if descendantName != "" {
+			// Validate the snapshot is still on the descendant's history.
+			isAnc, err := m.git.IsAncestor(bc.PreSyncCommit, descendantName)
+			if err == nil && isAnc {
+				debugLog("lookup-snapshot-hit", "parent", parentName, "descendant", descendantName, "sha", bc.PreSyncCommit)
+				return bc.PreSyncCommit
+			}
+			debugLog("lookup-snapshot-not-ancestor", "parent", parentName, "descendant", descendantName, "sha", bc.PreSyncCommit)
+			// Don't auto-clear here — the snapshot may still be valid for
+			// other descendants. Just fall through to the live-HEAD path
+			// for this caller.
+		} else {
+			debugLog("lookup-snapshot-hit-no-descendant", "parent", parentName, "sha", bc.PreSyncCommit)
 			return bc.PreSyncCommit
 		}
-		// Snapshot SHA is gone (GC, or manual repo surgery). Drop it so it
-		// doesn't get used in subsequent ops.
-		debugLog("lookup-snapshot-stale", "branch", branchName, "sha", bc.PreSyncCommit)
-		bc.PreSyncCommit = ""
-		_ = m.stackConfig.Save(m.repoDir)
 	}
-	head, err := m.git.GetBranchCommit(branchName)
+	head, err := m.git.GetBranchCommit(parentName)
 	if err != nil || head == "" {
-		debugLog("lookup-snapshot-empty", "branch", branchName)
+		debugLog("lookup-snapshot-empty", "parent", parentName)
 		return ""
 	}
-	debugLog("lookup-snapshot-fallback-livehead", "branch", branchName, "sha", head)
+	debugLog("lookup-snapshot-fallback-livehead", "parent", parentName, "sha", head)
 	return head
 }
 
@@ -780,8 +907,9 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 
 	// Best-effort: enable git rerere so manually-resolved conflicts get
 	// auto-replayed on subsequent rebases (e.g. after --abort, or for hunks
-	// that recur across siblings). Idempotent and scoped to this repo.
-	_ = git.EnableRerere(m.repoDir)
+	// that recur across siblings). Cached per Manager to avoid forking two
+	// `git config` processes on every sync entry point.
+	m.ensureRerereEnabled()
 
 	// Clear stale snapshots from prior crashed/interrupted runs so they don't
 	// pollute today's lookups. A snapshot is stale when the branch HEAD hasn't
@@ -1199,7 +1327,10 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			// PreSyncCommit; if absent, fall back to the parent's current HEAD,
 			// which makes `--onto X X` equivalent to plain `git rebase X` —
 			// safe when the parent has not been rewritten in any tracked run.
-			fallbackOldBase := m.lookupPreSyncSHA(branch.Parent)
+			// Pass branch.Name as descendantName so the lookup validates the
+			// snapshot is still on this branch's history (defence against a
+			// stale snapshot whose ancestor relation has been broken).
+			fallbackOldBase := m.lookupPreSyncSHA(branch.Parent, branch.Name)
 			var syncResult git.RebaseResult
 			if fallbackOldBase != "" {
 				syncResult = branchDoSyncOnto(parentRef, fallbackOldBase)
@@ -1316,8 +1447,8 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 	result := &RebaseResult{Branch: branch.Name, WorktreePath: workDir, Remote: branch.Remote}
 
 	// Best-effort: enable git rerere so manually-resolved conflicts get
-	// auto-replayed on subsequent rebases. Idempotent.
-	_ = git.EnableRerere(m.repoDir)
+	// auto-replayed on subsequent rebases. Cached per Manager.
+	m.ensureRerereEnabled()
 
 	// Pick up any new commits the remote has on origin/<branch> before we
 	// rebase onto the parent. See integrateRemoteForBranch for the case
@@ -1484,7 +1615,9 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 	// When no PreSyncCommit is recorded, lookupPreSyncSHA falls back to the
 	// parent's current HEAD, making `--onto X X` equivalent to plain rebase —
 	// safe whenever the parent has not been rewritten in any tracked session.
-	oldParentSHA := m.lookupPreSyncSHA(branch.Parent)
+	// Pass branch.Name so a stale snapshot that no longer sits on this
+	// branch's history is rejected in favour of the live-HEAD fallback.
+	oldParentSHA := m.lookupPreSyncSHA(branch.Parent, branch.Name)
 
 	// Snapshot this branch before its rewrite, so a subsequent SyncBranch call
 	// on a grandchild — or a `--continue` invocation — can use this branch's
@@ -1542,7 +1675,9 @@ func (m *Manager) RebaseOnParent(useMerge ...bool) error {
 	// Use --onto to avoid replaying the parent's commits when the parent has
 	// been rewritten by a recent sync (cascade fix). Falls back to plain rebase
 	// when no snapshot is available (oldBase == parentRef ⇒ equivalent).
-	oldParentSHA := m.lookupPreSyncSHA(currentBranch.Parent)
+	// currentBranch is the descendant being rebased; pass its name so a
+	// stale snapshot that's no longer in its history degrades to plain rebase.
+	oldParentSHA := m.lookupPreSyncSHA(currentBranch.Parent, currentBranch.Name)
 	fmt.Fprintf(os.Stderr, "Rebasing %s onto %s\n", currentBranch.Name, parentRef)
 	if oldParentSHA == "" || oldParentSHA == parentRef {
 		return m.git.Rebase(parentRef)
@@ -1621,8 +1756,10 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 			// Has commits — rebase the child onto the (possibly-rewritten)
 			// currentBranch. Use --onto with the parent's PreSyncCommit so we
 			// only replay the child's own commits and not the parent's, which
-			// would re-encounter conflicts already resolved upstream.
-			oldParentSHA := m.lookupPreSyncSHA(currentBranch.Name)
+			// would re-encounter conflicts already resolved upstream. Pass
+			// child.Name as the descendant so the lookup rejects a stale
+			// snapshot that no longer sits on this child's history.
+			oldParentSHA := m.lookupPreSyncSHA(currentBranch.Name, child.Name)
 			// Per-child snapshot was already taken upfront — see batch above.
 
 			var syncResult git.RebaseResult

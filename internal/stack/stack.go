@@ -20,6 +20,7 @@ type Manager struct {
 	repoDir        string
 	fetched        bool
 	fetchedRemotes map[string]bool // per-remote fetch dedupe (separate from origin's `fetched`)
+	rerereEnabled  bool            // whether ensureRerereEnabled has run for this Manager
 }
 
 // Fetch runs git fetch once per Manager lifetime. Subsequent calls are no-ops.
@@ -32,6 +33,24 @@ func (m *Manager) Fetch() error {
 	}
 	m.fetched = true
 	return nil
+}
+
+// ensureRerereEnabled wires `rerere.enabled` and `rerere.autoupdate` into
+// the repo's local git config at most once per Manager lifetime. The
+// underlying `git.EnableRerere` is itself idempotent and respects an
+// explicit user `false`, but it forks two `git config` processes per call;
+// caching here avoids repeating that on every sync entry point
+// (syncStackInternal, SyncBranch, RebaseChildren, etc.).
+//
+// Best-effort: errors from the underlying git config writes are
+// intentionally swallowed because rerere is a safety-net optimization,
+// not a correctness requirement — sync proceeds either way.
+func (m *Manager) ensureRerereEnabled() {
+	if m.rerereEnabled {
+		return
+	}
+	_ = git.EnableRerere(m.repoDir)
+	m.rerereEnabled = true
 }
 
 // FetchRemote fetches a specific named remote (e.g. a fork) once per Manager

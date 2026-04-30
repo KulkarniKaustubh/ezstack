@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
@@ -130,16 +131,22 @@ func Sync(args []string) error {
 	autostash := !*noAutostashFlag
 	jsonOutput := *jsonFlag
 
-	// Acquire a sync-level lock so two `ezs sync` invocations on the same
-	// repo (e.g. accidental dual-terminal runs) can't race on snapshot
-	// reads/writes or fight over rebase state. Skipped for --dry-run since
-	// dry-run is read-only. Skipped for --continue since the user may run
-	// it from a separate shell while the original sync is still pending —
-	// the snapshot semantics handle that legitimate sequence.
-	if !dryRun && !*continueFlag {
+	// Acquire a sync-level lock so two `ezs sync` invocations can't race on
+	// snapshot reads/writes or fight over rebase state. The lock file lives
+	// next to stacks.json (which is global per ezstack install), so the
+	// lock is also global — concurrent syncs across different repos will
+	// serialize. That's what we want: stacks.json is shared state.
+	//
+	// Skipped only for --dry-run, which is read-only. --continue acquires
+	// the lock too: by the time the user runs --continue, the original sync
+	// has already returned (its lock release fired), so there's no
+	// contention with the conflicted run; the lock here exists to prevent
+	// two simultaneous --continue invocations from racing on snapshot
+	// cleanup and PR-metadata updates.
+	if !dryRun {
 		cfgDir, cfgErr := config.ConfigDir()
 		if cfgErr == nil {
-			lock, lockErr := config.AcquireSyncLock(cfgDir + "/stacks.json")
+			lock, lockErr := config.AcquireSyncLock(filepath.Join(cfgDir, "stacks.json"))
 			if lockErr != nil {
 				return lockErr
 			}
@@ -1301,8 +1308,42 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 				continue
 			}
 
+			// Autostash any uncommitted changes in the child's worktree before
+			// the re-sync. The bulk-sync path autostashes per-branch via
+			// SyncCallbacks; SyncBranch (called below) doesn't, so descendants
+			// re-synced under --continue would otherwise hit `git merge
+			// --ff-only`'s "would be overwritten" refusal during integrate, or
+			// git's rebase dirty-tree complaint.
+			//
+			// Skipped when no dedicated worktree exists (checkout-based sync
+			// requires the main repo to be clean — an existing constraint).
+			didChildStash := false
+			var childStashGit *git.Git
+			if child.WorktreePath != "" {
+				childStashGit = git.New(child.WorktreePath)
+				if _, found := childStashGit.FindEzstackStash(child.Name); found {
+					// A prior aborted sync already left an autostash. Don't
+					// stack another one on top — the existing one still has
+					// the user's changes. The orphan-stash banner above
+					// already surfaced this to the user.
+				} else if hasChanges, _ := childStashGit.HasChanges(); hasChanges {
+					if err := childStashGit.StashPush(); err != nil {
+						ui.Warn(fmt.Sprintf("Failed to autostash %s before re-sync: %v (refusing to rebase over uncommitted changes)", child.Name, err))
+						stoppedSubtrees[child.Name] = true
+						descendantConflict = true
+						continue
+					}
+					didChildStash = true
+				}
+			}
+
 			childResult, err := mgr.SyncBranch(child.Name, gh, useMerge)
 			if err != nil {
+				if didChildStash {
+					if popErr := childStashGit.StashPop(); popErr != nil {
+						ui.Warn(fmt.Sprintf("Failed to pop autostash for %s after sync error: %v (your changes are still in `git stash list`)", child.Name, popErr))
+					}
+				}
 				ui.Warn(fmt.Sprintf("Failed to sync %s: %v", child.Name, err))
 				stoppedSubtrees[child.Name] = true
 				descendantConflict = true
@@ -1314,14 +1355,32 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 			}
 			switch {
 			case childResult.HasConflict:
+				// Leave the autostash in place — the user resolves the conflict
+				// and the next successful --continue (or manual `git stash pop`)
+				// restores their changes.
 				ui.Warn(fmt.Sprintf("Conflict syncing %s — resolve in: %s, then re-run `ezs sync --continue`", child.Name, childWorkDir))
+				if didChildStash {
+					ui.Warn(fmt.Sprintf("Uncommitted changes were autostashed for %s; they will restore on the next successful sync, or run `git stash pop` manually.", child.Name))
+				}
 				stoppedSubtrees[child.Name] = true
 				descendantConflict = true
 			case childResult.Error != nil:
+				if didChildStash {
+					if popErr := childStashGit.StashPop(); popErr != nil {
+						ui.Warn(fmt.Sprintf("Failed to pop autostash for %s: %v", child.Name, popErr))
+					}
+				}
 				ui.Warn(fmt.Sprintf("Failed to sync %s: %v", child.Name, childResult.Error))
 				stoppedSubtrees[child.Name] = true
 				descendantConflict = true
 			case childResult.Success:
+				if didChildStash {
+					if popErr := childStashGit.StashPop(); popErr != nil {
+						ui.Warn(fmt.Sprintf("Failed to pop autostash for %s: %v", child.Name, popErr))
+					} else {
+						ui.Info(fmt.Sprintf("Restored stashed changes for %s", child.Name))
+					}
+				}
 				ui.Success(fmt.Sprintf("Synced %s", child.Name))
 				if useMerge {
 					OfferPush(child.Name, childWorkDir, child.EffectiveRemote())
