@@ -667,6 +667,10 @@ func TestRebaseChildren_GrandchildrenCascade(t *testing.T) {
 // EZSTACK_DEBUG unset → no output; set → tag + key=value lands on stderr.
 // Catches the typical regression where someone bypasses the gate.
 func TestDebugLog_FiresOnlyWhenEnvSet(t *testing.T) {
+	// Pin EZSTACK_DEBUG with t.Setenv up front so the test cleanup restores
+	// whatever value the developer/CI had set in their shell — even though we
+	// flip it on/off below to drive the two arms of the test.
+	t.Setenv("EZSTACK_DEBUG", "")
 	// Reset the cached gate so the env var is re-read at each call below.
 	debugOnce = sync.Once{}
 	defer func() { debugOnce = sync.Once{} }()
@@ -681,7 +685,6 @@ func TestDebugLog_FiresOnlyWhenEnvSet(t *testing.T) {
 
 	debugOnce = sync.Once{}
 	os.Setenv("EZSTACK_DEBUG", "1")
-	defer os.Unsetenv("EZSTACK_DEBUG")
 	debugLog("test-tag", "k", "v") // should produce one line
 
 	w.Close()

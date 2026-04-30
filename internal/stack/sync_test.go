@@ -34,8 +34,7 @@ func setupSyncTestEnv(t *testing.T) (repoDir, worktreeBaseDir string, cleanup fu
 	os.MkdirAll(worktreeBaseDir, 0755)
 	os.MkdirAll(configDir, 0755)
 
-	originalHome := os.Getenv("EZSTACK_HOME")
-	os.Setenv("EZSTACK_HOME", configDir)
+	t.Setenv("EZSTACK_HOME", configDir)
 
 	exec.Command("git", "-C", repoDir, "init", "-b", "main").Run()
 	exec.Command("git", "-C", repoDir, "config", "user.email", "test@test.com").Run()
@@ -61,7 +60,6 @@ func setupSyncTestEnv(t *testing.T) (repoDir, worktreeBaseDir string, cleanup fu
 	cfg.Save()
 
 	cleanup = func() {
-		os.Setenv("EZSTACK_HOME", originalHome)
 		os.RemoveAll(tmpDir)
 	}
 

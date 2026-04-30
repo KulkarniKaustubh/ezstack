@@ -33,8 +33,7 @@ func setupContinueScopeEnv(t *testing.T) (mgr *stack.Manager, cleanup func()) {
 			t.Fatal(err)
 		}
 	}
-	origHome := os.Getenv("EZSTACK_HOME")
-	os.Setenv("EZSTACK_HOME", cfgDir)
+	t.Setenv("EZSTACK_HOME", cfgDir)
 	exec.Command("git", "-C", repo, "init", "-b", "main").Run()
 	exec.Command("git", "-C", repo, "config", "user.email", "t@t.com").Run()
 	exec.Command("git", "-C", repo, "config", "user.name", "t").Run()
@@ -65,7 +64,6 @@ func setupContinueScopeEnv(t *testing.T) (mgr *stack.Manager, cleanup func()) {
 	mgr, _ = stack.NewManager(repo)
 
 	cleanup = func() {
-		os.Setenv("EZSTACK_HOME", origHome)
 		os.RemoveAll(tmp)
 	}
 	return mgr, cleanup

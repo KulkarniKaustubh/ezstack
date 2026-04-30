@@ -32,8 +32,7 @@ func setupTwoStackConflictEnv(t *testing.T) (mgr *stack.Manager, repoDir, worktr
 			t.Fatal(err)
 		}
 	}
-	origHome := os.Getenv("EZSTACK_HOME")
-	os.Setenv("EZSTACK_HOME", cfgDir)
+	t.Setenv("EZSTACK_HOME", cfgDir)
 
 	exec.Command("git", "-C", repoDir, "init", "-b", "main").Run()
 	exec.Command("git", "-C", repoDir, "config", "user.email", "t@t.com").Run()
@@ -95,7 +94,6 @@ func setupTwoStackConflictEnv(t *testing.T) (mgr *stack.Manager, repoDir, worktr
 			p := filepath.Join(worktreeBaseDir, name)
 			exec.Command("git", "-C", p, "rebase", "--abort").Run()
 		}
-		os.Setenv("EZSTACK_HOME", origHome)
 		os.RemoveAll(tmp)
 	}
 	return mgr, repoDir, worktreeBaseDir, cleanup
@@ -178,9 +176,7 @@ func TestSyncContinue_DescendantSubtreeReSyncsAfterRoot(t *testing.T) {
 	for _, d := range []string{repoDir, worktreeBaseDir, cfgDir} {
 		os.MkdirAll(d, 0755)
 	}
-	origHome := os.Getenv("EZSTACK_HOME")
-	os.Setenv("EZSTACK_HOME", cfgDir)
-	defer os.Setenv("EZSTACK_HOME", origHome)
+	t.Setenv("EZSTACK_HOME", cfgDir)
 
 	exec.Command("git", "-C", repoDir, "init", "-b", "main").Run()
 	exec.Command("git", "-C", repoDir, "config", "user.email", "t@t.com").Run()
@@ -294,9 +290,7 @@ func TestSyncContinue_PartialReturnsErrSyncIncomplete(t *testing.T) {
 	for _, d := range []string{repoDir, worktreeBaseDir, cfgDir} {
 		os.MkdirAll(d, 0755)
 	}
-	origHome := os.Getenv("EZSTACK_HOME")
-	os.Setenv("EZSTACK_HOME", cfgDir)
-	defer os.Setenv("EZSTACK_HOME", origHome)
+	t.Setenv("EZSTACK_HOME", cfgDir)
 
 	exec.Command("git", "-C", repoDir, "init", "-b", "main").Run()
 	exec.Command("git", "-C", repoDir, "config", "user.email", "t@t.com").Run()
