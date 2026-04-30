@@ -29,6 +29,7 @@ var knownCommands = map[string]bool{
 	"reparent": true, "rp": true,
 	"stack":   true,
 	"unstack": true,
+	"attach":  true,
 	"commit":  true, "ci": true,
 	"amend":   true,
 	"diff":    true,
@@ -229,6 +230,8 @@ func main() {
 		err = commands.Stack(args)
 	case "unstack":
 		err = commands.Unstack(args)
+	case "attach":
+		err = commands.Attach(args)
 	case "commit", "ci":
 		err = commands.Commit(args)
 	case "amend":
@@ -337,6 +340,7 @@ func printUsage() {
 %sCOMMANDS%s
     agent         Launch AI agent with stack context
     amend         Amend last commit and auto-sync children
+    attach        Bring an existing branch under ezs management
     commit, ci    Commit and auto-sync child branches
     config        Configure ezstack
     delete, del, rm  Delete a branch and its worktree
@@ -395,7 +399,7 @@ func printShellInit() {
 # Add this to your shell config: eval "$(ezs --shell-init)"
 ezs() {
     case "${1:-}" in
-        goto|go|new|n|delete|del|rm|sync|up|down|menu)
+        goto|go|new|n|attach|delete|del|rm|sync|up|down|menu)
             # These commands may output "cd <path>" which we need to eval
             eval "$(EZS_SHELL_WRAPPER=1 command ezs "$@")"
             ;;

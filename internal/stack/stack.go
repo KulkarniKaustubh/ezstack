@@ -1506,6 +1506,35 @@ func (m *Manager) MarkBranchMerged(branchName string) error {
 	return nil
 }
 
+// SetBranchWorktreePath records or clears the worktree path for an
+// already-tracked branch. Used by `ezs attach` to upgrade a tracked-without-
+// worktree branch to a tracked-with-worktree branch (or, with path="",
+// to record that a previously-known worktree was removed). Returns an error
+// if the branch is not tracked in any stack — callers should check that
+// first.
+func (m *Manager) SetBranchWorktreePath(branchName, path string) error {
+	if m.GetBranch(branchName) == nil {
+		return fmt.Errorf("branch '%s' is not tracked in any stack", branchName)
+	}
+
+	cache := m.stackConfig.Cache
+	bc := cache.GetBranchCache(branchName)
+	if bc == nil {
+		bc = &config.BranchCache{}
+	}
+	bc.WorktreePath = path
+	cache.SetBranchCache(branchName, bc)
+
+	for _, stack := range m.stackConfig.Stacks {
+		if stack.HasBranch(branchName) {
+			stack.PopulateBranchesWithCache(cache)
+			break
+		}
+	}
+
+	return m.stackConfig.Save(m.repoDir)
+}
+
 // MarkBranchRemote marks a branch as belonging to another contributor.
 // Remote branches are not rebased during sync. Optionally sets PR URL.
 // If remote is non-empty, it specifies the git remote to push to (for fork PRs).

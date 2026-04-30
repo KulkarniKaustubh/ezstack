@@ -532,34 +532,12 @@ func Status(args []string) error {
 // branches they made with `git checkout -b` outside of ezs and learn how to
 // adopt them. No-op when there are no orphans.
 func printOrphanBranches(g *git.Git, mgr *stack.Manager) {
-	localBranches, err := g.ListLocalBranches()
+	orphans, err := CollectUntrackedBranches(g, mgr)
 	if err != nil {
-		return
+		// Status decoration shouldn't fail the command, but the user deserves
+		// a heads-up that the orphan list may be incomplete.
+		fmt.Fprintf(os.Stderr, "%swarning: orphan-branch lookup partial: %v%s\n", ui.Yellow, err, ui.Reset)
 	}
-
-	worktrees, _ := g.ListWorktrees()
-	wtByBranch := make(map[string]string, len(worktrees))
-	for _, wt := range worktrees {
-		if wt.Branch != "" {
-			wtByBranch[wt.Branch] = wt.Path
-		}
-	}
-
-	type orphan struct {
-		name         string
-		worktreePath string
-	}
-	var orphans []orphan
-	for _, b := range localBranches {
-		if mgr.IsMainBranch(b) {
-			continue
-		}
-		if mgr.GetBranch(b) != nil {
-			continue
-		}
-		orphans = append(orphans, orphan{name: b, worktreePath: wtByBranch[b]})
-	}
-
 	if len(orphans) == 0 {
 		return
 	}
@@ -567,12 +545,12 @@ func printOrphanBranches(g *git.Git, mgr *stack.Manager) {
 	fmt.Fprintf(os.Stderr, "%s%sBranches not in any stack:%s\n", ui.Bold, ui.Cyan, ui.Reset)
 	for _, o := range orphans {
 		suffix := "[no worktree]"
-		if o.worktreePath != "" {
-			suffix = fmt.Sprintf("(worktree at %s)", o.worktreePath)
+		if o.WorktreePath != "" {
+			suffix = fmt.Sprintf("(worktree at %s)", o.WorktreePath)
 		}
-		fmt.Fprintf(os.Stderr, "  %s %s%s%s\n", o.name, ui.Gray, suffix, ui.Reset)
+		fmt.Fprintf(os.Stderr, "  %s %s%s%s\n", o.Name, ui.Gray, suffix, ui.Reset)
 	}
-	fmt.Fprintf(os.Stderr, "%sAdopt one with:%s ezs stack -b <branch> -p <parent>\n\n", ui.Gray, ui.Reset)
+	fmt.Fprintf(os.Stderr, "%sAdopt one with:%s ezs attach <branch>\n\n", ui.Gray, ui.Reset)
 }
 
 // runStatusWatch repeatedly clears the screen and runs status until the user

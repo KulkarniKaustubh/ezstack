@@ -307,17 +307,14 @@ func New(args []string) error {
 	// If the branch already exists locally, ezs new would either silently
 	// adopt it (worktree mode tolerates "branch already exists") or fail
 	// opaquely (no-worktree mode). Both are surprising. Steer the user to
-	// `ezs stack`, which is the supported path for bringing a pre-existing
-	// branch into a stack.
+	// `ezs attach`, which is the supported path for bringing a pre-existing
+	// branch under ezs management — it auto-detects the parent and
+	// converges the branch to the repo's "fully managed" state.
 	if g.BranchExists(branchName) {
-		hintParent := parentBranch
-		if hintParent == "" {
-			hintParent = "<parent>"
-		}
 		return fmt.Errorf("branch %q already exists locally\n\n"+
-			"  Add it to a stack:    ezs stack -b %s -p %s\n"+
-			"  Or pick a new name:   ezs new %s-v2",
-			branchName, branchName, hintParent, branchName)
+			"  Bring it into ezstack:  ezs attach %s\n"+
+			"  Or pick a new name:     ezs new %s-v2",
+			branchName, branchName, branchName)
 	}
 
 	// Create the manager first to get repo-specific config

@@ -12,7 +12,7 @@
 
 [Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows) · [Editor & Desktop Integrations](#editor--desktop-integrations)
 
-**Commands:** [agent](#ezs-agent) · [commit/amend](#ezs-commit--ezs-amend) · [config](#ezs-config) · [delete](#ezs-delete) · [diff](#ezs-diff) · [doctor](#ezs-doctor) · [down/up](#ezs-down--ezs-up) · [goto](#ezs-goto) · [list](#ezs-list) · [log](#ezs-log) · [menu](#ezs-menu) · [new](#ezs-new) · [pr](#ezs-pr) · [push](#ezs-push) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [status](#ezs-status) · [sync](#ezs-sync) · [unstack](#ezs-unstack) · [upgrade](#ezs-upgrade)
+**Commands:** [agent](#ezs-agent) · [attach](#ezs-attach) · [commit/amend](#ezs-commit--ezs-amend) · [config](#ezs-config) · [delete](#ezs-delete) · [diff](#ezs-diff) · [doctor](#ezs-doctor) · [down/up](#ezs-down--ezs-up) · [goto](#ezs-goto) · [list](#ezs-list) · [log](#ezs-log) · [menu](#ezs-menu) · [new](#ezs-new) · [pr](#ezs-pr) · [push](#ezs-push) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [status](#ezs-status) · [sync](#ezs-sync) · [unstack](#ezs-unstack) · [upgrade](#ezs-upgrade)
 
 **Extras:** [Hooks](#hooks) · [Exit codes](#exit-codes) · [Discoverability](#discoverability-info---examples-did-you-mean)
 
@@ -637,6 +637,47 @@ ezs config set agent_command "aider --model gpt-4"
 > positional argument and rejects anything trailing — this keeps typos like
 > `ezs config set worktree_base_dir /tmp/foo --bogus` from being silently
 > stored as the literal path `/tmp/foo --bogus`.
+
+---
+
+### `ezs attach`
+
+Bring an existing local branch under ezs management. Idempotent — running it on an already-fully-attached branch is a no-op. Designed so you don't have to know whether your branch is bare, a worktree-but-untracked, or tracked-without-worktree: `ezs attach` converges to whatever "fully managed" looks like for the current repo.
+
+```
+ezs attach [branch] [options]
+
+Options:
+    -p, --parent <branch>     Override detected parent (default: nearest tracked ancestor via merge-base)
+    -w, --worktree <path>     Force a worktree at this path (overrides config)
+    -W, --no-worktree         Register without a worktree (overrides config)
+    -c, --cd / -C, --no-cd    Change to the worktree after attaching (overrides cd_after_new)
+    -s/-S                     Submodule init control, same as `ezs new`
+    -y, --yes                 Skip the "Proceed?" confirm
+```
+
+The auto-detected parent is the closest tracked ancestor by commit-distance, with the configured base branch as a fallback. The chosen parent, target stack, and worktree action are shown as a one-screen plan before any changes — so you confirm intent, not blind to outcome.
+
+With no branch argument, `ezs attach` opens an interactive picker over local branches that aren't in any stack yet. Each row shows the auto-detected parent so you're never selecting blind.
+
+```bash
+# Bring a branch you made with `git checkout -b` into a stack
+ezs attach feature-x
+
+# Override the detected parent
+ezs attach feature-x -p feature-a
+
+# Force a worktree in a no-worktree-mode repo
+ezs attach feature-x -w ~/wt/feature-x
+
+# Force bare attach in a worktree-mode repo
+ezs attach feature-x -W
+
+# Pick from orphan branches interactively
+ezs attach
+```
+
+To pick up a remote branch (PR review, collaborator's branch), use `ezs new origin/<branch>` instead — that's the canonical "remote → local managed" path.
 
 ---
 

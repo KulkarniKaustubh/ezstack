@@ -610,6 +610,7 @@
         <li><a href="#stacking-on-a-remote-pr" class="toc-h3">Stacking on a Remote PR</a></li>
         <li><a href="#commands">Commands</a></li>
         <li><a href="#ezs-agent" class="toc-h3">ezs agent</a></li>
+        <li><a href="#ezs-attach" class="toc-h3">ezs attach</a></li>
         <li><a href="#ezs-commit--ezs-amend" class="toc-h3">ezs commit / ezs amend</a></li>
         <li><a href="#ezs-config" class="toc-h3">ezs config</a></li>
         <li><a href="#ezs-delete" class="toc-h3">ezs delete</a></li>
@@ -1221,6 +1222,36 @@ Options:
       <code>ezs config set worktree_base_dir /tmp/foo --bogus</code> from being silently
       stored as the literal path <code>/tmp/foo --bogus</code>.</p>
       </blockquote>
+      <h3 id="ezs-attach"><code>ezs attach</code></h3>
+      <p>Bring an existing local branch under ezs management. Idempotent — running it on an already-fully-attached branch is a no-op. Designed so you don't have to know whether your branch is bare, a worktree-but-untracked, or tracked-without-worktree: <code>ezs attach</code> converges to whatever &quot;fully managed&quot; looks like for the current repo.</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">attach</span> <span class="c-str">[branch]</span> <span class="c-str">[options]</span>
+
+Options:
+    <span class="c-flag">-p,</span> <span class="c-flag">--parent</span> <span class="c-str">&lt;branch&gt;</span>     <span class="c-dim">Override detected parent (default: nearest tracked ancestor via merge-base)</span>
+    <span class="c-flag">-w,</span> <span class="c-flag">--worktree</span> <span class="c-str">&lt;path&gt;</span>     <span class="c-dim">Force a worktree at this path (overrides config)</span>
+    <span class="c-flag">-W,</span> <span class="c-flag">--no-worktree</span>         <span class="c-dim">Register without a worktree (overrides config)</span>
+    <span class="c-flag">-c,</span> <span class="c-flag">--cd</span> <span class="c-str">/</span> <span class="c-flag">-C,</span> <span class="c-flag">--no-cd</span>    <span class="c-dim">Change to the worktree after attaching (overrides cd_after_new)</span>
+    <span class="c-flag">-s/-S</span>                     <span class="c-dim">Submodule init control, same as `ezs new`</span>
+    <span class="c-flag">-y,</span> <span class="c-flag">--yes</span>                 <span class="c-dim">Skip the &#34;Proceed?&#34; confirm</span>
+</code></pre>
+      <p>The auto-detected parent is the closest tracked ancestor by commit-distance, with the configured base branch as a fallback. The chosen parent, target stack, and worktree action are shown as a one-screen plan before any changes — so you confirm intent, not blind to outcome.</p>
+      <p>With no branch argument, <code>ezs attach</code> opens an interactive picker over local branches that aren't in any stack yet. Each row shows the auto-detected parent so you're never selecting blind.</p>
+      <pre><code><span class="c-comment"># Bring a branch you made with `git checkout -b` into a stack</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">attach</span> <span class="c-str">feature-x</span>
+
+<span class="c-comment"># Override the detected parent</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">attach</span> <span class="c-str">feature-x</span> <span class="c-flag">-p</span> <span class="c-str">feature-a</span>
+
+<span class="c-comment"># Force a worktree in a no-worktree-mode repo</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">attach</span> <span class="c-str">feature-x</span> <span class="c-flag">-w</span> <span class="c-str">~/wt/feature-x</span>
+
+<span class="c-comment"># Force bare attach in a worktree-mode repo</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">attach</span> <span class="c-str">feature-x</span> <span class="c-flag">-W</span>
+
+<span class="c-comment"># Pick from orphan branches interactively</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">attach</span>
+</code></pre>
+      <p>To pick up a remote branch (PR review, collaborator's branch), use <code>ezs new origin/&lt;branch&gt;</code> instead — that's the canonical &quot;remote → local managed&quot; path.</p>
       <h3 id="ezs-commit--ezs-amend"><code>ezs commit</code> / <code>ezs amend</code></h3>
       <p>Wrap <code>git commit</code> / <code>git commit --amend</code> and auto-sync child branches. Aliases: <code>ci</code></p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">commit</span> <span class="c-str">[git-commit-options]</span> <span class="c-str">[--merge|--rebase]</span>

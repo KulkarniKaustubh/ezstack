@@ -13,7 +13,7 @@ import (
 // matching on the long names, and listing both forms doubles the menu without
 // helping anyone.
 var topLevelCommands = []string{
-	"agent", "amend", "commit", "config", "delete", "diff", "doctor", "down",
+	"agent", "amend", "attach", "commit", "config", "delete", "diff", "doctor", "down",
 	"goto", "list", "log", "menu", "new", "pr", "push",
 	"reparent", "stack", "status", "sync", "unstack", "up", "upgrade",
 }
@@ -56,6 +56,7 @@ var configKeys = []string{
 var commandFlags = map[string][]string{
 	"agent":    {"--cmd", "--stack", "-s", "--branch", "-b", "--dry-run", "--save-prompt", "--no-push", "--preset", "--no-mcp", "--help", "-h"},
 	"amend":    {"--merge", "--rebase", "--push", "--push-children", "--no-push", "--help", "-h"},
+	"attach":   {"--parent", "-p", "--worktree", "-w", "--no-worktree", "-W", "--cd", "-c", "--no-cd", "-C", "--init-submodules", "-s", "--no-init-submodules", "-S", "--yes", "-y", "--help", "-h"},
 	"commit":   {"--merge", "--rebase", "--push", "--push-children", "--no-push", "--help", "-h"},
 	"config":   {"--help", "-h"},
 	"delete":   {"--force", "-f", "--stack", "-s", "--cascade", "--help", "-h"},

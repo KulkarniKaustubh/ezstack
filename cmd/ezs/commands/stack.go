@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -494,18 +495,40 @@ type UntrackedBranch struct {
 // stack and aren't the base branch — both unregistered worktrees and bare
 // local branches. Order: worktrees first (in git's listing order), then bare
 // branches (in git's listing order).
-func CollectUntrackedBranches(g *git.Git, mgr *stack.Manager, excludeBranches ...string) []UntrackedBranch {
+//
+// On partial source failure, returns whatever could be collected plus a
+// non-nil error joining the failures so callers can decide whether to log
+// a warning or proceed silently. Most callers can pass `_` for the error.
+func CollectUntrackedBranches(g *git.Git, mgr *stack.Manager, excludeBranches ...string) ([]UntrackedBranch, error) {
 	exclude := make(map[string]bool, len(excludeBranches))
 	for _, b := range excludeBranches {
 		exclude[b] = true
 	}
 
+	// Stack roots (e.g. a "develop" branch that anchors a stack) are real
+	// local branches that aren't in any stack's Branches list, so without
+	// this filter they'd leak into the orphan list with a misleading
+	// "ezs attach <root>" hint.
+	stackRoots := make(map[string]bool)
+	for _, s := range mgr.ListStacks() {
+		if s.Root != "" {
+			stackRoots[s.Root] = true
+		}
+	}
+
 	seen := make(map[string]bool)
 	var out []UntrackedBranch
+	var errs []error
 
-	if unregistered, err := mgr.GetUnregisteredWorktrees(); err == nil {
+	unregistered, err := mgr.GetUnregisteredWorktrees()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("list unregistered worktrees: %w", err))
+	} else {
 		for _, wt := range unregistered {
 			if exclude[wt.Branch] || seen[wt.Branch] {
+				continue
+			}
+			if stackRoots[wt.Branch] {
 				continue
 			}
 			seen[wt.Branch] = true
@@ -513,12 +536,18 @@ func CollectUntrackedBranches(g *git.Git, mgr *stack.Manager, excludeBranches ..
 		}
 	}
 
-	if localBranches, err := g.ListLocalBranches(); err == nil {
+	localBranches, err := g.ListLocalBranches()
+	if err != nil {
+		errs = append(errs, fmt.Errorf("list local branches: %w", err))
+	} else {
 		for _, lb := range localBranches {
 			if exclude[lb] || seen[lb] {
 				continue
 			}
 			if mgr.IsMainBranch(lb) {
+				continue
+			}
+			if stackRoots[lb] {
 				continue
 			}
 			if mgr.GetBranch(lb) != nil {
@@ -529,7 +558,7 @@ func CollectUntrackedBranches(g *git.Git, mgr *stack.Manager, excludeBranches ..
 		}
 	}
 
-	return out
+	return out, errors.Join(errs...)
 }
 
 // selectUntrackedBranch shows a selection UI for branches not in any stack.
@@ -538,7 +567,10 @@ func CollectUntrackedBranches(g *git.Git, mgr *stack.Manager, excludeBranches ..
 // having to materialize a worktree manually.
 // excludeBranches are filtered out of the list (e.g. the base branch itself).
 func selectUntrackedBranch(g *git.Git, mgr *stack.Manager, excludeBranches ...string) (string, error) {
-	candidates := CollectUntrackedBranches(g, mgr, excludeBranches...)
+	candidates, err := CollectUntrackedBranches(g, mgr, excludeBranches...)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%swarning: %v%s\n", ui.Yellow, err, ui.Reset)
+	}
 	if len(candidates) == 0 {
 		return "", fmt.Errorf("no untracked branches found. All branches are already in stacks")
 	}

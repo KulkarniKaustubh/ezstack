@@ -60,7 +60,10 @@ func TestNewBranch_ExistingBranchErrors(t *testing.T) {
 	gitBareBranch(t, env.RepoDir, "feature-x", "main")
 
 	chdirForTest(t, env.RepoDir)
-	err := commands.New([]string{"feature-x", "-p", "main"})
+	// Flags before positional so we don't depend on whether the flag parser
+	// accepts interleaving — the BranchExists check fires regardless, but
+	// argument order shouldn't be load-bearing for the test signal.
+	err := commands.New([]string{"-p", "main", "feature-x"})
 	if err == nil {
 		t.Fatalf("expected error when branch already exists; got nil")
 	}
@@ -68,8 +71,8 @@ func TestNewBranch_ExistingBranchErrors(t *testing.T) {
 	if !strings.Contains(msg, "already exists") {
 		t.Errorf("error should mention branch already exists; got: %s", msg)
 	}
-	if !strings.Contains(msg, "ezs stack") {
-		t.Errorf("error should signpost `ezs stack`; got: %s", msg)
+	if !strings.Contains(msg, "ezs attach") {
+		t.Errorf("error should signpost `ezs attach`; got: %s", msg)
 	}
 }
 
@@ -94,7 +97,10 @@ func TestCollectUntrackedBranches_IncludesBareBranches(t *testing.T) {
 		t.Fatalf("NewManager: %v", err)
 	}
 
-	got := commands.CollectUntrackedBranches(g, mgr)
+	got, err := commands.CollectUntrackedBranches(g, mgr)
+	if err != nil {
+		t.Fatalf("CollectUntrackedBranches: %v", err)
+	}
 
 	var sawBare, sawTracked bool
 	for _, c := range got {
@@ -147,10 +153,42 @@ func TestStatus_OrphanSection(t *testing.T) {
 	if !strings.Contains(out, "manual-branch") {
 		t.Errorf("orphan branch missing from status output; got:\n%s", out)
 	}
-	if !strings.Contains(out, "ezs stack") {
+	if !strings.Contains(out, "ezs attach") {
 		t.Errorf("adoption hint missing from status output; got:\n%s", out)
 	}
-	if strings.Contains(out, "tracked-feature\n") && strings.Contains(out, "Branches not in any stack:\n  tracked-feature") {
-		t.Errorf("tracked branch leaked into orphan list; got:\n%s", out)
+
+	// Scope the leak check to the orphan section itself (between the header
+	// and the "Adopt one with:" footer). Otherwise we'd false-negative when
+	// the tracked branch shows up earlier in unrelated stack output, or
+	// false-positive only when it happens to land first under the header.
+	orphanSection := extractOrphanSection(out)
+	if orphanSection == "" {
+		t.Fatalf("could not locate orphan section in output:\n%s", out)
 	}
+	if !strings.Contains(orphanSection, "manual-branch") {
+		t.Errorf("manual-branch missing from orphan section:\n%s", orphanSection)
+	}
+	if strings.Contains(orphanSection, "tracked-feature") {
+		t.Errorf("tracked branch leaked into orphan section:\n%s", orphanSection)
+	}
+}
+
+// extractOrphanSection returns the body of the "Branches not in any stack"
+// section — everything between that header and the "Adopt one with:" footer.
+// Returns "" if the section isn't present. Strips ANSI color codes so
+// substring matches are robust to ui.Bold/ui.Cyan/etc. Reuses the stripANSI
+// helper from completions_test.go.
+func extractOrphanSection(out string) string {
+	plain := stripANSI(out)
+	const header = "Branches not in any stack:"
+	const footer = "Adopt one with:"
+	hi := strings.Index(plain, header)
+	if hi < 0 {
+		return ""
+	}
+	body := plain[hi+len(header):]
+	if fi := strings.Index(body, footer); fi >= 0 {
+		body = body[:fi]
+	}
+	return body
 }
