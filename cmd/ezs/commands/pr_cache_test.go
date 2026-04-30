@@ -372,6 +372,89 @@ func TestRefreshPRStateFromGitHub_GetPRFallsBackToGetPRByBranch(t *testing.T) {
 	}
 }
 
+func TestRefreshPRStateFromGitHub_BranchLookupErrPRNotFoundClearsCache(t *testing.T) {
+	// The real github.Client surfaces "no PR for this branch" as an
+	// ErrPRNotFound-wrapped error rather than (nil, nil). The refresh
+	// helper must recognize that sentinel and treat it as "PR is gone"
+	// rather than as a transient failure — otherwise users see misleading
+	// "refresh failed" messages instead of the cache being cleared.
+	cacheDir := setupCacheTest(t)
+	cc, err := config.LoadCacheConfig(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cc.SetBranchCache("feature", &config.BranchCache{
+		WorktreePath: "/wt/feature",
+		PRUrl:        "https://github.com/o/r/pull/42",
+		PRState:      "OPEN",
+	})
+	if err := cc.Save(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+
+	branch := &config.Branch{Name: "feature", PRNumber: 42, PRState: "OPEN"}
+	gh := &fakePRFetcher{
+		errsByNum: map[int]error{42: errors.New("not found")},
+		errsByBranc: map[string]error{
+			"feature": fmt.Errorf("%w for branch %q", github.ErrPRNotFound, "feature"),
+		},
+	}
+
+	pr, refreshErr := refreshPRStateFromGitHub(gh, cacheDir, branch)
+	if refreshErr != nil {
+		t.Fatalf("expected ErrPRNotFound to be swallowed, got: %v", refreshErr)
+	}
+	if pr != nil {
+		t.Errorf("expected nil pr, got %+v", pr)
+	}
+	if branch.PRNumber != 0 || branch.PRState != "" {
+		t.Errorf("branch not cleared: %+v", branch)
+	}
+	bc := reloadBranchCache(t, cacheDir, "feature")
+	if bc == nil || bc.PRUrl != "" || bc.PRState != "" || bc.WorktreePath != "/wt/feature" {
+		t.Errorf("cache not reconciled correctly: %+v", bc)
+	}
+}
+
+func TestRefreshPRStateFromGitHub_NoCachedNumberErrPRNotFoundIsClean(t *testing.T) {
+	// Same as above but without a stale cached number — the no-PR signal
+	// from GetPRByBranch (the only call made) must still resolve to (nil,
+	// nil) rather than bubble up as a refresh failure.
+	cacheDir := setupCacheTest(t)
+	branch := &config.Branch{Name: "fresh"}
+	gh := &fakePRFetcher{
+		errsByBranc: map[string]error{
+			"fresh": fmt.Errorf("%w for branch %q", github.ErrPRNotFound, "fresh"),
+		},
+	}
+	pr, err := refreshPRStateFromGitHub(gh, cacheDir, branch)
+	if err != nil {
+		t.Fatalf("expected nil err, got: %v", err)
+	}
+	if pr != nil {
+		t.Errorf("expected nil pr, got %+v", pr)
+	}
+}
+
+func TestFetchLivePR_PreservesTransientErrorsAcrossFallback(t *testing.T) {
+	// When the fallback lookup also fails with a transient error (not
+	// ErrPRNotFound), the original GetPR error must surface — clearing
+	// the cache on a flaky network would silently destroy good data.
+	branch := &config.Branch{Name: "feature", PRNumber: 42, PRState: "OPEN"}
+	getPRErr := errors.New("network unreachable")
+	gh := &fakePRFetcher{
+		errsByNum:   map[int]error{42: getPRErr},
+		errsByBranc: map[string]error{"feature": errors.New("also down")},
+	}
+	pr, err := fetchLivePR(gh, branch)
+	if err == nil {
+		t.Fatal("expected error to surface")
+	}
+	if pr != nil {
+		t.Errorf("expected nil pr on error, got %+v", pr)
+	}
+}
+
 func TestRefreshPRStateFromGitHub_NoCachedNumberUsesBranchLookup(t *testing.T) {
 	cacheDir := setupCacheTest(t)
 	branch := &config.Branch{Name: "fresh"} // no PRNumber

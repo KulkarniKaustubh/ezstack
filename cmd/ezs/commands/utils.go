@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -156,34 +157,65 @@ type prFetcher interface {
 //
 //   - Returns (pr, nil) when GitHub has a PR for the branch. Cache and the
 //     in-memory branch are updated in lockstep.
-//   - Returns (nil, nil) only when the prFetcher explicitly signals "no PR"
-//     (a (nil, nil) return). The real *github.Client never returns that —
-//     it surfaces "not found" as an error — but the contract leaves room
-//     for fakes and for future client refinements that distinguish the cases.
-//   - Returns (nil, err) on any other error (transient/network/unauthorized
-//     /not-found). Cache is NOT touched, so an unreachable GitHub never
-//     accidentally clears a perfectly good cache.
+//   - Returns (nil, nil) when GitHub confirms no PR exists for the branch
+//     (errors.Is(err, github.ErrPRNotFound), or the prFetcher returns
+//     (nil, nil) directly). The cached PR fields are cleared so the next
+//     `pr create` proceeds without nagging.
+//   - Returns (nil, err) on any other error (transient/network/unauthorized).
+//     Cache is NOT touched, so an unreachable GitHub never accidentally
+//     clears a perfectly good cache.
 //
 // Prefers GetPR(number) when a number is already cached; this path works for
 // fork PRs whose head ref isn't reachable via `gh pr view <branch>`. Falls
-// back to GetPRByBranch only when the number lookup fails, since a stale
-// cached number (e.g., the PR was hard-deleted) would otherwise leave the
-// caller blind.
+// back to GetPRByBranch when the number lookup fails, since a stale cached
+// number (e.g., the PR was hard-deleted) would otherwise leave the caller
+// blind. If both lookups confirm "not found" we treat that as the
+// PR-was-deleted case rather than a transient error.
 func refreshPRStateFromGitHub(gh prFetcher, cacheDir string, branch *config.Branch) (*github.PR, error) {
-	var pr *github.PR
-	var err error
+	pr, err := fetchLivePR(gh, branch)
+	return applyPRRefresh(cacheDir, branch, pr, err)
+}
+
+// fetchLivePR resolves the live PR for a branch without touching the cache or
+// mutating the branch. Split from refreshPRStateFromGitHub so callers like
+// `pr refresh -s` can fetch many branches in parallel and apply the cache
+// updates serially (avoiding the load-modify-save race in CacheConfig.Save
+// where each goroutine would otherwise overwrite the others' updates).
+func fetchLivePR(gh prFetcher, branch *config.Branch) (*github.PR, error) {
 	if branch.PRNumber > 0 {
-		pr, err = gh.GetPR(branch.PRNumber)
-		if err != nil {
-			if br, brErr := gh.GetPRByBranch(branch.Name); brErr == nil {
-				pr, err = br, nil
-			}
+		pr, err := gh.GetPR(branch.PRNumber)
+		if err == nil {
+			return pr, nil
 		}
-	} else {
-		pr, err = gh.GetPRByBranch(branch.Name)
+		// Stale cached number — try the head-branch lookup. Distinguish
+		// the three resolutions: live PR found, confirmed not-found, or
+		// transient failure. We only swallow the original GetPR error
+		// when the fallback gives an unambiguous answer.
+		br, brErr := gh.GetPRByBranch(branch.Name)
+		switch {
+		case brErr == nil && br != nil:
+			return br, nil
+		case errors.Is(brErr, github.ErrPRNotFound):
+			return nil, nil
+		case brErr == nil && br == nil:
+			return nil, nil
+		default:
+			return nil, err
+		}
 	}
-	if err != nil {
-		return nil, err
+	pr, err := gh.GetPRByBranch(branch.Name)
+	if errors.Is(err, github.ErrPRNotFound) {
+		return nil, nil
+	}
+	return pr, err
+}
+
+// applyPRRefresh reconciles a single (branch, fetch-result) tuple into the
+// on-disk cache and the in-memory branch. Safe to call serially after a batch
+// of fetchLivePR calls.
+func applyPRRefresh(cacheDir string, branch *config.Branch, pr *github.PR, fetchErr error) (*github.PR, error) {
+	if fetchErr != nil {
+		return nil, fetchErr
 	}
 	if pr == nil {
 		if cleanErr := clearPRFromCache(cacheDir, branch.Name); cleanErr != nil {

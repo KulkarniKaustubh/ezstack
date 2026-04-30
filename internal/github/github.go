@@ -3,6 +3,7 @@ package github
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -11,6 +12,12 @@ import (
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 )
+
+// ErrPRNotFound is returned by GetPRByBranch when GitHub has no PR for the
+// given head branch. Callers that want to distinguish "no PR" from "transient
+// error" can use errors.Is(err, ErrPRNotFound) instead of fragile string
+// matching against gh stderr.
+var ErrPRNotFound = errors.New("no pull request found")
 
 // Client wraps GitHub operations using gh CLI
 type Client struct {
@@ -129,7 +136,10 @@ func (c *Client) getPRByHeadBranch(branch string) (*PR, error) {
 		return nil, fmt.Errorf("failed to parse PR list response for branch %q: %w", branch, err)
 	}
 	if len(prs) == 0 {
-		return nil, fmt.Errorf("no pull requests found for branch %q", branch)
+		// Wrap the sentinel so callers can use errors.Is to distinguish
+		// "no PR exists" from transient/network/auth failures, while still
+		// preserving the branch name in the human-readable message.
+		return nil, fmt.Errorf("%w for branch %q", ErrPRNotFound, branch)
 	}
 	prs[0].Merged = prs[0].MergedAt != ""
 	return &prs[0], nil

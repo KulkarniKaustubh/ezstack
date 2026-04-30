@@ -1202,8 +1202,14 @@ func prRefresh(args []string) error {
 		branches = append(branches, b)
 	}
 
+	// Fetch each branch's live PR in parallel. Apply the results serially
+	// below — applyPRRefresh hits the on-disk cache, and concurrent
+	// load-modify-save calls against stacks.json would race (each
+	// goroutine reads the file before the others' saves land, then
+	// overwrites the whole branches map on save). The network fetch is
+	// the slow part anyway.
 	type result struct {
-		name     string
+		branch   *config.Branch
 		oldNum   int
 		oldState string
 		newPR    *github.PR
@@ -1221,32 +1227,37 @@ func prRefresh(args []string) error {
 			defer func() { <-sem }()
 			oldNum := br.PRNumber
 			oldState := br.PRState
-			pr, refreshErr := refreshPRStateFromGitHub(gh, mainWorktree, br)
-			results[idx] = result{name: br.Name, oldNum: oldNum, oldState: oldState, newPR: pr, err: refreshErr}
+			pr, fetchErr := fetchLivePR(gh, br)
+			results[idx] = result{branch: br, oldNum: oldNum, oldState: oldState, newPR: pr, err: fetchErr}
 		}(i, b)
 	}
 	wg.Wait()
 
 	changed := 0
 	for _, r := range results {
+		newPR, applyErr := applyPRRefresh(mainWorktree, r.branch, r.newPR, r.err)
 		switch {
-		case r.err != nil:
-			ui.Warn(fmt.Sprintf("%s: refresh failed (%v)", r.name, r.err))
-		case r.newPR == nil:
-			fmt.Fprintf(os.Stderr, "  %s %s: PR #%d no longer on GitHub (cache cleared)\n", ui.IconBullet, r.name, r.oldNum)
-			changed++
+		case applyErr != nil:
+			ui.Warn(fmt.Sprintf("%s: refresh failed (%v)", r.branch.Name, applyErr))
+		case newPR == nil:
+			if r.oldNum > 0 {
+				fmt.Fprintf(os.Stderr, "  %s %s: PR #%d no longer on GitHub (cache cleared)\n", ui.IconBullet, r.branch.Name, r.oldNum)
+				changed++
+			} else {
+				fmt.Fprintf(os.Stderr, "  %s %s: no PR on GitHub\n", ui.IconBullet, r.branch.Name)
+			}
 		default:
-			newState := prStateFromGitHub(r.newPR)
-			if r.oldNum == r.newPR.Number && r.oldState == newState {
-				fmt.Fprintf(os.Stderr, "  %s %s: PR #%d unchanged (%s)\n", ui.IconBullet, r.name, r.newPR.Number, newState)
+			newState := prStateFromGitHub(newPR)
+			if r.oldNum == newPR.Number && r.oldState == newState {
+				fmt.Fprintf(os.Stderr, "  %s %s: PR #%d unchanged (%s)\n", ui.IconBullet, r.branch.Name, newPR.Number, newState)
 				continue
 			}
 			if r.oldNum == 0 {
-				fmt.Fprintf(os.Stderr, "  %s %s: discovered PR #%d (%s)\n", ui.IconBullet, r.name, r.newPR.Number, newState)
-			} else if r.oldNum != r.newPR.Number {
-				fmt.Fprintf(os.Stderr, "  %s %s: PR #%d -> #%d (%s)\n", ui.IconBullet, r.name, r.oldNum, r.newPR.Number, newState)
+				fmt.Fprintf(os.Stderr, "  %s %s: discovered PR #%d (%s)\n", ui.IconBullet, r.branch.Name, newPR.Number, newState)
+			} else if r.oldNum != newPR.Number {
+				fmt.Fprintf(os.Stderr, "  %s %s: PR #%d -> #%d (%s)\n", ui.IconBullet, r.branch.Name, r.oldNum, newPR.Number, newState)
 			} else {
-				fmt.Fprintf(os.Stderr, "  %s %s: PR #%d %s -> %s\n", ui.IconBullet, r.name, r.newPR.Number, displayPRState(r.oldState), newState)
+				fmt.Fprintf(os.Stderr, "  %s %s: PR #%d %s -> %s\n", ui.IconBullet, r.branch.Name, newPR.Number, displayPRState(r.oldState), newState)
 			}
 			changed++
 		}

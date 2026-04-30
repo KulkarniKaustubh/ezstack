@@ -1,11 +1,26 @@
 package github
 
 import (
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 )
+
+func TestErrPRNotFound_WrappedIsRecognizable(t *testing.T) {
+	// Callers detect the "no PR for this branch" case via errors.Is rather
+	// than fragile string matching against gh stderr. Verify the wrapped
+	// form (which preserves the branch name in the message) still matches.
+	err := fmt.Errorf("%w for branch %q", ErrPRNotFound, "feature/x")
+	if !errors.Is(err, ErrPRNotFound) {
+		t.Errorf("wrapped ErrPRNotFound not detected by errors.Is: %v", err)
+	}
+	if !strings.Contains(err.Error(), "feature/x") {
+		t.Errorf("wrapped error lost branch context: %v", err)
+	}
+}
 
 func TestNewClient(t *testing.T) {
 	tests := []struct {
