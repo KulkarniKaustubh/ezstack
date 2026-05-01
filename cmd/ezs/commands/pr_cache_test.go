@@ -455,6 +455,58 @@ func TestFetchLivePR_PreservesTransientErrorsAcrossFallback(t *testing.T) {
 	}
 }
 
+func TestRefreshPRStateFromGitHub_URLOnlyCacheClearedOnNotFound(t *testing.T) {
+	// Branch has PRUrl but PRNumber didn't parse (rare malformed-URL legacy
+	// entry). When refresh confirms no PR exists, the cache MUST clear the
+	// PRUrl field — `pr refresh -s` filters on `PRNumber > 0 || PRUrl != ""`,
+	// so this is the path that gets exercised when a malformed cache entry
+	// gets reconciled. Pairs with the prRefresh reporting fix that now
+	// recognizes oldURL-only clears as a real change.
+	cacheDir := setupCacheTest(t)
+	cc, err := config.LoadCacheConfig(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cc.SetBranchCache("feature", &config.BranchCache{
+		WorktreePath: "/wt/feature",
+		PRUrl:        "https://github.com/o/r/pull/", // trailing slash → PRNumberFromURL returns 0
+		PRState:      "OPEN",
+	})
+	if err := cc.Save(cacheDir); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate the in-memory branch shape that walkTree would produce for
+	// this cache entry: PRUrl populated, PRNumber == 0.
+	branch := &config.Branch{Name: "feature", PRUrl: "https://github.com/o/r/pull/", PRState: "OPEN"}
+	gh := &fakePRFetcher{
+		errsByBranc: map[string]error{
+			"feature": fmt.Errorf("%w for branch %q", github.ErrPRNotFound, "feature"),
+		},
+	}
+
+	pr, err := refreshPRStateFromGitHub(gh, cacheDir, branch)
+	if err != nil {
+		t.Fatalf("expected nil err, got: %v", err)
+	}
+	if pr != nil {
+		t.Errorf("expected nil pr, got %+v", pr)
+	}
+	if branch.PRUrl != "" || branch.PRState != "" {
+		t.Errorf("in-memory branch not cleared: %+v", branch)
+	}
+	bc := reloadBranchCache(t, cacheDir, "feature")
+	if bc == nil {
+		t.Fatal("BranchCache vanished — should still hold worktree")
+	}
+	if bc.PRUrl != "" || bc.PRState != "" {
+		t.Errorf("PR fields not cleared: %+v", bc)
+	}
+	if bc.WorktreePath != "/wt/feature" {
+		t.Errorf("non-PR fields touched: %+v", bc)
+	}
+}
+
 func TestRefreshPRStateFromGitHub_NoCachedNumberUsesBranchLookup(t *testing.T) {
 	cacheDir := setupCacheTest(t)
 	branch := &config.Branch{Name: "fresh"} // no PRNumber

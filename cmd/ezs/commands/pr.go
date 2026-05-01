@@ -182,13 +182,10 @@ func prInteractive() error {
 	return nil
 }
 
-// prDraftAll creates draft PRs for every branch in the current stack that
-// doesn't already have one. It is the --draft-all entry point for `ezs pr`.
-func prDraftAll() error {
-	return prDraftAllForce(false)
-}
-
-// prDraftAllForce is the --draft-all entry point with explicit --force handling.
+// prDraftAllForce is the --draft-all entry point. force=true reuses the same
+// reconciliation logic as `pr create --stack --force`, which is what makes
+// `ezs pr --draft-all --force` (and `ezs pr create --draft-all --force`) work
+// against stacks where some cached PRs have drifted into a terminal state.
 func prDraftAllForce(force bool) error {
 	if err := github.CheckAuth(); err != nil {
 		return ui.NewExitError(ui.ExitAuthRequired, "%v", err)
@@ -502,8 +499,15 @@ func prCreate(args []string) error {
 		// see "couldn't check PR state" warnings on its first `pr create`.
 		if branch.PRNumber > 0 {
 			ui.Warn(fmt.Sprintf("Could not check PR state on GitHub: %v", refreshErr))
-			if !forceCreate && !branch.IsMerged && branch.PRState != "CLOSED" && branch.PRState != "MERGED" {
+			cacheTerminal := branch.IsMerged || branch.PRState == "CLOSED" || branch.PRState == "MERGED"
+			switch {
+			case !forceCreate && !cacheTerminal:
 				return fmt.Errorf("branch '%s' has cached PR #%d (%s): %s\nGitHub is unreachable so the cache cannot be verified. Use 'ezs pr update' to push to the existing PR, or 'ezs pr create --force' to create a new one anyway", branch.Name, branch.PRNumber, displayPRState(branch.PRState), branch.PRUrl)
+			case forceCreate && !cacheTerminal:
+				// User explicitly opted into duplication. Be loud about it
+				// so a scripted `pr create --force` against a flaky network
+				// doesn't quietly create a duplicate of a still-live PR.
+				ui.Warn(fmt.Sprintf("--force: creating a new PR for '%s' even though cached PR #%d (%s) may still be live on GitHub", branch.Name, branch.PRNumber, displayPRState(branch.PRState)))
 			}
 		}
 	case livePR != nil && !livePR.Merged && livePR.State != "CLOSED":
@@ -1237,6 +1241,7 @@ func prRefresh(args []string) error {
 	type result struct {
 		branch   *config.Branch
 		oldNum   int
+		oldURL   string
 		oldState string
 		newPR    *github.PR
 		err      error
@@ -1252,9 +1257,10 @@ func prRefresh(args []string) error {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			oldNum := br.PRNumber
+			oldURL := br.PRUrl
 			oldState := br.PRState
 			pr, fetchErr := fetchLivePR(gh, br)
-			results[idx] = result{branch: br, oldNum: oldNum, oldState: oldState, newPR: pr, err: fetchErr}
+			results[idx] = result{branch: br, oldNum: oldNum, oldURL: oldURL, oldState: oldState, newPR: pr, err: fetchErr}
 		}(i, b)
 	}
 	wg.Wait()
@@ -1268,10 +1274,21 @@ func prRefresh(args []string) error {
 			ui.Warn(fmt.Sprintf("%s: refresh failed (%v)", r.branch.Name, applyErr))
 			failed++
 		case newPR == nil:
-			if r.oldNum > 0 {
+			// applyPRRefresh cleared the cache iff the branch had a cached
+			// association before. Track that via either oldNum (parsed
+			// successfully) or oldURL (raw cache value, covers the rare
+			// malformed-URL case where PRNumber failed to parse). Without
+			// the oldURL check, a successful clear in the malformed-URL
+			// case shows up as "no PR on GitHub" with changed=0 — and the
+			// summary then claims everything was already in sync.
+			switch {
+			case r.oldNum > 0:
 				fmt.Fprintf(os.Stderr, "  %s %s: PR #%d no longer on GitHub (cache cleared)\n", ui.IconBullet, r.branch.Name, r.oldNum)
 				changed++
-			} else {
+			case r.oldURL != "":
+				fmt.Fprintf(os.Stderr, "  %s %s: cached PR URL %q no longer on GitHub (cache cleared)\n", ui.IconBullet, r.branch.Name, r.oldURL)
+				changed++
+			default:
 				fmt.Fprintf(os.Stderr, "  %s %s: no PR on GitHub\n", ui.IconBullet, r.branch.Name)
 			}
 		default:
