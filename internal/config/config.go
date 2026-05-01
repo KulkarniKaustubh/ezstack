@@ -1085,6 +1085,90 @@ func (cc *CacheConfig) SetBranchCache(branchName string, cache *BranchCache) {
 	cc.Branches[branchName] = cache
 }
 
+// MutateBranchCache atomically loads, modifies, and saves a single branch's
+// cache entry under the stacks.json file lock. The mutator receives the
+// current entry (or nil if absent) and returns the next value (or nil to
+// delete the entry).
+//
+// Use this instead of LoadCacheConfig + SetBranchCache + Save when only a
+// few branches need updating: the load-modify-save pattern is racy across
+// processes because Save replaces the whole branches map with the in-memory
+// copy, which silently discards updates to other branches that landed
+// between the load and the save. MutateBranchCache loads inside the lock
+// and only ever rewrites the named branch (plus delete-on-nil), so peer
+// writes to other branches survive.
+//
+// A non-nil error returned by fn aborts the save. The pointer fn returns
+// may but need not alias the pointer it received — both work.
+func MutateBranchCache(repoDir, branchName string, fn func(current *BranchCache) (next *BranchCache, err error)) error {
+	configDir, err := ConfigDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+	stackPath := filepath.Join(configDir, "stacks.json")
+
+	lock, lockErr := acquireFileLock(stackPath + ".lock")
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.release()
+
+	var file stackConfigFile
+	data, err := os.ReadFile(stackPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to read stacks.json: %w", err)
+		}
+	} else if len(data) > 0 {
+		if uErr := json.Unmarshal(data, &file); uErr != nil {
+			return fmt.Errorf("failed to parse stacks.json: %w", uErr)
+		}
+	}
+	if file.Repos == nil {
+		file.Repos = make(map[string]*repoData)
+	}
+
+	rd := file.Repos[repoDir]
+	if rd == nil {
+		rd = &repoData{Stacks: make(map[string]*Stack)}
+		file.Repos[repoDir] = rd
+	}
+	if rd.Branches == nil {
+		rd.Branches = make(map[string]*BranchCache)
+	}
+
+	current := rd.Branches[branchName]
+	next, mutErr := fn(current)
+	if mutErr != nil {
+		return mutErr
+	}
+
+	// "There was nothing, fn says still nothing" is a real no-op — used by
+	// clearPRFromCache against a branch with no cache entry. Skip the file
+	// rewrite so callers can call this freely without paying for I/O.
+	if next == nil && current == nil {
+		return nil
+	}
+
+	if next == nil {
+		delete(rd.Branches, branchName)
+	} else {
+		rd.Branches[branchName] = next
+	}
+
+	file.Version = currentStackConfigVersion
+
+	newData, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return atomicWriteFile(stackPath, newData, 0644)
+}
+
 // Save writes the cache data back to the combined stacks.json file.
 // This loads the current stacks.json, updates the branches for this repo, and writes it back atomically.
 func (cc *CacheConfig) Save(repoDir string) error {

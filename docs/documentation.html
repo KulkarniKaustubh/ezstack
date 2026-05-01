@@ -1444,7 +1444,7 @@ Top-level <span class="c-str">flags:</span>
     <span class="c-flag">-f,</span> <span class="c-flag">--force</span>            <span class="c-dim">Create a new PR even if one already exists</span>
                            (alias: <span class="c-flag">--recreate)</span>
 </code></pre>
-      <p><strong><code>--force</code>.</strong> Bypasses the existing-PR guard. When the cached PR has been merged or closed, this is a no-op (the cached terminal state already lets create proceed). When the cached PR is still live on GitHub, you'll be prompted to confirm — the existing PR is not closed, and GitHub may reject the new PR as a duplicate.</p>
+      <p><strong><code>--force</code>.</strong> Bypasses the existing-PR guard. When the cached PR has been merged or closed, this is a no-op (the cached terminal state already lets create proceed). When the cached PR is still live on GitHub, a warning is printed and a new PR is created — the existing PR stays open and GitHub may reject the new PR as a duplicate. <code>--force</code> does not prompt, so scripts can pass it without holding stdin open.</p>
       <h4 id="ezs-pr-draft"><code>ezs pr draft</code></h4>
       <p>Toggles the current branch's PR between draft and ready-for-review state.</p>
       <h4 id="ezs-pr-merge"><code>ezs pr merge</code></h4>

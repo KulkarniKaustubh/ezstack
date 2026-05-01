@@ -366,8 +366,9 @@ func prCreate(args []string) error {
     -d, --draft            Create as draft PR
     --branch <name>        Create PR for a specific branch (instead of current)
     -f, --force            Create a new PR even if one already exists for the branch
-                           (alias: --recreate). When the existing PR is still
-                           live on GitHub, you'll be prompted to confirm.
+                           (alias: --recreate). Skips the confirmation prompt so
+                           scripts don't deadlock on stdin — the warning is still
+                           printed to stderr.
     -h, --help             Show this help message
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
@@ -489,10 +490,10 @@ func prCreate(args []string) error {
 		}
 		ui.Warn(fmt.Sprintf("Branch '%s' already has an open PR #%d: %s", branch.Name, livePR.Number, livePR.URL))
 		ui.Warn("--force will leave the existing PR open and create a new one. GitHub may refuse this as a duplicate.")
-		if !ui.ConfirmTUI("Create a new PR anyway?") {
-			ui.Warn("Cancelled")
-			return nil
-		}
+		// --force is the explicit "I know what I'm doing" gate — don't add
+		// a second prompt. ConfirmTUI in non-tty contexts (CI, scripts)
+		// always returns false, which silently turned every scripted
+		// `pr create --force` into a no-op.
 	}
 	// Reaching here means: no live PR (terminal state or never existed), or
 	// --force was confirmed. The branch cache has been reconciled by

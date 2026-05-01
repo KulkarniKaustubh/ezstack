@@ -935,7 +935,7 @@ Options:
                            (alias: --recreate)
 ```
 
-**`--force`.** Bypasses the existing-PR guard. When the cached PR has been merged or closed, this is a no-op (the cached terminal state already lets create proceed). When the cached PR is still live on GitHub, you'll be prompted to confirm — the existing PR is not closed, and GitHub may reject the new PR as a duplicate.
+**`--force`.** Bypasses the existing-PR guard. When the cached PR has been merged or closed, this is a no-op (the cached terminal state already lets create proceed). When the cached PR is still live on GitHub, a warning is printed and a new PR is created — the existing PR stays open and GitHub may reject the new PR as a duplicate. `--force` does not prompt, so scripts can pass it without holding stdin open.
 
 #### `ezs pr draft`
 
