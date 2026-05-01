@@ -1011,6 +1011,16 @@ const (
 // re-run after resolving" from any other failure mode.
 var ErrSyncIncomplete = ui.NewExitError(ui.ExitConflict, "sync continue incomplete: resolve remaining conflicts and re-run `ezs sync --continue`")
 
+// errSyncContinueFailed wraps a non-conflict failure during `--continue` (a
+// real git or filesystem error from `git rebase --continue` / `git commit`,
+// or a SyncBranch failure on a descendant re-sync). Exits with
+// ExitGeneral (1) instead of ExitConflict (3) so scripts and the user can
+// distinguish "broken state — investigate" from "still in conflict —
+// resolve and re-run".
+func errSyncContinueFailed(detail string) error {
+	return ui.NewExitError(ui.ExitGeneral, "sync continue failed: %s", detail)
+}
+
 // resolveContinueScope mirrors the scope-flag dispatch used by non-continue
 // sync (lines reading -a / -s / -c / -b / positional hash). Defaults: in a
 // stack worktree → currentStack; on main with no flags → all.
@@ -1218,6 +1228,8 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 
 	successCount := 0
 	stillInConflict := false
+	hardErrorCount := 0
+	var firstHardError string
 	var continuedBranches []conflictBranch
 	for _, cb := range found {
 		branchWorkDir := cb.branch.WorktreePath
@@ -1269,11 +1281,17 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 			stillInConflict = true
 		default:
 			ui.Error(fmt.Sprintf("Failed to continue %s: %v", cb.branch.Name, res.Err))
-			stillInConflict = true
+			hardErrorCount++
+			if firstHardError == "" {
+				firstHardError = fmt.Sprintf("%s: %v", cb.branch.Name, res.Err)
+			}
 		}
 	}
 
 	if successCount == 0 {
+		if hardErrorCount > 0 {
+			return errSyncContinueFailed(firstHardError)
+		}
 		if stillInConflict {
 			return ErrSyncIncomplete
 		}
@@ -1286,6 +1304,7 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 	// subtree once any node hits a fresh conflict, since further descendants
 	// would just re-derive the same problem.
 	descendantConflict := false
+	descendantHardError := false
 	for _, cb := range continuedBranches {
 		descendants := mgr.GetDescendants(cb.branch.Name)
 		if len(descendants) == 0 {
@@ -1390,7 +1409,7 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 				}
 				ui.Warn(fmt.Sprintf("Failed to sync %s: %v", child.Name, err))
 				stoppedSubtrees[child.Name] = true
-				descendantConflict = true
+				descendantHardError = true
 				continue
 			}
 			childWorkDir := child.WorktreePath
@@ -1416,7 +1435,7 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 				}
 				ui.Warn(fmt.Sprintf("Failed to sync %s: %v", child.Name, childResult.Error))
 				stoppedSubtrees[child.Name] = true
-				descendantConflict = true
+				descendantHardError = true
 			case childResult.Success:
 				if didChildStash {
 					if popErr := childStashGit.StashPop(); popErr != nil {
@@ -1443,10 +1462,10 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 	}
 
 	// If the entire scope is now fully resolved (no in-progress branches and
-	// no descendant conflicts), clear PreSyncCommits for every branch in the
-	// scope — the snapshots have served their purpose. Otherwise leave them
-	// for the next --continue.
-	if !stillInConflict && !descendantConflict {
+	// no descendant conflicts or hard errors), clear PreSyncCommits for every
+	// branch in the scope — the snapshots have served their purpose. Otherwise
+	// leave them for the next --continue.
+	if !stillInConflict && !descendantConflict && hardErrorCount == 0 && !descendantHardError {
 		var toClear []string
 		for _, s := range scopedStacks {
 			for _, b := range s.Branches {
@@ -1459,6 +1478,15 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 	fmt.Fprintln(os.Stderr)
 	ui.Success(fmt.Sprintf("Continued %d branch(es)!", successCount))
 
+	// Exit-code priority: hard errors (broken state) outrank conflicts (just
+	// re-run after resolving). Scripts can use the exit code to decide
+	// whether to retry automatically (3) or escalate to a human (1).
+	if hardErrorCount > 0 || descendantHardError {
+		if firstHardError != "" {
+			return errSyncContinueFailed(firstHardError)
+		}
+		return errSyncContinueFailed("descendant re-sync failed (see log)")
+	}
 	if stillInConflict || descendantConflict {
 		return ErrSyncIncomplete
 	}
