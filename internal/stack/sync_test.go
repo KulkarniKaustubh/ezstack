@@ -1750,3 +1750,146 @@ func TestSnapshotAndClearPreSyncSHAs(t *testing.T) {
 		t.Errorf("lookupPreSyncSHA fallback = %q, want live HEAD %q", got, curSHA)
 	}
 }
+
+// TestSyncBranch_SnapshotTakenBeforeFastForward exercises the audit-fix where
+// SyncBranch's snapshot was previously taken AFTER integrateRemoteForBranch,
+// so a parent that both (a) had collaborator commits to FF and (b) had a
+// rebase that conflicted with main left a post-FF SHA in PreSyncCommit. A
+// later SyncBranch(child) saw a snapshot whose collab commits weren't in the
+// child's history; the IsAncestor guard rejected it and fell back to the
+// parent's live HEAD; `git rebase --onto live live` then degenerated to plain
+// `git rebase parent`, replaying the parent's own commits onto the new tip
+// and re-encountering the original conflict on the child. The fix moves the
+// snapshot above the FF in SyncBranch.
+//
+// This regression test fails with the snapshot-after-FF ordering and passes
+// once the snapshot is taken first.
+func TestSyncBranch_SnapshotTakenBeforeFastForward(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// Seed shared.txt on MAIN so a inherits it without needing its own seed
+	// commit. That keeps a's history at exactly one commit (a1), so the
+	// rebase-conflict-then-continue flow only has to resolve one step.
+	baseLines := strings.Repeat("L\n", 12)
+	sharedPath := filepath.Join(repoDir, "shared.txt")
+	os.WriteFile(sharedPath, []byte(baseLines), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "seed shared.txt").Run()
+
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-u", "origin", "main").Run()
+
+	editLine := func(path string, idx int, val string) {
+		raw, _ := os.ReadFile(path)
+		ls := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+		ls[idx] = val
+		os.WriteFile(path, []byte(strings.Join(ls, "\n")+"\n"), 0644)
+	}
+
+	mgr, _ := NewManager(repoDir)
+	aPath := filepath.Join(worktreeBaseDir, "a")
+	if _, err := mgr.CreateBranch("a", "main", aPath, ""); err != nil {
+		t.Fatal(err)
+	}
+	mgr, _ = NewManager(repoDir)
+	editLine(filepath.Join(aPath, "shared.txt"), 0, "L1-A")
+	exec.Command("git", "-C", aPath, "add", ".").Run()
+	exec.Command("git", "-C", aPath, "commit", "-m", "a1").Run()
+	exec.Command("git", "-C", aPath, "push", "-u", "origin", "a").Run()
+
+	bPath := filepath.Join(worktreeBaseDir, "b")
+	if _, err := mgr.CreateBranch("b", "a", bPath, ""); err != nil {
+		t.Fatal(err)
+	}
+	mgr, _ = NewManager(repoDir)
+	editLine(filepath.Join(bPath, "shared.txt"), 6, "L7-B")
+	exec.Command("git", "-C", bPath, "add", ".").Run()
+	exec.Command("git", "-C", bPath, "commit", "-m", "b1").Run()
+
+	// Collaborator pushes an unrelated commit on top of origin/a (a separate
+	// file so it can't conflict with anything else on rebase).
+	collabSHA := simulateCollaboratorCommit(t, bareDir, "a", "collab.txt", "from-teammate\n", "collab-a")
+	_ = collabSHA
+
+	// main updates line 0 to conflict with a1.
+	editLine(sharedPath, 0, "L1-MAIN")
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "main edit line 1").Run()
+	exec.Command("git", "-C", repoDir, "push", "origin", "main").Run()
+
+	// SyncBranch(a) — FF brings collab into a, then rebase onto main hits
+	// the conflict on a1.
+	mgr, _ = NewManager(aPath)
+	preFFA, _ := mgr.git.GetBranchCommit("a")
+	res, err := mgr.SyncBranch("a", nil)
+	if err != nil {
+		t.Fatalf("SyncBranch(a): %v", err)
+	}
+	if !res.HasConflict {
+		t.Fatalf("expected a's rebase to hit a conflict on a1; got %+v", res)
+	}
+
+	// The snapshot for a must be the PRE-FF SHA — that's what b's history is
+	// anchored on. If the snapshot is the post-FF SHA (the bug), b's
+	// IsAncestor check would reject it on next SyncBranch(b).
+	mgr, _ = NewManager(repoDir)
+	bcA := mgr.stackConfig.Cache.GetBranchCache("a")
+	if bcA == nil || bcA.PreSyncCommit == "" {
+		t.Fatalf("expected PreSyncCommit on a after conflict; got %+v", bcA)
+	}
+	if bcA.PreSyncCommit != preFFA {
+		t.Errorf("PreSyncCommit captured POST-FF SHA — would cause cascade bug.\n  got:     %s (post-FF)\n  want:    %s (pre-FF)\n  collab:  %s", bcA.PreSyncCommit, preFFA, collabSHA)
+	}
+
+	// Resolve a's conflict and continue manually so we can drive SyncBranch(b)
+	// next without going through commands.Sync (this test is unit-level).
+	editLine(filepath.Join(aPath, "shared.txt"), 0, "L1-RESOLVED")
+	exec.Command("git", "-C", aPath, "add", ".").Run()
+	contCmd := exec.Command("git", "-C", aPath, "rebase", "--continue")
+	contCmd.Env = append(os.Environ(), "GIT_EDITOR=true")
+	if out, err := contCmd.CombinedOutput(); err != nil {
+		t.Fatalf("rebase --continue: %v\n%s", err, string(out))
+	}
+
+	// Sanity: a now contains collab + resolved a1 on top of new main.
+	aShared, _ := os.ReadFile(filepath.Join(aPath, "shared.txt"))
+	if !strings.Contains(string(aShared), "L1-RESOLVED") {
+		t.Fatalf("a's shared.txt missing resolved line: %q", string(aShared))
+	}
+	if _, err := os.Stat(filepath.Join(aPath, "collab.txt")); err != nil {
+		t.Fatalf("a's worktree missing collab.txt — FF didn't take effect: %v", err)
+	}
+
+	// Now SyncBranch(b). With the fix, the pre-FF snapshot of a is used as
+	// --onto's oldBase, so only b1 is replayed onto a's new tip. With the
+	// bug, the post-FF snapshot fails IsAncestor and the live-HEAD fallback
+	// degenerates to plain rebase, re-replaying a1 and re-encountering the
+	// conflict.
+	bMgr, _ := NewManager(bPath)
+	bRes, err := bMgr.SyncBranch("b", nil)
+	if err != nil {
+		t.Fatalf("SyncBranch(b): %v", err)
+	}
+	if bRes.HasConflict {
+		exec.Command("git", "-C", bPath, "rebase", "--abort").Run()
+		t.Fatalf("BUG: SyncBranch(b) hit a cascading conflict despite the snapshot-before-FF fix. Result: %+v", bRes)
+	}
+	if !bRes.Success {
+		t.Fatalf("SyncBranch(b) did not succeed: %+v", bRes)
+	}
+
+	// b's tree must hold the resolved a1, b's own edit, and the collab file
+	// from a's FF. None should be lost.
+	bShared, _ := os.ReadFile(filepath.Join(bPath, "shared.txt"))
+	for _, want := range []string{"L1-RESOLVED", "L7-B"} {
+		if !strings.Contains(string(bShared), want) {
+			t.Errorf("b's shared.txt missing %q after sync: %q", want, string(bShared))
+		}
+	}
+	if _, err := os.Stat(filepath.Join(bPath, "collab.txt")); err != nil {
+		t.Errorf("collab.txt missing in b's worktree — FF + cascade fix didn't propagate: %v", err)
+	}
+}

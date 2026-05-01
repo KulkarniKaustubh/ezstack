@@ -447,10 +447,13 @@ func (m *Manager) FindStackForBranch(branchName string) *config.Stack {
 }
 
 // GetCurrentStack returns the stack for the current branch.
-// Falls back to .git/rebase-merge/head-name when HEAD is detached due to an
-// in-progress rebase, so that `ezs sync -s --continue` (which resolves the
-// "current stack" from inside a conflicted worktree) finds the right stack
-// even though the rebase has detached HEAD.
+// Falls back to .git/rebase-merge/head-name (or rebase-apply/head-name) when
+// HEAD is detached due to an in-progress rebase, so that
+// `ezs sync -s --continue` (which resolves the "current stack" from inside a
+// conflicted worktree) finds the right stack even though the rebase has
+// detached HEAD. Only rebase needs this fallback — `git merge` keeps HEAD on
+// the branch ref even mid-conflict, so CurrentBranch already returns a usable
+// name during a merge in progress.
 func (m *Manager) GetCurrentStack() (*config.Stack, *config.Branch, error) {
 	currentBranch, err := m.git.CurrentBranch()
 	if err != nil {

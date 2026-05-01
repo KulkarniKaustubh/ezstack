@@ -1,11 +1,11 @@
 package stack
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -672,8 +672,8 @@ func TestDebugLog_FiresOnlyWhenEnvSet(t *testing.T) {
 	// flip it on/off below to drive the two arms of the test.
 	t.Setenv("EZSTACK_DEBUG", "")
 	// Reset the cached gate so the env var is re-read at each call below.
-	debugOnce = sync.Once{}
-	defer func() { debugOnce = sync.Once{} }()
+	resetDebugOnceForTesting()
+	defer resetDebugOnceForTesting()
 
 	orig := os.Stderr
 	r, w, _ := os.Pipe()
@@ -683,19 +683,20 @@ func TestDebugLog_FiresOnlyWhenEnvSet(t *testing.T) {
 	os.Unsetenv("EZSTACK_DEBUG")
 	debugLog("test-tag", "k", "v") // should produce nothing
 
-	debugOnce = sync.Once{}
+	resetDebugOnceForTesting()
 	os.Setenv("EZSTACK_DEBUG", "1")
 	debugLog("test-tag", "k", "v") // should produce one line
 
 	w.Close()
-	buf := make([]byte, 1024)
-	n, _ := r.Read(buf)
-	got := string(buf[:n])
-
-	if !strings.Contains(got, "[ezstack:test-tag] k=v") {
-		t.Errorf("debug log missing when env set; got %q", got)
+	got, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stderr pipe: %v", err)
 	}
-	if strings.Count(got, "[ezstack:test-tag]") != 1 {
-		t.Errorf("expected exactly one debug line; got %d in %q", strings.Count(got, "[ezstack:test-tag]"), got)
+
+	if !strings.Contains(string(got), "[ezstack:test-tag] k=v") {
+		t.Errorf("debug log missing when env set; got %q", string(got))
+	}
+	if strings.Count(string(got), "[ezstack:test-tag]") != 1 {
+		t.Errorf("expected exactly one debug line; got %d in %q", strings.Count(string(got), "[ezstack:test-tag]"), string(got))
 	}
 }

@@ -2,6 +2,7 @@ package itests
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -262,19 +263,21 @@ func TestSyncItest_OrphanStashSurfaced(t *testing.T) {
 	// b should now be mid-rebase. a is not in conflict but has the orphan stash.
 
 	// Capture stderr for the duration of --continue so we can assert on the
-	// orphan warning.
+	// orphan warning. Use io.ReadAll so a chatty --continue can't truncate
+	// the warning out of the captured buffer.
 	orig := os.Stderr
 	r, w, _ := os.Pipe()
 	os.Stderr = w
 	_ = commands.Sync([]string{"--all", "--continue"})
 	w.Close()
 	os.Stderr = orig
-	buf := make([]byte, 4096)
-	n, _ := r.Read(buf)
-	captured := string(buf[:n])
+	captured, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stderr pipe: %v", err)
+	}
 
-	if !strings.Contains(captured, "Orphan ezstack autostash found for a") {
-		t.Errorf("expected orphan-stash warning for a in --continue output. got:\n%s", captured)
+	if !strings.Contains(string(captured), "Orphan ezstack autostash found for a") {
+		t.Errorf("expected orphan-stash warning for a in --continue output. got:\n%s", string(captured))
 	}
 }
 
@@ -372,7 +375,9 @@ func TestSyncItest_DryRunJSONIncludesBehindRemote(t *testing.T) {
 
 	chdirOrFail(t, featPath)
 
-	// Capture stdout (JSON goes to stdout) for parsing.
+	// Capture stdout (JSON goes to stdout) for parsing. Use io.ReadAll so
+	// the parse below can't fail on a truncated tail when the dry-run
+	// output happens to exceed our buffer guess.
 	orig := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
@@ -381,12 +386,14 @@ func TestSyncItest_DryRunJSONIncludesBehindRemote(t *testing.T) {
 	}
 	w.Close()
 	os.Stdout = orig
-	buf := make([]byte, 8192)
-	n, _ := r.Read(buf)
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stdout pipe: %v", err)
+	}
 
 	var entries []map[string]any
-	if err := json.Unmarshal(buf[:n], &entries); err != nil {
-		t.Fatalf("parse JSON: %v\nraw: %q", err, string(buf[:n]))
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		t.Fatalf("parse JSON: %v\nraw: %q", err, string(raw))
 	}
 	var featEntry map[string]any
 	for _, e := range entries {

@@ -359,9 +359,16 @@ func writeSyncStats(w io.Writer, cwd string) {
 // branches when running --squash.
 // topoOrderStackBranches returns the stack's branches in parent-before-child
 // order. Any branch whose parent isn't present in the stack (typically the
-// root, whose parent is the base branch) is emitted first. Branches that form
-// a cycle — which shouldn't happen in a well-formed stack — are appended at
-// the end rather than dropped, so the caller still sees every input.
+// root, whose parent is the base branch) is emitted first.
+//
+// Cycles shouldn't occur in a well-formed stack but the implementation is
+// cycle-tolerant: `visited` is set on entry to each `visit`, so a back-edge
+// short-circuits without recursing forever. The first cycle member visited
+// is emitted first (after any of its non-cycle ancestors), then each later
+// member follows in DFS order; no input is dropped, but the resulting order
+// within a cycle is not a true topological one (it can't be — a cycle has
+// no topological order). Callers that depend on a strict parent-before-child
+// invariant should never see a cycle in practice.
 func topoOrderStackBranches(s *config.Stack) []*config.Branch {
 	if s == nil || len(s.Branches) == 0 {
 		return nil
@@ -1148,6 +1155,13 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 	// conflict — they were left behind by a prior aborted sync. We don't
 	// auto-pop because the user may have edited the worktree after the stash
 	// was created, so popping could surprise them. Just inform.
+	//
+	// Why `git -C b.WorktreePath` is correct: ezstack only ever creates an
+	// autostash from inside b's own worktree (StashPush is invoked there),
+	// so the saved diff applies cleanly to that worktree. Stashes are stored
+	// at repo level (`refs/stash`) so `FindEzstackStash` works from any
+	// worktree, but popping is only safe in the worktree the diff was taken
+	// from — `b.WorktreePath` per ezstack's one-worktree-per-branch model.
 	inProgressSet := make(map[string]bool, len(found))
 	for _, cb := range found {
 		inProgressSet[cb.branch.Name] = true

@@ -382,10 +382,16 @@ func (m *Manager) integrateRemoteForBranch(branch *config.Branch) git.RebaseResu
 	// Make sure this remote has been fetched so its tracking refs are
 	// up-to-date. Manager.FetchRemote dedupes per remote across the Manager
 	// lifetime — origin's fetch is shared with the bulk Fetch() at sync
-	// start. Failures are non-fatal: an absent tracking ref just means we
-	// skip the FF below.
+	// start. Failures here are non-fatal — an absent tracking ref just means
+	// we skip the FF below — but a stale tracking ref is still a real risk:
+	// the rebase phase will proceed against possibly-outdated origin info,
+	// and a subsequent force-push could overwrite teammate commits that
+	// landed on origin/<branch> while our fetch was failing. Surface the
+	// failure prominently so the user knows their local view of the remote
+	// may be stale before they push.
 	if err := m.FetchRemote(remote); err != nil {
-		fmt.Fprintf(os.Stderr, "  Warning: failed to fetch %s: %v (skipping remote integration for %s)\n", remote, err, branch.Name)
+		fmt.Fprintf(os.Stderr, "  ⚠ Warning: failed to fetch %s for %s: %v\n", remote, branch.Name, err)
+		fmt.Fprintf(os.Stderr, "  origin/%s may be stale. Skipping remote pull; if you force-push after this sync without re-fetching you may overwrite teammate commits. Re-run `ezs sync` once your network is healthy.\n", branch.Name)
 		return git.RebaseResult{Success: true}
 	}
 	remoteRef := remote + "/" + branch.Name
@@ -1450,6 +1456,20 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 	// auto-replayed on subsequent rebases. Cached per Manager.
 	m.ensureRerereEnabled()
 
+	// Snapshot BEFORE integrateRemoteForBranch can move HEAD via fast-forward.
+	// Descendants of this branch are anchored at its pre-FF state — they were
+	// created when the local matched origin/<branch> at some earlier point and
+	// don't have any collaborator commits in their history. If we snapshot
+	// post-FF, a later lookupPreSyncSHA(thisBranch, descendant) sees the
+	// post-FF SHA, fails the IsAncestor check, and falls back to the live
+	// HEAD; then `--onto newParent newParent` reduces to plain `git rebase
+	// newParent` which (when this branch's commits conflict with the new
+	// upstream) reintroduces the cascading-conflict bug Plan A fixed.
+	//
+	// In the bulk path (syncStackInternal) snapshots are already taken before
+	// per-branch FF; this is the single-branch entry point's equivalent.
+	m.snapshotPreSyncSHAs([]string{branch.Name})
+
 	// Pick up any new commits the remote has on origin/<branch> before we
 	// rebase onto the parent. See integrateRemoteForBranch for the case
 	// matrix; the short version is: strict fast-forward → pull, divergence
@@ -1468,12 +1488,6 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 
 		result.BehindBy = behindBy
 		result.SyncedParent = "origin/" + stack.Root
-
-		// Snapshot this branch's pre-rewrite SHA so any subsequent SyncBranch
-		// call on a child can rebase --onto with the correct oldBase. Stack
-		// roots (origin/main) aren't tracked branches, so we don't need to
-		// snapshot them — only this branch.
-		m.snapshotPreSyncSHAs([]string{branch.Name})
 
 		syncResult := doSyncOp(func(sg *git.Git) git.RebaseResult {
 			if merge {
@@ -1545,8 +1559,8 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 			mergeBase = oldParentRef
 		}
 
-		m.snapshotPreSyncSHAs([]string{branch.Name})
-
+		// Snapshot was already taken at the top of SyncBranch (before any FF),
+		// so descendants see this branch's pre-rewrite SHA when they look it up.
 		syncResult := doSyncOp(func(sg *git.Git) git.RebaseResult {
 			if merge {
 				return sg.MergeNonInteractive("origin/" + stack.Root)
@@ -1619,11 +1633,9 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 	// branch's history is rejected in favour of the live-HEAD fallback.
 	oldParentSHA := m.lookupPreSyncSHA(branch.Parent, branch.Name)
 
-	// Snapshot this branch before its rewrite, so a subsequent SyncBranch call
-	// on a grandchild — or a `--continue` invocation — can use this branch's
-	// pre-rewrite SHA as the oldBase for *its* --onto.
-	m.snapshotPreSyncSHAs([]string{branch.Name})
-
+	// This branch's snapshot was already taken at the top of SyncBranch (before
+	// any FF), so a subsequent SyncBranch on a grandchild — or a `--continue`
+	// invocation — sees the pre-FF SHA when looking it up via lookupPreSyncSHA.
 	syncResult := doSyncOp(func(sg *git.Git) git.RebaseResult {
 		if merge {
 			return sg.MergeNonInteractive(parentRef)

@@ -36,3 +36,16 @@ func debugLog(tag string, kv ...string) {
 	}
 	fmt.Fprintln(os.Stderr, out)
 }
+
+// resetDebugOnceForTesting forces the next debugLog call to re-read
+// EZSTACK_DEBUG. The gate is cached via sync.Once for cheap repeated calls
+// in production; tests that flip the env to drive both arms of the gate need
+// a way to invalidate that cache without referring to the unexported globals
+// directly. Localising the reset here means the storage shape of the gate
+// can change without breaking tests.
+//
+// Production code must never call this; if it shows up in a non-test caller,
+// the env-var caching contract is being violated.
+func resetDebugOnceForTesting() {
+	debugOnce = sync.Once{}
+}
