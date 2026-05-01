@@ -1039,15 +1039,15 @@ Options:
     -b, --branch <name>    Sync a specific branch by name (rebase onto parent + cascade to children)
     -p, --parent           Rebase current branch onto its parent
     -C, --children         Rebase child branches onto current branch
+    --continue             Continue after resolving conflicts (completes rebase/merge, pushes, then re-syncs the entire descendant subtree). Honors -s, -a, -c, -b, and positional <hash-prefix> to limit the scope.
     --merge                Use git merge instead of git rebase
     --rebase               Use git rebase (overrides sync_strategy config)
-    --no-delete-local      Don't delete local branches after their PRs are merged
-    --dry-run              Preview what would be synced without making changes
-    --continue             Continue after resolving conflicts (honors -s, -a, -c, -b, and a positional <hash-prefix> to limit scope; re-syncs the entire descendant subtree)
-    --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
-    --json                 Output dry-run results as JSON (requires --dry-run)
     --stats                Print a commits-per-branch summary after syncing
     --squash               Squash each child's commits into one before rebasing onto parent
+    --no-delete-local      Don't delete local branches after their PRs are merged
+    --dry-run              Preview what would be synced without making changes
+    --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
+    --json                 Output dry-run results as JSON (requires --dry-run)
 ```
 
 **`--stats`.** Prints a post-sync summary listing, for each branch in the synced set, the number of commits ahead of its parent after the sync completes. The summary is registered so it runs after the `post-sync` hook fires (via LIFO-ordered defers), so the numbers you see reflect the final state on disk.

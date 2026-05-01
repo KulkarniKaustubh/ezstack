@@ -285,7 +285,7 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <h3>Smart Conflict Handling</h3>
-          <p>Rebase conflicts pause with clear recovery instructions. Run <code>ezs sync --continue</code> to resume, push, and re-sync children. Autostash and <code>--dry-run</code> included.</p>
+          <p>Rebase conflicts pause with clear recovery instructions. <code>ezs sync --continue</code> honors the same scope flags as <code>sync</code> and re-syncs the entire descendant subtree from the resolved branch. Sync also fast-forwards each local to <code>origin/&lt;branch&gt;</code> first, so collaborator commits get picked up automatically. Autostash and <code>--dry-run</code> included.</p>
         </div>
         <div class="feature-card" data-animate>
           <div class="feature-icon">

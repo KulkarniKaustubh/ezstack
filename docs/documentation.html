@@ -1504,15 +1504,15 @@ Options:
     <span class="c-flag">-b,</span> <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>    <span class="c-dim">Sync a specific branch by name (rebase onto parent + cascade to children)</span>
     <span class="c-flag">-p,</span> <span class="c-flag">--parent</span>           <span class="c-dim">Rebase current branch onto its parent</span>
     <span class="c-flag">-C,</span> <span class="c-flag">--children</span>         <span class="c-dim">Rebase child branches onto current branch</span>
+    <span class="c-flag">--continue</span>             <span class="c-dim">Continue after resolving conflicts (completes rebase/merge, pushes, then re-syncs the entire descendant subtree). Honors -s, -a, -c, -b, and positional &lt;hash-prefix&gt; to limit the scope.</span>
     <span class="c-flag">--merge</span>                <span class="c-dim">Use git merge instead of git rebase</span>
     <span class="c-flag">--rebase</span>               <span class="c-dim">Use git rebase (overrides sync_strategy config)</span>
-    <span class="c-flag">--no-delete-local</span>      <span class="c-dim">Don&#39;t delete local branches after their PRs are merged</span>
-    <span class="c-flag">--dry-run</span>              <span class="c-dim">Preview what would be synced without making changes</span>
-    <span class="c-flag">--continue</span>             <span class="c-dim">Continue after resolving conflicts (honors -s, -a, -c, -b, and a positional &lt;hash-prefix&gt; to limit scope; re-syncs the entire descendant subtree)</span>
-    <span class="c-flag">--no-autostash</span>         <span class="c-dim">Don&#39;t stash uncommitted changes before rebase (autostash is on by default)</span>
-    <span class="c-flag">--json</span>                 <span class="c-dim">Output dry-run results as JSON (requires --dry-run)</span>
     <span class="c-flag">--stats</span>                <span class="c-dim">Print a commits-per-branch summary after syncing</span>
     <span class="c-flag">--squash</span>               <span class="c-dim">Squash each child&#39;s commits into one before rebasing onto parent</span>
+    <span class="c-flag">--no-delete-local</span>      <span class="c-dim">Don&#39;t delete local branches after their PRs are merged</span>
+    <span class="c-flag">--dry-run</span>              <span class="c-dim">Preview what would be synced without making changes</span>
+    <span class="c-flag">--no-autostash</span>         <span class="c-dim">Don&#39;t stash uncommitted changes before rebase (autostash is on by default)</span>
+    <span class="c-flag">--json</span>                 <span class="c-dim">Output dry-run results as JSON (requires --dry-run)</span>
 </code></pre>
       <p><strong><code>--stats</code>.</strong> Prints a post-sync summary listing, for each branch in the synced set, the number of commits ahead of its parent after the sync completes. The summary is registered so it runs after the <code>post-sync</code> hook fires (via LIFO-ordered defers), so the numbers you see reflect the final state on disk.</p>
       <p><strong><code>--squash</code>.</strong> Before rebasing each child onto its parent, collapses the child's commits into a single commit. Only branches with ≥2 commits since their parent are affected; branches that are already a single commit are left alone. Because <code>--squash</code> rewrites history, any already-pushed branch will need <code>git push --force-with-lease</code> afterward — ezstack prints a warning reminding you of this up front.</p>
