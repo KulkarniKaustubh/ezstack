@@ -43,15 +43,23 @@ func PR(args []string) error {
 		return nil
 	}
 	// --draft-all is a top-level shortcut for "create draft PRs across the
-	// whole current stack". It is only recognized when no subcommand is
-	// present — otherwise we'd silently hijack `pr create --draft-all` and
-	// drop its -t/-b flags on the floor. `pr create --draft-all` is handled
-	// inside prCreate itself.
+	// whole current stack". Only honored when no subcommand is present —
+	// `pr create --draft-all` is parsed inside prCreate. We also recognize
+	// --force/-f/--recreate alongside it so `ezs pr --draft-all --force`
+	// behaves the same as `ezs pr create --draft-all --force`.
 	if len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		hasDraftAll := false
+		force := false
 		for _, a := range args {
-			if a == "--draft-all" {
-				return prDraftAll()
+			switch a {
+			case "--draft-all":
+				hasDraftAll = true
+			case "-f", "--force", "--recreate":
+				force = true
 			}
+		}
+		if hasDraftAll {
+			return prDraftAllForce(force)
 		}
 	}
 	// Allow --help without requiring auth
@@ -239,6 +247,19 @@ func prCreateAllDraft(currentStack *config.Stack, draft, force bool) error {
 
 	branchesToCreate := []*config.Branch{}
 	for _, b := range currentStack.Branches {
+		// commitsAhead is a local git op, so checking it before either the
+		// fast-path skip or the GitHub refresh is free and avoids printing
+		// "will force create" warnings for branches we're about to skip.
+		commitsAhead, err := g.GetCommitsAhead(b.Name, b.Parent)
+		if err != nil {
+			ui.Warn(fmt.Sprintf("Could not check commits for %s: %v (skipping)", b.Name, err))
+			continue
+		}
+		if commitsAhead == 0 {
+			ui.Warn(fmt.Sprintf("Skipping %s: no commits ahead of '%s'", b.Name, b.Parent))
+			continue
+		}
+
 		cacheClaimsLive := b.PRNumber > 0 && !b.IsMerged && (b.PRState == "OPEN" || b.PRState == "DRAFT")
 
 		// Fast path: cache says PR is live and we're not forcing. Skip
@@ -279,17 +300,6 @@ func prCreateAllDraft(currentStack *config.Stack, draft, force bool) error {
 			// the shared "create all PRs?" prompt below.
 			ui.Warn(fmt.Sprintf("--force: will create a new PR for '%s' even though PR #%d is open", b.Name, livePR.Number))
 		}
-
-		// Check if branch has commits ahead of its base
-		commitsAhead, err := g.GetCommitsAhead(b.Name, b.Parent)
-		if err != nil {
-			ui.Warn(fmt.Sprintf("Could not check commits for %s: %v (skipping)", b.Name, err))
-			continue
-		}
-		if commitsAhead == 0 {
-			ui.Warn(fmt.Sprintf("Skipping %s: no commits ahead of '%s'", b.Name, b.Parent))
-			continue
-		}
 		branchesToCreate = append(branchesToCreate, b)
 	}
 
@@ -313,8 +323,18 @@ func prCreateAllDraft(currentStack *config.Stack, draft, force bool) error {
 	for _, b := range branchesToCreate {
 		ui.Info(fmt.Sprintf("Creating PR for %s...", b.Name))
 
+		// Single-branch prCreate threads the fork remote through every push
+		// site (commit 642eb5a). Bulk creation must do the same — without
+		// it, a stack containing a fork branch tries to push to origin and
+		// fails confusingly. Branches whose remote is `_nopush` (fork that
+		// disallows maintainer push) are skipped with a warning rather than
+		// counted as a hard failure.
+		if !b.CanPush() {
+			ui.Warn(fmt.Sprintf("Skipping %s: push not allowed (fork does not allow maintainer push)", b.Name))
+			continue
+		}
 		// Push the branch first
-		if err := g.RunInteractive("push", "-u", "origin", b.Name); err != nil {
+		if err := g.RunInteractive("push", "-u", b.EffectiveRemote(), b.Name); err != nil {
 			ui.Warn(fmt.Sprintf("Failed to push %s: %v", b.Name, err))
 			failed++
 			continue
@@ -412,6 +432,9 @@ func prCreate(args []string) error {
 		return prDraftAllForce(forceCreate)
 	}
 	if *stackFlag {
+		if *title != "" || *body != "" || *branchFlag != "" {
+			ui.Warn("--stack creates one PR per branch with auto-generated titles; -t/-b/--branch are ignored")
+		}
 		currentStack, _, err := mgr.GetCurrentStack()
 		if err != nil {
 			return err
