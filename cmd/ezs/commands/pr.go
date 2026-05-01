@@ -253,25 +253,20 @@ func prCreateAllDraft(currentStack *config.Stack, draft, force bool) error {
 		// Slow path: ambiguous cache or --force. Reconcile against GitHub.
 		// refreshPRStateFromGitHub returns (nil, nil) when no PR exists,
 		// (pr, nil) when a PR is found, and (nil, err) on transient errors.
+		// Routing both the cached-PR and the no-PR-number paths through this
+		// helper keeps cache writes uniform and gives ErrPRNotFound the same
+		// "(nil, nil) → cache cleared" treatment whether the branch had a
+		// cached number or not. Only warn when there was something cached to
+		// reconcile — fresh branches shouldn't get a "could not refresh" nag
+		// just because gh is briefly flaky.
 		var livePR *github.PR
-		if b.PRNumber > 0 || b.IsMerged {
-			pr, refreshErr := refreshPRStateFromGitHub(gh, mainWorktree, b)
-			if refreshErr != nil {
+		pr, refreshErr := refreshPRStateFromGitHub(gh, mainWorktree, b)
+		if refreshErr != nil {
+			if b.PRNumber > 0 || b.IsMerged {
 				ui.Warn(fmt.Sprintf("Could not refresh PR state for %s: %v (using cache)", b.Name, refreshErr))
-			} else {
-				livePR = pr
 			}
 		} else {
-			// No cached PR number — replicate the original head-branch lookup.
-			pr, brErr := gh.GetPRByBranch(b.Name)
-			if brErr == nil && pr != nil {
-				livePR = pr
-				b.PRNumber = pr.Number
-				b.PRUrl = pr.URL
-				b.PRState = prStateFromGitHub(pr)
-				b.IsMerged = pr.Merged
-				savePRToCache(mainWorktree, b.Name, pr)
-			}
+			livePR = pr
 		}
 
 		liveOpen := livePR != nil && !livePR.Merged && livePR.State != "CLOSED"
@@ -715,7 +710,10 @@ func prUpdate(args []string) error {
 			// Better to attempt a useful push than to bail on a flaky network.
 			ui.Warn(fmt.Sprintf("Could not refresh PR state from GitHub: %v (using cache)", refreshErr))
 		case livePR == nil:
-			return fmt.Errorf("PR #%d is no longer on GitHub. Run 'ezs pr unlink' to forget the cached association, or 'ezs pr create' to make a new one", originalPRNumber)
+			// applyPRRefresh has already cleared the cache for us, so suggesting
+			// `ezs pr unlink` here would only print "no cached PR association".
+			// Point the user at the recovery action that still has work to do.
+			return fmt.Errorf("PR #%d is no longer on GitHub. Cleared the cached association — run 'ezs pr create' to make a new one", originalPRNumber)
 		case livePR.Merged:
 			return fmt.Errorf("PR #%d is already merged: %s\nUse 'ezs pr create --force' to recreate, or 'ezs pr unlink' to forget the association", livePR.Number, livePR.URL)
 		case livePR.State == "CLOSED":
@@ -1174,7 +1172,11 @@ func prRefresh(args []string) error {
 			return err
 		}
 		for _, b := range currentStack.Branches {
-			if b.PRNumber > 0 {
+			// Match the single-branch filter below: a branch with a cached PRUrl
+			// but no parsed PRNumber (URL parse failure on legacy entries) is
+			// still a valid refresh target — fetchLivePR will fall through to
+			// the head-branch lookup and either rediscover or clear it.
+			if b.PRNumber > 0 || b.PRUrl != "" {
 				branches = append(branches, b)
 			}
 		}
