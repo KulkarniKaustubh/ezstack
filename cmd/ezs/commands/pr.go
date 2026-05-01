@@ -1260,11 +1260,13 @@ func prRefresh(args []string) error {
 	wg.Wait()
 
 	changed := 0
+	failed := 0
 	for _, r := range results {
 		newPR, applyErr := applyPRRefresh(mainWorktree, r.branch, r.newPR, r.err)
 		switch {
 		case applyErr != nil:
 			ui.Warn(fmt.Sprintf("%s: refresh failed (%v)", r.branch.Name, applyErr))
+			failed++
 		case newPR == nil:
 			if r.oldNum > 0 {
 				fmt.Fprintf(os.Stderr, "  %s %s: PR #%d no longer on GitHub (cache cleared)\n", ui.IconBullet, r.branch.Name, r.oldNum)
@@ -1288,9 +1290,17 @@ func prRefresh(args []string) error {
 			changed++
 		}
 	}
-	if changed > 0 {
+	switch {
+	case changed > 0 && failed > 0:
+		ui.Warn(fmt.Sprintf("Refreshed %d branch(es); %d failed (cache left untouched for those)", changed, failed))
+	case changed > 0:
 		ui.Success(fmt.Sprintf("Refreshed %d branch(es)", changed))
-	} else {
+	case failed > 0:
+		// Distinguish total failure from "everything was already in sync".
+		// Returning an error here lets scripts (and `pr update`'s later
+		// caller chain) know the cache wasn't reconciled.
+		return fmt.Errorf("refresh failed for %d branch(es); cache left as-is", failed)
+	default:
 		ui.Info("All branches already in sync with GitHub.")
 	}
 	return nil
@@ -1422,9 +1432,11 @@ func prUnlink(args []string) error {
 	}
 
 	cleared := 0
+	failed := 0
 	for _, t := range targets {
 		if err := clearPRFromCache(mainWorktree, t.name); err != nil {
 			ui.Warn(fmt.Sprintf("Failed to unlink %s: %v", t.name, err))
+			failed++
 			continue
 		}
 		// Also clear in-memory mirror so subsequent commands in this process
@@ -1437,6 +1449,15 @@ func prUnlink(args []string) error {
 		}
 		cleared++
 	}
-	ui.Success(fmt.Sprintf("Unlinked %d branch(es)", cleared))
+	switch {
+	case cleared > 0 && failed > 0:
+		ui.Warn(fmt.Sprintf("Unlinked %d branch(es); %d failed", cleared, failed))
+	case cleared > 0:
+		ui.Success(fmt.Sprintf("Unlinked %d branch(es)", cleared))
+	default:
+		// Surface as a non-zero exit so scripts notice — `ui.Success("Unlinked
+		// 0 branch(es)")` was actively misleading when every clear failed.
+		return fmt.Errorf("unlink failed for all %d branch(es)", failed)
+	}
 	return nil
 }

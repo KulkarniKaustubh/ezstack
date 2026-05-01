@@ -303,7 +303,14 @@ type legacyConfig struct {
 }
 
 // atomicWriteFile writes data to a file atomically by writing to a temp file
-// in the same directory and then renaming it.
+// in the same directory, fsyncing it, and then renaming over the destination.
+//
+// fsync before rename is what makes "atomic" actually durable: without it, a
+// crash between rename and the OS flushing dirty pages can leave the renamed
+// file with arbitrary contents (including the empty file the kernel exposes
+// when the inode metadata has hit disk but the data block hasn't). For
+// stacks.json this means one bad shutdown could surface as "stack vanished"
+// rather than "stack reverted to last good save".
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".ezstack-tmp-*")
@@ -318,6 +325,11 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return err
