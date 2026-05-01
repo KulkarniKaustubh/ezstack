@@ -485,13 +485,13 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>new</code> <span class="cmd-alias">n</span></td><td>Create a new branch in the stack.</td></tr>
-                <tr><td class="cmd-name"><code>list</code> <span class="cmd-alias">ls</span></td><td>List all stacks and branches.</td></tr>
-                <tr><td class="cmd-name"><code>status</code> <span class="cmd-alias">st</span></td><td>Show status of current stack with PR and CI info.</td></tr>
-                <tr><td class="cmd-name"><code>stack</code></td><td>Add an untracked branch/worktree to an existing stack, start a new stack, or rename a stack.</td></tr>
-                <tr><td class="cmd-name"><code>unstack</code></td><td>Remove a branch from stack tracking without deleting the git branch or worktree.</td></tr>
                 <tr><td class="cmd-name"><code>delete</code> <span class="cmd-alias">del, rm</span></td><td>Delete a branch and its worktree.</td></tr>
+                <tr><td class="cmd-name"><code>list</code> <span class="cmd-alias">ls</span></td><td>List all stacks and branches.</td></tr>
+                <tr><td class="cmd-name"><code>new</code> <span class="cmd-alias">n</span></td><td>Create a new branch in the stack.</td></tr>
                 <tr><td class="cmd-name"><code>reparent</code> <span class="cmd-alias">rp</span></td><td>Change the parent of a branch and sync commits onto the new parent.</td></tr>
+                <tr><td class="cmd-name"><code>stack</code></td><td>Add an untracked branch/worktree to an existing stack, start a new stack, or rename a stack.</td></tr>
+                <tr><td class="cmd-name"><code>status</code> <span class="cmd-alias">st</span></td><td>Show status of current stack with PR and CI info.</td></tr>
+                <tr><td class="cmd-name"><code>unstack</code></td><td>Remove a branch from stack tracking without deleting the git branch or worktree.</td></tr>
               </tbody>
             </table>
           </div>
@@ -506,9 +506,9 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
+                <tr><td class="cmd-name"><code>down</code></td><td>Navigate down the stack toward children</td></tr>
                 <tr><td class="cmd-name"><code>goto</code> <span class="cmd-alias">go</span></td><td>Navigate to a branch worktree.</td></tr>
                 <tr><td class="cmd-name"><code>up</code></td><td>Navigate up the stack toward parent</td></tr>
-                <tr><td class="cmd-name"><code>down</code></td><td>Navigate down the stack toward children</td></tr>
               </tbody>
             </table>
           </div>
@@ -523,11 +523,11 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>sync</code></td><td>Sync stack with remote.</td></tr>
-                <tr><td class="cmd-name"><code>commit</code> <span class="cmd-alias">ci</span></td><td>Commit and auto-sync child branches</td></tr>
                 <tr><td class="cmd-name"><code>amend</code></td><td>Amend last commit and auto-sync children</td></tr>
-                <tr><td class="cmd-name"><code>push</code></td><td>Push current branch or entire stack to remote.</td></tr>
+                <tr><td class="cmd-name"><code>commit</code> <span class="cmd-alias">ci</span></td><td>Commit and auto-sync child branches</td></tr>
                 <tr><td class="cmd-name"><code>diff</code></td><td>Show diff against parent branch.</td></tr>
+                <tr><td class="cmd-name"><code>push</code></td><td>Push current branch or entire stack to remote.</td></tr>
+                <tr><td class="cmd-name"><code>sync</code></td><td>Sync stack with remote.</td></tr>
               </tbody>
             </table>
           </div>
@@ -543,10 +543,10 @@
             <table class="cmd-table">
               <tbody>
                 <tr><td class="cmd-name"><code>pr create</code></td><td>Create a new pull request</td></tr>
-                <tr><td class="cmd-name"><code>pr update</code></td><td>Push changes and update PR metadata</td></tr>
-                <tr><td class="cmd-name"><code>pr merge</code></td><td>Merge a pull request (merge, squash, or rebase)</td></tr>
                 <tr><td class="cmd-name"><code>pr draft</code></td><td>Toggle PR between draft and ready</td></tr>
+                <tr><td class="cmd-name"><code>pr merge</code></td><td>Merge a pull request (merge, squash, or rebase)</td></tr>
                 <tr><td class="cmd-name"><code>pr stack</code></td><td>Update all PR descriptions with stack info</td></tr>
+                <tr><td class="cmd-name"><code>pr update</code></td><td>Push changes and update PR metadata</td></tr>
               </tbody>
             </table>
           </div>
@@ -564,8 +564,8 @@
                 <tr><td class="cmd-name"><code>config</code> <span class="cmd-alias">cfg</span></td><td>Interactive configuration setup</td></tr>
                 <tr><td class="cmd-name"><code>config set</code></td><td>Set a configuration value</td></tr>
                 <tr><td class="cmd-name"><code>config show</code></td><td>Show current configuration</td></tr>
-                <tr><td class="cmd-name"><code>menu</code></td><td>Interactive command menu</td></tr>
                 <tr><td class="cmd-name"><code>doctor</code></td><td>Check that ezstack&#39;s runtime dependencies and on-disk config are healthy.</td></tr>
+                <tr><td class="cmd-name"><code>menu</code></td><td>Interactive command menu</td></tr>
                 <tr><td class="cmd-name"><code>upgrade</code></td><td>Self-update the running ezs binary (and the companion ezs-mcp if installed) to the latest published GitHub release.</td></tr>
               </tbody>
             </table>
@@ -666,7 +666,7 @@
             <span class="eco-badge eco-badge-new">New</span>
           </div>
           <h3>MCP Server</h3>
-          <p>Drive <code>ezs</code> from Claude Code and any MCP-compatible agent. Eleven stack operations exposed as Model Context Protocol tools &mdash; status, list, sync, push, PR create/merge, goto, new, delete, reparent. Destructive tools are annotated so clients can prompt before running.</p>
+          <p>Drive <code>ezs</code> from Claude Code and any MCP-compatible agent. 25 stack operations exposed as Model Context Protocol tools &mdash; inspect (status, list, diff, log, doctor, config_show), mutate (commit, amend, sync, push, new, delete, reparent, stack, unstack, config_set, config_import), navigate (goto), and manage PRs (pr_create, pr_update, pr_merge, pr_draft, pr_draft_all, pr_stack), plus config export. Destructive tools are annotated so clients can prompt before running.</p>
           <div class="eco-install">
             <h4>Install</h4>
             <ol>

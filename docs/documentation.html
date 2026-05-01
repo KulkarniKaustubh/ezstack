@@ -637,7 +637,7 @@
         <li><a href="#environment" class="toc-h3">Environment</a></li>
         <li><a href="#requiring-a-hook" class="toc-h3">Requiring a hook</a></li>
         <li><a href="#dry-run-contract" class="toc-h3">Dry-run contract</a></li>
-        <li><a href="#discoverability---info---examples-did-you-mean">Discoverability: --info, --examples, &#34;did you mean&#34;</a></li>
+        <li><a href="#discoverability">Discoverability</a></li>
         <li><a href="#ezs---info" class="toc-h3">ezs --info</a></li>
         <li><a href="#ezs-command---examples" class="toc-h3">ezs &lt;command&gt; --examples</a></li>
         <li><a href="#did-you-mean" class="toc-h3">&#34;Did you mean…?&#34;</a></li>
@@ -1723,9 +1723,9 @@ Options:
       </ul>
       </section>
 
-      <section class="docs-section" id="discoverability---info---examples-did-you-mean" data-heading="Discoverability: --info, --examples, &#34;did you mean&#34;">
-      <h2 id="discoverability---info---examples-did-you-mean">Discoverability: <code>--info</code>, <code>--examples</code>, &quot;did you mean&quot;</h2>
-      <p>A handful of ergonomics make it easier to discover commands and debug problems.</p>
+      <section class="docs-section" id="discoverability" data-heading="Discoverability">
+      <h2 id="discoverability">Discoverability</h2>
+      <p>A handful of ergonomics make it easier to discover commands and debug problems: <code>--info</code> for diagnostics, <code>--examples</code> for per-command recipes, and a built-in &quot;did you mean…?&quot; suggester for typos.</p>
       <h3 id="ezs---info"><code>ezs --info</code></h3>
       <p>Prints a diagnostic dump (ezstack version, <code>go</code>/<code>git</code>/<code>gh</code>/<code>fzf</code> versions, config directory, whether <code>config.json</code> is present and loads cleanly, repo count, default base branch). Designed to be pasted into bug reports — no secrets, no stack contents.</p>
       <h3 id="ezs-command---examples"><code>ezs &lt;command&gt; --examples</code></h3>
@@ -1770,7 +1770,7 @@ Options:
       exposes the full stack workflow as MCP tools. Point any MCP-compatible agent
       (Claude Code, Zed, etc.) at it and the agent can drive <code>ezs</code> directly —
       inspect, mutate, navigate, and manage pull requests without leaving the agent
-      loop. 21 tools, one binary.</p>
+      loop. 25 tools, one binary.</p>
       <p><strong>Install</strong></p>
       <pre><code><span class="c-comment"># Homebrew (ships alongside ezs)</span>
 <span class="c-cmd">brew</span> <span class="c-flag">tap</span> <span class="c-str">KulkarniKaustubh/ezstack</span>
@@ -1824,6 +1824,11 @@ Options:
       <td><code>ezstack_log</code></td>
       <td>read-only</td>
       <td>Commits since parent as JSON (hash, message, author, ISO date). <code>branch</code>.</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_doctor</code></td>
+      <td>read-only</td>
+      <td>Run diagnostics: ezstack version, prerequisite versions (go/git/gh/fzf), config directory state, and the configured default base branch. Safe to paste into bug reports — no secrets included.</td>
       </tr>
       <tr>
       <td><code>ezstack_config_show</code></td>
@@ -1937,6 +1942,11 @@ Options:
       <td>Toggle a PR between draft and ready-for-review. <code>branch</code>.</td>
       </tr>
       <tr>
+      <td><code>ezstack_pr_draft_all</code></td>
+      <td>—</td>
+      <td>Create draft PRs for every branch in the current stack that doesn't already have one. Branches with an existing PR are left alone (use <code>ezstack_pr_draft</code> to toggle an existing PR's draft state).</td>
+      </tr>
+      <tr>
       <td><code>ezstack_pr_stack</code></td>
       <td>—</td>
       <td>Update every PR description in the stack with navigation links. <code>branch</code>.</td>
@@ -1957,6 +1967,16 @@ Options:
       <td><code>ezstack_config_set</code></td>
       <td>—</td>
       <td>Set a config value. <code>key</code> and <code>value</code> (both required). Valid keys: <code>worktree_base_dir</code>, <code>default_base_branch</code>, <code>github_token</code>, <code>cd_after_new</code>, <code>use_worktrees</code>, <code>sync_strategy</code>, <code>agent_command</code>.</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_config_export</code></td>
+      <td>—</td>
+      <td>Export the global ezstack config (excluding the per-machine <code>github_token</code>) to a file. Safe to share — no secrets included. <code>file</code> (required).</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_config_import</code></td>
+      <td>destructive</td>
+      <td>Replace the global ezstack config with the contents of <code>&lt;file&gt;</code>. Validated against the schema before being applied; the existing local <code>github_token</code> is preserved. <code>file</code> (required).</td>
       </tr>
       </tbody>
       </table>

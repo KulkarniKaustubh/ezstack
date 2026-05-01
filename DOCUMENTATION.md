@@ -14,7 +14,7 @@
 
 **Commands:** [agent](#ezs-agent) · [commit/amend](#ezs-commit--ezs-amend) · [config](#ezs-config) · [delete](#ezs-delete) · [diff](#ezs-diff) · [doctor](#ezs-doctor) · [down/up](#ezs-down--ezs-up) · [goto](#ezs-goto) · [list](#ezs-list) · [log](#ezs-log) · [menu](#ezs-menu) · [new](#ezs-new) · [pr](#ezs-pr) · [push](#ezs-push) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [status](#ezs-status) · [sync](#ezs-sync) · [unstack](#ezs-unstack) · [upgrade](#ezs-upgrade)
 
-**Extras:** [Hooks](#hooks) · [Exit codes](#exit-codes) · [Discoverability](#discoverability-info---examples-did-you-mean)
+**Extras:** [Hooks](#hooks) · [Exit codes](#exit-codes) · [Discoverability](#discoverability)
 
 ---
 
@@ -1200,9 +1200,9 @@ Hooks only fire when ezstack is about to mutate state. Preview commands never in
 
 ---
 
-## Discoverability: `--info`, `--examples`, "did you mean"
+## Discoverability
 
-A handful of ergonomics make it easier to discover commands and debug problems.
+A handful of ergonomics make it easier to discover commands and debug problems: `--info` for diagnostics, `--examples` for per-command recipes, and a built-in "did you mean…?" suggester for typos.
 
 ### `ezs --info`
 
@@ -1261,7 +1261,7 @@ Located in `cmd/ezs-mcp/`. A standalone Model Context Protocol server that
 exposes the full stack workflow as MCP tools. Point any MCP-compatible agent
 (Claude Code, Zed, etc.) at it and the agent can drive `ezs` directly &mdash;
 inspect, mutate, navigate, and manage pull requests without leaving the agent
-loop. 21 tools, one binary.
+loop. 25 tools, one binary.
 
 **Install**
 
@@ -1306,6 +1306,7 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 | `ezstack_list` | read-only | List all stacks and branches. `all`, `decorated`. |
 | `ezstack_diff` | read-only | Diff against parent branch as JSON numstat (default) or diffstat. `branch`, `stat`. |
 | `ezstack_log` | read-only | Commits since parent as JSON (hash, message, author, ISO date). `branch`. |
+| `ezstack_doctor` | read-only | Run diagnostics: ezstack version, prerequisite versions (go/git/gh/fzf), config directory state, and the configured default base branch. Safe to paste into bug reports — no secrets included. |
 | `ezstack_config_show` | read-only | Full ezstack configuration for the active repo. |
 
 **Branch management**
@@ -1336,6 +1337,7 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 | `ezstack_pr_update` | destructive | Push the latest commits and refresh the PR base branch / stack description. `branch`. |
 | `ezstack_pr_merge` | destructive | Merge the pull request for a branch. `branch`, `method`. |
 | `ezstack_pr_draft` | &mdash; | Toggle a PR between draft and ready-for-review. `branch`. |
+| `ezstack_pr_draft_all` | &mdash; | Create draft PRs for every branch in the current stack that doesn't already have one. Branches with an existing PR are left alone (use `ezstack_pr_draft` to toggle an existing PR's draft state). |
 | `ezstack_pr_stack` | &mdash; | Update every PR description in the stack with navigation links. `branch`. |
 
 **Configuration**
@@ -1343,6 +1345,8 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 | Tool | Annotation | Description |
 |---|---|---|
 | `ezstack_config_set` | &mdash; | Set a config value. `key` and `value` (both required). Valid keys: `worktree_base_dir`, `default_base_branch`, `github_token`, `cd_after_new`, `use_worktrees`, `sync_strategy`, `agent_command`. |
+| `ezstack_config_export` | &mdash; | Export the global ezstack config (excluding the per-machine `github_token`) to a file. Safe to share — no secrets included. `file` (required). |
+| `ezstack_config_import` | destructive | Replace the global ezstack config with the contents of `<file>`. Validated against the schema before being applied; the existing local `github_token` is preserved. `file` (required). |
 
 Read-only inspection tools return JSON by default; `ezstack_status` and
 `ezstack_list` accept `decorated=true` for terminal-styled output. Destructive
