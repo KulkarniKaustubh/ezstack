@@ -700,3 +700,105 @@ func TestDebugLog_FiresOnlyWhenEnvSet(t *testing.T) {
 		t.Errorf("expected exactly one debug line; got %d in %q", strings.Count(string(got), "[ezstack:test-tag]"), string(got))
 	}
 }
+
+// TestLookupPreSyncSHA_GracefullyHandlesGarbageCollectedSnapshot covers a
+// real production hazard: the snapshot SHA was a valid commit when recorded,
+// but a later `git gc --prune=now` (or `git reflog expire`) removed it from
+// the object database. RefExists must catch this and the lookup must drop
+// the bad snapshot rather than passing a non-resolvable SHA to
+// `git rebase --onto`.
+//
+// Strategy: build an orphan commit so it's a real object, capture its SHA,
+// then expire the reflog and run aggressive GC to delete it. This is the
+// closest we can get to "force-push deleted the SHA from origin then origin
+// pruned it" without spinning up two repos.
+func TestLookupPreSyncSHA_GracefullyHandlesGarbageCollectedSnapshot(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	parentPath := filepath.Join(worktreeBaseDir, "parent")
+	mgr.CreateBranch("parent", "main", parentPath, "")
+	mgr, _ = NewManager(repoDir)
+	os.WriteFile(filepath.Join(parentPath, "p.txt"), []byte("p1\n"), 0644)
+	exec.Command("git", "-C", parentPath, "add", ".").Run()
+	exec.Command("git", "-C", parentPath, "commit", "-m", "p1").Run()
+	parentLiveHead, _ := mgr.git.GetBranchCommit("parent")
+
+	// Create a real commit, capture its SHA, then make it unreachable and GC it.
+	exec.Command("git", "-C", repoDir, "checkout", "-b", "doomed").Run()
+	os.WriteFile(filepath.Join(repoDir, "doomed.txt"), []byte("will be GC'd\n"), 0644)
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "doomed").Run()
+	doomedOut, _ := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	doomedSHA := strings.TrimSpace(string(doomedOut))
+
+	// Make the commit unreachable: switch away, delete the branch, expire
+	// the reflog, run aggressive GC. After this `git cat-file -e` should fail.
+	exec.Command("git", "-C", repoDir, "checkout", "main").Run()
+	exec.Command("git", "-C", repoDir, "branch", "-D", "doomed").Run()
+	exec.Command("git", "-C", repoDir, "reflog", "expire", "--expire=now", "--all").Run()
+	if err := exec.Command("git", "-C", repoDir, "gc", "--prune=now", "--aggressive").Run(); err != nil {
+		t.Fatalf("gc --prune=now: %v", err)
+	}
+	// Confirm the SHA is actually gone before we depend on it for the test.
+	if exec.Command("git", "-C", repoDir, "cat-file", "-e", doomedSHA).Run() == nil {
+		t.Skipf("git did not garbage-collect %s on this platform; skipping", doomedSHA)
+	}
+
+	// Plant the GC'd SHA as parent's PreSyncCommit and run the lookup.
+	mgr, _ = NewManager(repoDir)
+	bc := &config.BranchCache{PreSyncCommit: doomedSHA}
+	mgr.stackConfig.Cache.SetBranchCache("parent", bc)
+
+	got := mgr.lookupPreSyncSHA("parent", "")
+	if got == doomedSHA {
+		t.Errorf("lookupPreSyncSHA returned a GC'd SHA %q; passing it to `git rebase --onto` would error or silently misbehave", doomedSHA)
+	}
+	if got != parentLiveHead {
+		t.Errorf("expected fallback to parent's live HEAD %q; got %q", parentLiveHead, got)
+	}
+	if bc2 := mgr.stackConfig.Cache.GetBranchCache("parent"); bc2 == nil || bc2.PreSyncCommit != "" {
+		t.Errorf("GC'd snapshot should be cleared from cache after lookup; got bc=%+v", bc2)
+	}
+}
+
+// TestSnapshotStillNeededByDescendant_PreservesOnAncestorError covers the
+// production-readiness fix for #2: a transient `IsAncestor` failure (e.g. a
+// partial-clone fetch error, a flaky filesystem) must NOT cause us to
+// overwrite a snapshot that may still be load-bearing. The test plants a
+// descendant whose name doesn't resolve as a git ref so IsAncestor returns
+// an error; the helper must conservatively return true.
+func TestSnapshotStillNeededByDescendant_PreservesOnAncestorError(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	parentPath := filepath.Join(worktreeBaseDir, "parent")
+	mgr.CreateBranch("parent", "main", parentPath, "")
+	mgr, _ = NewManager(repoDir)
+
+	// Add a child to the stack tree, then delete its underlying git ref
+	// so IsAncestor(<sha>, <childName>) errors out. The cache entry stays
+	// so GetDescendants still returns the child.
+	childPath := filepath.Join(worktreeBaseDir, "phantom")
+	mgr.CreateBranch("phantom", "parent", childPath, "")
+	mgr, _ = NewManager(repoDir)
+
+	// Force the worktree+branch removed but keep cache pointing at it.
+	exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", childPath).Run()
+	exec.Command("git", "-C", repoDir, "branch", "-D", "phantom").Run()
+
+	// Snapshot some real SHA on parent. We're testing the error path of
+	// the *check*, not the validity of the SHA itself.
+	parentHead, _ := mgr.git.GetBranchCommit("parent")
+	if parentHead == "" {
+		t.Fatal("parent HEAD lookup failed")
+	}
+
+	// IsAncestor(parentHead, "phantom") errors because "phantom" no longer
+	// resolves. The helper must conservatively return true (preserve).
+	if !mgr.snapshotStillNeededByDescendant("parent", parentHead) {
+		t.Errorf("snapshotStillNeededByDescendant must return true on transient IsAncestor error to avoid dropping a still-needed snapshot")
+	}
+}

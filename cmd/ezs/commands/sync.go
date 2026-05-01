@@ -983,10 +983,16 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 // continueScope captures the user-requested scope for `ezs sync --continue`.
 // Mirrors the dispatch shape of non-continue sync (-a / -s / -c / -b /
 // positional hash) so `--continue` honors the same selectors.
+//
+// `defaulted` is true when no scope flag was provided and the resolver picked
+// a default — used to print one explanatory line so the user isn't surprised
+// when, e.g., running `ezs sync --continue` from main implicitly touches every
+// stack with an in-progress rebase.
 type continueScope struct {
 	mode       continueMode
 	stack      *config.Stack
 	branchName string
+	defaulted  bool
 }
 
 type continueMode int
@@ -1000,9 +1006,10 @@ const (
 
 // ErrSyncIncomplete signals that `ezs sync --continue` finished but some
 // branches are still mid-conflict, or a re-synced child hit a new conflict.
-// The top-level error printer presents this as a warning rather than a stack
-// trace, but a non-zero exit still allows scripts to detect partial completion.
-var ErrSyncIncomplete = fmt.Errorf("sync continue incomplete: resolve remaining conflicts and re-run `ezs sync --continue`")
+// Wrapped as *ui.ExitError so main() exits with ExitConflict (3) rather than
+// the generic ExitGeneral (1), letting scripts distinguish "still in conflict —
+// re-run after resolving" from any other failure mode.
+var ErrSyncIncomplete = ui.NewExitError(ui.ExitConflict, "sync continue incomplete: resolve remaining conflicts and re-run `ezs sync --continue`")
 
 // resolveContinueScope mirrors the scope-flag dispatch used by non-continue
 // sync (lines reading -a / -s / -c / -b / positional hash). Defaults: in a
@@ -1061,9 +1068,9 @@ func resolveContinueScope(mgr *stack.Manager, posArgs []string, allFlag, stackFl
 	}
 	// Default: if in a stack, current stack only; else all.
 	if stk, _, err := mgr.GetCurrentStack(); err == nil {
-		return continueScope{mode: continueModeCurrentStack, stack: stk}, nil
+		return continueScope{mode: continueModeCurrentStack, stack: stk, defaulted: true}, nil
 	}
-	return continueScope{mode: continueModeAll}, nil
+	return continueScope{mode: continueModeAll, defaulted: true}, nil
 }
 
 // stacksInScope returns the stacks that --continue should consider, given a
@@ -1103,6 +1110,21 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 	if len(scopedStacks) == 0 {
 		ui.Info("No stacks in scope.")
 		return nil
+	}
+
+	// When the user gave no scope flag, surface the resolved default so the
+	// implicit blast radius of `--continue` (especially "all stacks" when run
+	// from main) isn't a surprise. Explicit selectors don't need this — the
+	// user already knows what they asked for.
+	if scope.defaulted {
+		switch scope.mode {
+		case continueModeAll:
+			ui.Info(fmt.Sprintf("--continue: no scope flag given, defaulting to all stacks (%d). Use -s/-c/-b/<hash> to scope.", len(scopedStacks)))
+		case continueModeCurrentStack:
+			if scope.stack != nil {
+				ui.Info(fmt.Sprintf("--continue: scoped to current stack %s. Use -a to include all stacks.", scope.stack.DisplayName()))
+			}
+		}
 	}
 
 	// Fetch so the descendant re-sync can pick up any commits that landed on
@@ -1296,8 +1318,16 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 		stoppedSubtrees := make(map[string]bool)
 		for _, child := range inScope {
 			// Skip if any ancestor in this subtree was already stopped.
+			// `seen` guards against a malformed tree producing a parent cycle —
+			// shouldn't happen in practice (validated on stack ops), but a
+			// blind walk would otherwise loop forever on corruption.
 			ancestorStopped := false
+			seen := make(map[string]bool)
 			for parent := child.Parent; parent != ""; {
+				if seen[parent] {
+					break
+				}
+				seen[parent] = true
 				if stoppedSubtrees[parent] {
 					ancestorStopped = true
 					break

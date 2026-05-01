@@ -6,8 +6,12 @@ import (
 )
 
 // EnableRerere ensures `rerere.enabled` and `rerere.autoupdate` are set on the
-// repository. Idempotent: it only writes when a setting is unset, so it does
-// not override a user's explicit `false` choice.
+// repository. Idempotent: it only writes when a setting is unset at the
+// repo-local scope, so a user who has explicitly set `rerere.enabled = false`
+// in this repo's config keeps that value untouched. A user who has set it to
+// `false` in their *global* config (~/.gitconfig) WILL be overridden here —
+// the repo-local true wins by git config precedence — which matches the
+// intent of opt-in scoped behaviour for ezstack-managed repos.
 //
 // rerere ("reuse recorded resolution") records the conflict-and-resolution
 // hunks the first time a conflict is resolved, then auto-applies that

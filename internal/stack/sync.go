@@ -215,10 +215,19 @@ func (m *Manager) snapshotPreSyncSHAs(branchNames []string) {
 // that descendant will replay only the descendant's own commits — exactly
 // what the snapshot exists for. When false, no descendant is anchored at
 // `sha`, so overwriting it loses no useful information.
+//
+// On a transient `IsAncestor` failure (e.g. a partial clone hitting a missing
+// pack, a flaky filesystem) we conservatively return true — overwriting a
+// snapshot that *might* still be load-bearing risks reintroducing the cascade
+// conflict bug Plan A fixes, so when in doubt, preserve.
 func (m *Manager) snapshotStillNeededByDescendant(parentName, sha string) bool {
 	for _, d := range m.GetDescendants(parentName) {
 		isAnc, err := m.git.IsAncestor(sha, d.Name)
-		if err == nil && isAnc {
+		if err != nil {
+			debugLog("snapshot-needed-ancestor-error", "parent", parentName, "descendant", d.Name, "sha", sha, "err", err.Error())
+			return true
+		}
+		if isAnc {
 			return true
 		}
 	}
@@ -484,8 +493,17 @@ func (m *Manager) lookupPreSyncSHA(parentName, descendantName string) string {
 			_ = m.stackConfig.Save(m.repoDir)
 		} else if descendantName != "" {
 			// Validate the snapshot is still on the descendant's history.
+			// Treat a transient IsAncestor failure (network on a partial
+			// clone, FS hiccup) as "trust the snapshot" rather than
+			// fall back to live HEAD: a snapshot we recorded ourselves
+			// is more likely to be correct than a guess that loses the
+			// cascade-fix property when the parent has been rewritten.
 			isAnc, err := m.git.IsAncestor(bc.PreSyncCommit, descendantName)
-			if err == nil && isAnc {
+			if err != nil {
+				debugLog("lookup-snapshot-ancestor-error", "parent", parentName, "descendant", descendantName, "sha", bc.PreSyncCommit, "err", err.Error())
+				return bc.PreSyncCommit
+			}
+			if isAnc {
 				debugLog("lookup-snapshot-hit", "parent", parentName, "descendant", descendantName, "sha", bc.PreSyncCommit)
 				return bc.PreSyncCommit
 			}

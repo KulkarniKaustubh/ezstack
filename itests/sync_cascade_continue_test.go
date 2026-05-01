@@ -387,4 +387,110 @@ func TestSyncItest_ContinueExitsNonZeroOnPartial(t *testing.T) {
 	if !strings.Contains(err.Error(), "incomplete") {
 		t.Errorf("error should be ErrSyncIncomplete (mentions 'incomplete'); got: %v", err)
 	}
+
+	// Production-safety property: a partial `--continue` must NOT push the
+	// in-conflict descendant. b's rebase paused on a fresh conflict; if its
+	// half-rebased state were force-pushed, the bad state would land on
+	// origin and a teammate's clone would inherit it.
+	out, _ := exec.Command("git", "-C", env.RepoDir, "ls-remote", "origin", "refs/heads/b").Output()
+	if strings.TrimSpace(string(out)) != "" {
+		t.Errorf("origin/b must not exist after a partial --continue (b never finished its rebase). got: %q", string(out))
+	}
+}
+
+// TestSyncItest_ContinueExitsWithExitConflictCode verifies the exit code
+// surfaced for a partial `--continue` is ExitConflict (3), not the generic
+// ExitGeneral (1). Scripts wrapping ezstack rely on this distinction to
+// decide whether to retry vs. surface a hard failure.
+func TestSyncItest_ContinueExitsWithExitConflictCode(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+	withYesMode(t)
+
+	os.WriteFile(filepath.Join(env.RepoDir, "shared.txt"), []byte("seed\n"), 0644)
+	exec.Command("git", "-C", env.RepoDir, "add", ".").Run()
+	exec.Command("git", "-C", env.RepoDir, "commit", "-m", "seed").Run()
+	initBareRemote(t, env)
+
+	// One branch with a conflicting edit on shared.txt.
+	mgr, _ := stack.NewManager(env.RepoDir)
+	aPath := filepath.Join(env.WorktreeDir, "a")
+	mgr.CreateBranch("a", "main", aPath, "")
+	aPath, _ = filepath.EvalSymlinks(aPath)
+	os.WriteFile(filepath.Join(aPath, "shared.txt"), []byte("a-FEAT\n"), 0644)
+	exec.Command("git", "-C", aPath, "add", ".").Run()
+	exec.Command("git", "-C", aPath, "commit", "-m", "a1").Run()
+
+	os.WriteFile(filepath.Join(env.RepoDir, "shared.txt"), []byte("MAIN\n"), 0644)
+	exec.Command("git", "-C", env.RepoDir, "add", ".").Run()
+	exec.Command("git", "-C", env.RepoDir, "commit", "-m", "main").Run()
+	exec.Command("git", "-C", env.RepoDir, "push", "origin", "main").Run()
+
+	chdirOrFail(t, aPath)
+	t.Cleanup(func() { abortRebaseQuiet(aPath) })
+	_ = commands.Sync([]string{"-s"})
+
+	// Don't resolve. --continue should report still-in-conflict and surface
+	// ErrSyncIncomplete (which must be a *ui.ExitError with ExitConflict).
+	err := commands.Sync([]string{"-s", "--continue"})
+	if err == nil {
+		t.Fatal("expected --continue with unresolved conflict to error")
+	}
+	if got := ui.GetExitCode(err); got != ui.ExitConflict {
+		t.Errorf("partial --continue must exit %d (ExitConflict); got %d", ui.ExitConflict, got)
+	}
+}
+
+// TestSyncItest_ContinueSurvivesFetchFailure verifies that --continue
+// gracefully degrades when the pre-descendant fetch fails (e.g. the user's
+// network dropped, or origin is temporarily unreachable). The local
+// `git rebase --continue` for the in-progress branch must still complete;
+// only the descendant re-sync's freshness suffers.
+func TestSyncItest_ContinueSurvivesFetchFailure(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+	withYesMode(t)
+
+	os.WriteFile(filepath.Join(env.RepoDir, "shared.txt"), []byte("seed\n"), 0644)
+	exec.Command("git", "-C", env.RepoDir, "add", ".").Run()
+	exec.Command("git", "-C", env.RepoDir, "commit", "-m", "seed").Run()
+	bareDir := initBareRemote(t, env)
+
+	mgr, _ := stack.NewManager(env.RepoDir)
+	aPath := filepath.Join(env.WorktreeDir, "a")
+	mgr.CreateBranch("a", "main", aPath, "")
+	aPath, _ = filepath.EvalSymlinks(aPath)
+	os.WriteFile(filepath.Join(aPath, "shared.txt"), []byte("a-FEAT\n"), 0644)
+	exec.Command("git", "-C", aPath, "add", ".").Run()
+	exec.Command("git", "-C", aPath, "commit", "-m", "a1").Run()
+
+	os.WriteFile(filepath.Join(env.RepoDir, "shared.txt"), []byte("MAIN\n"), 0644)
+	exec.Command("git", "-C", env.RepoDir, "add", ".").Run()
+	exec.Command("git", "-C", env.RepoDir, "commit", "-m", "main").Run()
+	exec.Command("git", "-C", env.RepoDir, "push", "origin", "main").Run()
+
+	chdirOrFail(t, aPath)
+	t.Cleanup(func() { abortRebaseQuiet(aPath) })
+	_ = commands.Sync([]string{"-s"})
+
+	// Resolve a's conflict so --continue's git rebase --continue can complete.
+	os.WriteFile(filepath.Join(aPath, "shared.txt"), []byte("a-RESOLVED\n"), 0644)
+	exec.Command("git", "-C", aPath, "add", ".").Run()
+
+	// Make origin unreachable: rename the bare repo. The Fetch() at the top
+	// of syncContinue will fail; the code must warn and proceed, not crash
+	// or short-circuit before completing the rebase.
+	moved := bareDir + ".moved"
+	if err := os.Rename(bareDir, moved); err != nil {
+		t.Fatalf("rename bare to simulate fetch failure: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Rename(moved, bareDir) })
+
+	if err := commands.Sync([]string{"-s", "--continue"}); err != nil {
+		t.Fatalf("--continue should succeed despite fetch failure (rebase --continue is local); got: %v", err)
+	}
+	aGit := git.New(aPath)
+	if ip, _ := aGit.IsRebaseInProgress(); ip {
+		t.Errorf("a's rebase should be complete after --continue even with fetch failure")
+	}
 }
