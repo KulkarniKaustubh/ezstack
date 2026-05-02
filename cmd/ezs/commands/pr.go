@@ -744,7 +744,15 @@ func prUpdate(args []string) error {
 	// OPEN forever and `ezs pr update` silently no-ops or pushes pointlessly.
 	// Issue #22: pr_update never re-queries GitHub on the no-push code path.
 	originalPRNumber := branch.PRNumber
-	if gh, ghErr := newGitHubClient(g); ghErr == nil {
+	gh, ghErr := newGitHubClient(g)
+	if ghErr != nil {
+		// Origin URL doesn't parse as a GitHub remote (or some other gh
+		// init failure). We can't verify cache state — warn explicitly so
+		// the user knows the merged/closed-PR refusal won't fire and the
+		// push proceeds against potentially-stale cache. Mirrors what
+		// `pr refresh` reports on the same failure mode.
+		ui.Warn(fmt.Sprintf("Could not verify PR state on GitHub: %v (using cache)", ghErr))
+	} else {
 		livePR, refreshErr := refreshPRStateFromGitHub(gh, getMainWorktreePath(g), branch)
 		switch {
 		case refreshErr != nil:
@@ -839,8 +847,9 @@ func prUpdate(args []string) error {
 
 	ui.Success(fmt.Sprintf("Updated PR #%d", branch.PRNumber))
 
-	// Also update PR base branch and stack descriptions
-	gh, ghErr := newGitHubClient(g)
+	// Reuse the gh client already constructed for the reconcile pass — we
+	// only need to update PR metadata when GitHub is reachable, and that
+	// determination was already made above.
 	if ghErr == nil {
 		updatePRMetadata(gh, currentStack, branch)
 	}
