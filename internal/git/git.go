@@ -263,6 +263,13 @@ func (g *Git) GetLastCommitMessage() (string, error) {
 	return g.run("log", "-1", "--format=%s")
 }
 
+// GetLastCommitMessageOf returns the message of the tip commit on a specific
+// branch ref. Companion to GetLastCommitMessage for callers like
+// `pr create --branch <other>` where HEAD is not the branch the PR is for.
+func (g *Git) GetLastCommitMessageOf(branch string) (string, error) {
+	return g.run("log", "-1", "--format=%s", branch)
+}
+
 // IsBranchMerged checks if a branch has been merged into target
 func (g *Git) IsBranchMerged(branch, target string) (bool, error) {
 	// Check if the branch commit is an ancestor of target

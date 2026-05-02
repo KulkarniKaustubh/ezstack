@@ -68,6 +68,14 @@ func PR(args []string) error {
 		return nil
 	}
 
+	// `pr unlink` is the only subcommand that's purely local — it edits
+	// stacks.json and doesn't touch GitHub. Dispatch it before the auth
+	// gate so users whose gh login has expired can still recover from a
+	// stale cache without re-authenticating first.
+	if len(args) > 0 && args[0] == "unlink" {
+		return prUnlink(args[1:])
+	}
+
 	if err := github.CheckAuth(); err != nil {
 		return ui.NewExitError(ui.ExitAuthRequired, "%v", err)
 	}
@@ -88,8 +96,6 @@ func PR(args []string) error {
 		return prDraft(args[1:])
 	case "stack":
 		return prStack(args[1:])
-	case "unlink":
-		return prUnlink(args[1:])
 	case "refresh":
 		return prRefresh(args[1:])
 	default:
@@ -552,7 +558,10 @@ func prCreate(args []string) error {
 
 	isDraft := *draft
 	if !isDraft {
-		commitMsg, err := g.GetLastCommitMessage()
+		// Inspect the target branch's tip rather than HEAD — when --branch
+		// <other> is passed, HEAD may be on a different (possibly unrelated)
+		// branch and its WIP-ness shouldn't influence the PR being created.
+		commitMsg, err := g.GetLastCommitMessageOf(branch.Name)
 		isWipCommit := err == nil && startsWithWIP(commitMsg)
 
 		// Ask user to choose PR type
@@ -590,6 +599,11 @@ func prCreate(args []string) error {
 	}
 
 	ui.Info("Pushing branch to remote...")
+	// Always use the branch-explicit push helpers: when --branch <other> is
+	// passed, branch.Name is not the current checkout, so PushForce/Push/
+	// PushSetUpstream (all of which use g.CurrentBranch internally) would
+	// silently push the wrong branch and then create a PR pointing at code
+	// that doesn't match.
 	if hasDiverged || remoteBehind > 0 {
 		// Remote branch exists with different commits - need force push
 		if hasDiverged {
@@ -601,17 +615,17 @@ func prCreate(args []string) error {
 			ui.Warn("Cancelled - cannot create PR without pushing")
 			return nil
 		}
-		if err := g.PushForce(branch.EffectiveRemote()); err != nil {
+		if err := g.PushBranch(branch.Name, true, branch.EffectiveRemote()); err != nil {
 			return fmt.Errorf("failed to force push: %w", err)
 		}
 	} else if g.RemoteBranchExists(branch.Name) {
 		// Remote exists and local is ahead or in sync - regular push should work
-		if err := g.Push(false, branch.EffectiveRemote()); err != nil {
+		if err := g.PushBranch(branch.Name, false, branch.EffectiveRemote()); err != nil {
 			return fmt.Errorf("failed to push: %w", err)
 		}
 	} else {
 		// Remote doesn't exist - set upstream
-		if err := g.PushSetUpstream(branch.EffectiveRemote()); err != nil {
+		if err := g.PushBranchSetUpstream(branch.Name, branch.EffectiveRemote()); err != nil {
 			return fmt.Errorf("failed to push: %w", err)
 		}
 	}

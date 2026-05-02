@@ -149,6 +149,51 @@ func TestGetLastCommitMessage(t *testing.T) {
 	}
 }
 
+func TestGetLastCommitMessageOf(t *testing.T) {
+	// Verifies that GetLastCommitMessageOf inspects the named branch's tip
+	// rather than HEAD — required by `pr create --branch <other>` so the
+	// WIP-detection heuristic looks at the branch the PR is for, not at
+	// whatever is currently checked out.
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+	mainBranch, _ := g.CurrentBranch()
+
+	// Anchor commit on main so the branch ref exists somewhere.
+	mainFile := filepath.Join(dir, "main.txt")
+	os.WriteFile(mainFile, []byte("main"), 0644)
+	exec.Command("git", "-C", dir, "add", ".").Run()
+	exec.Command("git", "-C", dir, "commit", "-m", "main: initial").Run()
+
+	// Create a feature branch with a distinct commit, then leave HEAD on main.
+	exec.Command("git", "-C", dir, "checkout", "-b", "feature").Run()
+	featureFile := filepath.Join(dir, "feature.txt")
+	os.WriteFile(featureFile, []byte("feature"), 0644)
+	exec.Command("git", "-C", dir, "add", ".").Run()
+	exec.Command("git", "-C", dir, "commit", "-m", "wip: in progress on feature").Run()
+	exec.Command("git", "-C", dir, "checkout", mainBranch).Run()
+
+	// HEAD is on main; querying feature must return feature's tip message.
+	msg, err := g.GetLastCommitMessageOf("feature")
+	if err != nil {
+		t.Fatalf("GetLastCommitMessageOf(feature) error = %v", err)
+	}
+	if msg != "wip: in progress on feature" {
+		t.Errorf("GetLastCommitMessageOf(feature) = %q, want %q", msg, "wip: in progress on feature")
+	}
+
+	// And HEAD's branch should still report main's message — sanity check
+	// that we didn't accidentally change the side-effect-free helper.
+	headMsg, err := g.GetLastCommitMessage()
+	if err != nil {
+		t.Fatalf("GetLastCommitMessage() error = %v", err)
+	}
+	if headMsg != "main: initial" {
+		t.Errorf("GetLastCommitMessage() = %q, want main's tip", headMsg)
+	}
+}
+
 func TestGetBranchCommit(t *testing.T) {
 	dir, cleanup := setupTestRepo(t)
 	defer cleanup()
