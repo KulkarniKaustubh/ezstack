@@ -44,7 +44,14 @@ func (m *Manager) resolveBranchWorktree(branch *config.Branch) string {
 			return ""
 		}
 		// Heal config so future sync calls and persisted state reflect reality.
+		// Persist immediately: an in-memory-only heal is lost when the process
+		// exits, so the next `ezs sync` re-discovers the same drift and any
+		// caller that opens a fresh Manager (e.g. RebaseChildren's recursion)
+		// won't see it. A best-effort save keeps the heal sticky.
 		branch.WorktreePath = wt.Path
+		if err := m.stackConfig.Save(m.repoDir); err != nil {
+			fmt.Fprintf(os.Stderr, "  Warning: failed to persist healed worktree path for %s: %v\n", branch.Name, err)
+		}
 		return wt.Path
 	}
 	return ""
@@ -1766,15 +1773,21 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 	}
 
 	for _, child := range children {
-		useCheckout := child.WorktreePath == ""
+		// Heal config drift the same way SyncBranch and syncStackInternal do:
+		// when ezstack config has WorktreePath="" but git has a real worktree,
+		// fall through to the worktree path instead of `syncViaCheckout`. The
+		// checkout path would otherwise fail with "branch is already used by
+		// worktree at …" when it tries to check the branch out in the main repo.
+		worktreePath := m.resolveBranchWorktree(child)
+		useCheckout := worktreePath == ""
 		var g *git.Git
 		if useCheckout {
 			g = m.git
 		} else {
-			g = git.New(child.WorktreePath)
+			g = git.New(worktreePath)
 		}
 
-		workDir := child.WorktreePath
+		workDir := worktreePath
 		if workDir == "" {
 			workDir = m.repoDir
 		}
@@ -1850,16 +1863,19 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 			results = append(results, result)
 		}
 
-		// Recursively sync this child's children
+		// Recursively sync this child's children. Use the locally-resolved
+		// worktreePath (not child.WorktreePath) so a drift heal performed
+		// above propagates here without depending on the cache mutation
+		// having been observed back via the *config.Branch pointer.
 		var childResults []RebaseResult
-		if child.WorktreePath != "" {
-			childMgr, err := NewManager(child.WorktreePath)
+		if worktreePath != "" {
+			childMgr, err := NewManager(worktreePath)
 			if err != nil {
 				result := RebaseResult{
 					Branch:       child.Name,
-					WorktreePath: child.WorktreePath,
+					WorktreePath: worktreePath,
 					Remote:       child.Remote,
-					Error:        fmt.Errorf("failed to open manager for %s: %w", child.WorktreePath, err),
+					Error:        fmt.Errorf("failed to open manager for %s: %w", worktreePath, err),
 				}
 				results = append(results, result)
 				return results, nil

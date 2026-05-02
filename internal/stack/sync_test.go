@@ -1893,3 +1893,79 @@ func TestSyncBranch_SnapshotTakenBeforeFastForward(t *testing.T) {
 		t.Errorf("collab.txt missing in b's worktree — FF + cascade fix didn't propagate: %v", err)
 	}
 }
+
+// TestRebaseChildren_HealsConfigDriftWithRealWorktree exercises the case where
+// ezstack config has a child branch with WorktreePath="" but git actually has a
+// dedicated worktree for it (drift). Previously RebaseChildren took the
+// checkout-based path and `git checkout child` failed in the main repo with
+// "branch is already used by worktree at …", so the rebase silently aborted.
+// After the fix, RebaseChildren consults `resolveBranchWorktree`, finds the
+// real worktree, and rebases there — restoring parity with SyncBranch and
+// syncStackInternal which already healed this drift.
+func TestRebaseChildren_HealsConfigDriftWithRealWorktree(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	// parent worktree
+	mgr, _ := NewManager(repoDir)
+	parentPath := filepath.Join(worktreeBaseDir, "p")
+	if _, err := mgr.CreateBranch("p", "main", parentPath, ""); err != nil {
+		t.Fatalf("CreateBranch p: %v", err)
+	}
+	mgr, _ = NewManager(repoDir)
+
+	// child worktree with one commit ahead of parent
+	childPath := filepath.Join(worktreeBaseDir, "c")
+	if _, err := mgr.CreateBranch("c", "p", childPath, ""); err != nil {
+		t.Fatalf("CreateBranch c: %v", err)
+	}
+	os.WriteFile(filepath.Join(childPath, "child.txt"), []byte("c1\n"), 0644)
+	exec.Command("git", "-C", childPath, "add", ".").Run()
+	exec.Command("git", "-C", childPath, "commit", "-m", "c1").Run()
+
+	// Add a commit on parent so RebaseChildren has work to do.
+	os.WriteFile(filepath.Join(parentPath, "p.txt"), []byte("p1\n"), 0644)
+	exec.Command("git", "-C", parentPath, "add", ".").Run()
+	exec.Command("git", "-C", parentPath, "commit", "-m", "p1").Run()
+
+	// Simulate config drift: clear the child's WorktreePath in cache and
+	// persist, so a fresh Manager loads with the drift in place.
+	mgr, _ = NewManager(repoDir)
+	cache := mgr.stackConfig.Cache
+	bc := cache.GetBranchCache("c")
+	if bc == nil {
+		t.Fatal("c has no cache entry")
+	}
+	bc.WorktreePath = ""
+	cache.SetBranchCache("c", bc)
+	if err := mgr.stackConfig.Save(repoDir); err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	// Open from the parent worktree so GetCurrentStack/RebaseChildren
+	// operate from p's perspective.
+	mgr, _ = NewManager(parentPath)
+	if mgr.GetBranch("c") == nil || mgr.GetBranch("c").WorktreePath != "" {
+		t.Fatalf("test setup: expected c.WorktreePath empty in fresh manager, got %+v", mgr.GetBranch("c"))
+	}
+
+	results, err := mgr.RebaseChildren()
+	if err != nil {
+		t.Fatalf("RebaseChildren: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d: %+v", len(results), results)
+	}
+	r := results[0]
+	if !r.Success {
+		t.Fatalf("RebaseChildren on drifted child failed: branch=%s err=%v conflict=%v", r.Branch, r.Error, r.HasConflict)
+	}
+	if r.WorktreePath == repoDir {
+		t.Errorf("RebaseChildren used main-repo dir for c (drift not healed); got WorktreePath=%q", r.WorktreePath)
+	}
+
+	// Parent's commit must now be on c.
+	if _, err := os.Stat(filepath.Join(childPath, "p.txt")); err != nil {
+		t.Errorf("p.txt missing in c's worktree after RebaseChildren — rebase didn't apply: %v", err)
+	}
+}
