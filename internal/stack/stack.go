@@ -13,12 +13,14 @@ import (
 
 // Manager handles stack operations
 type Manager struct {
-	git         *git.Git
-	config      *config.Config
-	repoConfig  *config.RepoConfig
-	stackConfig *config.StackConfig
-	repoDir     string
-	fetched     bool
+	git            *git.Git
+	config         *config.Config
+	repoConfig     *config.RepoConfig
+	stackConfig    *config.StackConfig
+	repoDir        string
+	fetched        bool
+	fetchedRemotes map[string]bool // per-remote fetch dedupe (separate from origin's `fetched`)
+	rerereEnabled  bool            // whether ensureRerereEnabled has run for this Manager
 }
 
 // Fetch runs git fetch once per Manager lifetime. Subsequent calls are no-ops.
@@ -30,6 +32,47 @@ func (m *Manager) Fetch() error {
 		return fmt.Errorf("failed to fetch: %w", err)
 	}
 	m.fetched = true
+	return nil
+}
+
+// ensureRerereEnabled wires `rerere.enabled` and `rerere.autoupdate` into
+// the repo's local git config at most once per Manager lifetime. The
+// underlying `git.EnableRerere` is itself idempotent and respects an
+// explicit user `false`, but it forks two `git config` processes per call;
+// caching here avoids repeating that on every sync entry point
+// (syncStackInternal, SyncBranch, RebaseChildren, etc.).
+//
+// Best-effort: errors from the underlying git config writes are
+// intentionally swallowed because rerere is a safety-net optimization,
+// not a correctness requirement — sync proceeds either way.
+func (m *Manager) ensureRerereEnabled() {
+	if m.rerereEnabled {
+		return
+	}
+	_ = git.EnableRerere(m.repoDir)
+	m.rerereEnabled = true
+}
+
+// FetchRemote fetches a specific named remote (e.g. a fork) once per Manager
+// lifetime. Used by integrateRemoteForBranch when a branch's configured
+// remote isn't `origin` — `Fetch()` only handles origin to avoid hanging on
+// unreachable remotes by default. Best-effort: failures are returned but the
+// caller typically logs and proceeds, since a stale ref is better than a
+// failed sync.
+func (m *Manager) FetchRemote(remote string) error {
+	if remote == "" || remote == "origin" {
+		return m.Fetch()
+	}
+	if m.fetchedRemotes == nil {
+		m.fetchedRemotes = map[string]bool{}
+	}
+	if m.fetchedRemotes[remote] {
+		return nil
+	}
+	if err := m.git.FetchRemote(remote); err != nil {
+		return fmt.Errorf("failed to fetch %s: %w", remote, err)
+	}
+	m.fetchedRemotes[remote] = true
 	return nil
 }
 
@@ -403,18 +446,42 @@ func (m *Manager) FindStackForBranch(branchName string) *config.Stack {
 	return nil
 }
 
-// GetCurrentStack returns the stack for the current branch
+// GetCurrentStack returns the stack for the current branch.
+// Falls back to .git/rebase-merge/head-name (or rebase-apply/head-name) when
+// HEAD is detached due to an in-progress rebase, so that
+// `ezs sync -s --continue` (which resolves the "current stack" from inside a
+// conflicted worktree) finds the right stack even though the rebase has
+// detached HEAD. Only rebase needs this fallback — `git merge` keeps HEAD on
+// the branch ref even mid-conflict, so CurrentBranch already returns a usable
+// name during a merge in progress.
 func (m *Manager) GetCurrentStack() (*config.Stack, *config.Branch, error) {
 	currentBranch, err := m.git.CurrentBranch()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	for _, stack := range m.stackConfig.Stacks {
-		for _, branch := range stack.Branches {
-			if branch.Name == currentBranch {
-				return stack, branch, nil
+	lookup := func(name string) (*config.Stack, *config.Branch, bool) {
+		for _, stack := range m.stackConfig.Stacks {
+			for _, branch := range stack.Branches {
+				if branch.Name == name {
+					return stack, branch, true
+				}
 			}
+		}
+		return nil, nil, false
+	}
+
+	if currentBranch != "HEAD" {
+		if s, b, ok := lookup(currentBranch); ok {
+			return s, b, nil
+		}
+	}
+	// Detached HEAD or branch not tracked — try the rebase head-name as a
+	// fallback. During `git rebase`, HEAD is detached but the original branch
+	// name is recorded in rebase-state files.
+	if rebaseBranch := m.git.BranchFromRebaseState(); rebaseBranch != "" {
+		if s, b, ok := lookup(rebaseBranch); ok {
+			return s, b, nil
 		}
 	}
 	return nil, nil, fmt.Errorf("current branch %s is not part of any stack", currentBranch)
@@ -458,6 +525,43 @@ func (m *Manager) GetChildren(branchName string) []*config.Branch {
 		}
 	}
 	return children
+}
+
+// GetDescendants returns every transitive descendant of branchName across all
+// stacks, in topological order (parents before children). Used by `ezs sync
+// --continue` to re-sync the entire subtree after a parent's rebase completes,
+// not just the immediate children.
+func (m *Manager) GetDescendants(branchName string) []*config.Branch {
+	visited := make(map[string]bool)
+	var out []*config.Branch
+	var walk func(name string)
+	walk = func(name string) {
+		for _, child := range m.GetChildren(name) {
+			if visited[child.Name] {
+				continue
+			}
+			visited[child.Name] = true
+			out = append(out, child)
+			walk(child.Name)
+		}
+	}
+	walk(branchName)
+	return out
+}
+
+// SetBranchRemote updates the cached `Remote` for a branch and persists.
+// Used by tests (and could be wired into a future `ezs config set
+// branch-remote` flag) to point ezstack at a fork remote when push/pull
+// should target somewhere other than `origin`. Returns nil on success.
+func (m *Manager) SetBranchRemote(branchName, remote string) error {
+	cache := m.stackConfig.Cache
+	bc := cache.GetBranchCache(branchName)
+	if bc == nil {
+		bc = &config.BranchCache{}
+	}
+	bc.Remote = remote
+	cache.SetBranchCache(branchName, bc)
+	return m.stackConfig.Save(m.repoDir)
 }
 
 // GetTreeChildren returns child branches based on the original tree structure (BaseBranch),
