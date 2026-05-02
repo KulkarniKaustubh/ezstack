@@ -364,7 +364,11 @@ func (m *Manager) cleanupStalePreSyncSHAs() {
 				debugLog("snapshot-cleanup-age-preserve", "branch", name, "sha", bc.PreSyncCommit, "reason", "descendant-still-anchored")
 				continue
 			}
-			debugLog("snapshot-cleanup-age", "branch", name, "sha", bc.PreSyncCommit, "age_days", fmt.Sprintf("%.1f", now.Sub(time.Unix(bc.PreSyncCommitAt, 0)).Hours()/24))
+			ageStr := "no-timestamp"
+			if bc.PreSyncCommitAt != 0 {
+				ageStr = fmt.Sprintf("%.1f", now.Sub(time.Unix(bc.PreSyncCommitAt, 0)).Hours()/24)
+			}
+			debugLog("snapshot-cleanup-age", "branch", name, "sha", bc.PreSyncCommit, "age_days", ageStr)
 			bc.PreSyncCommit = ""
 			bc.PreSyncCommitAt = 0
 			dirty = true
@@ -508,11 +512,16 @@ func (m *Manager) lookupPreSyncSHA(parentName, descendantName string) string {
 	if bc := m.stackConfig.Cache.GetBranchCache(parentName); bc != nil && bc.PreSyncCommit != "" {
 		if !m.git.RefExists(bc.PreSyncCommit) {
 			// Snapshot SHA is gone (GC, or manual repo surgery). Drop it
-			// so it doesn't get used in subsequent ops.
+			// so it doesn't get used in subsequent ops. Surface a save
+			// failure: if writes are persistently failing, the dead SHA
+			// stays in cache and every future lookup repeats the
+			// RefExists probe — silent dropping hides the problem.
 			debugLog("lookup-snapshot-stale-gone", "parent", parentName, "sha", bc.PreSyncCommit)
 			bc.PreSyncCommit = ""
 			bc.PreSyncCommitAt = 0
-			_ = m.stackConfig.Save(m.repoDir)
+			if err := m.stackConfig.Save(m.repoDir); err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to clear stale snapshot for %s: %v\n", parentName, err)
+			}
 		} else if descendantName != "" {
 			// Validate the snapshot is still on the descendant's history.
 			// Treat a transient IsAncestor failure (network on a partial
