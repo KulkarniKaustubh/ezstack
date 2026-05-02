@@ -943,3 +943,78 @@ func TestPushBranch_PushesNamedBranchNotCurrent(t *testing.T) {
 		t.Error("main was pushed to remote despite PushBranch being called with 'feature'; regression: push used CurrentBranch() instead of the named branch")
 	}
 }
+
+// TestPushBranchSetUpstream_PushesNamedBranchAndSetsUpstream is the upstream
+// counterpart to TestPushBranch_PushesNamedBranchNotCurrent. It locks in two
+// contract points required by `pr create --branch <other>`: (1) the push
+// targets the explicitly-named branch, not HEAD, and (2) -u actually sets
+// upstream tracking on the named branch. Without this regression coverage,
+// switching prCreate's first-push site from PushSetUpstream (current-branch
+// only) to PushBranchSetUpstream silently regresses if the helper goes back
+// to using CurrentBranch().
+func TestPushBranchSetUpstream_PushesNamedBranchAndSetsUpstream(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	// Create "feature" with a distinct commit, then leave HEAD on main.
+	if err := exec.Command("git", "-C", dir, "checkout", "-b", "feature").Run(); err != nil {
+		t.Fatalf("checkout -b feature: %v", err)
+	}
+	featureFile := filepath.Join(dir, "feature.txt")
+	if err := os.WriteFile(featureFile, []byte("feature-only\n"), 0644); err != nil {
+		t.Fatalf("write feature.txt: %v", err)
+	}
+	exec.Command("git", "-C", dir, "add", ".").Run()
+	exec.Command("git", "-C", dir, "commit", "-m", "feature commit").Run()
+	if err := exec.Command("git", "-C", dir, "checkout", "main").Run(); err != nil {
+		t.Fatalf("checkout main: %v", err)
+	}
+
+	// Bare remote.
+	bare, err := os.MkdirTemp("", "push-branch-upstream-remote-*")
+	if err != nil {
+		t.Fatalf("mkdtemp remote: %v", err)
+	}
+	defer os.RemoveAll(bare)
+	if err := exec.Command("git", "init", "--bare", "-b", "main", bare).Run(); err != nil {
+		t.Fatalf("init bare: %v", err)
+	}
+	if err := exec.Command("git", "-C", dir, "remote", "add", "origin", bare).Run(); err != nil {
+		t.Fatalf("add remote: %v", err)
+	}
+
+	g := New(dir)
+	if cur, _ := g.CurrentBranch(); cur != "main" {
+		t.Fatalf("test setup: expected HEAD on main, got %q", cur)
+	}
+
+	if err := g.PushBranchSetUpstream("feature", "origin"); err != nil {
+		t.Fatalf("PushBranchSetUpstream(feature): %v", err)
+	}
+
+	// 1. feature got pushed.
+	if out, err := exec.Command("git", "-C", bare, "rev-parse", "--verify", "refs/heads/feature").CombinedOutput(); err != nil {
+		t.Errorf("feature was not pushed: %v: %s", err, out)
+	}
+
+	// 2. main was NOT pushed (would catch a regression where the helper went
+	// back to using CurrentBranch).
+	if err := exec.Command("git", "-C", bare, "rev-parse", "--verify", "refs/heads/main").Run(); err == nil {
+		t.Error("main was pushed to remote despite PushBranchSetUpstream being called with 'feature'")
+	}
+
+	// 3. Upstream tracking was actually set on feature (the -u part). git
+	// stores this in branch.<name>.remote / branch.<name>.merge.
+	out, err := exec.Command("git", "-C", dir, "config", "--get", "branch.feature.remote").CombinedOutput()
+	if err != nil {
+		t.Errorf("upstream remote not configured for feature: %v: %s", err, out)
+	} else if got := strings.TrimSpace(string(out)); got != "origin" {
+		t.Errorf("branch.feature.remote = %q, want %q", got, "origin")
+	}
+	out, err = exec.Command("git", "-C", dir, "config", "--get", "branch.feature.merge").CombinedOutput()
+	if err != nil {
+		t.Errorf("upstream merge ref not configured for feature: %v: %s", err, out)
+	} else if got := strings.TrimSpace(string(out)); got != "refs/heads/feature" {
+		t.Errorf("branch.feature.merge = %q, want %q", got, "refs/heads/feature")
+	}
+}
