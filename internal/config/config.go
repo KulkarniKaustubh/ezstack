@@ -220,6 +220,17 @@ type BranchCache struct {
 	PreSyncCommitAt int64 `json:"pre_sync_commit_at,omitempty"`
 }
 
+// ClearPRFields zeroes the PR-association fields on this BranchCache while
+// preserving worktree, fork-remote, and is_remote metadata. Used by `ezs pr
+// unlink` and by recovery paths that detect a cached PR is no longer on
+// GitHub.
+func (bc *BranchCache) ClearPRFields() {
+	bc.PRNumber = 0
+	bc.PRUrl = ""
+	bc.PRState = ""
+	bc.IsMerged = false
+}
+
 // CacheConfig holds cached branch metadata for a repo
 type CacheConfig struct {
 	Branches map[string]*BranchCache `json:"branches"`
@@ -305,7 +316,14 @@ type legacyConfig struct {
 }
 
 // atomicWriteFile writes data to a file atomically by writing to a temp file
-// in the same directory and then renaming it.
+// in the same directory, fsyncing it, and then renaming over the destination.
+//
+// fsync before rename is what makes "atomic" actually durable: without it, a
+// crash between rename and the OS flushing dirty pages can leave the renamed
+// file with arbitrary contents (including the empty file the kernel exposes
+// when the inode metadata has hit disk but the data block hasn't). For
+// stacks.json this means one bad shutdown could surface as "stack vanished"
+// rather than "stack reverted to last good save".
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".ezstack-tmp-*")
@@ -320,6 +338,11 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		return err
 	}
 	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
 		tmp.Close()
 		os.Remove(tmpPath)
 		return err
@@ -1085,6 +1108,90 @@ func (cc *CacheConfig) SetBranchCache(branchName string, cache *BranchCache) {
 		cc.Branches = make(map[string]*BranchCache)
 	}
 	cc.Branches[branchName] = cache
+}
+
+// MutateBranchCache atomically loads, modifies, and saves a single branch's
+// cache entry under the stacks.json file lock. The mutator receives the
+// current entry (or nil if absent) and returns the next value (or nil to
+// delete the entry).
+//
+// Use this instead of LoadCacheConfig + SetBranchCache + Save when only a
+// few branches need updating: the load-modify-save pattern is racy across
+// processes because Save replaces the whole branches map with the in-memory
+// copy, which silently discards updates to other branches that landed
+// between the load and the save. MutateBranchCache loads inside the lock
+// and only ever rewrites the named branch (plus delete-on-nil), so peer
+// writes to other branches survive.
+//
+// A non-nil error returned by fn aborts the save. The pointer fn returns
+// may but need not alias the pointer it received — both work.
+func MutateBranchCache(repoDir, branchName string, fn func(current *BranchCache) (next *BranchCache, err error)) error {
+	configDir, err := ConfigDir()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return err
+	}
+	stackPath := filepath.Join(configDir, "stacks.json")
+
+	lock, lockErr := acquireFileLock(stackPath + ".lock")
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.release()
+
+	var file stackConfigFile
+	data, err := os.ReadFile(stackPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return fmt.Errorf("failed to read stacks.json: %w", err)
+		}
+	} else if len(data) > 0 {
+		if uErr := json.Unmarshal(data, &file); uErr != nil {
+			return fmt.Errorf("failed to parse stacks.json: %w", uErr)
+		}
+	}
+	if file.Repos == nil {
+		file.Repos = make(map[string]*repoData)
+	}
+
+	rd := file.Repos[repoDir]
+	if rd == nil {
+		rd = &repoData{Stacks: make(map[string]*Stack)}
+		file.Repos[repoDir] = rd
+	}
+	if rd.Branches == nil {
+		rd.Branches = make(map[string]*BranchCache)
+	}
+
+	current := rd.Branches[branchName]
+	next, mutErr := fn(current)
+	if mutErr != nil {
+		return mutErr
+	}
+
+	// "There was nothing, fn says still nothing" is a real no-op — used by
+	// clearPRFromCache against a branch with no cache entry. Skip the file
+	// rewrite so callers can call this freely without paying for I/O.
+	if next == nil && current == nil {
+		return nil
+	}
+
+	if next == nil {
+		delete(rd.Branches, branchName)
+	} else {
+		rd.Branches[branchName] = next
+	}
+
+	file.Version = currentStackConfigVersion
+
+	newData, err := json.MarshalIndent(file, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	return atomicWriteFile(stackPath, newData, 0644)
 }
 
 // Save writes the cache data back to the combined stacks.json file.

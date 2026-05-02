@@ -1417,7 +1417,9 @@ Subcommands:
     <span class="c-cmd">create</span>    <span class="c-dim">Create a new pull request</span>
     <span class="c-cmd">draft</span>     <span class="c-dim">Toggle PR between draft and ready</span>
     <span class="c-cmd">merge</span>     <span class="c-dim">Merge a pull request</span>
+    <span class="c-cmd">refresh</span>   <span class="c-dim">Reconcile cached PR state from GitHub</span>
     <span class="c-cmd">stack</span>     <span class="c-dim">Update all PR descriptions with stack info</span>
+    <span class="c-cmd">unlink</span>    <span class="c-dim">Clear cached PR association for a branch</span>
     <span class="c-cmd">update</span>    <span class="c-dim">Push changes and update PR metadata (base branch, descriptions)</span>
 
 Top-level <span class="c-str">flags:</span>
@@ -1425,13 +1427,24 @@ Top-level <span class="c-str">flags:</span>
                    <span class="c-cmd">doesn</span><span class="c-str">&#39;t already have one</span>
 </code></pre>
       <p><strong><code>--draft-all</code>.</strong> Walks every branch in the current stack and, for any branch that doesn't already have an associated PR, creates a new draft PR against its parent. Branches that already have a PR are left alone (use <code>ezs pr draft</code> to toggle an existing PR into draft state). This is the fastest way to seed a full stack of draft PRs for early-visibility review.</p>
+      <p><strong>Cache reconciliation.</strong> ezstack caches per-branch PR metadata (<code>pr_url</code>, <code>pr_state</code>, <code>is_merged</code>) in <code>~/.ezstack/stacks.json</code>. The <code>pr</code> subcommands keep that cache in sync with GitHub:</p>
+      <ul>
+      <li><code>pr create</code> queries GitHub before refusing to create. If the cached PR is in a terminal state (<code>MERGED</code> / <code>CLOSED</code>), a new PR is allowed silently. If the PR is still live on GitHub, <code>pr create</code> refuses unless <code>--force</code> (alias <code>--recreate</code>) is passed.</li>
+      <li><code>pr update</code> queries GitHub before pushing. If the PR has been merged or closed externally, it refuses to push and updates the cache.</li>
+      <li><code>pr refresh</code> and <code>pr unlink</code> are the explicit recovery primitives — useful when GitHub state has changed in ways ezstack didn't initiate.</li>
+      </ul>
       <h4 id="ezs-pr-create"><code>ezs pr create</code></h4>
       <pre><code>Options:
+    <span class="c-flag">-s,</span> <span class="c-flag">--stack</span>            <span class="c-dim">Create PRs for all branches in the current stack</span>
+    <span class="c-flag">--draft-all</span>            <span class="c-dim">Create draft PRs across the whole stack (implies --stack --draft)</span>
     <span class="c-flag">-t,</span> <span class="c-flag">--title</span> <span class="c-str">&lt;title&gt;</span>    <span class="c-dim">PR title (defaults to branch name)</span>
     <span class="c-flag">-b,</span> <span class="c-flag">--body</span> <span class="c-str">&lt;body&gt;</span>      <span class="c-dim">PR body/description</span>
     <span class="c-flag">-d,</span> <span class="c-flag">--draft</span>            <span class="c-dim">Create as draft PR</span>
     <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>        <span class="c-dim">Create PR for a specific branch (instead of current)</span>
+    <span class="c-flag">-f,</span> <span class="c-flag">--force</span>            <span class="c-dim">Create a new PR even if one already exists</span>
+                           (alias: <span class="c-flag">--recreate)</span>
 </code></pre>
+      <p><strong><code>--force</code>.</strong> Bypasses the existing-PR guard. When the cached PR has been merged or closed, this is a no-op (the cached terminal state already lets create proceed). When the cached PR is still live on GitHub, a warning is printed and a new PR is created — the existing PR stays open and GitHub may reject the new PR as a duplicate. <code>--force</code> does not prompt, so scripts can pass it without holding stdin open.</p>
       <h4 id="ezs-pr-draft"><code>ezs pr draft</code></h4>
       <p>Toggles the current branch's PR between draft and ready-for-review state.</p>
       <h4 id="ezs-pr-merge"><code>ezs pr merge</code></h4>
@@ -1440,10 +1453,28 @@ Top-level <span class="c-str">flags:</span>
     <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>            <span class="c-dim">Merge PR for a specific branch (instead of current)</span>
     <span class="c-flag">--no-delete-branch</span>         <span class="c-dim">Don&#39;t delete the remote branch after merge</span>
 </code></pre>
+      <h4 id="ezs-pr-refresh"><code>ezs pr refresh</code></h4>
+      <p>Queries GitHub for the current state of one or more PRs and updates the local cache. Use after PRs have been merged, closed, or re-targeted via the GitHub UI to bring <code>ezs ls</code> and other commands back in sync without pushing or recreating anything.</p>
+      <pre><code>Options:
+    <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>    <span class="c-dim">Refresh a specific branch (instead of current)</span>
+    <span class="c-flag">-s,</span> <span class="c-flag">--stack</span>        <span class="c-dim">Refresh every PR in the current stack (parallelized)</span>
+</code></pre>
       <h4 id="ezs-pr-stack"><code>ezs pr stack</code></h4>
       <p>Update all PR descriptions in the stack with navigation links.</p>
       <pre><code>Options:
     <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>    <span class="c-dim">Target a specific branch&#39;s stack (instead of current)</span>
+</code></pre>
+      <h4 id="ezs-pr-unlink"><code>ezs pr unlink</code></h4>
+      <p>Clears the cached PR association (<code>pr_url</code>, <code>pr_state</code>, <code>is_merged</code>) for one or more branches. Does not touch GitHub — the PR itself is unaffected. Use when the cached association has gone stale and you want <code>ezs pr create</code> to make a fresh PR for the branch.</p>
+      <pre><code>Options:
+    <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>    <span class="c-dim">Unlink a specific branch (instead of current)</span>
+    <span class="c-flag">--all</span>              <span class="c-dim">Unlink every branch in the current stack</span>
+    <span class="c-flag">-y,</span> <span class="c-flag">--yes</span>          <span class="c-dim">Skip the confirmation prompt</span>
+</code></pre>
+      <h4 id="ezs-pr-update"><code>ezs pr update</code></h4>
+      <p>Reconciles cached PR state from GitHub, then pushes code changes and updates the PR base branch and stack descriptions to match the current stack structure. If the PR has been merged or closed externally, refuses to push and reports the new state.</p>
+      <pre><code>Options:
+    <span class="c-flag">--branch</span> <span class="c-str">&lt;name&gt;</span>    <span class="c-dim">Update PR for a specific branch (instead of current)</span>
 </code></pre>
       <h3 id="ezs-push"><code>ezs push</code></h3>
       <p>Push current branch or entire stack to remote.</p>

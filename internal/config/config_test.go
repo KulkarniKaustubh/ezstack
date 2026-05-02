@@ -2,8 +2,11 @@ package config
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -973,5 +976,322 @@ func TestConfig_SyncStrategy_Persistence(t *testing.T) {
 	got = loaded.GetSyncStrategy("/other/repo")
 	if got != "rebase" {
 		t.Errorf("Unknown repo GetSyncStrategy() = %q, want %q", got, "rebase")
+	}
+}
+
+// setupTempConfig points EZSTACK_HOME at a fresh temp dir for the duration
+// of t. Returns a stable repo path suitable as a stacks.json key.
+func setupTempConfig(t *testing.T) string {
+	t.Helper()
+	t.Setenv("EZSTACK_HOME", t.TempDir())
+	return "/fake/repo"
+}
+
+func TestMutateBranchCache_CreatesEntry(t *testing.T) {
+	repo := setupTempConfig(t)
+	err := MutateBranchCache(repo, "feature", func(bc *BranchCache) (*BranchCache, error) {
+		if bc != nil {
+			t.Errorf("expected nil current, got %+v", bc)
+		}
+		return &BranchCache{PRUrl: "https://github.com/o/r/pull/1", PRState: "OPEN"}, nil
+	})
+	if err != nil {
+		t.Fatalf("mutate: %v", err)
+	}
+
+	cc, err := LoadCacheConfig(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bc := cc.GetBranchCache("feature")
+	if bc == nil || bc.PRUrl != "https://github.com/o/r/pull/1" || bc.PRState != "OPEN" {
+		t.Errorf("entry not persisted: %+v", bc)
+	}
+}
+
+func TestMutateBranchCache_UpdatesExistingEntry(t *testing.T) {
+	repo := setupTempConfig(t)
+	if err := MutateBranchCache(repo, "feature", func(bc *BranchCache) (*BranchCache, error) {
+		return &BranchCache{PRUrl: "u1", PRState: "OPEN"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := MutateBranchCache(repo, "feature", func(bc *BranchCache) (*BranchCache, error) {
+		if bc == nil || bc.PRState != "OPEN" {
+			t.Errorf("expected to receive existing entry, got %+v", bc)
+		}
+		bc.PRState = "MERGED"
+		bc.IsMerged = true
+		return bc, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cc, _ := LoadCacheConfig(repo)
+	bc := cc.GetBranchCache("feature")
+	if bc.PRState != "MERGED" || !bc.IsMerged || bc.PRUrl != "u1" {
+		t.Errorf("update lost fields: %+v", bc)
+	}
+}
+
+func TestMutateBranchCache_DeletesByReturningNil(t *testing.T) {
+	repo := setupTempConfig(t)
+	if err := MutateBranchCache(repo, "feature", func(bc *BranchCache) (*BranchCache, error) {
+		return &BranchCache{PRUrl: "u"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := MutateBranchCache(repo, "feature", func(bc *BranchCache) (*BranchCache, error) {
+		return nil, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cc, _ := LoadCacheConfig(repo)
+	if bc := cc.GetBranchCache("feature"); bc != nil {
+		t.Errorf("entry should have been deleted, still got: %+v", bc)
+	}
+}
+
+func TestMutateBranchCache_NilCurrentNilNext_DoesNotWriteFile(t *testing.T) {
+	// Calling MutateBranchCache against a missing branch with a closure
+	// that also returns nil is a real no-op (clearPRFromCache hits this
+	// path). It must not write the stacks.json file: doing so would create
+	// an empty file from nothing on every "no entry to clear" call.
+	repo := setupTempConfig(t)
+	configDir, _ := ConfigDir()
+	stackPath := filepath.Join(configDir, "stacks.json")
+
+	if _, err := os.Stat(stackPath); !os.IsNotExist(err) {
+		t.Fatalf("expected no stacks.json initially, got err=%v", err)
+	}
+
+	if err := MutateBranchCache(repo, "ghost", func(bc *BranchCache) (*BranchCache, error) {
+		return nil, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(stackPath); !os.IsNotExist(err) {
+		t.Errorf("stacks.json should not have been created for nil/nil mutate, but it exists")
+	}
+}
+
+func TestMutateBranchCache_FnErrorAbortsSave(t *testing.T) {
+	repo := setupTempConfig(t)
+	if err := MutateBranchCache(repo, "feature", func(bc *BranchCache) (*BranchCache, error) {
+		return &BranchCache{PRUrl: "original"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	wantErr := errors.New("intentional")
+	got := MutateBranchCache(repo, "feature", func(bc *BranchCache) (*BranchCache, error) {
+		bc.PRUrl = "modified"
+		return bc, wantErr
+	})
+	if !errors.Is(got, wantErr) {
+		t.Errorf("expected fn error to surface, got %v", got)
+	}
+
+	cc, _ := LoadCacheConfig(repo)
+	bc := cc.GetBranchCache("feature")
+	if bc == nil || bc.PRUrl != "original" {
+		t.Errorf("aborted save still mutated: %+v", bc)
+	}
+}
+
+func TestMutateBranchCache_PreservesOtherBranchesAcrossCalls(t *testing.T) {
+	// Sequential writes to different branches in the same repo must
+	// preserve each other's data — this is the in-process flavor of the
+	// concurrent test below and protects against the easy regression of
+	// a closure that overwrites the whole branches map.
+	repo := setupTempConfig(t)
+	if err := MutateBranchCache(repo, "alpha", func(bc *BranchCache) (*BranchCache, error) {
+		return &BranchCache{PRUrl: "alpha-url", PRState: "OPEN"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := MutateBranchCache(repo, "beta", func(bc *BranchCache) (*BranchCache, error) {
+		return &BranchCache{PRUrl: "beta-url", PRState: "MERGED"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := MutateBranchCache(repo, "alpha", func(bc *BranchCache) (*BranchCache, error) {
+		bc.PRState = "MERGED"
+		return bc, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cc, _ := LoadCacheConfig(repo)
+	a := cc.GetBranchCache("alpha")
+	b := cc.GetBranchCache("beta")
+	if a == nil || a.PRState != "MERGED" || a.PRUrl != "alpha-url" {
+		t.Errorf("alpha lost fields: %+v", a)
+	}
+	if b == nil || b.PRState != "MERGED" || b.PRUrl != "beta-url" {
+		t.Errorf("beta clobbered by later alpha mutate: %+v", b)
+	}
+}
+
+func TestMutateBranchCache_ConcurrentDifferentBranches_NoLostUpdates(t *testing.T) {
+	// The cross-process race fix: parallel goroutines writing to DIFFERENT
+	// branches must not clobber each other. With the old LoadCacheConfig +
+	// SetBranchCache + Save pattern, each Save replaced the whole branches
+	// map with the in-memory copy, so a writer that loaded before its peer
+	// would silently revert the peer's update.
+	repo := setupTempConfig(t)
+	const iters = 50
+	const workers = 4
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(wid int) {
+			defer wg.Done()
+			for i := 0; i < iters; i++ {
+				name := fmt.Sprintf("w%d-%d", wid, i)
+				url := fmt.Sprintf("https://github.com/o/r/pull/%d%d", wid, i)
+				err := MutateBranchCache(repo, name, func(bc *BranchCache) (*BranchCache, error) {
+					return &BranchCache{PRUrl: url, PRState: "OPEN"}, nil
+				})
+				if err != nil {
+					t.Errorf("worker %d iter %d: %v", wid, i, err)
+					return
+				}
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	cc, err := LoadCacheConfig(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := workers * iters
+	got := len(cc.Branches)
+	if got != want {
+		t.Errorf("after concurrent mutates: %d branches, want %d (lost %d updates)", got, want, want-got)
+	}
+}
+
+func TestMutateBranchCache_ConcurrentSameBranch_LastWriteWins(t *testing.T) {
+	// Parallel writes to the SAME branch serialize through the file lock
+	// — last writer wins, but no entry should be lost or corrupted. We
+	// only assert "the final value is one of the writers' values, and
+	// there's exactly one entry" — strict ordering isn't promised.
+	repo := setupTempConfig(t)
+	const writers = 8
+
+	var wg sync.WaitGroup
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func(wid int) {
+			defer wg.Done()
+			url := fmt.Sprintf("https://github.com/o/r/pull/%d", wid+100)
+			err := MutateBranchCache(repo, "shared", func(bc *BranchCache) (*BranchCache, error) {
+				return &BranchCache{PRUrl: url, PRState: "OPEN"}, nil
+			})
+			if err != nil {
+				t.Errorf("writer %d: %v", wid, err)
+			}
+		}(w)
+	}
+	wg.Wait()
+
+	cc, _ := LoadCacheConfig(repo)
+	bc := cc.GetBranchCache("shared")
+	if bc == nil {
+		t.Fatal("entry vanished under contention")
+	}
+	if bc.PRState != "OPEN" {
+		t.Errorf("PRState corrupted: %q", bc.PRState)
+	}
+	// PRUrl should be one of the writers' values (we don't care which).
+	matched := false
+	for w := 0; w < writers; w++ {
+		if bc.PRUrl == fmt.Sprintf("https://github.com/o/r/pull/%d", w+100) {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		t.Errorf("PRUrl is not from any writer: %q", bc.PRUrl)
+	}
+}
+
+func TestMutateBranchCache_DoesNotTouchOtherRepos(t *testing.T) {
+	// Two repos share the same stacks.json but live under different keys.
+	// MutateBranchCache against repoA must never change repoB's section.
+	t.Setenv("EZSTACK_HOME", t.TempDir())
+	const repoA = "/test/repoA"
+	const repoB = "/test/repoB"
+
+	if err := MutateBranchCache(repoA, "alpha", func(bc *BranchCache) (*BranchCache, error) {
+		return &BranchCache{PRUrl: "alpha-url"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := MutateBranchCache(repoB, "beta", func(bc *BranchCache) (*BranchCache, error) {
+		return &BranchCache{PRUrl: "beta-url"}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := MutateBranchCache(repoA, "alpha", func(bc *BranchCache) (*BranchCache, error) {
+		bc.PRState = "MERGED"
+		return bc, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	ccA, _ := LoadCacheConfig(repoA)
+	ccB, _ := LoadCacheConfig(repoB)
+	if a := ccA.GetBranchCache("alpha"); a == nil || a.PRUrl != "alpha-url" || a.PRState != "MERGED" {
+		t.Errorf("repoA.alpha not as expected: %+v", a)
+	}
+	if b := ccB.GetBranchCache("beta"); b == nil || b.PRUrl != "beta-url" {
+		t.Errorf("repoB.beta lost: %+v", b)
+	}
+	if ccA.GetBranchCache("beta") != nil {
+		t.Errorf("repoA leaked beta from repoB")
+	}
+	if ccB.GetBranchCache("alpha") != nil {
+		t.Errorf("repoB leaked alpha from repoA")
+	}
+}
+
+func TestMutateBranchCache_PreservesNonPRFields(t *testing.T) {
+	// clearPRFromCache uses MutateBranchCache to wipe PR fields while
+	// preserving WorktreePath/IsRemote/Remote. Lock that contract in.
+	repo := setupTempConfig(t)
+	if err := MutateBranchCache(repo, "feature", func(bc *BranchCache) (*BranchCache, error) {
+		return &BranchCache{
+			WorktreePath: "/wt/feature",
+			IsRemote:     true,
+			Remote:       "fork",
+			PRUrl:        "https://github.com/o/r/pull/42",
+			PRState:      "OPEN",
+		}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MutateBranchCache(repo, "feature", func(bc *BranchCache) (*BranchCache, error) {
+		bc.ClearPRFields()
+		return bc, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	cc, _ := LoadCacheConfig(repo)
+	bc := cc.GetBranchCache("feature")
+	if bc == nil {
+		t.Fatal("entry vanished — should still hold worktree/remote")
+	}
+	if bc.PRUrl != "" || bc.PRState != "" || bc.IsMerged {
+		t.Errorf("PR fields not cleared: %+v", bc)
+	}
+	if bc.WorktreePath != "/wt/feature" || !bc.IsRemote || bc.Remote != "fork" {
+		t.Errorf("non-PR fields touched: %+v", bc)
 	}
 }

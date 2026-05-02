@@ -172,7 +172,7 @@ func New(args []string) error {
 			if err == nil && pr != nil && pr.Number > 0 {
 				branch.PRNumber = pr.Number
 				branch.PRUrl = pr.URL
-				savePRToCache(mgr.GetRepoDir(), branch.Name, pr.Number, pr.URL)
+				savePRToCache(mgr.GetRepoDir(), branch.Name, pr)
 
 				ui.Success(fmt.Sprintf("Registered '%s' as a stack root (found existing PR #%d)", branch.Name, pr.Number))
 				ui.Info("You can now add child branches with: ezs new <branch-name>")
@@ -715,7 +715,7 @@ func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noC
 		if forkRemote := detectForkRemote(g, gh, pr); forkRemote != "" {
 			mgr.MarkBranchRemote(remoteBranch, prURL, forkRemote)
 		} else if pr != nil {
-			savePRToCache(mgr.GetRepoDir(), remoteBranch, pr.Number, prURL)
+			savePRToCache(mgr.GetRepoDir(), remoteBranch, pr)
 		}
 	}
 

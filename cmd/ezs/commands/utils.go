@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -64,23 +65,166 @@ func EmitCd(path string) {
 	}
 }
 
-// savePRToCache saves a single branch's PR number and URL to the cache.
-func savePRToCache(cacheDir, branchName string, prNum int, prURL string) {
-	cache, err := config.LoadCacheConfig(cacheDir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to load cache for PR save: %v\n", err)
+// displayPRState returns a human-friendly label for a cached PRState value.
+// "" (legacy entries that never had state recorded) shows as "state unknown"
+// rather than empty quotes, which would otherwise read as "()" in error
+// messages.
+func displayPRState(state string) string {
+	if state == "" {
+		return "state unknown"
+	}
+	return state
+}
+
+// prStateFromGitHub maps a github.PR onto the canonical cached PRState value.
+// The four-way enum ("MERGED" | "CLOSED" | "DRAFT" | "OPEN") matches what
+// fetchBranchStatuses writes — keep them aligned so a status-driven refresh
+// and an explicit pr-create/update-driven refresh produce the same cache.
+func prStateFromGitHub(pr *github.PR) string {
+	if pr == nil {
+		return ""
+	}
+	if pr.Merged {
+		return "MERGED"
+	}
+	if pr.State == "CLOSED" {
+		return "CLOSED"
+	}
+	if pr.IsDraft {
+		return "DRAFT"
+	}
+	return "OPEN"
+}
+
+// savePRToCache writes the PR-association fields for a branch in one shot.
+// Takes the full *github.PR (rather than scattered scalars) so the cache
+// can never end up with a stale pr_state / is_merged paired with a fresh
+// pr_url — a bug the previous narrower signature actively produced.
+//
+// Uses the atomic mutator so concurrent peer processes (e.g. an `ezs ls`
+// running in another terminal that's writing PRState for unrelated
+// branches via fetchBranchStatuses) don't clobber this update — the
+// older LoadCacheConfig + SetBranchCache + Save pattern overwrites the
+// entire branches map with whatever this process loaded earlier.
+func savePRToCache(cacheDir, branchName string, pr *github.PR) {
+	if pr == nil {
 		return
 	}
-	bc := cache.GetBranchCache(branchName)
-	if bc == nil {
-		bc = &config.BranchCache{}
-	}
-	bc.PRNumber = prNum
-	bc.PRUrl = prURL
-	cache.SetBranchCache(branchName, bc)
-	if err := cache.Save(cacheDir); err != nil {
+	err := config.MutateBranchCache(cacheDir, branchName, func(bc *config.BranchCache) (*config.BranchCache, error) {
+		if bc == nil {
+			bc = &config.BranchCache{}
+		}
+		bc.PRNumber = pr.Number
+		bc.PRUrl = pr.URL
+		bc.PRState = prStateFromGitHub(pr)
+		bc.IsMerged = pr.Merged
+		return bc, nil
+	})
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save PR cache: %v\n", err)
 	}
+}
+
+// clearPRFromCache zeroes the PR-association fields for a branch (pr_url,
+// pr_state, is_merged) while preserving worktree, remote, and is_remote.
+// Used by `ezs pr unlink` and by recovery paths that detect a cached PR is
+// no longer on GitHub. No-op when the branch has no cache entry.
+func clearPRFromCache(cacheDir, branchName string) error {
+	return config.MutateBranchCache(cacheDir, branchName, func(bc *config.BranchCache) (*config.BranchCache, error) {
+		if bc == nil {
+			return nil, nil
+		}
+		bc.ClearPRFields()
+		return bc, nil
+	})
+}
+
+// prFetcher abstracts the github.Client methods that the refresh path needs.
+// Lets unit tests reconcile cache state without exec'ing gh — *github.Client
+// satisfies it directly.
+type prFetcher interface {
+	GetPR(number int) (*github.PR, error)
+	GetPRByBranch(branch string) (*github.PR, error)
+}
+
+// refreshPRStateFromGitHub queries the live PR for a branch and reconciles
+// the local cache with the result. Behavior:
+//
+//   - Returns (pr, nil) when GitHub has a PR for the branch. Cache and the
+//     in-memory branch are updated in lockstep.
+//   - Returns (nil, nil) when GitHub confirms no PR exists for the branch
+//     (errors.Is(err, github.ErrPRNotFound), or the prFetcher returns
+//     (nil, nil) directly). The cached PR fields are cleared so the next
+//     `pr create` proceeds without nagging.
+//   - Returns (nil, err) on any other error (transient/network/unauthorized).
+//     Cache is NOT touched, so an unreachable GitHub never accidentally
+//     clears a perfectly good cache.
+//
+// Prefers GetPR(number) when a number is already cached; this path works for
+// fork PRs whose head ref isn't reachable via `gh pr view <branch>`. Falls
+// back to GetPRByBranch when the number lookup fails, since a stale cached
+// number (e.g., the PR was hard-deleted) would otherwise leave the caller
+// blind. If both lookups confirm "not found" we treat that as the
+// PR-was-deleted case rather than a transient error.
+func refreshPRStateFromGitHub(gh prFetcher, cacheDir string, branch *config.Branch) (*github.PR, error) {
+	pr, err := fetchLivePR(gh, branch)
+	return applyPRRefresh(cacheDir, branch, pr, err)
+}
+
+// fetchLivePR resolves the live PR for a branch without touching the cache or
+// mutating the branch. Split from refreshPRStateFromGitHub so callers like
+// `pr refresh -s` can fetch many branches in parallel and apply the cache
+// updates serially (avoiding the load-modify-save race in CacheConfig.Save
+// where each goroutine would otherwise overwrite the others' updates).
+func fetchLivePR(gh prFetcher, branch *config.Branch) (*github.PR, error) {
+	if branch.PRNumber > 0 {
+		pr, err := gh.GetPR(branch.PRNumber)
+		if err == nil {
+			return pr, nil
+		}
+		// Stale cached number — try the head-branch lookup. Distinguish
+		// the three resolutions: live PR found, confirmed not-found, or
+		// transient failure. We only swallow the original GetPR error
+		// when the fallback gives an unambiguous answer.
+		br, brErr := gh.GetPRByBranch(branch.Name)
+		switch {
+		case brErr == nil && br != nil:
+			return br, nil
+		case errors.Is(brErr, github.ErrPRNotFound):
+			return nil, nil
+		case brErr == nil && br == nil:
+			return nil, nil
+		default:
+			return nil, err
+		}
+	}
+	pr, err := gh.GetPRByBranch(branch.Name)
+	if errors.Is(err, github.ErrPRNotFound) {
+		return nil, nil
+	}
+	return pr, err
+}
+
+// applyPRRefresh reconciles a single (branch, fetch-result) tuple into the
+// on-disk cache and the in-memory branch. Safe to call serially after a batch
+// of fetchLivePR calls.
+func applyPRRefresh(cacheDir string, branch *config.Branch, pr *github.PR, fetchErr error) (*github.PR, error) {
+	if fetchErr != nil {
+		return nil, fetchErr
+	}
+	if pr == nil {
+		if cleanErr := clearPRFromCache(cacheDir, branch.Name); cleanErr != nil {
+			fmt.Fprintf(os.Stderr, "Warning: %v\n", cleanErr)
+		}
+		branch.PRNumber, branch.PRUrl, branch.PRState, branch.IsMerged = 0, "", "", false
+		return nil, nil
+	}
+	branch.PRNumber = pr.Number
+	branch.PRUrl = pr.URL
+	branch.PRState = prStateFromGitHub(pr)
+	branch.IsMerged = pr.Merged
+	savePRToCache(cacheDir, branch.Name, pr)
+	return pr, nil
 }
 
 // updateStackDescriptions updates PR descriptions for all PRs in the given stack.
@@ -606,29 +750,43 @@ func discoverAndCachePRs(g *git.Git, s *config.Stack, debug bool) *github.Client
 			if debug {
 				fmt.Fprintf(os.Stderr, "[DEBUG] Found PR #%d for branch %s\n", r.pr.Number, r.branch.Name)
 			}
+			// Mirror the live PR onto the in-memory branch in lockstep
+			// (was previously number/url only — a half-update that paired
+			// with savePRToCache's old narrow signature). State and merged
+			// are persisted below alongside number/url so the cache stays
+			// consistent even if fetchBranchStatuses' later per-PR refresh
+			// can't reach GitHub.
 			r.branch.PRNumber = r.pr.Number
 			r.branch.PRUrl = r.pr.URL
+			r.branch.PRState = prStateFromGitHub(r.pr)
+			r.branch.IsMerged = r.pr.Merged
 			discoveredPRs = true
 		}
 	}
 
 	if discoveredPRs {
 		mainWorktree := getMainWorktreePath(g)
-		cache, err := config.LoadCacheConfig(mainWorktree)
-		if err == nil {
-			for _, branch := range s.Branches {
-				if branch.PRNumber > 0 {
-					bc := cache.GetBranchCache(branch.Name)
-					if bc == nil {
-						bc = &config.BranchCache{}
-					}
-					bc.PRNumber = branch.PRNumber
-					bc.PRUrl = branch.PRUrl
-					cache.SetBranchCache(branch.Name, bc)
-				}
+		// Per-branch atomic writes: a peer process running `ezs pr refresh`
+		// or `ezs pr update` against the same stacks.json no longer loses its
+		// updates to the LoadCacheConfig + SetBranchCache + Save replace-all
+		// pattern this used to do.
+		for _, r := range results {
+			if r.pr == nil {
+				continue
 			}
-			if err := cache.Save(mainWorktree); err != nil {
-				fmt.Fprintf(os.Stderr, "  Warning: failed to save PR cache: %v\n", err)
+			pr := r.pr
+			err := config.MutateBranchCache(mainWorktree, r.branch.Name, func(bc *config.BranchCache) (*config.BranchCache, error) {
+				if bc == nil {
+					bc = &config.BranchCache{}
+				}
+				bc.PRNumber = pr.Number
+				bc.PRUrl = pr.URL
+				bc.PRState = prStateFromGitHub(pr)
+				bc.IsMerged = pr.Merged
+				return bc, nil
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to save PR cache for %s: %v\n", r.branch.Name, err)
 			}
 		}
 	}
@@ -853,34 +1011,41 @@ func fetchBranchStatuses(g *git.Git, s *config.Stack, debug bool) map[string]*ui
 
 	wg.Wait()
 
-	// Save cached PR state for all branches with PR data
+	// Save cached PR state for all branches with PR data. Each branch is
+	// written atomically so a concurrent `ezs pr update` running in another
+	// terminal doesn't lose its writes to a stale in-memory branches map
+	// here. We pre-load the cache once for the cheap "did this entry actually
+	// change" check — that read can be racy without consequence because the
+	// MutateBranchCache call inside the loop is the authoritative write.
 	mainWorktree, err := g.GetMainWorktree()
 	if err == nil {
-		cache, err := config.LoadCacheConfig(mainWorktree)
-		if err == nil {
-			changed := false
-			for _, branch := range s.Branches {
-				if branch.PRState == "" {
+		preCache, _ := config.LoadCacheConfig(mainWorktree)
+		for _, branch := range s.Branches {
+			if branch.PRState == "" {
+				continue
+			}
+			if preCache != nil {
+				if bc := preCache.GetBranchCache(branch.Name); bc != nil &&
+					bc.PRState == branch.PRState && bc.IsMerged == branch.IsMerged {
 					continue
 				}
-				bc := cache.GetBranchCache(branch.Name)
+			}
+			brName := branch.Name
+			brState := branch.PRState
+			brMerged := branch.IsMerged
+			err := config.MutateBranchCache(mainWorktree, brName, func(bc *config.BranchCache) (*config.BranchCache, error) {
 				if bc == nil {
 					bc = &config.BranchCache{}
 				}
 				// Reconcile cached IsMerged with live PR state. Without this,
 				// once a branch was cached as merged it stayed merged forever
 				// (e.g., a force-pushed-and-reopened PR would never sync again).
-				if bc.PRState != branch.PRState || bc.IsMerged != branch.IsMerged {
-					bc.PRState = branch.PRState
-					bc.IsMerged = branch.IsMerged
-					cache.SetBranchCache(branch.Name, bc)
-					changed = true
-				}
-			}
-			if changed {
-				if err := cache.Save(mainWorktree); err != nil {
-					fmt.Fprintf(os.Stderr, "  Warning: failed to save status cache: %v\n", err)
-				}
+				bc.PRState = brState
+				bc.IsMerged = brMerged
+				return bc, nil
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "  Warning: failed to save status cache for %s: %v\n", brName, err)
 			}
 		}
 	}
@@ -1001,6 +1166,9 @@ var commandExamples = map[string][][2]string{
 		{"ezs pr create -s", "Create PRs for every branch in the stack"},
 		{"ezs pr --draft-all", "Create all stack PRs as drafts"},
 		{"ezs pr merge", "Merge the current branch's PR"},
+		{"ezs pr create --force", "Create a fresh PR even if one is already cached"},
+		{"ezs pr refresh -s", "Reconcile cached PR state for the whole stack"},
+		{"ezs pr unlink", "Forget the cached PR for the current branch"},
 	},
 	"new": {
 		{"ezs new feature-x", "Create a new branch off the current branch"},
