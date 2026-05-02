@@ -2,13 +2,16 @@
 //
 // It downloads the matching release tarball from GitHub, verifies the
 // SHA-256 against checksums.txt, and atomically swaps the running
-// binary (and its sibling) on disk. Homebrew and `go install` users
-// are detected and routed to their respective package manager instead
-// of an in-place swap.
+// binary (and its sibling) on disk. `go install` users are upgraded by
+// re-running `go install` against the latest release tag so the
+// toolchain remains the source of truth for their install. Homebrew
+// users are routed back to `brew upgrade ezstack` so brew's receipt of
+// the install stays in sync with the binary on disk.
 package upgrade
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
@@ -55,6 +58,20 @@ var currentExecutableFn = currentExecutable
 // hook so a rollback test can inject a controlled failure on a specific
 // destination.
 var atomicReplaceFn = atomicReplace
+
+// goInstallFn invokes `go install <pkg>` for the go-install upgrade
+// path. Test hook so the dispatch can be exercised without spawning a
+// real `go` process or hitting the proxy.
+var goInstallFn = runGoInstall
+
+// goBinExistsFn reports whether the `go` toolchain is on PATH. Test
+// hook so the pre-flight check (which fires BEFORE Confirm so the
+// user doesn't agree to an upgrade that immediately errors out)
+// doesn't depend on the runtime PATH containing the system `go`.
+var goBinExistsFn = func() error {
+	_, err := exec.LookPath("go")
+	return err
+}
 
 // maxArchiveBytes caps the raw tarball download to defend against a
 // malicious or misconfigured release returning an unbounded body. 500 MiB
@@ -319,7 +336,10 @@ func Run(ctx context.Context, opts Options) (*Result, error) {
 
 	res := &Result{Method: method, From: opts.CurrentVersion}
 
-	if method != InstallBinary {
+	switch method {
+	case InstallGoInstall:
+		return runGoInstallUpgrade(ctx, opts, execPath, res, logf)
+	case InstallHomebrew:
 		return res, &ManagedInstallError{Method: method, ExecPath: execPath}
 	}
 
@@ -623,7 +643,9 @@ func snapshotForRollback(src, backup string) error {
 
 // ManagedInstallError signals that the binary is owned by a package
 // manager and the user must upgrade through that channel. The CLI
-// catches this and prints a tailored hint.
+// catches this and prints a tailored hint. Only Homebrew installs end
+// up here today — `go install` installs are upgraded in-process by
+// re-running `go install`.
 type ManagedInstallError struct {
 	Method   InstallMethod
 	ExecPath string
@@ -633,11 +655,205 @@ func (e *ManagedInstallError) Error() string {
 	switch e.Method {
 	case InstallHomebrew:
 		return fmt.Sprintf("ezstack was installed via Homebrew (%s); run `brew upgrade ezstack` instead", e.ExecPath)
-	case InstallGoInstall:
-		return fmt.Sprintf("ezstack was installed via `go install` (%s); run `go install github.com/%s/%s/v4/cmd/ezs@latest` (and `cmd/ezs-mcp@latest`) instead", e.ExecPath, repoOwner, repoName)
 	default:
 		return "ezstack is managed by an external installer; in-place upgrade is disabled"
 	}
+}
+
+// runGoInstallUpgrade re-installs ezs (and optionally ezs-mcp) by
+// invoking `go install` for the resolved release tag. It mirrors the
+// flag semantics of the binary path (--check, --force, --version,
+// --no-mcp, Confirm, Logf), but delegates the actual swap to the Go
+// toolchain so the user's install stays consistent with how it was
+// originally laid down.
+//
+// ezs-mcp is only re-installed when it already exists somewhere the
+// classifier accepts (sibling to ezs OR resolvable via PATH and not
+// Homebrew-managed). We don't want to silently plant a new binary on
+// a machine that didn't have one, and we don't want to add a duplicate
+// go-install copy when brew already owns the binary on PATH.
+func runGoInstallUpgrade(ctx context.Context, opts Options, execPath string, res *Result, logf func(format string, args ...any)) (*Result, error) {
+	rel, err := resolveRelease(ctx, opts.TargetTag)
+	if err != nil {
+		return nil, err
+	}
+	res.To = strings.TrimPrefix(rel.TagName, "v")
+
+	cmp := CompareVersions(opts.CurrentVersion, rel.TagName)
+	pinned := opts.TargetTag != ""
+	if opts.CheckOnly {
+		switch {
+		case cmp >= 0 && pinned:
+			res.AlreadyAtTip = true
+			logf("ezstack %s is at or above pinned tag %s", res.From, rel.TagName)
+		case cmp >= 0:
+			res.AlreadyAtTip = true
+			logf("ezstack is already at the latest version (%s)", res.From)
+		default:
+			logf("upgrade available via `go install`: %s → %s", res.From, res.To)
+		}
+		return res, nil
+	}
+	if cmp >= 0 && !opts.Force {
+		res.AlreadyAtTip = true
+		if pinned {
+			logf("ezstack %s is at or above pinned tag %s — use --force to reinstall", res.From, rel.TagName)
+		} else {
+			logf("ezstack is already at the latest version (%s)", res.From)
+		}
+		return res, nil
+	}
+
+	// Pre-flight: fail fast if `go` isn't on PATH so the user gets a
+	// clean install-Go-or-use-the-tarball message instead of a confusing
+	// post-confirm error after they've agreed to proceed.
+	if err := goBinExistsFn(); err != nil {
+		return nil, fmt.Errorf("ezs was installed via `go install` (%s) but `go` is not on PATH; install Go from https://go.dev/dl/ or download the binary tarball from the GitHub release", execPath)
+	}
+
+	// Warn if `go install` would land the new binary in a directory
+	// other than where the running ezs lives. This happens when
+	// GOBIN/GOPATH have drifted since the original install (e.g. ezs
+	// is at $GOPATH/bin from a year ago, but $GOBIN now points
+	// elsewhere). The new binary would sit on disk while $PATH still
+	// resolves to the stale one — the exact failure the user is
+	// upgrading to fix. Don't error: the user may have set up
+	// shadowing intentionally, and they can resolve it after the run.
+	ezsDir := filepath.Dir(execPath)
+	predictedDir := predictedGoInstallDir()
+	if predictedDir != "" && predictedDir != ezsDir {
+		logf("note: `go install` will write to %s but the running ezs lives in %s — make sure %s appears first on $PATH or restart the shell after the upgrade",
+			predictedDir, ezsDir, predictedDir)
+	}
+
+	switch {
+	case cmp > 0:
+		logf("downgrading from %s to %s via `go install`", res.From, res.To)
+	case cmp == 0:
+		logf("reinstalling %s via `go install`", res.From)
+	default:
+		logf("upgrading from %s to %s via `go install`", res.From, res.To)
+	}
+
+	if opts.Confirm != nil {
+		ok := opts.Confirm(fmt.Sprintf("Re-run `go install` to upgrade ezs at %s?", ezsDir))
+		if !ok {
+			res.Cancelled = true
+			return res, nil
+		}
+	}
+
+	pkgs := []string{"ezs"}
+	if opts.IncludeMCP {
+		// Reuse the binary-path classifier so a brew-managed ezs-mcp
+		// on PATH gets the same skip-with-hint treatment, and so a
+		// genuinely missing ezs-mcp doesn't trigger a brand-new install.
+		_, skipReason, mcpOK := resolveMCPTarget(ezsDir)
+		switch {
+		case mcpOK:
+			pkgs = append(pkgs, "ezs-mcp")
+		case skipReason != "":
+			logf("%s", skipReason)
+		default:
+			logf("no ezs-mcp found alongside ezs or on PATH — skipping (run `go install %s/cmd/ezs-mcp@%s` if you want it)",
+				goModulePath(rel.TagName), rel.TagName)
+		}
+	}
+
+	modulePath := goModulePath(rel.TagName)
+	for _, name := range pkgs {
+		target := fmt.Sprintf("%s/cmd/%s@%s", modulePath, name, rel.TagName)
+		logf("running: go install %s", target)
+		if err := goInstallFn(ctx, target, logf); err != nil {
+			// Surface partial progress so the user can tell which
+			// binary needs a manual retry. ezs upgraded but ezs-mcp
+			// failed leaves the pair version-skewed; the log line
+			// above and the error returned together make that clear.
+			return nil, fmt.Errorf("go install %s: %w", target, err)
+		}
+		landingDir := predictedDir
+		if landingDir == "" {
+			landingDir = ezsDir
+		}
+		res.Updated = append(res.Updated, filepath.Join(landingDir, name))
+	}
+	return res, nil
+}
+
+// predictedGoInstallDir mirrors what `go install` would pick for its
+// output directory: $GOBIN, then the first $GOPATH/bin entry, then
+// ~/go/bin. Returns "" when the user has neither GOPATH set nor a
+// resolvable home directory — `go install` itself will then surface
+// the underlying error and the caller falls back to logging without
+// the dir.
+func predictedGoInstallDir() string {
+	if g := strings.TrimSpace(os.Getenv("GOBIN")); g != "" {
+		return g
+	}
+	if gp := os.Getenv("GOPATH"); gp != "" {
+		// `go install pkg@version` uses the FIRST entry in a
+		// colon-separated GOPATH for its output bin dir.
+		first := strings.SplitN(gp, string(os.PathListSeparator), 2)[0]
+		if first = strings.TrimSpace(first); first != "" {
+			return filepath.Join(first, "bin")
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		return filepath.Join(home, "go", "bin")
+	}
+	return ""
+}
+
+// goModulePath computes the import path that `go install` should
+// receive for the given release tag. Major versions ≥ 2 use the
+// /vN suffix that semantic-import-versioning requires; v0/v1 omit it.
+// Falls back to the v4 path that ships today when the tag is malformed
+// so a corrupted release record doesn't silently re-install the wrong
+// major version.
+func goModulePath(tag string) string {
+	core, _ := splitSemver(tag)
+	major := core[0]
+	if major <= 0 {
+		major = 4
+	}
+	if major == 1 {
+		return fmt.Sprintf("github.com/%s/%s", repoOwner, repoName)
+	}
+	return fmt.Sprintf("github.com/%s/%s/v%d", repoOwner, repoName, major)
+}
+
+// runGoInstall executes `go install <pkg>` and pipes its stdout/stderr
+// through logf line-by-line so the user sees module-download progress
+// in the same stream as the surrounding upgrade messages. Returns the
+// exit error wrapped with the captured output to make an arcane go
+// toolchain failure (e.g. "module requires Go 1.26") legible.
+func runGoInstall(ctx context.Context, pkg string, logf func(format string, args ...any)) error {
+	goBin, err := exec.LookPath("go")
+	if err != nil {
+		return fmt.Errorf("`go` not on PATH — install Go from https://go.dev/dl/ or download the binary tarball from GitHub Releases")
+	}
+	cmd := exec.CommandContext(ctx, goBin, "install", pkg)
+	cmd.Env = os.Environ()
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	runErr := cmd.Run()
+	msg := strings.TrimSpace(out.String())
+	if runErr != nil {
+		if msg != "" {
+			return fmt.Errorf("%w\n%s", runErr, msg)
+		}
+		return runErr
+	}
+	if msg != "" {
+		for _, line := range strings.Split(msg, "\n") {
+			if line == "" {
+				continue
+			}
+			logf("go: %s", line)
+		}
+	}
+	return nil
 }
 
 // resolveRelease picks between LatestRelease and ReleaseByTag based on

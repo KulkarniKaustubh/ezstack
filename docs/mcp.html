@@ -101,7 +101,7 @@
     <div class="container">
       <div class="workflow-header" data-animate>
         <span class="mode-label mode-label-work">How It Works</span>
-        <h2>One binary. 21 tools. Real <code>ezs</code> under the hood.</h2>
+        <h2>One binary. 25 tools. Real <code>ezs</code> under the hood.</h2>
         <p><code>ezs-mcp</code> is a separate binary that speaks JSON-RPC over stdio. Under the hood it invokes the same <code>ezs</code> command functions your shell uses &mdash; there is no second copy of the logic to drift. Your agent gets the identical behavior you'd get from the terminal, captured and handed back as structured tool results.</p>
       </div>
 
@@ -156,7 +156,7 @@
     <div class="container">
       <div class="workflow-header" data-animate>
         <span class="mode-label mode-label-feature">Tool Catalog</span>
-        <h2>Twenty-one tools, full stack coverage</h2>
+        <h2>Twenty-five tools, full stack coverage</h2>
         <p>Every ezstack operation an agent needs &mdash; inspect, commit, sync, push, PR, configure &mdash; exposed with strict input schemas. Read-only tools default to JSON; destructive tools carry the MCP destructive annotation; tools that would normally launch an editor or an <code>fzf</code> picker have those paths closed off at the schema level so they can't hang the MCP transport.</p>
       </div>
 
@@ -190,6 +190,11 @@
               <td><code>ezstack_log</code></td>
               <td><span class="mode-label mode-label-work">read-only</span></td>
               <td>Commits since parent as JSON (hash, message, author, ISO date). <code>branch</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_doctor</code></td>
+              <td><span class="mode-label mode-label-work">read-only</span></td>
+              <td>Run diagnostics: ezstack version, prerequisite versions (go/git/gh/fzf), config directory state, and the configured default base branch. Safe to paste into bug reports — no secrets included.</td>
             </tr>
             <tr>
               <td><code>ezstack_config_show</code></td>
@@ -312,6 +317,11 @@
               <td>Toggle a PR between draft and ready-for-review. <code>branch</code>.</td>
             </tr>
             <tr>
+              <td><code>ezstack_pr_draft_all</code></td>
+              <td>&mdash;</td>
+              <td>Create draft PRs for every branch in the current stack that doesn't already have one. Branches with an existing PR are left alone (use <code>ezstack_pr_draft</code> to toggle an existing PR's draft state).</td>
+            </tr>
+            <tr>
               <td><code>ezstack_pr_stack</code></td>
               <td>&mdash;</td>
               <td>Update every PR description in the stack with navigation links. <code>branch</code>.</td>
@@ -335,6 +345,16 @@
               <td><code>ezstack_config_set</code></td>
               <td>&mdash;</td>
               <td>Set a config value. <code>key</code> and <code>value</code> (both required). Valid keys: <code>worktree_base_dir</code>, <code>default_base_branch</code>, <code>github_token</code>, <code>cd_after_new</code>, <code>use_worktrees</code>, <code>sync_strategy</code>, <code>agent_command</code>.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_config_export</code></td>
+              <td>&mdash;</td>
+              <td>Export the global ezstack config (excluding the per-machine <code>github_token</code>) to a file. Safe to share — no secrets included. <code>file</code> (required).</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_config_import</code></td>
+              <td><span class="mode-label mode-label-feature">destructive</span></td>
+              <td>Replace the global ezstack config with the contents of <code>&lt;file&gt;</code>. Validated against the schema before being applied; the existing local <code>github_token</code> is preserved. <code>file</code> (required).</td>
             </tr>
           </tbody>
         </table>

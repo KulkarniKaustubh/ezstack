@@ -139,6 +139,7 @@ A few other flags worth knowing about:
 - `ezs new --template <name>` — seed the new worktree from `~/.ezstack/templates/<name>`.
 - `ezs push --verify` / `--all-remotes` — require the pre-push hook, or push to origin and the fork remote.
 - `ezs sync --stats` / `--squash` — print a commits-per-branch summary, or squash each child before rebasing onto its parent.
+- `ezs sync --continue` — resume after resolving conflicts. Honors the same scope flags as `sync` itself (`-s`, `-a`, `-c`, `-b <name>`, positional `<hash-prefix>`), re-syncs the entire descendant subtree from the resolved branch, and exits non-zero when any branch is still in conflict. Sync also fast-forwards each local branch to `origin/<branch>` before rebasing so collaborator commits get picked up automatically (strict ff-only — divergent locals are skipped with a `diverged` note).
 - `ezs pr --draft-all` — create draft PRs across every branch in the current stack.
 - `ezs goto --search <query>` — fuzzy-match a branch by substring across all stacks.
 - `ezs delete --cascade` — delete a branch and every descendant in one shot (deepest-first; aborts on a dirty descendant unless `--force`).
@@ -168,7 +169,7 @@ Agent prompts are composed from three layers: a shipped prompt (updated with rel
 
 ## MCP Server (Claude Code & other MCP clients)
 
-ezstack ships a standalone MCP server, `ezs-mcp`, that exposes the full stack workflow as Model Context Protocol tools. Point any MCP-compatible agent at it (Claude Code, Zed, etc.) and the agent can drive `ezs` directly: inspect (`status`, `list`, `diff`, `log`, `config_show`), mutate (`commit`, `amend`, `sync`, `push`, `new`, `delete`, `reparent`, `stack`, `unstack`, `config_set`), navigate (`goto`), and manage PRs (`pr_create`, `pr_update`, `pr_merge`, `pr_draft`, `pr_stack`). 21 tools, one binary.
+ezstack ships a standalone MCP server, `ezs-mcp`, that exposes the full stack workflow as Model Context Protocol tools. Point any MCP-compatible agent at it (Claude Code, Zed, etc.) and the agent can drive `ezs` directly: inspect (`status`, `list`, `diff`, `log`, `doctor`, `config_show`), mutate (`commit`, `amend`, `sync`, `push`, `new`, `delete`, `reparent`, `stack`, `unstack`, `config_set`, `config_import`), navigate (`goto`), manage PRs (`pr_create`, `pr_update`, `pr_merge`, `pr_draft`, `pr_draft_all`, `pr_stack`), and back up config (`config_export`). 25 tools, one binary.
 
 Install:
 
@@ -251,7 +252,7 @@ your editor or a native GUI:
 | **VS Code Extension** (`vscode-extension/`) | Sidebar stack tree, per-branch file browser, PR & CI status, command palette, agent integration | [vscode.html](https://kulkarnikaustubh.github.io/ezstack/vscode.html) · [README](vscode-extension/README.md) |
 | **Neovim Plugin** ([`ezstack.nvim`](https://github.com/KulkarniKaustubh/ezstack.nvim)) | Native Lua plugin with `:Ezs` command suite, styled stack viewer, Telescope pickers, statusline component, fugitive auto-refresh | [nvim.html](https://kulkarnikaustubh.github.io/ezstack/nvim.html) · [README](https://github.com/KulkarniKaustubh/ezstack.nvim#readme) |
 | **Desktop App** (`tauri-ui/`) | Tauri v2 + React 19 desktop GUI. Three-panel layout, visual stack graph with drag-to-reparent, branch reflog history, sidebar repo filter, toast notifications, remote SSH mode | [desktop.html](https://kulkarnikaustubh.github.io/ezstack/desktop.html) · [README](tauri-ui/README.md) |
-| **MCP Server** (`cmd/ezs-mcp/`) | Model Context Protocol server for Claude Code and other MCP-compatible agents. Exposes eleven stack operations as tools with destructive annotations and required-arg schemas | [mcp.html](https://kulkarnikaustubh.github.io/ezstack/mcp.html) |
+| **MCP Server** (`cmd/ezs-mcp/`) | Model Context Protocol server for Claude Code and other MCP-compatible agents. Exposes 25 stack operations as tools with destructive annotations and required-arg schemas | [mcp.html](https://kulkarnikaustubh.github.io/ezstack/mcp.html) |
 
 ### VS Code
 

@@ -95,7 +95,7 @@
     <div class="hero-glow"></div>
     <div class="container">
       <div class="hero-content">
-        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v4.7.5 &mdash; Latest Release</a>
+        <a href="https://github.com/KulkarniKaustubh/ezstack/releases" target="_blank" rel="noopener" class="hero-badge">v4.7.6 &mdash; Latest Release</a>
         <h1>Stacked PRs.<br>Zero friction.</h1>
         <p class="hero-sub">Manage stacked pull requests with git worktrees. Create branches, sync rebases, manage PRs &mdash; all from one CLI.</p>
         <div class="hero-actions">
@@ -285,7 +285,7 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <h3>Smart Conflict Handling</h3>
-          <p>Rebase conflicts pause with clear recovery instructions. Run <code>ezs sync --continue</code> to resume, push, and re-sync children. Autostash and <code>--dry-run</code> included.</p>
+          <p>Rebase conflicts pause with clear recovery instructions. <code>ezs sync --continue</code> honors the same scope flags as <code>sync</code> and re-syncs the entire descendant subtree from the resolved branch. Sync also fast-forwards each local to <code>origin/&lt;branch&gt;</code> first, so collaborator commits get picked up automatically. Autostash and <code>--dry-run</code> included.</p>
         </div>
         <div class="feature-card" data-animate>
           <div class="feature-icon">
@@ -433,7 +433,7 @@
             <p>The agent sees your stack structure, worktree paths, and all ezstack commands. It works within a single branch.</p>
             <div class="step-code">
               <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs agent</span>
-<span class="c-dim">Installing ezs-mcp@v4.7.5... ✓</span>
+<span class="c-dim">Installing ezs-mcp@v4.7.6... ✓</span>
 <span class="c-dim">Registering ezstack MCP with claude (user scope)... ✓</span>
 <span class="c-dim">Launching claude in ~/worktrees/auth-service...</span>
 <span class="c-dim">Stack context injected (3 branches, 2 PRs, 21 MCP tools)</span>
@@ -646,7 +646,7 @@
           <div class="eco-install">
             <h4>Install</h4>
             <ol>
-              <li>Download <code>ezstack-4.7.5.vsix</code> from the release page</li>
+              <li>Download <code>ezstack-4.7.6.vsix</code> from the release page</li>
               <li>In VS Code: <code>Cmd+Shift+P</code> &rarr; "Install from VSIX" &rarr; select the file</li>
               <li>Open a repo with ezstack configured &mdash; the panel appears in the sidebar</li>
             </ol>
@@ -666,7 +666,7 @@
             <span class="eco-badge eco-badge-new">New</span>
           </div>
           <h3>MCP Server</h3>
-          <p>Drive <code>ezs</code> from Claude Code and any MCP-compatible agent. Eleven stack operations exposed as Model Context Protocol tools &mdash; status, list, sync, push, PR create/merge, goto, new, delete, reparent. Destructive tools are annotated so clients can prompt before running.</p>
+          <p>Drive <code>ezs</code> from Claude Code and any MCP-compatible agent. 25 stack operations exposed as Model Context Protocol tools &mdash; inspect (status, list, diff, log, doctor, config_show), mutate (commit, amend, sync, push, new, delete, reparent, stack, unstack, config_set, config_import), navigate (goto), and manage PRs (pr_create, pr_update, pr_merge, pr_draft, pr_draft_all, pr_stack), plus config export. Destructive tools are annotated so clients can prompt before running.</p>
           <div class="eco-install">
             <h4>Install</h4>
             <ol>
@@ -715,7 +715,7 @@
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License &middot; v4.7.5</span>
+          <span class="footer-meta">MIT License &middot; v4.7.6</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

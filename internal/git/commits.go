@@ -85,30 +85,72 @@ func (g *Git) IsMergeInProgress() (bool, error) {
 	return err == nil, nil
 }
 
-// RebaseContinue continues a rebase in progress
-func (g *Git) RebaseContinue() error {
+// ContinueResult classifies the outcome of `git rebase --continue` /
+// `git commit --no-edit` invoked to resume an in-progress rebase or merge.
+//
+// A multi-step rebase can pause again on the next commit's conflict, so a
+// successful exit code from `git rebase --continue` doesn't necessarily mean
+// the rebase is complete. Callers must distinguish "fully done" from "paused
+// again" so they don't push an unfinished branch or re-enter children whose
+// parent isn't actually rebased yet.
+type ContinueResult struct {
+	// Done is true when no rebase or merge is in progress after the continue.
+	Done bool
+	// StillInConflict is true when the operation paused on another conflict
+	// (a multi-step rebase whose next commit also has merge conflicts).
+	StillInConflict bool
+	// Err is set when the underlying git command failed for a reason that
+	// isn't a paused-on-conflict — bad state, invalid args, IO error, etc.
+	Err error
+	// Stderr captures git's diagnostic output for callers that want to surface
+	// it on Err or StillInConflict.
+	Stderr string
+}
+
+// RebaseContinue resumes an in-progress rebase. See ContinueResult for the
+// classification semantics.
+func (g *Git) RebaseContinue() ContinueResult {
 	cmd := exec.Command("git", "rebase", "--continue")
 	cmd.Dir = g.RepoDir
 	cmd.Env = append(os.Environ(), "GIT_EDITOR=true")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("rebase --continue failed: %s", stderr.String())
+	runErr := cmd.Run()
+	stderrStr := stderr.String()
+	inProgress, _ := g.IsRebaseInProgress()
+	if !inProgress && runErr == nil {
+		return ContinueResult{Done: true, Stderr: stderrStr}
 	}
-	return nil
+	if inProgress {
+		// A multi-step rebase paused again on the next commit's conflict.
+		// `git rebase --continue` may exit non-zero in this case; either way,
+		// the rebase is still in progress and the user must resolve the new
+		// conflict before continuing.
+		return ContinueResult{StillInConflict: true, Stderr: stderrStr}
+	}
+	// Not in progress and exit non-zero — a real failure.
+	return ContinueResult{Err: fmt.Errorf("rebase --continue failed: %s", stderrStr), Stderr: stderrStr}
 }
 
-// MergeContinue continues a merge in progress (commits the resolved merge)
-func (g *Git) MergeContinue() error {
+// MergeContinue commits the resolved merge in progress. See ContinueResult.
+// Multi-conflict merges aren't possible (a merge is a single commit), but the
+// shared shape lets the caller treat both flows uniformly.
+func (g *Git) MergeContinue() ContinueResult {
 	cmd := exec.Command("git", "commit", "--no-edit")
 	cmd.Dir = g.RepoDir
 	cmd.Env = append(os.Environ(), "GIT_EDITOR=true")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("merge continue failed: %s", stderr.String())
+	runErr := cmd.Run()
+	stderrStr := stderr.String()
+	inProgress, _ := g.IsMergeInProgress()
+	if !inProgress && runErr == nil {
+		return ContinueResult{Done: true, Stderr: stderrStr}
 	}
-	return nil
+	if inProgress {
+		return ContinueResult{StillInConflict: true, Stderr: stderrStr}
+	}
+	return ContinueResult{Err: fmt.Errorf("merge continue failed: %s", stderrStr), Stderr: stderrStr}
 }
 
 // HasUnresolvedConflicts checks if there are unresolved merge conflicts

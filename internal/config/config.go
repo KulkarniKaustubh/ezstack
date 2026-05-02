@@ -205,6 +205,19 @@ type BranchCache struct {
 	IsMerged     bool   `json:"is_merged,omitempty"`
 	IsRemote     bool   `json:"is_remote,omitempty"`
 	Remote       string `json:"remote,omitempty"` // git remote to push to (e.g. fork remote); defaults to "origin"
+	// PreSyncCommit is the SHA the branch pointed at before the current sync run
+	// began rewriting it. Used as the `oldBase` for `git rebase --onto newParent
+	// oldBase` so children of a freshly-rebased parent don't replay the parent's
+	// commits and re-encounter conflicts that were already resolved upstream.
+	// Persisted across process boundaries so `ezs sync --continue` (a separate
+	// invocation) can use it. Cleared when the branch's sync completes cleanly;
+	// left set while a rebase/merge is in progress.
+	PreSyncCommit string `json:"pre_sync_commit,omitempty"`
+	// PreSyncCommitAt is the Unix epoch second at which PreSyncCommit was last
+	// recorded. Used by stale-snapshot cleanup to age out snapshots from prior
+	// runs that no longer have a worktree to introspect — without this, a
+	// crashed checkout-based sync would leave its snapshot in cache forever.
+	PreSyncCommitAt int64 `json:"pre_sync_commit_at,omitempty"`
 }
 
 // ClearPRFields zeroes the PR-association fields on this BranchCache while

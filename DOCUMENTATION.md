@@ -14,7 +14,7 @@
 
 **Commands:** [agent](#ezs-agent) · [commit/amend](#ezs-commit--ezs-amend) · [config](#ezs-config) · [delete](#ezs-delete) · [diff](#ezs-diff) · [doctor](#ezs-doctor) · [down/up](#ezs-down--ezs-up) · [goto](#ezs-goto) · [list](#ezs-list) · [log](#ezs-log) · [menu](#ezs-menu) · [new](#ezs-new) · [pr](#ezs-pr) · [push](#ezs-push) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [status](#ezs-status) · [sync](#ezs-sync) · [unstack](#ezs-unstack) · [upgrade](#ezs-upgrade)
 
-**Extras:** [Hooks](#hooks) · [Exit codes](#exit-codes) · [Discoverability](#discoverability-info---examples-did-you-mean)
+**Extras:** [Hooks](#hooks) · [Exit codes](#exit-codes) · [Discoverability](#discoverability)
 
 ---
 
@@ -69,7 +69,7 @@ Verify the install:
 
 ```bash
 ezs --version
-# → ezstack version 4.7.5
+# → ezstack version 4.7.6
 ```
 
 ### 2. Wire up shell integration
@@ -274,7 +274,7 @@ ezs upgrade --check    # see whether an upgrade is available without downloading
 ezs upgrade --version v4.6.0   # pin to a specific release tag
 ```
 
-`ezs upgrade` detects how the binary was installed: Homebrew users get the `brew upgrade ezstack` command printed instead of an in-place swap, and `go install` users get the `go install …@latest` command. The companion `ezs-mcp` binary is upgraded alongside `ezs` in lock-step — first by checking next to `ezs`, and then by falling back to `PATH` so a `go install`-only `ezs-mcp` (e.g. at `~/go/bin/ezs-mcp` while `ezs` lives in `~/.local/bin/`) is still picked up. A Homebrew-managed `ezs-mcp` resolved through `PATH` is left alone with a hint to run `brew upgrade ezstack` instead. Pass `--no-mcp` to skip it entirely.
+`ezs upgrade` detects how the binary was installed and routes to the right channel: a manual binary install gets an in-place atomic swap, a `go install` install is re-installed by re-running `go install …@<tag>` so the toolchain stays the source of truth for the install location, and a Homebrew install is left alone with a hint to run `brew upgrade ezstack` (so brew's receipt of the install stays in sync). The companion `ezs-mcp` binary is upgraded alongside `ezs` in lock-step — first by checking next to `ezs`, and then by falling back to `PATH` so a `go install`-only `ezs-mcp` (e.g. at `~/go/bin/ezs-mcp` while `ezs` lives in `~/.local/bin/`) is still picked up. A Homebrew-managed `ezs-mcp` resolved through `PATH` is left alone with the same brew hint. Pass `--no-mcp` to skip it entirely.
 
 `ezs-mcp` exposes the same flow under `--upgrade`, `--upgrade-check`, `--upgrade-tag`, and `--upgrade-force` for the rare case where it is installed without `ezs`.
 
@@ -1083,15 +1083,15 @@ Options:
     -b, --branch <name>    Sync a specific branch by name (rebase onto parent + cascade to children)
     -p, --parent           Rebase current branch onto its parent
     -C, --children         Rebase child branches onto current branch
+    --continue             Continue after resolving conflicts (completes rebase/merge, pushes, then re-syncs the entire descendant subtree). Honors -s, -a, -c, -b, and positional <hash-prefix> to limit the scope.
     --merge                Use git merge instead of git rebase
     --rebase               Use git rebase (overrides sync_strategy config)
-    --no-delete-local      Don't delete local branches after their PRs are merged
-    --dry-run              Preview what would be synced without making changes
-    --continue             Continue after resolving conflicts
-    --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
-    --json                 Output dry-run results as JSON (requires --dry-run)
     --stats                Print a commits-per-branch summary after syncing
     --squash               Squash each child's commits into one before rebasing onto parent
+    --no-delete-local      Don't delete local branches after their PRs are merged
+    --dry-run              Preview what would be synced without making changes
+    --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
+    --json                 Output dry-run results as JSON (requires --dry-run)
 ```
 
 **`--stats`.** Prints a post-sync summary listing, for each branch in the synced set, the number of commits ahead of its parent after the sync completes. The summary is registered so it runs after the `post-sync` hook fires (via LIFO-ordered defers), so the numbers you see reflect the final state on disk.
@@ -1099,6 +1099,12 @@ Options:
 **`--squash`.** Before rebasing each child onto its parent, collapses the child's commits into a single commit. Only branches with ≥2 commits since their parent are affected; branches that are already a single commit are left alone. Because `--squash` rewrites history, any already-pushed branch will need `git push --force-with-lease` afterward — ezstack prints a warning reminding you of this up front.
 
 **Hooks.** `ezs sync` runs `~/.ezstack/hooks/pre-sync` before the sync (aborting on non-zero exit) and `~/.ezstack/hooks/post-sync` after (warning only). See the [Hooks](#hooks) section below.
+
+**Picking up collaborator commits.** Before rebasing each branch onto its parent, sync also fast-forwards the local branch to `origin/<branch>` when a teammate has pushed new commits there. Strict fast-forward only — if your local has unpushed commits *and* the remote has commits you don't, sync prints a `diverged` note and skips the pull (auto-pulling could re-introduce pre-rebase parent commits when the local was just ezstack-rebased). Run `git pull --rebase` in the worktree yourself in that case.
+
+**Cascading conflicts.** When the parent of a stacked chain conflicts with the new base, only the parent's rebase hits the conflict — children get rebased with `git rebase --onto newParent oldParentSHA`, replaying just their own commits. The pre-rebase SHA of every selected branch is snapshotted into `~/.ezstack/stacks.json` (field `pre_sync_commit`) before any rewriting starts, so a later `ezs sync --continue` (a separate process) can use it. `git rerere` is also auto-enabled on the repo on first sync as a safety net for hunks that recur across siblings.
+
+**Concurrent syncs.** A non-blocking exclusive lock on `~/.ezstack/stacks.json.sync.lock` prevents two `ezs sync` invocations (including `--continue`) from racing on snapshot reads/writes or PR-metadata updates. A second invocation while one is already running fails fast with "another `ezs sync` is already running". Backed by `flock` on Unix and `LockFileEx` on Windows. `--dry-run` skips the lock since it's read-only.
 
 By default, sync uses git rebase. Use `--merge` to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with `ezs config set sync_strategy merge`. Use `--rebase` or `--merge` to override the configured strategy for a single run.
 
@@ -1140,10 +1146,10 @@ Options
 `upgrade` does not require being inside a git repository. It works in three steps:
 
 1. Resolves the running binary path with `os.Executable()` and classifies the install:
-   - **Homebrew** (`/opt/homebrew/Cellar/ezstack/...`, `/usr/local/Cellar/ezstack/...`, `/home/linuxbrew/.linuxbrew/Cellar/ezstack/...`) — prints `brew upgrade ezstack` and exits.
-   - **`go install`** (under `$GOBIN`, `$GOPATH/bin`, or `~/go/bin`) — prints the `go install …@latest` command and exits.
+   - **Homebrew** (`/opt/homebrew/Cellar/ezstack/...`, `/usr/local/Cellar/ezstack/...`, `/home/linuxbrew/.linuxbrew/Cellar/ezstack/...`) — prints `brew upgrade ezstack` and exits (so brew's receipt of the install stays in sync with the binary on disk).
+   - **`go install`** (under `$GOBIN`, `$GOPATH/bin`, or `~/go/bin`) — re-runs `go install github.com/KulkarniKaustubh/ezstack/v<major>/cmd/ezs@<tag>` (and `cmd/ezs-mcp@<tag>` when an existing `ezs-mcp` is present) so the Go toolchain stays the source of truth for the install location. The major-version segment is derived from the resolved release tag.
    - Otherwise — proceeds with an in-place swap.
-2. Hits the GitHub Releases API for the requested tag (default: `/releases/latest`), downloads `ezstack_<os>_<arch>.tar.gz` plus `checksums.txt`, and verifies the SHA-256.
+2. Hits the GitHub Releases API for the requested tag (default: `/releases/latest`), downloads `ezstack_<os>_<arch>.tar.gz` plus `checksums.txt`, and verifies the SHA-256. The `go install` path skips this step — the toolchain hashes the module against `go.sum` itself.
 3. Atomically renames the new binaries on top of the old ones (per binary, in their own directories — `ezs` and `ezs-mcp` can live in different bin dirs). On Unix this is safe even for the currently-running process: the kernel keeps the old inode alive until exit.
 
 `ezs-mcp` is resolved in two stages so a split-directory install layout still upgrades in lock-step:
@@ -1240,9 +1246,9 @@ Hooks only fire when ezstack is about to mutate state. Preview commands never in
 
 ---
 
-## Discoverability: `--info`, `--examples`, "did you mean"
+## Discoverability
 
-A handful of ergonomics make it easier to discover commands and debug problems.
+A handful of ergonomics make it easier to discover commands and debug problems: `--info` for diagnostics, `--examples` for per-command recipes, and a built-in "did you mean…?" suggester for typos.
 
 ### `ezs --info`
 
@@ -1301,7 +1307,7 @@ Located in `cmd/ezs-mcp/`. A standalone Model Context Protocol server that
 exposes the full stack workflow as MCP tools. Point any MCP-compatible agent
 (Claude Code, Zed, etc.) at it and the agent can drive `ezs` directly &mdash;
 inspect, mutate, navigate, and manage pull requests without leaving the agent
-loop. 21 tools, one binary.
+loop. 25 tools, one binary.
 
 **Install**
 
@@ -1346,6 +1352,7 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 | `ezstack_list` | read-only | List all stacks and branches. `all`, `decorated`. |
 | `ezstack_diff` | read-only | Diff against parent branch as JSON numstat (default) or diffstat. `branch`, `stat`. |
 | `ezstack_log` | read-only | Commits since parent as JSON (hash, message, author, ISO date). `branch`. |
+| `ezstack_doctor` | read-only | Run diagnostics: ezstack version, prerequisite versions (go/git/gh/fzf), config directory state, and the configured default base branch. Safe to paste into bug reports — no secrets included. |
 | `ezstack_config_show` | read-only | Full ezstack configuration for the active repo. |
 
 **Branch management**
@@ -1376,6 +1383,7 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 | `ezstack_pr_update` | destructive | Push the latest commits and refresh the PR base branch / stack description. `branch`. |
 | `ezstack_pr_merge` | destructive | Merge the pull request for a branch. `branch`, `method`. |
 | `ezstack_pr_draft` | &mdash; | Toggle a PR between draft and ready-for-review. `branch`. |
+| `ezstack_pr_draft_all` | &mdash; | Create draft PRs for every branch in the current stack that doesn't already have one. Branches with an existing PR are left alone (use `ezstack_pr_draft` to toggle an existing PR's draft state). |
 | `ezstack_pr_stack` | &mdash; | Update every PR description in the stack with navigation links. `branch`. |
 
 **Configuration**
@@ -1383,6 +1391,8 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 | Tool | Annotation | Description |
 |---|---|---|
 | `ezstack_config_set` | &mdash; | Set a config value. `key` and `value` (both required). Valid keys: `worktree_base_dir`, `default_base_branch`, `github_token`, `cd_after_new`, `use_worktrees`, `sync_strategy`, `agent_command`. |
+| `ezstack_config_export` | &mdash; | Export the global ezstack config (excluding the per-machine `github_token`) to a file. Safe to share — no secrets included. `file` (required). |
+| `ezstack_config_import` | destructive | Replace the global ezstack config with the contents of `<file>`. Validated against the schema before being applied; the existing local `github_token` is preserved. `file` (required). |
 
 Read-only inspection tools return JSON by default; `ezstack_status` and
 `ezstack_list` accept `decorated=true` for terminal-styled output. Destructive
@@ -1425,14 +1435,14 @@ checks, and review status) and a per-branch file browser. Auto-refreshes when
 
 ```bash
 # Pre-built (from the Releases page)
-code --install-extension ezstack-4.7.5.vsix
+code --install-extension ezstack-4.7.6.vsix
 
 # From source
 cd vscode-extension
 npm install
 npm run compile
 npx vsce package
-code --install-extension ezstack-4.7.5.vsix
+code --install-extension ezstack-4.7.6.vsix
 ```
 
 **Commands** are available under the `ezstack:` prefix in the command palette

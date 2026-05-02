@@ -205,6 +205,17 @@ func (g *Git) ListWorktrees() ([]Worktree, error) {
 	return worktrees, nil
 }
 
+// BranchFromRebaseState returns the branch name recorded in this repo's
+// rebase-state files (.git/rebase-merge/head-name or .git/rebase-apply/head-name).
+// During a rebase HEAD is detached, so `git rev-parse --abbrev-ref HEAD`
+// returns "HEAD" — but ezstack still needs to know which branch the worktree
+// is "really" on so commands like `ezs sync -s --continue` can resolve the
+// current stack. Returns "" when no rebase is in progress or the file can't
+// be read.
+func (g *Git) BranchFromRebaseState() string {
+	return getBranchFromRebaseState(g.RepoDir)
+}
+
 // getBranchFromRebaseState tries to get the original branch name from rebase state files
 // This is useful when a worktree is in the middle of a rebase (detached HEAD)
 func getBranchFromRebaseState(worktreePath string) string {
@@ -270,6 +281,28 @@ func (g *Git) GetLastCommitMessageOf(branch string) (string, error) {
 	return g.run("log", "-1", "--format=%s", branch)
 }
 
+// IsAncestor checks whether `ancestor` is reachable from `descendant`. Wraps
+// `git merge-base --is-ancestor`. Returns (false, nil) when the answer is no
+// (exit code 1) and (false, err) for any other failure (bad refs, etc.).
+//
+// Used by lookupPreSyncSHA to detect snapshots that have been invalidated by
+// out-of-band history rewrites (e.g. a manual `git rebase` between ezstack
+// runs): if the recorded SHA is no longer reachable from the branch tip,
+// git's `--onto staleSHA` would compute a bogus commit range, so the caller
+// must discard the snapshot and fall back to plain rebase.
+func (g *Git) IsAncestor(ancestor, descendant string) (bool, error) {
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", ancestor, descendant)
+	cmd.Dir = g.RepoDir
+	err := cmd.Run()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // IsBranchMerged checks if a branch has been merged into target
 func (g *Git) IsBranchMerged(branch, target string) (bool, error) {
 	// Check if the branch commit is an ancestor of target
@@ -311,6 +344,57 @@ func (g *Git) GetCommitsAhead(branch, target string) (int, error) {
 		return 0, fmt.Errorf("failed to parse commit count: %w", err)
 	}
 	return count, nil
+}
+
+// GetAheadBehind returns the divergence between two refs in a single git
+// invocation: ahead = commits in `local` not reachable from `remote`,
+// behind = commits in `remote` not reachable from `local`.
+//
+// Use this instead of two GetCommitsAhead/GetCommitsBehind calls when you
+// need both numbers — git computes them simultaneously here and the result
+// is consistent against a single snapshot of the object database.
+func (g *Git) GetAheadBehind(local, remote string) (ahead, behind int, err error) {
+	output, err := g.run("rev-list", "--left-right", "--count", local+"..."+remote)
+	if err != nil {
+		return 0, 0, err
+	}
+	parts := strings.Fields(strings.TrimSpace(output))
+	if len(parts) != 2 {
+		return 0, 0, fmt.Errorf("unexpected rev-list output: %q", output)
+	}
+	ahead, err = strconv.Atoi(parts[0])
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse ahead: %w", err)
+	}
+	behind, err = strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, 0, fmt.Errorf("parse behind: %w", err)
+	}
+	return ahead, behind, nil
+}
+
+// FastForwardMerge runs `git merge --ff-only target` in the current repo.
+// Used by sync's remote-integration step to advance a branch to its remote's
+// new tip when the local has no diverging commits. Returns RebaseResult so
+// callers can use the same conflict-handling shape as RebaseNonInteractive.
+//
+// The --ff-only flag rejects any merge that would require a real merge
+// commit, so this is safe to call even when the caller hasn't pre-checked
+// divergence — git will refuse rather than create unexpected history.
+func (g *Git) FastForwardMerge(target string) RebaseResult {
+	cmd := exec.Command("git", "merge", "--ff-only", target)
+	cmd.Dir = g.RepoDir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		combined := stdout.String() + stderr.String()
+		// --ff-only doesn't produce a CONFLICT in the merge sense — it just
+		// refuses on divergence — but a worktree-state error or refusal is
+		// still a real failure for our purposes.
+		return RebaseResult{Error: fmt.Errorf("fast-forward failed: %s", strings.TrimSpace(combined))}
+	}
+	return RebaseResult{Success: true}
 }
 
 // GetDiffStat returns the total lines added and removed between base and head.
@@ -373,6 +457,22 @@ func (g *Git) RemoteBranchExists(branch string) bool {
 	originBranch := "origin/" + branch
 	_, err := g.run("rev-parse", "--verify", originBranch)
 	return err == nil
+}
+
+// RefExists checks whether an arbitrary git ref resolves to a real object
+// in the repository. Useful for symbolic refs (branches, tags). Combines
+// `rev-parse --verify` (parses the ref to a SHA) with `cat-file -e` (proves
+// the SHA names an actual object) — `rev-parse --verify` alone accepts any
+// 40-char hex string as a "valid" SHA even when the object doesn't exist,
+// which is too lenient for snapshot validity checks.
+func (g *Git) RefExists(ref string) bool {
+	sha, err := g.run("rev-parse", "--verify", ref)
+	if err != nil {
+		return false
+	}
+	cmd := exec.Command("git", "cat-file", "-e", strings.TrimSpace(sha))
+	cmd.Dir = g.RepoDir
+	return cmd.Run() == nil
 }
 
 // ListLocalBranches returns all local branch names
@@ -510,6 +610,15 @@ func (g *Git) RebaseOntoNonInteractive(newBase, oldBase string) RebaseResult {
 // Rebase rebases current branch onto target
 func (g *Git) Rebase(target string) error {
 	return g.RunInteractive("rebase", target)
+}
+
+// RebaseOnto interactively rebases commits in `oldBase..HEAD` onto newBase.
+// Used by stack-aware callers that know the OLD parent SHA the current branch
+// was sitting on top of, so they can avoid replaying the parent's own commits
+// when the parent has been rewritten. When oldBase equals newBase this is
+// equivalent to plain `git rebase newBase`.
+func (g *Git) RebaseOnto(newBase, oldBase string) error {
+	return g.RunInteractive("rebase", "--onto", newBase, oldBase)
 }
 
 // MergeNonInteractive merges target into the current branch without interactive mode
@@ -695,9 +804,15 @@ func (g *Git) AddRemote(name, url string) error {
 	return err
 }
 
-// FetchRemote fetches from a specific remote
+// FetchRemote fetches from a specific named remote (e.g. a fork). Used by
+// integrate flows for non-origin remotes; the default Fetch() only handles
+// origin to avoid hanging on unreachable remotes by default. Adds --prune
+// so deleted remote branches stop showing as tracking refs.
 func (g *Git) FetchRemote(remote string) error {
-	_, err := g.run("fetch", remote)
+	if remote == "" {
+		return fmt.Errorf("FetchRemote: empty remote name")
+	}
+	_, err := g.runWithSpinner("Fetching from "+remote+"...", "fetch", remote, "--prune")
 	return err
 }
 
