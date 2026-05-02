@@ -59,6 +59,27 @@ func TestNewClient(t *testing.T) {
 			wantErr:   false,
 		},
 		{
+			name:      "Repo name with dot is preserved",
+			remoteURL: "https://github.com/owner/my-repo.io.git",
+			wantOwner: "owner",
+			wantRepo:  "my-repo.io",
+			wantErr:   false,
+		},
+		{
+			name:      "Repo name with dot, no .git suffix",
+			remoteURL: "git@github.com:owner/foo.bar",
+			wantOwner: "owner",
+			wantRepo:  "foo.bar",
+			wantErr:   false,
+		},
+		{
+			name:      "HTTPS URL with trailing slash",
+			remoteURL: "https://github.com/owner/repo/",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
 			name:      "Invalid URL - no github.com",
 			remoteURL: "git@gitlab.com:owner/repo.git",
 			wantErr:   true,

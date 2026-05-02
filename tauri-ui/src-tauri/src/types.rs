@@ -13,6 +13,10 @@ pub struct Branch {
     pub pr_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worktree_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub additions: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletions: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,6 +45,16 @@ pub struct Stack {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_base: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_pr_number: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_pr_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_additions: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_deletions: Option<i32>,
     pub branches: Vec<Branch>,
 }
 
@@ -50,6 +64,16 @@ pub struct StatusStack {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub root: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_base: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_pr_number: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_pr_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_additions: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_deletions: Option<i32>,
     pub branches: Vec<StatusBranch>,
 }
 
@@ -60,7 +84,11 @@ pub struct CommandResult {
     pub exit_code: i32,
 }
 
-// Mirrors ~/.ezstack/config.json
+// Mirrors ~/.ezstack/config.json. READ-ONLY — these structs deliberately omit
+// fields the desktop app doesn't read (github_token, cd_after_new,
+// use_worktrees, init_submodules, auto_draft_wip_commits, agent_command). If
+// the app ever needs to *write* this file, fill in those fields first or it
+// will silently strip them on round-trip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EzstackConfig {
     #[serde(default)]

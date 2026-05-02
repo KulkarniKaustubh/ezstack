@@ -347,11 +347,23 @@ func SelectWorktree(worktrees []WorktreeInfo, prompt string) (*WorktreeInfo, err
 	return nil, fmt.Errorf("worktree not found: %s", branchName)
 }
 
-// SelectWorktreeWithStackPreview uses fzf to select a worktree with stack preview
-// For worktrees not in any stack, the preview shows "Not part of a stack"
+// SelectWorktreeWithStackPreview uses fzf to select a worktree with stack preview.
+// For worktrees not in any stack, the preview shows "Not part of a stack".
+//
+// Under YesMode (MCP / -y) we cannot run fzf — there's no controlling terminal
+// — so multi-match calls fail loudly with a structured error instead of
+// hanging on an interactive prompt. The exact-match path (single worktree)
+// still works because callers handle len==1 before reaching here.
 func SelectWorktreeWithStackPreview(worktrees []WorktreeInfo, stacks []*config.Stack, prompt string) (*WorktreeInfo, error) {
 	if len(worktrees) == 0 {
 		return nil, fmt.Errorf("no worktrees to select from")
+	}
+	if YesMode && len(worktrees) > 1 {
+		names := make([]string, 0, len(worktrees))
+		for _, w := range worktrees {
+			names = append(names, w.Branch)
+		}
+		return nil, fmt.Errorf("multiple worktrees match (%s) — disambiguate with an exact branch name; interactive selection is unavailable in -y / MCP mode", strings.Join(names, ", "))
 	}
 
 	// Build a map of branch -> stack for quick lookup
@@ -1088,8 +1100,22 @@ func (t *TerminalBackend) ConfirmWithDefault(prompt string, defaultYes bool) boo
 // options is the list of options to display
 // prompt is the question to ask
 // defaultIdx is the 0-based index of the default selected option
-// Returns the 0-based index of the selected option, or -1 if cancelled
+// Returns the 0-based index of the selected option, or -1 if cancelled.
+//
+// Honors YesMode: under MCP / -y the menu auto-resolves to defaultIdx
+// instead of trying to drive a TTY that isn't there. Without this guard,
+// MCP tool calls that route through SelectTUI hang indefinitely waiting
+// for keystrokes from a controlling terminal.
 func SelectTUI(options []string, prompt string, defaultIdx int) int {
+	if YesMode {
+		if len(options) == 0 {
+			return -1
+		}
+		if defaultIdx < 0 || defaultIdx >= len(options) {
+			defaultIdx = 0
+		}
+		return defaultIdx
+	}
 	return activeBackend.Select(options, prompt, defaultIdx)
 }
 

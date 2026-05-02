@@ -164,6 +164,11 @@ func (g *Git) HasUnresolvedConflicts() (bool, error) {
 
 // Push pushes the current branch to the specified remote.
 // If remote is empty, defaults to "origin".
+//
+// Deprecated: prefer PushBranch(branchName, force, remote). Push consults
+// CurrentBranch() at call time, which means after a transient checkout (e.g.
+// the syncViaCheckout codepath that restores HEAD to main) it will push the
+// wrong branch. New callers should pass an explicit branch name.
 func (g *Git) Push(force bool, remote ...string) error {
 	r := "origin"
 	if len(remote) > 0 && remote[0] != "" {
@@ -196,8 +201,11 @@ func (g *Git) PushBranch(branch string, force bool, remote ...string) error {
 	return g.RunInteractive(args...)
 }
 
-// PushSetUpstream pushes and sets upstream.
+// PushSetUpstream pushes and sets upstream for the current branch.
 // If remote is empty, defaults to "origin".
+//
+// Deprecated: prefer PushBranchSetUpstream(branch, remote) — see Push for the
+// reasoning.
 func (g *Git) PushSetUpstream(remote ...string) error {
 	r := "origin"
 	if len(remote) > 0 && remote[0] != "" {

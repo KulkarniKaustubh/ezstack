@@ -3,6 +3,12 @@ export interface StackJSON {
   hash: string;
   name?: string;
   root: string;
+  /** Set when the stack root is itself a tracked branch with its own PR. */
+  root_base?: string;
+  root_pr_number?: number;
+  root_pr_url?: string;
+  root_additions?: number;
+  root_deletions?: number;
   branches: BranchJSON[];
 }
 
@@ -15,6 +21,9 @@ export interface BranchJSON {
   pr_number?: number;
   pr_url?: string;
   worktree_path?: string;
+  /** Always emitted (no omitempty). */
+  additions: number;
+  deletions: number;
 }
 
 /** Mirrors the Go statusStackJSON struct (ezs status --json) */
@@ -22,6 +31,11 @@ export interface StatusStackJSON {
   hash: string;
   name?: string;
   root: string;
+  root_base?: string;
+  root_pr_number?: number;
+  root_pr_url?: string;
+  root_additions?: number;
+  root_deletions?: number;
   branches: StatusBranchJSON[];
 }
 
@@ -31,9 +45,8 @@ export interface StatusBranchJSON extends BranchJSON {
   ci_state?: "success" | "failure" | "pending" | "none" | "";
   ci_summary?: string;
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" | "";
-  review_state?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "";
-  additions?: number;
-  deletions?: number;
+  /** "" appears for PRs without a review yet; gh also returns "COMMENTED". */
+  review_state?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "COMMENTED" | "";
 }
 
 /** Per-file git status indicator. */
@@ -54,9 +67,14 @@ export interface WorktreeGitStatus {
 export interface SyncInfoJSON {
   branch: string;
   needs_sync: boolean;
-  reason?: string;
-  parent?: string;
+  /** Set when the parent branch has been merged into the stack root. */
+  merged_parent?: string;
+  /** Set when the branch is behind its parent (rebase needed). */
+  behind_parent?: string;
+  /** Number of commits this branch is behind its parent. */
   behind_by?: number;
+  /** The branch this stack is rooted on (typically the default base). */
+  stack_root: string;
 }
 
 /** Mirrors the Go diffOutputJSON struct from cmd/ezs/commands/diff.go */

@@ -1324,14 +1324,19 @@ func (m *Manager) ApplyBranchRenames(renames []RenamedBranchInfo) error {
 			// Rename in tree (hash stays stable - stack identity doesn't change)
 			stack.RenameBranchInTree(rename.OldName, rename.NewName)
 
-			// Move cache entry: copy old metadata to new key, delete old key
+			// Move cache entry: copy old metadata to new key, delete old key.
+			// Skip the move if the new name already has a cache entry — that
+			// means a concurrent process or a prior command already populated
+			// it, and clobbering it would lose PR URLs / merged flags.
 			oldCache := cache.GetBranchCache(rename.OldName)
-			if oldCache != nil {
-				cache.SetBranchCache(rename.NewName, oldCache)
-			} else {
-				cache.SetBranchCache(rename.NewName, &config.BranchCache{
-					WorktreePath: rename.WorktreePath,
-				})
+			if cache.GetBranchCache(rename.NewName) == nil {
+				if oldCache != nil {
+					cache.SetBranchCache(rename.NewName, oldCache)
+				} else {
+					cache.SetBranchCache(rename.NewName, &config.BranchCache{
+						WorktreePath: rename.WorktreePath,
+					})
+				}
 			}
 			delete(cache.Branches, rename.OldName)
 

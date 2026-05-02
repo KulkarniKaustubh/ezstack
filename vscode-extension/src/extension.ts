@@ -145,6 +145,26 @@ export async function activate(
     return;
   }
 
+  // Warn if the CLI is too old. The extension calls features that landed in
+  // 4.7.0 (--cascade, --draft-all, --all-remotes, --verify, pr stack,
+  // config export/import, stack rename, agent --preset). Older binaries hit
+  // cryptic errors at the call site; nudge the user toward `ezs upgrade`.
+  const MIN_CLI_VERSION = { major: 4, minor: 7, patch: 0 };
+  const v = await cli.getVersionSemver();
+  if (v) {
+    const tooOld =
+      v.major < MIN_CLI_VERSION.major ||
+      (v.major === MIN_CLI_VERSION.major && v.minor < MIN_CLI_VERSION.minor) ||
+      (v.major === MIN_CLI_VERSION.major &&
+        v.minor === MIN_CLI_VERSION.minor &&
+        v.patch < MIN_CLI_VERSION.patch);
+    if (tooOld) {
+      vscode.window.showWarningMessage(
+        `ezstack: detected ezs v${v.major}.${v.minor}.${v.patch} — extension features may fail. Run \`ezs upgrade\` to update to ${MIN_CLI_VERSION.major}.${MIN_CLI_VERSION.minor}.${MIN_CLI_VERSION.patch} or newer.`,
+      );
+    }
+  }
+
   // Folder decorations (colored badges on workspace folders)
   const decorations = new FolderDecorationProvider(cli);
   context.subscriptions.push(

@@ -1876,9 +1876,13 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 		// worktreePath (not child.WorktreePath) so a drift heal performed
 		// above propagates here without depending on the cache mutation
 		// having been observed back via the *config.Branch pointer.
+		// Use NewReadOnlyManager so the recursive descent doesn't run a
+		// full Reconcile() mid-rebase — orphan/prune detection during an
+		// in-flight rebase can disturb the branch we're operating on. The
+		// top-level command already reconciled before kicking off the sync.
 		var childResults []RebaseResult
 		if worktreePath != "" {
-			childMgr, err := NewManager(worktreePath)
+			childMgr, err := NewReadOnlyManager(worktreePath)
 			if err != nil {
 				result := RebaseResult{
 					Branch:       child.Name,
@@ -1914,7 +1918,7 @@ func (m *Manager) RebaseChildren(useMerge ...bool) ([]RebaseResult, error) {
 				results = append(results, result)
 				return results, nil
 			}
-			childMgr, err := NewManager(m.repoDir)
+			childMgr, err := NewReadOnlyManager(m.repoDir)
 			if err != nil {
 				_ = m.git.CheckoutBranch(origBranch)
 				result := RebaseResult{

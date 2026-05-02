@@ -428,16 +428,22 @@ func (g *Git) GetDiffStat(base, head string) (added int, removed int, err error)
 // IsLocalAheadOfRemote checks if the local branch has commits not in the remote.
 // If remote is empty, defaults to "origin".
 // Returns true if local is ahead (needs push), false if in sync or behind.
+//
+// Distinguishes "remote ref doesn't exist" (treat as ahead — first push) from
+// transient or unrelated rev-parse failures (lock contention, repo corruption,
+// bad ref name) which are surfaced as errors. Returning (true, nil) on any
+// error would let downstream code push to a remote ref that may not be the
+// one we expected.
 func (g *Git) IsLocalAheadOfRemote(branch string, remote string) (bool, error) {
 	if remote == "" {
 		remote = "origin"
 	}
 	remoteBranch := remote + "/" + branch
-	// Check if remote branch exists
-	_, err := g.run("rev-parse", "--verify", remoteBranch)
-	if err != nil {
-		// Remote branch doesn't exist - local is ahead (needs first push)
-		return true, nil
+	if _, err := g.run("rev-parse", "--verify", remoteBranch); err != nil {
+		if isMissingRefError(err) {
+			return true, nil
+		}
+		return false, fmt.Errorf("rev-parse %s: %w", remoteBranch, err)
 	}
 	ahead, err := g.GetCommitsAhead(branch, remoteBranch)
 	if err != nil {
@@ -446,16 +452,46 @@ func (g *Git) IsLocalAheadOfRemote(branch string, remote string) (bool, error) {
 	return ahead > 0, nil
 }
 
+// isMissingRefError returns true if err's message looks like git's
+// "ref not found" output from `rev-parse --verify`. Git emits one of:
+//
+//	"fatal: Needed a single revision"
+//	"fatal: ambiguous argument 'X': unknown revision or path not in the working tree."
+//	"fatal: bad revision 'X'"
+//
+// These all mean "the ref doesn't exist". Anything else (lock contention,
+// repo corruption, transient errors) is propagated as a real error so the
+// caller can decide how to react.
+func isMissingRefError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "unknown revision") ||
+		strings.Contains(msg, "Needed a single revision") ||
+		strings.Contains(msg, "bad revision") ||
+		strings.Contains(msg, "not a valid object name")
+}
+
 // IsLocalAheadOfOrigin checks if the local branch has commits not in origin.
 // Deprecated: Use IsLocalAheadOfRemote instead.
 func (g *Git) IsLocalAheadOfOrigin(branch string) (bool, error) {
 	return g.IsLocalAheadOfRemote(branch, "origin")
 }
 
-// RemoteBranchExists checks if a remote branch exists
+// RemoteBranchExists checks if a branch exists on `origin`.
+// Use RemoteHasBranch when the remote may not be `origin` (e.g. fork remotes).
 func (g *Git) RemoteBranchExists(branch string) bool {
-	originBranch := "origin/" + branch
-	_, err := g.run("rev-parse", "--verify", originBranch)
+	return g.RemoteHasBranch("origin", branch)
+}
+
+// RemoteHasBranch checks if `branch` exists on the given remote. Defaults to
+// `origin` if remote is empty.
+func (g *Git) RemoteHasBranch(remote, branch string) bool {
+	if remote == "" {
+		remote = "origin"
+	}
+	_, err := g.run("rev-parse", "--verify", remote+"/"+branch)
 	return err == nil
 }
 

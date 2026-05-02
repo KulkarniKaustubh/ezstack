@@ -1,1 +1,1 @@
-export const APP_VERSION = "3.2.6-tauri-beta.3";
+export const APP_VERSION = "4.7.6";

@@ -37,9 +37,9 @@ describe("findCurrentBranch", () => {
         hash: "abc",
         root: "main",
         branches: [
-          { name: "feat-a", parent: "main", is_merged: false, is_current: false },
-          { name: "feat-b", parent: "feat-a", is_merged: false, is_current: true },
-          { name: "feat-c", parent: "feat-b", is_merged: false, is_current: false },
+          { name: "feat-a", parent: "main", is_merged: false, is_current: false, additions: 0, deletions: 0 },
+          { name: "feat-b", parent: "feat-a", is_merged: false, is_current: true, additions: 0, deletions: 0 },
+          { name: "feat-c", parent: "feat-b", is_merged: false, is_current: false, additions: 0, deletions: 0 },
         ],
       },
     ];
@@ -56,7 +56,7 @@ describe("findCurrentBranch", () => {
         hash: "abc",
         root: "main",
         branches: [
-          { name: "feat-a", parent: "main", is_merged: false, is_current: false },
+          { name: "feat-a", parent: "main", is_merged: false, is_current: false, additions: 0, deletions: 0 },
         ],
       },
     ];

@@ -8,6 +8,8 @@ function makeBranch(overrides: Partial<StatusBranchJSON> = {}): StatusBranchJSON
     parent: "main",
     is_merged: false,
     is_current: false,
+    additions: 0,
+    deletions: 0,
     ...overrides,
   };
 }

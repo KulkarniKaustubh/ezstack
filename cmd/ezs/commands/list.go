@@ -393,6 +393,10 @@ func Status(args []string) error {
 
 	stacks := mgr.ListStacks()
 	if len(stacks) == 0 {
+		if *jsonFlag {
+			fmt.Fprintln(os.Stdout, "[]")
+			return nil
+		}
 		ui.Info("No stacks found. Create one with: ezs new <branch-name>")
 		return nil
 	}

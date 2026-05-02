@@ -25,11 +25,12 @@ type Client struct {
 	repo  string
 }
 
-// NewClient creates a new GitHub client by parsing the remote URL
+// NewClient creates a new GitHub client by parsing the remote URL.
+// Handles: git@github.com:owner/repo.git or https://github.com/owner/repo.git
+// Repo names containing dots (e.g. "my-repo.io") are preserved — only a
+// trailing ".git" suffix is stripped.
 func NewClient(remoteURL string) (*Client, error) {
-	// Parse owner/repo from URL
-	// Handles: git@github.com:owner/repo.git or https://github.com/owner/repo.git
-	re := regexp.MustCompile(`github\.com[:/]([^/]+)/([^/.]+)`)
+	re := regexp.MustCompile(`github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$`)
 	matches := re.FindStringSubmatch(remoteURL)
 	if len(matches) != 3 {
 		return nil, fmt.Errorf("could not parse GitHub URL: %s", remoteURL)

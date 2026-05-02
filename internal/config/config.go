@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -164,6 +165,12 @@ type StackConfig struct {
 	Stacks  map[string]*Stack `json:"stacks"`
 	Cache   *CacheConfig      `json:"-"` // loaded alongside stacks, not serialized separately
 	repoDir string            // internal, not serialized - used for saving
+
+	// origSnapshot captures this repo's data as it existed on disk at load
+	// time. Save() uses it as the common ancestor for a three-way merge so
+	// that concurrent modifications by another ezstack process don't get
+	// silently overwritten. nil for fresh configs.
+	origSnapshot *repoData
 }
 
 // Stack represents a chain of stacked branches as a tree
@@ -316,7 +323,10 @@ type legacyConfig struct {
 }
 
 // atomicWriteFile writes data to a file atomically by writing to a temp file
-// in the same directory, fsyncing it, and then renaming over the destination.
+// in the same directory, fsyncing it, renaming over the destination, and then
+// fsyncing the parent directory so the rename itself is durable on filesystems
+// where rename ordering vs. data persistence isn't otherwise guaranteed
+// (APFS, ZFS, NFS).
 //
 // fsync before rename is what makes "atomic" actually durable: without it, a
 // crash between rename and the OS flushing dirty pages can leave the renamed
@@ -355,7 +365,22 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		os.Remove(tmpPath)
 		return err
 	}
+	syncDir(dir)
 	return nil
+}
+
+// syncDir fsyncs a directory so that a recent rename inside it is durable.
+// Best-effort: errors are ignored because (a) Windows rejects directory fsync
+// with EINVAL and (b) some filesystems return ENOTSUP. The atomic rename has
+// already happened; missing the directory sync is a small durability hit, not
+// a correctness bug.
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	d.Close()
 }
 
 // migrateStackConfig migrates stacks.json data from srcVersion to dstVersion.
@@ -930,7 +955,8 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 			Branches: rd.Branches,
 			repoDir:  repoDir,
 		},
-		repoDir: repoDir,
+		repoDir:      repoDir,
+		origSnapshot: snapshotRepoData(rd),
 	}
 
 	for hash, stack := range sc.Stacks {
@@ -941,6 +967,119 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 	}
 
 	return sc, nil
+}
+
+// snapshotRepoData deep-copies a repoData via a JSON round-trip so that
+// later mutations to the live `*Stack` / `*BranchCache` pointers don't
+// affect the captured snapshot. Returns an empty (non-nil) repoData on
+// nil input so callers can compare without a nil check.
+func snapshotRepoData(rd *repoData) *repoData {
+	out := &repoData{
+		Stacks:   make(map[string]*Stack),
+		Branches: make(map[string]*BranchCache),
+	}
+	if rd == nil {
+		return out
+	}
+	if buf, err := json.Marshal(rd); err == nil {
+		_ = json.Unmarshal(buf, out)
+	}
+	if out.Stacks == nil {
+		out.Stacks = make(map[string]*Stack)
+	}
+	if out.Branches == nil {
+		out.Branches = make(map[string]*BranchCache)
+	}
+	return out
+}
+
+// jsonEqual compares two values by their JSON serialization. Returns false
+// if either side fails to marshal — we prefer "treat as different" over
+// "treat as equal" for safety.
+func jsonEqual(a, b any) bool {
+	aJSON, errA := json.Marshal(a)
+	bJSON, errB := json.Marshal(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return bytes.Equal(aJSON, bJSON)
+}
+
+// mergeRepoData performs a three-way merge between the disk state at load
+// time (orig), the in-memory state we want to write (mine), and the disk
+// state right now (theirs, which may include another process's changes).
+//
+// Per stack/branch:
+//   - If we modified it (mine != orig) → take mine
+//   - If we didn't touch it (mine == orig) → take theirs (preserves another
+//     process's concurrent updates, including deletions)
+//   - If we added (in mine, not in orig) → take mine
+//   - If we deleted (in orig, not in mine) → omit (deletion wins)
+//   - If theirs added (in theirs, not in orig, not in mine) → take theirs
+//
+// Concurrent modifications to the *same* stack from two processes resolve
+// last-writer-wins, which matches the existing semantics — but the common
+// case (two processes touching different stacks of the same repo) is now
+// safe.
+func mergeRepoData(orig, mine, theirs *repoData) *repoData {
+	if orig == nil {
+		orig = &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+	}
+	if theirs == nil {
+		theirs = &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+	}
+	merged := &repoData{
+		Stacks:   make(map[string]*Stack),
+		Branches: make(map[string]*BranchCache),
+	}
+
+	// Stacks
+	seenStacks := make(map[string]bool, len(mine.Stacks))
+	for hash, mineS := range mine.Stacks {
+		seenStacks[hash] = true
+		origS, hadOrig := orig.Stacks[hash]
+		if hadOrig && jsonEqual(origS, mineS) {
+			if theirS, hasTheirs := theirs.Stacks[hash]; hasTheirs {
+				merged.Stacks[hash] = theirS
+			}
+			continue
+		}
+		merged.Stacks[hash] = mineS
+	}
+	for hash, theirS := range theirs.Stacks {
+		if seenStacks[hash] {
+			continue
+		}
+		if _, wasOrig := orig.Stacks[hash]; wasOrig {
+			continue // we deleted it
+		}
+		merged.Stacks[hash] = theirS
+	}
+
+	// Branches (cache entries) — same shape
+	seenBranches := make(map[string]bool, len(mine.Branches))
+	for name, mineB := range mine.Branches {
+		seenBranches[name] = true
+		origB, hadOrig := orig.Branches[name]
+		if hadOrig && jsonEqual(origB, mineB) {
+			if theirB, hasTheirs := theirs.Branches[name]; hasTheirs {
+				merged.Branches[name] = theirB
+			}
+			continue
+		}
+		merged.Branches[name] = mineB
+	}
+	for name, theirB := range theirs.Branches {
+		if seenBranches[name] {
+			continue
+		}
+		if _, wasOrig := orig.Branches[name]; wasOrig {
+			continue
+		}
+		merged.Branches[name] = theirB
+	}
+
+	return merged
 }
 
 // IsFullyMerged returns true if every branch in the stack is marked as merged
@@ -1025,18 +1164,32 @@ func (sc *StackConfig) Save(repoDir string) error {
 		branches = sc.Cache.Branches
 	}
 
-	file.Version = currentStackConfigVersion
-	file.Repos[targetRepo] = &repoData{
+	mine := &repoData{
 		Stacks:   sc.Stacks,
 		Branches: branches,
 	}
+
+	// Three-way merge against any concurrent on-disk changes since we loaded.
+	// Without this, two parallel ezs invocations on different stacks of the
+	// same repo silently lose one process's writes.
+	merged := mergeRepoData(sc.origSnapshot, mine, file.Repos[targetRepo])
+
+	file.Version = currentStackConfigVersion
+	file.Repos[targetRepo] = merged
 
 	newData, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return atomicWriteFile(stackPath, newData, 0644)
+	if err := atomicWriteFile(stackPath, newData, 0644); err != nil {
+		return err
+	}
+
+	// Refresh our snapshot so a subsequent Save in the same process treats the
+	// just-written data as the new common ancestor for any further changes.
+	sc.origSnapshot = snapshotRepoData(merged)
+	return nil
 }
 
 // LoadCacheConfig loads cached branch metadata. This now delegates to the combined stacks file.
@@ -1347,13 +1500,21 @@ func (s *Stack) RemoveBranch(branchName string) {
 	s.removeBranchFromTree(s.Tree, branchName)
 }
 
-// removeBranchFromTree recursively finds and removes the branch
+// removeBranchFromTree recursively finds and removes the branch.
+// When the removed branch has children, they are reparented one level up.
+// If a child has the same name as a sibling already at the parent level
+// (rare but possible after a rename or import), we merge that child's
+// subtree into the existing sibling rather than overwriting it — losing
+// the existing subtree would silently drop branches from config.
 func (s *Stack) removeBranchFromTree(tree BranchTree, branchName string) bool {
 	for name, children := range tree {
 		if name == branchName {
-			// Move children up to this branch's parent (which is the current tree)
 			for childName, childTree := range children {
-				tree[childName] = childTree
+				if existing, collides := tree[childName]; collides {
+					mergeBranchTrees(existing, childTree)
+				} else {
+					tree[childName] = childTree
+				}
 			}
 			delete(tree, branchName)
 			return true
@@ -1363,6 +1524,19 @@ func (s *Stack) removeBranchFromTree(tree BranchTree, branchName string) bool {
 		}
 	}
 	return false
+}
+
+// mergeBranchTrees recursively merges src into dst, preserving any
+// non-overlapping subtrees on both sides. When the same name appears in
+// both, descend and merge.
+func mergeBranchTrees(dst, src BranchTree) {
+	for name, srcChildren := range src {
+		if dstChildren, ok := dst[name]; ok {
+			mergeBranchTrees(dstChildren, srcChildren)
+		} else {
+			dst[name] = srcChildren
+		}
+	}
 }
 
 // ReparentBranch moves a branch to be under a new parent

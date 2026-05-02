@@ -336,8 +336,8 @@ func prCreateAllDraft(currentStack *config.Stack, draft, force bool) error {
 			ui.Warn(fmt.Sprintf("Skipping %s: push not allowed (fork does not allow maintainer push)", b.Name))
 			continue
 		}
-		// Push the branch first
-		if err := g.RunInteractive("push", "-u", b.EffectiveRemote(), b.Name); err != nil {
+		// Push the branch first to its effective remote (fork-aware).
+		if err := g.PushBranchSetUpstream(b.Name, b.EffectiveRemote()); err != nil {
 			ui.Warn(fmt.Sprintf("Failed to push %s: %v", b.Name, err))
 			failed++
 			continue
