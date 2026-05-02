@@ -287,9 +287,12 @@ const preSyncSnapshotMaxAge = 14 * 24 * time.Hour
 //     no rebase/merge is in progress in its worktree — the prior sync was
 //     interrupted before any rewrite happened, so the snapshot is just
 //     noise.
-//  2. (Age fallback) PreSyncCommitAt is older than preSyncSnapshotMaxAge.
-//     This catches checkout-based branches (no worktree to introspect) and
-//     long-abandoned snapshots from crashed runs that never came back.
+//  2. (Age fallback) PreSyncCommitAt is older than preSyncSnapshotMaxAge
+//     AND the snapshot is no longer reachable from any descendant's tip.
+//     Catches checkout-based branches (no worktree to introspect) and
+//     long-abandoned snapshots from crashed runs that never came back —
+//     but never drops a snapshot a descendant is still anchored to, since
+//     that would silently reintroduce the cascade-conflict bug Plan A fixes.
 //
 // In-progress rebases/merges are always preserved regardless of age — the
 // snapshot is in active use.
@@ -340,8 +343,20 @@ func (m *Manager) cleanupStalePreSyncSHAs() {
 		// Heuristic 2: age fallback — applies regardless of worktree
 		// availability. PreSyncCommitAt of 0 means "no timestamp recorded"
 		// (older config that predates this field); treat as ancient and
-		// clear so we don't carry uninspectable snapshots forever.
+		// clear so we don't carry uninspectable snapshots forever. BUT:
+		// preserve the snapshot when it's still reachable from a descendant
+		// — that descendant has not been rebased onto the new parent yet,
+		// and its next sync needs this SHA as the `--onto` oldBase. Dropping
+		// it here would reduce the next rebase to plain `git rebase parent`,
+		// reintroducing the cascade-conflict bug Plan A fixes. (We only
+		// reach this branch when the SHA still exists in the object DB —
+		// `RefExists` was the implicit guard via heuristic 1's HEAD compare,
+		// but for the no-worktree path we explicitly check.)
 		if bc.PreSyncCommitAt == 0 || now.Sub(time.Unix(bc.PreSyncCommitAt, 0)) > preSyncSnapshotMaxAge {
+			if m.git.RefExists(bc.PreSyncCommit) && m.snapshotStillNeededByDescendant(name, bc.PreSyncCommit) {
+				debugLog("snapshot-cleanup-age-preserve", "branch", name, "sha", bc.PreSyncCommit, "reason", "descendant-still-anchored")
+				continue
+			}
 			debugLog("snapshot-cleanup-age", "branch", name, "sha", bc.PreSyncCommit, "age_days", fmt.Sprintf("%.1f", now.Sub(time.Unix(bc.PreSyncCommitAt, 0)).Hours()/24))
 			bc.PreSyncCommit = ""
 			bc.PreSyncCommitAt = 0
@@ -900,14 +915,21 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 		return g.RebaseOntoNonInteractive(newBase, oldBase)
 	}
 
-	// saveState persists cache and config; logs warnings on failure.
+	// saveState persists state; logs warnings on failure.
+	//
+	// The cache (BranchCache map) is embedded in StackConfig and shares its
+	// underlying storage, so a single StackConfig.Save covers both the
+	// merged-branch markers and the tree structure. Earlier versions of this
+	// helper saved twice (once via syncCache.save, once via StackConfig.Save)
+	// — both writes hit the same stacks.json file via the same flock, so the
+	// second was pure overhead. Marks the syncCache clean so a final
+	// end-of-run save can short-circuit when nothing else changed since.
 	saveState := func(sc *syncCache) {
-		if err := sc.save(); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: failed to save cache: %v\n", err)
-		}
 		if err := m.stackConfig.Save(m.repoDir); err != nil {
-			fmt.Fprintf(os.Stderr, "  Warning: failed to save config: %v\n", err)
+			fmt.Fprintf(os.Stderr, "  Warning: failed to save state: %v\n", err)
+			return
 		}
+		sc.dirty = false
 	}
 
 	// Use combined cache from stack config
@@ -1397,14 +1419,15 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 		}
 	}
 
-	// Save cache (tracks merged branches)
-	if err := sc.save(); err != nil {
-		return results, fmt.Errorf("failed to save cache: %w", err)
-	}
-
-	// Save updated config (tree structure)
-	if err := m.stackConfig.Save(m.repoDir); err != nil {
-		return results, fmt.Errorf("failed to save config: %w", err)
+	// One save covers both merged-branch markers and tree structure (shared
+	// stacks.json). Skip when nothing changed since the last saveState
+	// call — saveState clears sc.dirty after its write, so a clean tail of
+	// the loop has no work to do.
+	if sc.dirty {
+		if err := m.stackConfig.Save(m.repoDir); err != nil {
+			return results, fmt.Errorf("failed to save state: %w", err)
+		}
+		sc.dirty = false
 	}
 
 	// If the run completed cleanly — every reported result is a success, no

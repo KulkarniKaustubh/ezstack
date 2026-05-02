@@ -802,3 +802,76 @@ func TestSnapshotStillNeededByDescendant_PreservesOnAncestorError(t *testing.T) 
 		t.Errorf("snapshotStillNeededByDescendant must return true on transient IsAncestor error to avoid dropping a still-needed snapshot")
 	}
 }
+
+// TestCleanupStalePreSyncSHAs_PreservesAgedSnapshotNeededByDescendant covers
+// the long-stuck-conflict case: a parent's PreSyncCommit ages past
+// preSyncSnapshotMaxAge while a descendant has not yet been rebased and is
+// still anchored to that older SHA. Without the descendant-anchor check
+// inside the age fallback, the snapshot would be cleared, the next sync
+// would degrade to plain `git rebase parent`, and the cascade-conflict
+// bug Plan A fixes would silently come back.
+func TestCleanupStalePreSyncSHAs_PreservesAgedSnapshotNeededByDescendant(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	parentPath := filepath.Join(worktreeBaseDir, "parent")
+	mgr.CreateBranch("parent", "main", parentPath, "")
+	mgr, _ = NewManager(repoDir)
+	os.WriteFile(filepath.Join(parentPath, "p.txt"), []byte("p1\n"), 0644)
+	exec.Command("git", "-C", parentPath, "add", ".").Run()
+	exec.Command("git", "-C", parentPath, "commit", "-m", "p1").Run()
+	mgr, _ = NewManager(repoDir)
+	parentV0, _ := mgr.git.GetBranchCommit("parent")
+
+	childPath := filepath.Join(worktreeBaseDir, "child")
+	mgr.CreateBranch("child", "parent", childPath, "")
+	mgr, _ = NewManager(repoDir)
+	os.WriteFile(filepath.Join(childPath, "c.txt"), []byte("c1\n"), 0644)
+	exec.Command("git", "-C", childPath, "add", ".").Run()
+	exec.Command("git", "-C", childPath, "commit", "-m", "c1").Run()
+	mgr, _ = NewManager(repoDir)
+
+	// Rewrite parent so its current HEAD is no longer parentV0. Child still
+	// anchored at parentV0 (no rebase yet).
+	os.WriteFile(filepath.Join(parentPath, "p.txt"), []byte("p1-rewritten\n"), 0644)
+	exec.Command("git", "-C", parentPath, "add", ".").Run()
+	exec.Command("git", "-C", parentPath, "commit", "--amend", "-m", "p1 (rewritten)").Run()
+
+	// Plant a snapshot on parent at parentV0 with a 30-day-old timestamp —
+	// firmly past preSyncSnapshotMaxAge (14d), so age fallback would
+	// otherwise clear it.
+	bc := &config.BranchCache{
+		PreSyncCommit:   parentV0,
+		PreSyncCommitAt: time.Now().Add(-30 * 24 * time.Hour).Unix(),
+		WorktreePath:    parentPath,
+	}
+	mgr.stackConfig.Cache.SetBranchCache("parent", bc)
+
+	mgr.cleanupStalePreSyncSHAs()
+
+	bcAfter := mgr.stackConfig.Cache.GetBranchCache("parent")
+	if bcAfter == nil || bcAfter.PreSyncCommit != parentV0 {
+		t.Errorf("aged snapshot was cleared even though child is still anchored on it; PreSyncCommit=%q want %q.\nThis silently reintroduces the cascade-conflict bug — child's next sync degrades to plain `git rebase parent` and replays parent's commits.",
+			bcAfterField(bcAfter), parentV0)
+	}
+
+	// Sanity check: once the descendant anchor is removed, the same call
+	// DOES clear the aged snapshot (we don't want to leak snapshots forever
+	// just because a tree-tracked branch exists).
+	exec.Command("git", "-C", repoDir, "worktree", "remove", "--force", childPath).Run()
+	exec.Command("git", "-C", repoDir, "branch", "-D", "child").Run()
+	mgr, _ = NewManager(repoDir) // Reconcile drops "child" from the tree.
+	bc2 := &config.BranchCache{
+		PreSyncCommit:   parentV0,
+		PreSyncCommitAt: time.Now().Add(-30 * 24 * time.Hour).Unix(),
+		WorktreePath:    parentPath,
+	}
+	mgr.stackConfig.Cache.SetBranchCache("parent", bc2)
+
+	mgr.cleanupStalePreSyncSHAs()
+	bcFinal := mgr.stackConfig.Cache.GetBranchCache("parent")
+	if bcFinal != nil && bcFinal.PreSyncCommit != "" {
+		t.Errorf("aged snapshot with no surviving descendant should have been cleared; PreSyncCommit=%q (kept indefinitely is a leak)", bcFinal.PreSyncCommit)
+	}
+}

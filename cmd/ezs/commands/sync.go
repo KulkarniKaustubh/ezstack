@@ -1158,12 +1158,36 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 
 	branchInProgress := func(b *config.Branch) (rebaseIP, mergeIP bool) {
 		workdir := b.WorktreePath
-		if workdir == "" {
+		isCheckout := workdir == ""
+		if isCheckout {
 			workdir = mgr.GetRepoDir()
 		}
 		g := git.New(workdir)
 		rebaseIP, _ = g.IsRebaseInProgress()
 		mergeIP, _ = g.IsMergeInProgress()
+		// For checkout-based branches we share the main repo with every other
+		// checkout-based branch in this manager. Any in-progress rebase/merge
+		// there is "the main repo's" — not necessarily this branch's. Without
+		// disambiguation, a checkout-based sibling's mid-rebase would falsely
+		// flag B as in-progress, and `RebaseContinue` would advance the wrong
+		// branch's rebase and offer to push it under B's name.
+		//
+		// rebase: head-name in rebase-state files is canonical.
+		// merge: HEAD is still on the branch ref during a merge conflict, so
+		//   CurrentBranch is sufficient.
+		if isCheckout {
+			if rebaseIP {
+				if name := g.BranchFromRebaseState(); name != "" && name != b.Name {
+					rebaseIP = false
+				}
+			}
+			if mergeIP {
+				cur, _ := g.CurrentBranch()
+				if cur != "" && cur != "HEAD" && cur != b.Name {
+					mergeIP = false
+				}
+			}
+		}
 		return
 	}
 
