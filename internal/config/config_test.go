@@ -501,6 +501,133 @@ func TestMergeRepoData_ThreeWayMerge(t *testing.T) {
 			t.Fatal("their addition was lost when orig was nil")
 		}
 	})
+
+	t.Run("same-stack concurrent edit fires MergeConflictHook", func(t *testing.T) {
+		// Both we and they modified stack "x" relative to orig in *different*
+		// ways. Last-writer-wins is documented behavior, but the hook must
+		// fire so the loss isn't silent.
+		var got []string
+		prev := MergeConflictHook
+		MergeConflictHook = func(kind, key string) { got = append(got, kind+":"+key) }
+		defer func() { MergeConflictHook = prev }()
+
+		orig := &repoData{
+			Stacks:   map[string]*Stack{"x": mkStack("x", "main")},
+			Branches: map[string]*BranchCache{},
+		}
+		mine := &repoData{
+			Stacks:   map[string]*Stack{"x": mkStack("x", "develop")},
+			Branches: map[string]*BranchCache{},
+		}
+		theirs := &repoData{
+			Stacks:   map[string]*Stack{"x": mkStack("x", "release")},
+			Branches: map[string]*BranchCache{},
+		}
+		merged := mergeRepoData(orig, mine, theirs)
+		if merged.Stacks["x"].Root != "develop" {
+			t.Errorf("last-writer-wins broke: got root=%q, want %q", merged.Stacks["x"].Root, "develop")
+		}
+		if len(got) != 1 || got[0] != "stack:x" {
+			t.Errorf("hook calls = %v, want exactly [\"stack:x\"]", got)
+		}
+	})
+
+	t.Run("different-stack concurrent edits do NOT fire hook", func(t *testing.T) {
+		// We modify x; they modify y. Neither overwrote the other — no
+		// conflict, no hook. False positives here would noisify every save.
+		var got []string
+		prev := MergeConflictHook
+		MergeConflictHook = func(kind, key string) { got = append(got, kind+":"+key) }
+		defer func() { MergeConflictHook = prev }()
+
+		orig := &repoData{
+			Stacks: map[string]*Stack{
+				"x": mkStack("x", "main"),
+				"y": mkStack("y", "main"),
+			},
+			Branches: map[string]*BranchCache{},
+		}
+		mine := &repoData{
+			Stacks: map[string]*Stack{
+				"x": mkStack("x", "develop"),
+				"y": mkStack("y", "main"), // unchanged
+			},
+			Branches: map[string]*BranchCache{},
+		}
+		theirs := &repoData{
+			Stacks: map[string]*Stack{
+				"x": mkStack("x", "main"), // unchanged
+				"y": mkStack("y", "release"),
+			},
+			Branches: map[string]*BranchCache{},
+		}
+		merged := mergeRepoData(orig, mine, theirs)
+		if merged.Stacks["x"].Root != "develop" || merged.Stacks["y"].Root != "release" {
+			t.Errorf("merge failed to preserve disjoint edits: %+v", merged.Stacks)
+		}
+		if len(got) != 0 {
+			t.Errorf("hook fired on disjoint edits: %v", got)
+		}
+	})
+
+	t.Run("identical concurrent edit does NOT fire hook", func(t *testing.T) {
+		// We and they made the *same* change. There's no information loss
+		// — the hook should not fire.
+		var got []string
+		prev := MergeConflictHook
+		MergeConflictHook = func(kind, key string) { got = append(got, kind+":"+key) }
+		defer func() { MergeConflictHook = prev }()
+
+		orig := &repoData{
+			Stacks:   map[string]*Stack{"x": mkStack("x", "main")},
+			Branches: map[string]*BranchCache{},
+		}
+		mine := &repoData{
+			Stacks:   map[string]*Stack{"x": mkStack("x", "develop")},
+			Branches: map[string]*BranchCache{},
+		}
+		theirs := &repoData{
+			Stacks:   map[string]*Stack{"x": mkStack("x", "develop")},
+			Branches: map[string]*BranchCache{},
+		}
+		_ = mergeRepoData(orig, mine, theirs)
+		if len(got) != 0 {
+			t.Errorf("hook fired on identical edits: %v", got)
+		}
+	})
+
+	t.Run("same-branch concurrent edit fires hook with kind=branch", func(t *testing.T) {
+		var got []string
+		prev := MergeConflictHook
+		MergeConflictHook = func(kind, key string) { got = append(got, kind+":"+key) }
+		defer func() { MergeConflictHook = prev }()
+
+		orig := &repoData{
+			Stacks: map[string]*Stack{},
+			Branches: map[string]*BranchCache{
+				"feat": {PRUrl: "u0", PRState: "OPEN"},
+			},
+		}
+		mine := &repoData{
+			Stacks: map[string]*Stack{},
+			Branches: map[string]*BranchCache{
+				"feat": {PRUrl: "u-mine", PRState: "OPEN"},
+			},
+		}
+		theirs := &repoData{
+			Stacks: map[string]*Stack{},
+			Branches: map[string]*BranchCache{
+				"feat": {PRUrl: "u-theirs", PRState: "OPEN"},
+			},
+		}
+		merged := mergeRepoData(orig, mine, theirs)
+		if merged.Branches["feat"].PRUrl != "u-mine" {
+			t.Errorf("last-writer-wins broke for branch: %+v", merged.Branches["feat"])
+		}
+		if len(got) != 1 || got[0] != "branch:feat" {
+			t.Errorf("hook calls = %v, want exactly [\"branch:feat\"]", got)
+		}
+	})
 }
 
 func TestStackConfig_LoadSave(t *testing.T) {

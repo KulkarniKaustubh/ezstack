@@ -1005,6 +1005,25 @@ func jsonEqual(a, b any) bool {
 	return bytes.Equal(aJSON, bJSON)
 }
 
+// MergeConflictHook is invoked once per (kind, key) where the three-way
+// merge encountered a same-target concurrent edit (mine != orig AND
+// theirs != orig AND theirs != mine). Kind is "stack" or "branch". The
+// merge resolves last-writer-wins (mine), but the hook gives the caller a
+// chance to log or surface the fact that a peer's update is being
+// overwritten.
+//
+// Default writes a one-line warning to stderr. Tests override it to
+// capture the call. Set to a no-op func to silence (callers that want
+// silence: don't use nil — that path is reserved for "default behavior").
+var MergeConflictHook func(kind, key string) = func(kind, key string) {
+	fmt.Fprintf(os.Stderr,
+		"ezs: warning: concurrent edit to %s %q detected during save; "+
+			"another ezs process modified the same %s in between our load and save. "+
+			"Their changes were overwritten (last-writer-wins).\n",
+		kind, key, kind,
+	)
+}
+
 // mergeRepoData performs a three-way merge between the disk state at load
 // time (orig), the in-memory state we want to write (mine), and the disk
 // state right now (theirs, which may include another process's changes).
@@ -1017,10 +1036,10 @@ func jsonEqual(a, b any) bool {
 //   - If we deleted (in orig, not in mine) → omit (deletion wins)
 //   - If theirs added (in theirs, not in orig, not in mine) → take theirs
 //
-// Concurrent modifications to the *same* stack from two processes resolve
-// last-writer-wins, which matches the existing semantics — but the common
-// case (two processes touching different stacks of the same repo) is now
-// safe.
+// Concurrent modifications to the *same* stack/branch from two processes
+// resolve last-writer-wins, but we fire MergeConflictHook so the loss
+// isn't silent. The common case (two processes touching different stacks
+// of the same repo) remains lossless.
 func mergeRepoData(orig, mine, theirs *repoData) *repoData {
 	if orig == nil {
 		orig = &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
@@ -1033,6 +1052,12 @@ func mergeRepoData(orig, mine, theirs *repoData) *repoData {
 		Branches: make(map[string]*BranchCache),
 	}
 
+	notify := func(kind, key string) {
+		if MergeConflictHook != nil {
+			MergeConflictHook(kind, key)
+		}
+	}
+
 	// Stacks
 	seenStacks := make(map[string]bool, len(mine.Stacks))
 	for hash, mineS := range mine.Stacks {
@@ -1043,6 +1068,16 @@ func mergeRepoData(orig, mine, theirs *repoData) *repoData {
 				merged.Stacks[hash] = theirS
 			}
 			continue
+		}
+		// We modified (or added) — but if theirs *also* drifted from orig
+		// in some way other than matching mine, that's a same-target
+		// concurrent edit. Last-writer-wins (mine) is what the rest of
+		// ezstack expects, but the hook surfaces it so the user knows.
+		if hadOrig {
+			if theirS, hasTheirs := theirs.Stacks[hash]; hasTheirs &&
+				!jsonEqual(theirS, origS) && !jsonEqual(theirS, mineS) {
+				notify("stack", hash)
+			}
 		}
 		merged.Stacks[hash] = mineS
 	}
@@ -1066,6 +1101,12 @@ func mergeRepoData(orig, mine, theirs *repoData) *repoData {
 				merged.Branches[name] = theirB
 			}
 			continue
+		}
+		if hadOrig {
+			if theirB, hasTheirs := theirs.Branches[name]; hasTheirs &&
+				!jsonEqual(theirB, origB) && !jsonEqual(theirB, mineB) {
+				notify("branch", name)
+			}
 		}
 		merged.Branches[name] = mineB
 	}
