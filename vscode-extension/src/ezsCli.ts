@@ -266,17 +266,34 @@ export class EzsCli {
    * when the extension is paired with a too-old CLI that lacks features the
    * extension calls (e.g. `--cascade`, `--draft-all`, `pr stack`,
    * `config export/import`, `stack rename`, `agent --preset`).
+   *
+   * Matches `ezstack version X.Y.Z` (the literal `cmd/ezs/main.go` format)
+   * with optional pre-release/build suffix (e.g. `4.7.0-rc.1+abc`). The
+   * leading "version " anchor is intentional: it stops a trailing build
+   * hash like `1.2.3-2025.05.03+abc` from contributing a spurious second
+   * triple match further down the string.
    */
   async getVersionSemver(): Promise<{ major: number; minor: number; patch: number } | null> {
     try {
       const out = await this.getVersion();
-      // `ezs --version` prints `ezstack version X.Y.Z`
-      const m = out.match(/(\d+)\.(\d+)\.(\d+)/);
+      const m = out.match(/version\s+v?(\d+)\.(\d+)\.(\d+)\b/i);
       if (!m) return null;
       return { major: parseInt(m[1], 10), minor: parseInt(m[2], 10), patch: parseInt(m[3], 10) };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Exposed only for tests — `getVersion` shells out to the CLI and is
+   * inconvenient to stub. parseVersionSemver runs the same regex against
+   * an arbitrary string so tests can pin both happy-path output and
+   * adversarial inputs (build metadata, garbage, blank lines).
+   */
+  static parseVersionSemver(out: string): { major: number; minor: number; patch: number } | null {
+    const m = out.match(/version\s+v?(\d+)\.(\d+)\.(\d+)\b/i);
+    if (!m) return null;
+    return { major: parseInt(m[1], 10), minor: parseInt(m[2], 10), patch: parseInt(m[3], 10) };
   }
 
   async getLocalBranches(): Promise<string[]> {

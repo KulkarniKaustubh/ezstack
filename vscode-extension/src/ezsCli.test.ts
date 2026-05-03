@@ -62,3 +62,51 @@ describe("parseJSON", () => {
     );
   });
 });
+
+describe("EzsCli.parseVersionSemver", () => {
+  it("parses the standard ezstack version line", () => {
+    expect(EzsCli.parseVersionSemver("ezstack version 4.7.6\n")).toEqual({
+      major: 4,
+      minor: 7,
+      patch: 6,
+    });
+  });
+
+  it("parses a leading 'v' prefix", () => {
+    expect(EzsCli.parseVersionSemver("ezstack version v4.7.0\n")).toEqual({
+      major: 4,
+      minor: 7,
+      patch: 0,
+    });
+  });
+
+  it("anchors on 'version ' so trailing build metadata can't introduce a spurious match", () => {
+    // If the regex only matched any numeric triple, the build-metadata
+    // hash 2025.05.03 below would race the real triple. The anchor
+    // prevents that — we should still get 1.2.3.
+    expect(EzsCli.parseVersionSemver("ezstack version 1.2.3-rc.1+2025.05.03")).toEqual({
+      major: 1,
+      minor: 2,
+      patch: 3,
+    });
+  });
+
+  it("returns null when the version line is missing", () => {
+    expect(EzsCli.parseVersionSemver("")).toBeNull();
+    expect(EzsCli.parseVersionSemver("garbage 1.2 not enough segments")).toBeNull();
+  });
+
+  it("ignores leading non-version lines", () => {
+    // Future-proofing: if `ezs --version` ever prepends a deprecation
+    // notice, the parser should still find the canonical line.
+    const out = ["warning: outdated config schema", "ezstack version 4.7.5"].join("\n");
+    expect(EzsCli.parseVersionSemver(out)).toEqual({ major: 4, minor: 7, patch: 5 });
+  });
+
+  it("does not pick up a non-version triple like `git 2.43.0`", () => {
+    // Without the 'version ' anchor we'd match `2.43.0` from doctor-style
+    // output and wrongly claim the CLI is 2.43.0.
+    const out = "git: 2.43.0\nfzf: 0.45.0\n"; // no `ezstack version` line
+    expect(EzsCli.parseVersionSemver(out)).toBeNull();
+  });
+});
