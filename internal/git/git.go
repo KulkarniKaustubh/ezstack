@@ -552,6 +552,12 @@ func ValidateBranchName(name string) error {
 // nil) — the branch just hasn't been pushed. Other rev-parse failures are
 // surfaced as errors so callers can distinguish "no remote yet" from real
 // repo problems. If remote is empty, defaults to "origin".
+//
+// Uses a single `git rev-list --left-right --count` invocation so the
+// ahead/behind counts are computed against one consistent snapshot of the
+// object database. The previous two-call form (GetCommitsAhead +
+// GetCommitsBehind) could see a stale upper bound if a concurrent fetch /
+// prune landed between calls.
 func (g *Git) HasDivergedFromRemote(branch, remote string) (bool, int, int, error) {
 	if remote == "" {
 		remote = "origin"
@@ -564,12 +570,7 @@ func (g *Git) HasDivergedFromRemote(branch, remote string) (bool, int, int, erro
 		return false, 0, 0, fmt.Errorf("rev-parse %s: %w", remoteBranch, err)
 	}
 
-	localAhead, err := g.GetCommitsAhead(branch, remoteBranch)
-	if err != nil {
-		return false, 0, 0, err
-	}
-
-	remoteBehind, err := g.GetCommitsBehind(branch, remoteBranch)
+	localAhead, remoteBehind, err := g.GetAheadBehind(branch, remoteBranch)
 	if err != nil {
 		return false, 0, 0, err
 	}

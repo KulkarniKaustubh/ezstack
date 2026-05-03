@@ -3,6 +3,7 @@ package ui
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -1244,7 +1245,17 @@ func Info(msg string) {
 
 // Prompt asks for text input with a prompt and optional default value
 // Returns the user input or the default if empty input is given
+// Prompt asks the user a question and returns their answer, or `defaultVal`
+// if they pressed Enter. Honors YesMode: under MCP / -y the function returns
+// the default immediately rather than blocking on readline against a stdin
+// that no terminal will ever feed. Without this guard, MCP tool calls that
+// route through Prompt — most notably `ezstack_pr_create` without a `title`
+// arg — hang forever.
 func Prompt(prompt, defaultVal string) string {
+	if YesMode {
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ %q%s\n", Bold, Yellow, Reset, prompt, Green, defaultVal, Reset)
+		return defaultVal
+	}
 	return activeBackend.Prompt(prompt, defaultVal)
 }
 
@@ -1298,8 +1309,14 @@ func (t *TerminalBackend) Prompt(prompt, defaultVal string) string {
 }
 
 // PromptPath asks for a file path with tab completion support
-// Returns the user input or the default if empty input is given
+// Returns the user input or the default if empty input is given. Like
+// Prompt, returns the default immediately under YesMode so MCP / -y callers
+// don't hang on a missing TTY.
 func PromptPath(promptText, defaultVal string) string {
+	if YesMode {
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ %q%s\n", Bold, Yellow, Reset, promptText, Green, defaultVal, Reset)
+		return defaultVal
+	}
 	// Print the question on its own line first
 	fmt.Fprintf(os.Stderr, "%s%s?%s %s\n", Bold, Yellow, Reset, promptText)
 
@@ -1387,8 +1404,22 @@ func pathCompleterFunc(prefix string) *readline.PrefixCompleter {
 	return readline.PcItem(prefix)
 }
 
-// PromptRequired asks for text input and keeps asking until a non-empty value is provided
+// ErrPromptRequiredInYesMode is returned (panic-free) by callers that opt
+// into the error-returning variant of PromptRequired. Direct PromptRequired
+// callers under YesMode get an os.Exit since they have no way to recover.
+var ErrPromptRequiredInYesMode = errors.New("required prompt cannot be answered in non-interactive mode")
+
+// PromptRequired asks for text input and keeps asking until a non-empty
+// value is provided. Under YesMode there is no human to keep asking, so the
+// loop would spin forever on closed stdin. Print a clear diagnostic and exit
+// rather than hang the MCP server / scripted run indefinitely.
 func PromptRequired(prompt string) string {
+	if YesMode {
+		fmt.Fprintf(os.Stderr,
+			"ezs: error: required prompt %q cannot be answered in non-interactive mode (YesMode/-y/MCP). "+
+				"Re-run interactively or pass the value explicitly via the relevant flag.\n", prompt)
+		os.Exit(2)
+	}
 	return activeBackend.PromptRequired(prompt)
 }
 
@@ -1645,7 +1676,26 @@ func WithSpinner(message string, fn func() error) error {
 // and returns the edited content. If the user saves and exits, the content is returned.
 // If the user aborts (empty file or error), an error is returned.
 // The editor is determined by $EDITOR, $VISUAL, or falls back to "vim".
+//
+// Under YesMode there's no controlling terminal for $EDITOR to draw on, so
+// the editor would hang indefinitely. Skip it and return the initial
+// content unchanged — MCP / -y callers that want to edit should pass the
+// content via the relevant flag instead.
 func EditWithEditor(initialContent, fileExtension string) (string, error) {
+	if YesMode {
+		fmt.Fprintf(os.Stderr, "%sezs: skipping interactive editor in non-interactive mode (using initial content)%s\n", Gray, Reset)
+		return strings.TrimSpace(initialContent), nil
+	}
+	// Belt-and-braces: even when YesMode is off, an MCP-style invocation
+	// has no TTY for $EDITOR to draw on. Detect that and short-circuit
+	// rather than launch vim against /dev/null and hang. The TTY check
+	// covers stdin/stdout — most editors require both. We deliberately
+	// require BOTH to be terminals so a user redirecting only stdout
+	// (e.g. `ezs ... > file`) is not misclassified.
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Fprintf(os.Stderr, "%sezs: no terminal attached, skipping interactive editor%s\n", Gray, Reset)
+		return strings.TrimSpace(initialContent), nil
+	}
 	// Get the editor from environment
 	editor := os.Getenv("EDITOR")
 	if editor == "" {

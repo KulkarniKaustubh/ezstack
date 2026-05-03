@@ -109,4 +109,36 @@ describe("EzsCli.parseVersionSemver", () => {
     const out = "git: 2.43.0\nfzf: 0.45.0\n"; // no `ezstack version` line
     expect(EzsCli.parseVersionSemver(out)).toBeNull();
   });
+
+  it("parses the ezs-mcp variant emitted as 'ezstack-mcp version X.Y.Z'", () => {
+    // The MCP server's --version line was tightened to share the
+    // 'version ' anchor with the main CLI — verify the regex matches
+    // both binaries identically so a future caller that points the
+    // gate at ezs-mcp doesn't silently fall through to "unknown
+    // version → skip warning".
+    expect(EzsCli.parseVersionSemver("ezstack-mcp version 4.7.6\n")).toEqual({
+      major: 4,
+      minor: 7,
+      patch: 6,
+    });
+  });
+
+  it("tolerates Windows CRLF line endings", () => {
+    // ezs --version on Windows ends lines with \r\n. The regex must
+    // tolerate the carriage return — \b matches between `6` and `\r`,
+    // so we expect the same triple as the LF case.
+    expect(EzsCli.parseVersionSemver("ezstack version 4.7.6\r\n")).toEqual({
+      major: 4,
+      minor: 7,
+      patch: 6,
+    });
+  });
+
+  it("treats the empty result as 'unknown' rather than throwing", () => {
+    // Defensive: if `ezs --version` ever prints to stderr instead of
+    // stdout, the captured stdout could be empty. The activation gate
+    // must degrade to skipping the warning, not to a thrown exception.
+    expect(() => EzsCli.parseVersionSemver("")).not.toThrow();
+    expect(EzsCli.parseVersionSemver("")).toBeNull();
+  });
 });

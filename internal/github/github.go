@@ -25,14 +25,33 @@ type Client struct {
 	repo  string
 }
 
+// gitHubURLRe matches a github.com URL in the common forms ezstack sees:
+//
+//   - SSH:               git@github.com:owner/repo[.git]
+//   - HTTPS:             https://[user[:pw]@]github.com[:port]/owner/repo[.git][/]
+//   - SSH-protocol URI:  ssh://git@github.com[:port]/owner/repo[.git]
+//   - git protocol:      git://github.com[:port]/owner/repo[.git]
+//
+// The host is anchored on `(^|@|//)` — start of string (bare-SCP form),
+// after a userinfo `@` (SSH or HTTPS-with-credentials), or after the
+// scheme separator `//`. This prevents false positives on URLs where
+// `github.com` only appears as a path segment of an unrelated host
+// (e.g. `https://example.com/proxy/github.com/foo/bar`) and on hosts
+// that *contain* `github.com` as a substring without equaling it
+// (`my-github.com`, `agithub.com.example.io`). The trailing `.git` is
+// stripped case-insensitively (some repos surface as `.GIT` from older
+// tooling). Repo names with internal dots — `my-repo.io`, `foo.bar` —
+// are preserved; only the literal `.git` suffix is removed.
+var gitHubURLRe = regexp.MustCompile(`(?i)(?:^|@|//)github\.com(?::\d+)?[:/]([^/\s#?]+)/([^/\s#?]+?)(?:\.git)?/?(?:[#?].*)?$`)
+
 // NewClient creates a new GitHub client by parsing the remote URL.
-// Handles: git@github.com:owner/repo.git or https://github.com/owner/repo.git
-// Repo names containing dots (e.g. "my-repo.io") are preserved — only a
-// trailing ".git" suffix is stripped.
+// Accepts SSH, HTTPS, ssh://, and git:// URLs against github.com — including
+// URLs that carry a port (`https://github.com:443/...`), a query / anchor
+// suffix (`...?ref=…`, `...#readme`), or a `.git` suffix in any case.
+// Returns an error for non-github.com hosts and for malformed inputs.
 func NewClient(remoteURL string) (*Client, error) {
-	re := regexp.MustCompile(`github\.com[:/]([^/]+)/([^/]+?)(?:\.git)?/?$`)
-	matches := re.FindStringSubmatch(remoteURL)
-	if len(matches) != 3 {
+	matches := gitHubURLRe.FindStringSubmatch(remoteURL)
+	if len(matches) != 3 || matches[1] == "" || matches[2] == "" {
 		return nil, fmt.Errorf("could not parse GitHub URL: %s", remoteURL)
 	}
 

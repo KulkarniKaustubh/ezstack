@@ -36,7 +36,12 @@ func main() {
 		os.Exit(2)
 	}
 	if *showVersion {
-		fmt.Println(version.Version)
+		// Match the ezs CLI's "ezstack version X.Y.Z" output format so the
+		// VS Code extension's regex (anchored on the literal "version "
+		// keyword) recognizes both binaries identically. Pre-fix this
+		// printed only the bare semver, which silently failed the
+		// extension's min-CLI gate when it was pointed at ezs-mcp.
+		fmt.Printf("ezstack-mcp version %s\n", version.Version)
 		return
 	}
 	// --upgrade-tag / --upgrade-force are meaningless without --upgrade or
