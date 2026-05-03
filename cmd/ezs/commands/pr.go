@@ -476,8 +476,15 @@ func prCreate(args []string) error {
 		return fmt.Errorf("no commits to create PR from. This branch has no commits ahead of '%s'.\nPlease make at least one commit first", branch.Parent)
 	}
 
-	if !mgr.IsMainBranch(branch.Parent) && !g.RemoteBranchExists(branch.Parent) {
-		ui.Warn(fmt.Sprintf("Parent branch '%s' has not been pushed to remote.", branch.Parent))
+	// The PR base branch must exist on whichever remote hosts the parent.
+	// For tracked parents that's the parent's own EffectiveRemote (fork or
+	// origin); for an untracked parent (rare), fall back to origin.
+	parentRemote := "origin"
+	if parentBranch := mgr.GetBranch(branch.Parent); parentBranch != nil {
+		parentRemote = parentBranch.EffectiveRemote()
+	}
+	if !mgr.IsMainBranch(branch.Parent) && !g.RemoteHasBranch(parentRemote, branch.Parent) {
+		ui.Warn(fmt.Sprintf("Parent branch '%s' has not been pushed to %s.", branch.Parent, parentRemote))
 		ui.Warn("The PR base branch won't exist on GitHub until it is pushed.")
 		if !ui.ConfirmTUI("Continue anyway?") {
 			ui.Warn("Cancelled")
@@ -593,7 +600,8 @@ func prCreate(args []string) error {
 		ui.Warn(fmt.Sprintf("Could not fetch from remote: %v", err))
 	}
 
-	hasDiverged, localAhead, remoteBehind, err := g.HasDivergedFromOrigin(branch.Name)
+	branchRemote := branch.EffectiveRemote()
+	hasDiverged, localAhead, remoteBehind, err := g.HasDivergedFromRemote(branch.Name, branchRemote)
 	if err != nil {
 		ui.Warn(fmt.Sprintf("Could not check remote branch status: %v", err))
 	}
@@ -615,17 +623,17 @@ func prCreate(args []string) error {
 			ui.Warn("Cancelled - cannot create PR without pushing")
 			return nil
 		}
-		if err := g.PushBranch(branch.Name, true, branch.EffectiveRemote()); err != nil {
+		if err := g.PushForceBranch(branch.Name, branchRemote); err != nil {
 			return fmt.Errorf("failed to force push: %w", err)
 		}
-	} else if g.RemoteBranchExists(branch.Name) {
+	} else if g.RemoteHasBranch(branchRemote, branch.Name) {
 		// Remote exists and local is ahead or in sync - regular push should work
-		if err := g.PushBranch(branch.Name, false, branch.EffectiveRemote()); err != nil {
+		if err := g.PushBranch(branch.Name, false, branchRemote); err != nil {
 			return fmt.Errorf("failed to push: %w", err)
 		}
 	} else {
 		// Remote doesn't exist - set upstream
-		if err := g.PushBranchSetUpstream(branch.Name, branch.EffectiveRemote()); err != nil {
+		if err := g.PushBranchSetUpstream(branch.Name, branchRemote); err != nil {
 			return fmt.Errorf("failed to push: %w", err)
 		}
 	}
@@ -771,13 +779,17 @@ func prUpdate(args []string) error {
 		}
 	}
 
-	// Check if remote branch exists and detect divergence
-	hasDiverged, localAhead, remoteAhead, divergeErr := g.HasDivergedFromOrigin(branch.Name)
+	// Check if remote branch exists and detect divergence against the
+	// branch's effective remote (not always origin — fork PRs target the
+	// contributor's fork).
+	branchRemote := branch.EffectiveRemote()
+	hasDiverged, localAhead, remoteAhead, divergeErr := g.HasDivergedFromRemote(branch.Name, branchRemote)
 	if divergeErr != nil {
 		ui.Warn(fmt.Sprintf("Could not check remote status: %v", divergeErr))
 	}
 
-	remoteBranchExists := g.RemoteBranchExists(branch.Name)
+	remoteBranchExists := g.RemoteHasBranch(branchRemote, branch.Name)
+	remoteRef := branchRemote + "/" + branch.Name
 
 	// Determine push type and get commits to show
 	var needsForcePush bool
@@ -791,14 +803,14 @@ func prUpdate(args []string) error {
 		// History has diverged (amended commits, rebase, etc.) - needs force push
 		needsForcePush = true
 		// Show commits that will be pushed
-		commits, _ = g.GetCommitsBetween("origin/"+branch.Name, branch.Name)
+		commits, _ = g.GetCommitsBetween(remoteRef, branch.Name)
 		if len(commits) == 0 {
 			// If no new commits, show all local commits (amended case)
 			commits, _ = g.GetCommitsBetween(branch.Parent, branch.Name)
 		}
 	} else if localAhead > 0 {
 		// Simple case - local is ahead, regular push works
-		commits, _ = g.GetCommitsBetween("origin/"+branch.Name, branch.Name)
+		commits, _ = g.GetCommitsBetween(remoteRef, branch.Name)
 	} else if divergeErr != nil {
 		// Status check failed — attempt force push rather than silently skipping
 		needsForcePush = true
@@ -841,7 +853,7 @@ func prUpdate(args []string) error {
 	}
 
 	ui.Info("Pushing changes...")
-	if err := g.PushBranch(branch.Name, needsForcePush, branch.EffectiveRemote()); err != nil {
+	if err := g.PushBranch(branch.Name, needsForcePush, branchRemote); err != nil {
 		return fmt.Errorf("failed to push: %w", err)
 	}
 

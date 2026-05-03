@@ -545,33 +545,46 @@ func ValidateBranchName(name string) error {
 	return nil
 }
 
-// HasDivergedFromOrigin checks if local and remote branches have diverged
-// Returns (hasDiverged, localAhead, remoteBehind, error)
-// hasDiverged is true if both local has commits not in remote AND remote has commits not in local
-func (g *Git) HasDivergedFromOrigin(branch string) (bool, int, int, error) {
-	originBranch := "origin/" + branch
-	// Check if origin branch exists
-	_, err := g.run("rev-parse", "--verify", originBranch)
-	if err != nil {
-		// Origin branch doesn't exist - not diverged, just needs first push
-		return false, 0, 0, nil
+// HasDivergedFromRemote checks if local and remote branches have diverged.
+// Returns (hasDiverged, localAhead, remoteBehind, error). hasDiverged is
+// true only when local has commits not in remote AND remote has commits
+// not in local. If the remote ref doesn't exist yet, returns (false, 0, 0,
+// nil) — the branch just hasn't been pushed. Other rev-parse failures are
+// surfaced as errors so callers can distinguish "no remote yet" from real
+// repo problems. If remote is empty, defaults to "origin".
+func (g *Git) HasDivergedFromRemote(branch, remote string) (bool, int, int, error) {
+	if remote == "" {
+		remote = "origin"
+	}
+	remoteBranch := remote + "/" + branch
+	if _, err := g.run("rev-parse", "--verify", remoteBranch); err != nil {
+		if isMissingRefError(err) {
+			return false, 0, 0, nil
+		}
+		return false, 0, 0, fmt.Errorf("rev-parse %s: %w", remoteBranch, err)
 	}
 
-	// Get commits local has that remote doesn't
-	localAhead, err := g.GetCommitsAhead(branch, originBranch)
+	localAhead, err := g.GetCommitsAhead(branch, remoteBranch)
 	if err != nil {
 		return false, 0, 0, err
 	}
 
-	// Get commits remote has that local doesn't
-	remoteBehind, err := g.GetCommitsBehind(branch, originBranch)
+	remoteBehind, err := g.GetCommitsBehind(branch, remoteBranch)
 	if err != nil {
 		return false, 0, 0, err
 	}
 
-	// Diverged if both have unique commits
 	hasDiverged := localAhead > 0 && remoteBehind > 0
 	return hasDiverged, localAhead, remoteBehind, nil
+}
+
+// HasDivergedFromOrigin is a convenience wrapper for the common case.
+//
+// Deprecated: prefer HasDivergedFromRemote(branch, remote) so callers in
+// fork workflows can target the contributor's fork remote instead of
+// silently inspecting `origin`.
+func (g *Git) HasDivergedFromOrigin(branch string) (bool, int, int, error) {
+	return g.HasDivergedFromRemote(branch, "origin")
 }
 
 // RebaseResult contains the result of a rebase operation
@@ -854,6 +867,11 @@ func (g *Git) FetchRemote(remote string) error {
 
 // PushForce force pushes the current branch with lease (safer than --force).
 // If remote is empty, defaults to "origin".
+//
+// Deprecated: prefer PushForceBranch(branch, remote). PushForce consults
+// CurrentBranch() at call time, which is wrong when the active checkout
+// has been transiently swapped (e.g. syncViaCheckout restored HEAD to
+// main) or when the caller acts on a branch other than HEAD.
 func (g *Git) PushForce(remote ...string) error {
 	r := "origin"
 	if len(remote) > 0 && remote[0] != "" {
@@ -862,6 +880,17 @@ func (g *Git) PushForce(remote ...string) error {
 	branch, err := g.CurrentBranch()
 	if err != nil {
 		return fmt.Errorf("failed to get current branch: %w", err)
+	}
+	return g.RunInteractive("push", "--force-with-lease", r, branch)
+}
+
+// PushForceBranch force-pushes a specific branch with lease (safer than
+// --force). If remote is empty, defaults to "origin". Prefer this over
+// PushForce — it never reads CurrentBranch().
+func (g *Git) PushForceBranch(branch string, remote ...string) error {
+	r := "origin"
+	if len(remote) > 0 && remote[0] != "" {
+		r = remote[0]
 	}
 	return g.RunInteractive("push", "--force-with-lease", r, branch)
 }
