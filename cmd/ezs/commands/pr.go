@@ -608,10 +608,9 @@ func prCreate(args []string) error {
 
 	ui.Info("Pushing branch to remote...")
 	// Always use the branch-explicit push helpers: when --branch <other> is
-	// passed, branch.Name is not the current checkout, so PushForce/Push/
-	// PushSetUpstream (all of which use g.CurrentBranch internally) would
-	// silently push the wrong branch and then create a PR pointing at code
-	// that doesn't match.
+	// passed, branch.Name is not the current checkout, so Push / PushForce
+	// (which use g.CurrentBranch internally) would silently push the wrong
+	// branch and then create a PR pointing at code that doesn't match.
 	if hasDiverged || remoteBehind > 0 {
 		// Remote branch exists with different commits - need force push
 		if hasDiverged {

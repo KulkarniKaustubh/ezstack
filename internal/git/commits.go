@@ -201,28 +201,11 @@ func (g *Git) PushBranch(branch string, force bool, remote ...string) error {
 	return g.RunInteractive(args...)
 }
 
-// PushSetUpstream pushes and sets upstream for the current branch.
-// If remote is empty, defaults to "origin".
-//
-// Deprecated: prefer PushBranchSetUpstream(branch, remote) — see Push for the
-// reasoning.
-func (g *Git) PushSetUpstream(remote ...string) error {
-	r := "origin"
-	if len(remote) > 0 && remote[0] != "" {
-		r = remote[0]
-	}
-	branch, err := g.CurrentBranch()
-	if err != nil {
-		return err
-	}
-	return g.RunInteractive("push", "-u", r, branch)
-}
-
 // PushBranchSetUpstream pushes a specific branch with -u (set upstream).
 // Variant of PushBranch for the first-push case where the remote ref doesn't
-// exist yet. Necessary because callers like `pr create --branch <other>` can't
-// rely on PushSetUpstream — that helper pushes whatever is currently checked
-// out, not the named branch. If remote is empty, defaults to "origin".
+// exist yet. Necessary because callers like `pr create --branch <other>` need
+// to push by explicit branch name (not whatever HEAD happens to be).
+// If remote is empty, defaults to "origin".
 func (g *Git) PushBranchSetUpstream(branch string, remote ...string) error {
 	r := "origin"
 	if len(remote) > 0 && remote[0] != "" {

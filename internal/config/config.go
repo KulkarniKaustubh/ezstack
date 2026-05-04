@@ -1100,64 +1100,60 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 	return sc, nil
 }
 
-// snapshotBranches deep-copies a map of *BranchCache pointers via a JSON
-// round-trip. Used by CacheConfig load paths to capture the on-disk state
-// for a later three-way merge in Save. Returns an empty (non-nil) map on
-// nil input.
-//
-// Errors from Marshal/Unmarshal are surfaced via stderr (and the returned
-// map ends up empty). Both fields involved are JSON-tagged so this should
-// never fail in practice — but if it does, the silent path used to leave
-// `out` partially populated, which then made the three-way merge see a
-// stale "orig" and could drop concurrent peer updates. Loud failure is
-// vastly preferable to silent data loss.
-func snapshotBranches(branches map[string]*BranchCache) map[string]*BranchCache {
-	out := make(map[string]*BranchCache, len(branches))
-	if len(branches) == 0 {
-		return out
-	}
-	buf, err := json.Marshal(branches)
+// deepCopyJSON returns a deep copy of `in` via a JSON round-trip. On
+// Marshal or Unmarshal failure it logs to stderr (using `label` to
+// disambiguate) and returns the zero value of T — callers must restore
+// any non-nil-map invariants themselves at the wrapper boundary. Both
+// failure modes should be impossible for our JSON-tagged structs; loud
+// failure is vastly preferable to the silent partial-population trap
+// the prior hand-rolled snapshot helpers had (which made the three-way
+// merge see a stale "orig" and silently drop peer-process updates).
+func deepCopyJSON[T any](in T, label string) T {
+	var zero T
+	buf, err := json.Marshal(in)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "ezstack: snapshotBranches: marshal failed (%v); merge will see empty orig — peer updates may be lost\n", err)
-		return out
+		fmt.Fprintf(os.Stderr, "ezstack: %s: marshal failed (%v); merge will see empty orig — peer updates may be lost\n", label, err)
+		return zero
 	}
+	var out T
 	if err := json.Unmarshal(buf, &out); err != nil {
-		fmt.Fprintf(os.Stderr, "ezstack: snapshotBranches: unmarshal failed (%v); merge will see empty orig — peer updates may be lost\n", err)
-		return make(map[string]*BranchCache)
-	}
-	if out == nil {
-		out = make(map[string]*BranchCache)
+		fmt.Fprintf(os.Stderr, "ezstack: %s: unmarshal failed (%v); merge will see empty orig — peer updates may be lost\n", label, err)
+		return zero
 	}
 	return out
 }
 
-// snapshotRepoData deep-copies a repoData via a JSON round-trip so that
-// later mutations to the live `*Stack` / `*BranchCache` pointers don't
-// affect the captured snapshot. Returns an empty (non-nil) repoData on
-// nil input so callers can compare without a nil check.
-//
-// As with snapshotBranches, Marshal/Unmarshal errors are surfaced via
-// stderr instead of silently swallowed. A round-trip failure here makes
-// the three-way merge see a stale orig and can drop a peer's update.
+// snapshotBranches deep-copies a map of *BranchCache pointers for use as
+// the "orig" side of a later three-way merge in Save. Always returns a
+// non-nil map; on round-trip failure callers see an empty map (not a
+// partial copy).
+func snapshotBranches(branches map[string]*BranchCache) map[string]*BranchCache {
+	if len(branches) == 0 {
+		return make(map[string]*BranchCache)
+	}
+	out := deepCopyJSON(branches, "snapshotBranches")
+	if out == nil {
+		return make(map[string]*BranchCache)
+	}
+	return out
+}
+
+// snapshotRepoData deep-copies a repoData for use as the "orig" side of a
+// later three-way merge. Always returns a non-nil pointer with non-nil
+// inner maps so callers can read fields without nil checks.
 func snapshotRepoData(rd *repoData) *repoData {
-	out := &repoData{
-		Stacks:   make(map[string]*Stack),
-		Branches: make(map[string]*BranchCache),
-	}
-	if rd == nil {
-		return out
-	}
-	buf, err := json.Marshal(rd)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "ezstack: snapshotRepoData: marshal failed (%v); merge will see empty orig — peer updates may be lost\n", err)
-		return out
-	}
-	if err := json.Unmarshal(buf, out); err != nil {
-		fmt.Fprintf(os.Stderr, "ezstack: snapshotRepoData: unmarshal failed (%v); merge will see empty orig — peer updates may be lost\n", err)
+	fresh := func() *repoData {
 		return &repoData{
 			Stacks:   make(map[string]*Stack),
 			Branches: make(map[string]*BranchCache),
 		}
+	}
+	if rd == nil {
+		return fresh()
+	}
+	out := deepCopyJSON(rd, "snapshotRepoData")
+	if out == nil {
+		return fresh()
 	}
 	if out.Stacks == nil {
 		out.Stacks = make(map[string]*Stack)
@@ -1199,97 +1195,69 @@ var MergeConflictHook func(kind, key string) = func(kind, key string) {
 	)
 }
 
-// mergeBranches performs a three-way merge over branch-cache maps using
-// the same semantics as mergeRepoData (mine wins on us-modified, theirs
-// fills in on we-didn't-touch, deletions and additions from either side
-// survive). Same-target concurrent edits fire MergeConflictHook with kind
-// "branch".
-func mergeBranches(orig, mine, theirs map[string]*BranchCache) map[string]*BranchCache {
+// threeWayMergeMap is the generic three-way merge used by both branch-cache
+// and stack maps. Identical semantics to mergeRepoData (mine wins on
+// us-modified, theirs fills in on we-didn't-touch, deletions and additions
+// from either side survive). Same-target concurrent edits fire
+// MergeConflictHook with the supplied `kind` ("branch" or "stack") so the
+// caller can log the lost peer-update.
+//
+// Pre-2026 this lived as two near-identical clones (mergeBranches +
+// mergeStacks). The only differences were the type names, var names, and
+// the kind string. Generic-ifying eliminates the drift class where one
+// clone got a bug-fix and the other didn't.
+func threeWayMergeMap[K comparable, V any](orig, mine, theirs map[K]V, kind string) map[K]V {
 	if orig == nil {
-		orig = map[string]*BranchCache{}
+		orig = map[K]V{}
 	}
 	if theirs == nil {
-		theirs = map[string]*BranchCache{}
+		theirs = map[K]V{}
 	}
-	merged := make(map[string]*BranchCache)
-	notify := func(key string) {
+	merged := make(map[K]V, len(mine))
+	notify := func(key K) {
 		if MergeConflictHook != nil {
-			MergeConflictHook("branch", key)
+			MergeConflictHook(kind, fmt.Sprint(key))
 		}
 	}
-	seen := make(map[string]bool, len(mine))
-	for name, mineB := range mine {
-		seen[name] = true
-		origB, hadOrig := orig[name]
-		if hadOrig && jsonEqual(origB, mineB) {
-			if theirB, hasTheirs := theirs[name]; hasTheirs {
-				merged[name] = theirB
+	seen := make(map[K]bool, len(mine))
+	for k, mineV := range mine {
+		seen[k] = true
+		origV, hadOrig := orig[k]
+		if hadOrig && jsonEqual(origV, mineV) {
+			if theirV, hasTheirs := theirs[k]; hasTheirs {
+				merged[k] = theirV
 			}
 			continue
 		}
 		if hadOrig {
-			if theirB, hasTheirs := theirs[name]; hasTheirs &&
-				!jsonEqual(theirB, origB) && !jsonEqual(theirB, mineB) {
-				notify(name)
+			if theirV, hasTheirs := theirs[k]; hasTheirs &&
+				!jsonEqual(theirV, origV) && !jsonEqual(theirV, mineV) {
+				notify(k)
 			}
 		}
-		merged[name] = mineB
+		merged[k] = mineV
 	}
-	for name, theirB := range theirs {
-		if seen[name] {
+	for k, theirV := range theirs {
+		if seen[k] {
 			continue
 		}
-		if _, wasOrig := orig[name]; wasOrig {
+		if _, wasOrig := orig[k]; wasOrig {
 			continue // we deleted it
 		}
-		merged[name] = theirB
+		merged[k] = theirV
 	}
 	return merged
 }
 
-// mergeStacks performs a three-way merge over stack maps using the same
-// semantics as mergeBranches (kind="stack" for the conflict hook).
+// mergeBranches is a thin typed wrapper over threeWayMergeMap for
+// branch-cache maps. Kept as a named function so call sites read clearly.
+func mergeBranches(orig, mine, theirs map[string]*BranchCache) map[string]*BranchCache {
+	return threeWayMergeMap(orig, mine, theirs, "branch")
+}
+
+// mergeStacks is the named-typed wrapper for stack maps.
 func mergeStacks(orig, mine, theirs map[string]*Stack) map[string]*Stack {
-	if orig == nil {
-		orig = map[string]*Stack{}
-	}
-	if theirs == nil {
-		theirs = map[string]*Stack{}
-	}
-	merged := make(map[string]*Stack)
-	notify := func(key string) {
-		if MergeConflictHook != nil {
-			MergeConflictHook("stack", key)
-		}
-	}
-	seen := make(map[string]bool, len(mine))
-	for hash, mineS := range mine {
-		seen[hash] = true
-		origS, hadOrig := orig[hash]
-		if hadOrig && jsonEqual(origS, mineS) {
-			if theirS, hasTheirs := theirs[hash]; hasTheirs {
-				merged[hash] = theirS
-			}
-			continue
-		}
-		if hadOrig {
-			if theirS, hasTheirs := theirs[hash]; hasTheirs &&
-				!jsonEqual(theirS, origS) && !jsonEqual(theirS, mineS) {
-				notify(hash)
-			}
-		}
-		merged[hash] = mineS
-	}
-	for hash, theirS := range theirs {
-		if seen[hash] {
-			continue
-		}
-		if _, wasOrig := orig[hash]; wasOrig {
-			continue // we deleted it
-		}
-		merged[hash] = theirS
-	}
-	return merged
+	return threeWayMergeMap(orig, mine, theirs, "stack")
 }
 
 // mergeRepoData performs a three-way merge between the disk state at load
@@ -1366,11 +1334,6 @@ func (s *Stack) IsFullyMerged(cache *CacheConfig) bool {
 // This should be called after loading or after modifying the Tree
 func (s *Stack) PopulateBranches() {
 	s.Branches = s.GetBranches(s.cache)
-}
-
-// SetCache sets the cache for this stack, allowing branch metadata to be loaded
-func (s *Stack) SetCache(cache *CacheConfig) {
-	s.cache = cache
 }
 
 // PopulateBranchesWithCache rebuilds the Branches slice using the provided cache
