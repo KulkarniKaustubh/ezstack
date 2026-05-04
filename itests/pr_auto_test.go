@@ -128,13 +128,15 @@ func TestPRCreateAuto_HappyPath(t *testing.T) {
 	}
 
 	// And the stub claude should have received a prompt mentioning the diff
-	// + branch context — proving we shipped the right inputs.
+	// + branch context — proving we shipped the right inputs. The XML-style
+	// data delimiters are part of the prompt-injection hardening contract;
+	// asserting on them pins both substitution and structure.
 	inspect, err := os.ReadFile(promptInspect)
 	if err != nil {
 		t.Fatalf("prompt inspect file missing: %v", err)
 	}
 	prompt := string(inspect)
-	for _, want := range []string{"feat-auth", "main", "Diff"} {
+	for _, want := range []string{"<branch>feat-auth</branch>", "<parent>main</parent>", "<diff>"} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("agent prompt missing %q (first 400 chars):\n%s", want, truncateForTest(prompt, 400))
 		}
@@ -251,12 +253,12 @@ done
 [ -z "$prompt" ] && exit 0
 
 case "$prompt" in
-  *Name:\ feat-a*)
+  *"<branch>feat-a</branch>"*)
     cat <<'__JSON_END__'
 {"title":"AI: feat-a title","body":"AI: feat-a body"}
 __JSON_END__
     ;;
-  *Name:\ feat-b*)
+  *"<branch>feat-b</branch>"*)
     cat <<'__JSON_END__'
 {"title":"AI: feat-b title","body":"AI: feat-b body"}
 __JSON_END__
