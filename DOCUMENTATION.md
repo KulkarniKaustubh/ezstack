@@ -507,19 +507,22 @@ ezs stack
 Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically. **Requires worktree mode** (`use_worktrees: true`) — the agent needs separate working directories for each branch to work in isolation without disrupting your workspace.
 
 ```
-ezs agent [options]
+ezs agent [options] [-- <agent-args>]
 ezs agent feature "description"
+ezs agent ls [filter] [--json]
 ezs agent prompt <flag> <work|feature>
 
 Modes:
     (default)   Work session — agent scoped to a stack with full context
     feature     Feature builder — agent breaks a feature into stacked branches
+    ls (list)   List the AI sessions ezs has bound to stacks/branches in this repo
     prompt      View or edit the prompt templates used by the agent
 
 Options:
     --cmd <command>      Agent CLI to use (default: configured or "claude")
     -s, --stack <hash>   Stack to work on (hash prefix or "name")
     -b, --branch <name>  Branch to work in (implies stack)
+    --no-resume          Start a fresh session even if one exists for this branch/stack
     --dry-run            Print the composed prompt and exit (don't launch agent)
     --save-prompt <file> Write the composed prompt to <file> (pairs well with --dry-run)
     --no-push            Set EZS_AGENT_NO_PUSH=1 in the spawned agent's environment
@@ -528,11 +531,49 @@ Options:
     --no-mcp             Do not auto-install/register ezs-mcp; embed docs in
                          the prompt instead (escape hatch for non-claude CLIs
                          or air-gapped environments)
+
+`agent ls` filters (mutually exclusive — default is all sessions in current repo):
+    -b, --branch         Show only the session bound to the current branch
+    -s, --stack          Show only sessions bound to the current stack
+    --feature            Show only sessions created via `ezs agent feature`
+
+Anything after a literal `--` is forwarded to the agent CLI verbatim, so
+you can always pass agent-specific flags ezs doesn't know about (e.g.
+`ezs agent -- --debug --model opus`).
 ```
 
 You can run `ezs agent` from any branch, including `main` or other non-stack branches. If you're not on a stack branch, ezstack auto-selects the stack when there is exactly one, or shows an interactive picker when there are multiple stacks. You can always skip the picker with `--stack` or `--branch`.
 
 **`--no-push` and `EZS_AGENT_NO_PUSH`.** When `--no-push` is passed, the child agent process is launched with `EZS_AGENT_NO_PUSH=1` in its environment. Tooling run inside the agent session (hooks, helper scripts, nested `ezs` calls) can check this variable and skip push steps. The variable is only set when `--no-push` is explicitly used; regular `ezs` commands never see it.
+
+#### Session tracking and resumption
+
+`ezs agent` binds a UUID-based session to each stack — or to a single branch when `--branch` is set — and reuses that UUID on every subsequent run against the same scope. Sessions are persisted in `~/.ezstack/stacks.json` under `agent_session_id` (on the stack for stack-scoped runs, on the branch cache for branch-scoped) and survive process restarts. They get cleaned up automatically when you `ezs delete` the branch or the entire stack.
+
+| Run | What ezs does |
+|-----|----------------|
+| First run for a stack/branch | Mints a fresh UUID and persists it. Exposes the UUID as `EZS_AGENT_SESSION_ID` to the spawned agent. |
+| Subsequent runs | Reads the persisted UUID and re-exposes the same value to the agent. |
+| `--no-resume` | Forces a brand-new UUID, replacing the persisted one for future runs. |
+
+**Claude integration.** For Claude-family CLIs (`claude`, `claude-code`, etc.), ezs additionally injects flags so claude binds its session to ezs's UUID:
+
+- First run: `claude --session-id <uuid> --name "_ezstack-<identifier>" "<prompt>"`.
+- Subsequent runs: `claude --resume <uuid> --name "_ezstack-<identifier>"` (no prompt — claude reopens the prior conversation interactively).
+
+The display name (`_ezstack-<identifier>`) is what shows up in claude's `/resume` picker and the terminal title, so you can tell ezstack-managed sessions apart from ad-hoc ones.
+
+**Other agents.** For agent CLIs ezs doesn't recognize, ezs does **not** inject CLI flags (the schema differs per tool — anything we don't understand might misparse them). The session UUID is still minted, persisted, and exposed via `EZS_AGENT_SESSION_ID`, so user-supplied wrappers can read it and wire their own resume logic on top. Combine `--cmd` with `-- <agent-args>` to forward arbitrary flags to such wrappers.
+
+Use `ezs agent ls` (alias `ezs agent list`) to see every tracked session in the **current repo**, with the stack/branch each session is bound to and the exact `ezs agent` invocation that resumes it. Add `--json` for a machine-readable array suitable for piping into `jq` or other scripts. The JSON object has `scope`, `mode`, `stack_hash`, `stack_name`, `branch_name`, `display_name`, `session_id`, and `resume_cmd`.
+
+Filter the list with mutually-exclusive scope flags:
+
+- `-b` / `--branch` — show only the session bound to the user's current branch. Errors when the current branch isn't tracked by ezstack.
+- `-s` / `--stack` — show only sessions bound to the user's current stack (both stack-scoped and branch-scoped sessions in that stack). Errors when the cwd isn't on a stack branch.
+- `--feature` — show only sessions created via `ezs agent feature`. The `mode` field on each session row distinguishes work-mode (`"work"`) from feature-mode (`"feature"`); legacy entries written before mode tracking surface as `"work"`.
+
+`agent ls` is intentionally scoped to the current repo only. Sessions from other ezstack-tracked repos in `~/.ezstack/stacks.json` are not surfaced — there's no cross-repo listing flag, by design, because surfacing unrelated sessions creates more confusion than it resolves. Only ezstack-minted sessions (display name prefixed with `_ezstack-`) are listed — freestanding `claude` sessions you started by hand are not.
 
 **`--preset <name>`.** Looks up `~/.ezstack/agent-presets/<name>.md` and appends it to the end of the fully composed prompt under a `## Preset: <name>` header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.
 
@@ -931,11 +972,15 @@ Options:
     -b, --body <body>      PR body/description
     -d, --draft            Create as draft PR
     --branch <name>        Create PR for a specific branch (instead of current)
+    --auto, --ai           Use the configured AI agent to draft PR title and body
+                           from the diff and the repo's PR template
     -f, --force            Create a new PR even if one already exists
                            (alias: --recreate)
 ```
 
 **`--force`.** Bypasses the existing-PR guard. When the cached PR has been merged or closed, this is a no-op (the cached terminal state already lets create proceed). When the cached PR is still live on GitHub, a warning is printed and a new PR is created — the existing PR stays open and GitHub may reject the new PR as a duplicate. `--force` does not prompt, so scripts can pass it without holding stdin open.
+
+**`--auto` (alias `--ai`).** Hands the branch's diff, commit messages, and the repo's `pull_request_template.md` to the configured AI agent (`agent_command`) and asks it to fill in `{title, body}`. The result is fed into the regular create flow, so all the usual gating still happens — push, base validation, fork detection, stack-description update. Combine with `-s` / `--stack` to draft a body for every branch in the stack in one go. `-t` / `-b` always win over the AI's output for the field they specify, so you can pin a title and let the AI handle just the body (or vice versa). `--auto` currently requires a Claude-family agent because that's the only CLI ezs can drive non-interactively with predictable JSON output; passing `--cmd` to point at a different binary will be rejected with a clear error. The PR template's location is the standard set GitHub looks at: `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `docs/pull_request_template.md`, and the repo-root variants.
 
 #### `ezs pr draft`
 

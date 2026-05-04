@@ -1164,6 +1164,8 @@ var commandExamples = map[string][][2]string{
 	"pr": {
 		{"ezs pr create -t \"Add login\"", "Create a PR with the given title"},
 		{"ezs pr create -s", "Create PRs for every branch in the stack"},
+		{"ezs pr create --auto", "Let the AI agent draft the PR title and body"},
+		{"ezs pr create -s --auto", "AI-draft PRs for every branch in the stack"},
 		{"ezs pr --draft-all", "Create all stack PRs as drafts"},
 		{"ezs pr merge", "Merge the current branch's PR"},
 		{"ezs pr create --force", "Create a fresh PR even if one is already cached"},
@@ -1186,8 +1188,15 @@ var commandExamples = map[string][][2]string{
 	"agent": {
 		{"ezs agent", "Launch the agent on the current stack"},
 		{"ezs agent feature \"add JWT auth\"", "Build a feature as stacked branches"},
+		{"ezs agent ls", "List tracked AI sessions in this repo"},
+		{"ezs agent ls --branch", "Show only the current branch's session"},
+		{"ezs agent ls --stack", "Show only the current stack's sessions"},
+		{"ezs agent ls --feature", "Show only feature-mode sessions"},
+		{"ezs agent ls --json", "Emit tracked sessions as JSON for scripting"},
 		{"ezs agent --preset reviewer", "Use a saved prompt preset"},
 		{"ezs agent --no-push", "Block any auto-push during the agent run"},
+		{"ezs agent --no-resume", "Force a fresh agent session, ignoring any saved one"},
+		{"ezs agent -- --debug", "Forward extra flags to the agent CLI"},
 		{"ezs agent --dry-run --save-prompt /tmp/p.md", "Write the composed prompt to a file"},
 	},
 	"config": {

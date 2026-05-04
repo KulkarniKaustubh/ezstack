@@ -180,19 +180,29 @@ type StackConfig struct {
 	origSnapshot *repoData
 }
 
+// AgentSessionWorkMode is the mode tag stored alongside an agent session.
+// "" (empty) is treated as the work-mode default for entries written before
+// mode tracking was added — never write an empty mode for a fresh session.
+const (
+	AgentSessionWorkMode    = "work"    // `ezs agent` default (work session)
+	AgentSessionFeatureMode = "feature" // `ezs agent feature` builder mode
+)
+
 // Stack represents a chain of stacked branches as a tree
 // Hash is the map key in StackConfig.Stacks and is populated at load time.
 type Stack struct {
-	Hash           string       `json:"-"`                         // Populated from map key at load time
-	Name           string       `json:"name,omitempty"`            // Optional user-given name for the stack
-	Root           string       `json:"root"`                      // The base branch (e.g. "main", or a remote branch name)
-	RootBase       string       `json:"root_base,omitempty"`       // The branch the root's PR targets (for computing root diff)
-	RootPRNumber   int          `json:"-"`                         // Runtime-only: derived from RootPRUrl
-	RootPRUrl      string       `json:"root_pr_url,omitempty"`     // PR URL of the root branch (for remote base branches)
-	DeleteDeclined bool         `json:"delete_declined,omitempty"` // User declined cleanup prompt; don't re-ask
-	Tree           BranchTree   `json:"tree"`                      // The tree of branches
-	Branches       []*Branch    `json:"-"`                         // Runtime-only: populated from Tree for backward compatibility
-	cache          *CacheConfig // Runtime-only: reference to cache for metadata
+	Hash             string       `json:"-"`                            // Populated from map key at load time
+	Name             string       `json:"name,omitempty"`               // Optional user-given name for the stack
+	Root             string       `json:"root"`                         // The base branch (e.g. "main", or a remote branch name)
+	RootBase         string       `json:"root_base,omitempty"`          // The branch the root's PR targets (for computing root diff)
+	RootPRNumber     int          `json:"-"`                            // Runtime-only: derived from RootPRUrl
+	RootPRUrl        string       `json:"root_pr_url,omitempty"`        // PR URL of the root branch (for remote base branches)
+	DeleteDeclined   bool         `json:"delete_declined,omitempty"`    // User declined cleanup prompt; don't re-ask
+	AgentSessionID   string       `json:"agent_session_id,omitempty"`   // UUID of the AI agent session bound to this stack (used by `ezs agent` to resume)
+	AgentSessionMode string       `json:"agent_session_mode,omitempty"` // Mode the session was created in: "work" or "feature". Empty ⇒ legacy entry, treated as "work".
+	Tree             BranchTree   `json:"tree"`                         // The tree of branches
+	Branches         []*Branch    `json:"-"`                            // Runtime-only: populated from Tree for backward compatibility
+	cache            *CacheConfig // Runtime-only: reference to cache for metadata
 }
 
 // DisplayName returns the display string for a stack: "name [hash]" or just hash
@@ -232,6 +242,15 @@ type BranchCache struct {
 	// runs that no longer have a worktree to introspect — without this, a
 	// crashed checkout-based sync would leave its snapshot in cache forever.
 	PreSyncCommitAt int64 `json:"pre_sync_commit_at,omitempty"`
+	// AgentSessionID is the UUID of the AI agent session bound to this branch
+	// in branch-scoped (`ezs agent --branch`) mode. Used to resume the same
+	// session on subsequent `ezs agent` runs against this branch.
+	AgentSessionID string `json:"agent_session_id,omitempty"`
+	// AgentSessionMode tags how the session was created. Branch-scoped sessions
+	// are always work-mode (feature mode requires a stack), so this is set to
+	// "work" on write and consumed by `ezs agent ls --feature` to filter rows.
+	// Empty on legacy entries written before mode tracking; treated as "work".
+	AgentSessionMode string `json:"agent_session_mode,omitempty"`
 }
 
 // ClearPRFields zeroes the PR-association fields on this BranchCache while
