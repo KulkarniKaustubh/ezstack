@@ -28,11 +28,13 @@ func Agent(args []string) error {
 %sUSAGE%s
     ezs agent [options] [-- <agent-args>]   Launch agent scoped to a stack
     ezs agent feature|feat "description"    Launch agent to build a feature as stacked branches
+    ezs agent ls|list [--json]              List tracked AI sessions in this repo
     ezs agent prompt <flag> <work|feature>  View or edit agent prompt templates
 
 %sMODES%s
     (default)       Work session — agent is scoped to a stack with full context
     feature (feat)  Feature builder — agent breaks a feature into incremental stacked branches
+    ls (list)       List the AI sessions ezs has bound to stacks/branches in this repo
     prompt          View or edit the prompt templates used by the agent
 
 %sOPTIONS%s
@@ -96,12 +98,16 @@ func Agent(args []string) error {
 			ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset)
 	}
 
-	// Check for prompt subcommand early — before parsing agent flags,
-	// so that prompt-specific flags (--edit, --shipped, --custom, --repo, --reset)
-	// are not rejected by the agent flag set.
-	// Only match "prompt" as a positional arg (not a flag value like -s prompt).
-	if sub, rest := firstPositionalArg(args); sub == "prompt" {
-		return agentPrompt(rest)
+	// Check for early-dispatched subcommands before parsing agent flags, so
+	// that subcommand-specific flags aren't rejected by the agent flag set.
+	// Only match positional args (not flag values like `-s ls`).
+	if sub, rest := firstPositionalArg(args); sub != "" {
+		switch sub {
+		case "prompt":
+			return agentPrompt(rest)
+		case "ls", "list":
+			return agentList(rest)
+		}
 	}
 
 	// Split off any tokens following a literal "--": those are pass-through

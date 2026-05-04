@@ -95,6 +95,8 @@ var prSubcommandFlags = map[string][]string{
 // the default agent mode, so they pick up commandFlags["agent"] correctly.)
 var agentSubcommandFlags = map[string][]string{
 	"prompt": {"--shipped", "--custom", "--repo", "--edit", "--reset", "--help", "-h"},
+	"ls":     {"--json", "--help", "-h"},
+	"list":   {"--json", "--help", "-h"},
 }
 
 // branchPositionalCommands take a branch name as their first positional arg.
@@ -271,6 +273,8 @@ func printCompletions(args []string) {
 		if len(args) == 2 {
 			fmt.Println("feature")
 			fmt.Println("feat")
+			fmt.Println("ls")
+			fmt.Println("list")
 			fmt.Println("prompt")
 			return
 		}

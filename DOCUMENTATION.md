@@ -509,11 +509,13 @@ Launch an AI agent with full stack context. The agent is scoped to a single stac
 ```
 ezs agent [options] [-- <agent-args>]
 ezs agent feature "description"
+ezs agent ls [--json]
 ezs agent prompt <flag> <work|feature>
 
 Modes:
     (default)   Work session — agent scoped to a stack with full context
     feature     Feature builder — agent breaks a feature into stacked branches
+    ls (list)   List the AI sessions ezs has bound to stacks/branches in this repo
     prompt      View or edit the prompt templates used by the agent
 
 Options:
@@ -552,6 +554,8 @@ For Claude (the default agent), `ezs agent` binds a UUID-based session to each s
 The session ID is also exposed to the spawned agent as `EZS_AGENT_SESSION_ID` so non-claude wrappers can opt in by reading that variable. For unknown agent CLIs ezs does **not** inject session flags — anything we don't understand might misparse them — so `--resume` semantics there are up to the user (combine `--cmd` with `-- <agent-args>` to wire your own).
 
 Sessions are stored in `~/.ezstack/stacks.json` under `agent_session_id` on the stack (stack-scoped) or branch cache (branch-scoped). They survive process restarts but get cleaned up when you `ezs delete` the branch.
+
+Use `ezs agent ls` (alias `ezs agent list`) to see every tracked session in the current repo, with the stack/branch each session is bound to and the exact `ezs agent` invocation that resumes it. Add `--json` for a machine-readable array suitable for piping into `jq` or other scripts. The JSON object has `scope`, `stack_hash`, `stack_name`, `branch_name`, `display_name`, `session_id`, and `resume_cmd`.
 
 **`--preset <name>`.** Looks up `~/.ezstack/agent-presets/<name>.md` and appends it to the end of the fully composed prompt under a `## Preset: <name>` header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.
 

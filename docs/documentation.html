@@ -1081,11 +1081,13 @@
       <p>Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically. <strong>Requires worktree mode</strong> (<code>use_worktrees: true</code>) — the agent needs separate working directories for each branch to work in isolation without disrupting your workspace.</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">[options]</span> <span class="c-str">[--</span> <span class="c-str">&lt;agent-args&gt;]</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">feature</span> <span class="c-str">&#34;description&#34;</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">ls</span> <span class="c-str">[--json]</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">prompt</span> <span class="c-str">&lt;flag&gt;</span> <span class="c-str">&lt;work|feature&gt;</span>
 
 Modes:
     (default)   <span class="c-dim">Work session — agent scoped to a stack with full context</span>
     <span class="c-cmd">feature</span>     <span class="c-dim">Feature builder — agent breaks a feature into stacked branches</span>
+    <span class="c-cmd">ls</span> <span class="c-str">(list)</span>   <span class="c-dim">List the AI sessions ezs has bound to stacks/branches in this repo</span>
     <span class="c-cmd">prompt</span>      <span class="c-dim">View or edit the prompt templates used by the agent</span>
 
 Options:
@@ -1134,6 +1136,7 @@ Options:
       </table>
       <p>The session ID is also exposed to the spawned agent as <code>EZS_AGENT_SESSION_ID</code> so non-claude wrappers can opt in by reading that variable. For unknown agent CLIs ezs does <strong>not</strong> inject session flags — anything we don't understand might misparse them — so <code>--resume</code> semantics there are up to the user (combine <code>--cmd</code> with <code>-- &lt;agent-args&gt;</code> to wire your own).</p>
       <p>Sessions are stored in <code>~/.ezstack/stacks.json</code> under <code>agent_session_id</code> on the stack (stack-scoped) or branch cache (branch-scoped). They survive process restarts but get cleaned up when you <code>ezs delete</code> the branch.</p>
+      <p>Use <code>ezs agent ls</code> (alias <code>ezs agent list</code>) to see every tracked session in the current repo, with the stack/branch each session is bound to and the exact <code>ezs agent</code> invocation that resumes it. Add <code>--json</code> for a machine-readable array suitable for piping into <code>jq</code> or other scripts. The JSON object has <code>scope</code>, <code>stack_hash</code>, <code>stack_name</code>, <code>branch_name</code>, <code>display_name</code>, <code>session_id</code>, and <code>resume_cmd</code>.</p>
       <p><strong><code>--preset &lt;name&gt;</code>.</strong> Looks up <code>~/.ezstack/agent-presets/&lt;name&gt;.md</code> and appends it to the end of the fully composed prompt under a <code>## Preset: &lt;name&gt;</code> header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.</p>
       <p><strong><code>--save-prompt &lt;file&gt;</code>.</strong> Writes the fully composed prompt (after all three layers and any <code>--preset</code>) to <code>&lt;file&gt;</code>. Most useful with <code>--dry-run</code> to inspect exactly what the agent would see without spawning it.</p>
       <h4 id="automatic-mcp-integration-claude-code">Automatic MCP integration (Claude Code)</h4>
