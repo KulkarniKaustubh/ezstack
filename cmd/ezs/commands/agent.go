@@ -38,12 +38,16 @@ func Agent(args []string) error {
     prompt          View or edit the prompt templates used by the agent
 
 %sOPTIONS%s
-    --cmd <command>      Agent CLI to use (default: configured or "claude")
-    -s, --stack <hash>   Stack to work on (hash prefix or "name")
-    -b, --branch <name>  Branch to work in (implies --stack from branch's stack)
-    --no-resume          Start a fresh agent session even if one exists for this branch/stack
-    --dry-run            Print the composed prompt and exit (don't launch agent)
-    -h, --help           Show this help message
+    --cmd <command>       Agent CLI to use (default: configured or "claude")
+    -s, --stack <hash>    Stack to work on (hash prefix or "name")
+    -b, --branch <name>   Branch to work in (implies --stack from branch's stack)
+    --no-resume           Start a fresh agent session even if one exists for this branch/stack
+    --preset <name>       Append ~/.ezstack/agent-presets/<name>.md to the composed prompt
+    --no-push             Block any auto-push during the agent run
+    --no-mcp              Embed docs in the prompt instead of registering the ezstack MCP server
+    --dry-run             Print the composed prompt and exit (don't launch agent)
+    --save-prompt <file>  Write the composed prompt to <file> (use with --dry-run)
+    -h, --help            Show this help message
 
     If both --stack and --branch are specified, --branch takes priority.
     If neither is specified and you're not on a stacked branch, an interactive
@@ -649,10 +653,26 @@ func ensureInstructionsFile(path, promptType, location string) (string, error) {
 // It skips flags (--foo, -f) and their values so that e.g. "-s prompt" does not
 // match "prompt" as a subcommand.  Returns the matched arg and the remaining
 // args after it, or ("", nil) if there are no positional args.
+//
+// The valuedFlags table must list every string-valued flag the agent flag set
+// accepts. A missing entry causes the flag's value to be misread as a
+// positional — e.g. without `--save-prompt` here, `ezs agent --save-prompt
+// prompt` would dispatch to the `prompt` subcommand instead of saving the
+// composed prompt to a file named "prompt". Boolean flags (--dry-run,
+// --no-push, --no-mcp, --no-resume, -h/--help) are intentionally absent
+// because they don't consume the next token. The `--flag=value` form is also
+// safe to skip — pflag bundles the value with the flag, so the next token is
+// either the next flag or a real positional.
 func firstPositionalArg(args []string) (string, []string) {
 	// Flags whose values we know consume the next token.
 	valuedFlags := map[string]bool{
-		"--cmd": true, "-s": true, "--stack": true, "-b": true, "--branch": true,
+		"--cmd":         true,
+		"-s":            true,
+		"--stack":       true,
+		"-b":            true,
+		"--branch":      true,
+		"--save-prompt": true,
+		"--preset":      true,
 	}
 	skip := false
 	for i, a := range args {
@@ -661,6 +681,11 @@ func firstPositionalArg(args []string) (string, []string) {
 			continue
 		}
 		if strings.HasPrefix(a, "-") {
+			// `--flag=value` already bundles the value; don't skip the next
+			// token. valuedFlags lookup uses the bare flag name only.
+			if strings.HasPrefix(a, "--") && strings.Contains(a, "=") {
+				continue
+			}
 			if valuedFlags[a] {
 				skip = true // next token is the flag value
 			}

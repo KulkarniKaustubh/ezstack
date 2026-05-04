@@ -237,6 +237,21 @@ func TestAgentLs_AllFlag_CrossRepo(t *testing.T) {
 	if strings.Contains(string(defaultOut), "/tmp/other-repo-for-test") {
 		t.Errorf("default agent ls leaked foreign repo path; got:\n%s", defaultOut)
 	}
+	// JSON contract: repo_path is documented as "always set under --all"
+	// — i.e. absent in single-repo (default) JSON output. Every row would
+	// otherwise carry the same currentRepo value, which is redundant noise
+	// for jq pipelines. Pin the contract end-to-end so a regression in
+	// collectAgentSessionsFromStackConfig's includeRepoPath plumbing
+	// surfaces here too, not just in the unit-level pin.
+	var defaultRows []map[string]any
+	if err := json.Unmarshal(defaultOut, &defaultRows); err != nil {
+		t.Fatalf("default agent ls --json output isn't valid JSON: %v\n%s", err, defaultOut)
+	}
+	for _, r := range defaultRows {
+		if _, has := r["repo_path"]; has {
+			t.Errorf("default agent ls --json row leaked repo_path field (contract: only set under -a); got: %v", r)
+		}
+	}
 
 	// `agent ls -a --json` should include both: this repo's session AND
 	// the synthetic one from the other repo.

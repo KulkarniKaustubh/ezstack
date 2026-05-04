@@ -848,6 +848,52 @@ func TestFirstPositionalArg(t *testing.T) {
 			wantArg:  "prompt",
 			wantRest: []string{},
 		},
+		// String-valued flags whose values are NOT subcommand names — the
+		// flag's value must be consumed, never dispatched. Without these,
+		// `ezs agent --save-prompt prompt` would route to agentPrompt and
+		// `ezs agent --preset ls` would route to agentList instead of
+		// applying the named preset.
+		{
+			name:     "value of --save-prompt is not a subcommand",
+			args:     []string{"--save-prompt", "prompt"},
+			wantArg:  "",
+			wantRest: nil,
+		},
+		{
+			name:     "value of --preset is not a subcommand",
+			args:     []string{"--preset", "ls"},
+			wantArg:  "",
+			wantRest: nil,
+		},
+		{
+			name:     "real positional after --save-prompt value",
+			args:     []string{"--save-prompt", "/tmp/p.md", "feature", "Add JWT"},
+			wantArg:  "feature",
+			wantRest: []string{"Add JWT"},
+		},
+		{
+			name:     "real positional after --preset value",
+			args:     []string{"--preset", "reviewer", "ls"},
+			wantArg:  "ls",
+			wantRest: []string{},
+		},
+		// `--flag=value` form bundles its value, so the next token is a
+		// real positional. Without the `=`-aware skip, `--save-prompt=foo
+		// prompt` would still work for --save-prompt — but the equals form
+		// for --branch / --stack / --cmd previously slipped through to
+		// firstPositionalArg incorrectly stripping the next token.
+		{
+			name:     "--branch=value bundles, next token is positional",
+			args:     []string{"--branch=feat-x", "feature", "Add auth"},
+			wantArg:  "feature",
+			wantRest: []string{"Add auth"},
+		},
+		{
+			name:     "--save-prompt=path bundles, next token is positional",
+			args:     []string{"--save-prompt=/tmp/p.md", "ls"},
+			wantArg:  "ls",
+			wantRest: []string{},
+		},
 	}
 
 	for _, tt := range tests {

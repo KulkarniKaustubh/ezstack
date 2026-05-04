@@ -251,7 +251,7 @@ func TestCollectAgentSessionsFromStackConfig(t *testing.T) {
 	}
 
 	t.Run("same-repo rows have no cd prefix", func(t *testing.T) {
-		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r")
+		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r", false)
 		if len(rows) != 2 {
 			t.Fatalf("expected 2 rows (1 stack-scoped + 1 branch-scoped feat-x), got %d: %v", len(rows), rows)
 		}
@@ -262,8 +262,38 @@ func TestCollectAgentSessionsFromStackConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("single-repo (includeRepoPath=false) omits RepoPath on every row", func(t *testing.T) {
+		// The help text pins repo_path as "always set under --all" — i.e.
+		// absent in single-repo JSON output. omitempty handles that, but
+		// only if we never assign repoPath to RepoPath in the first place.
+		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r", false)
+		if len(rows) == 0 {
+			t.Fatal("expected at least one row")
+		}
+		for _, r := range rows {
+			if r.RepoPath != "" {
+				t.Errorf("single-repo row %q leaked RepoPath=%q", r.DisplayName, r.RepoPath)
+			}
+		}
+	})
+
+	t.Run("cross-repo (includeRepoPath=true) populates RepoPath", func(t *testing.T) {
+		rows := collectAgentSessionsFromStackConfig("/elsewhere", sc, "/here", true)
+		if len(rows) == 0 {
+			t.Fatal("expected at least one row")
+		}
+		for _, r := range rows {
+			if r.RepoPath != "/elsewhere" {
+				t.Errorf("cross-repo row %q has RepoPath=%q, want /elsewhere", r.DisplayName, r.RepoPath)
+			}
+		}
+	})
+
 	t.Run("foreign-repo rows get cd prefix", func(t *testing.T) {
-		rows := collectAgentSessionsFromStackConfig("/elsewhere", sc, "/here")
+		// includeRepoPath value doesn't influence the cd prefix — the prefix
+		// is driven by repoPath != currentRepo. Pass true here to mirror
+		// production --all behavior.
+		rows := collectAgentSessionsFromStackConfig("/elsewhere", sc, "/here", true)
 		for _, r := range rows {
 			if !strings.HasPrefix(r.ResumeCmd, "cd /elsewhere && ") {
 				t.Errorf("foreign-repo row %q missing cd prefix; got %q", r.DisplayName, r.ResumeCmd)
@@ -272,7 +302,7 @@ func TestCollectAgentSessionsFromStackConfig(t *testing.T) {
 	})
 
 	t.Run("orphan branch (in cache, not in stack tree) is filtered out", func(t *testing.T) {
-		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r")
+		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r", false)
 		for _, r := range rows {
 			if r.BranchName == "orphan" {
 				t.Errorf("orphan branch should not appear in any stack's row list; got %v", r)
@@ -281,7 +311,7 @@ func TestCollectAgentSessionsFromStackConfig(t *testing.T) {
 	})
 
 	t.Run("branch with empty session id is skipped", func(t *testing.T) {
-		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r")
+		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r", false)
 		for _, r := range rows {
 			if r.BranchName == "feat-y" {
 				t.Errorf("feat-y has empty session id; should not produce a row: %v", r)
@@ -290,7 +320,7 @@ func TestCollectAgentSessionsFromStackConfig(t *testing.T) {
 	})
 
 	t.Run("stack-scoped row carries the stack name", func(t *testing.T) {
-		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r")
+		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r", false)
 		var stackRow *agentSessionRow
 		for i := range rows {
 			if rows[i].Scope == "stack" {
@@ -314,9 +344,13 @@ func TestCollectAgentSessionsFromStackConfig(t *testing.T) {
 // nil StackConfig (which the cross-repo loader can hand us if a repo
 // entry is malformed) yields nil instead of panicking.
 func TestCollectAgentSessions_NilStackConfig(t *testing.T) {
-	rows := collectAgentSessionsFromStackConfig("/r", nil, "/r")
+	rows := collectAgentSessionsFromStackConfig("/r", nil, "/r", true)
 	if rows != nil {
-		t.Errorf("expected nil rows for nil StackConfig, got %v", rows)
+		t.Errorf("expected nil rows for nil StackConfig (includeRepoPath=true), got %v", rows)
+	}
+	rows = collectAgentSessionsFromStackConfig("/r", nil, "/r", false)
+	if rows != nil {
+		t.Errorf("expected nil rows for nil StackConfig (includeRepoPath=false), got %v", rows)
 	}
 }
 

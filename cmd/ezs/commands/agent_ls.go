@@ -103,7 +103,11 @@ func agentList(args []string) error {
 		if mErr != nil {
 			return mErr
 		}
-		rows = collectAgentSessionsFromStackConfig(currentRepo, mgr.GetStackConfig(), currentRepo)
+		// includeRepoPath=false: the help text documents `repo_path` as
+		// "always set under --all" — i.e. omitted in single-repo mode where
+		// it would be redundant noise (every row has the same value). The
+		// omitempty JSON tag handles the actual elision.
+		rows = collectAgentSessionsFromStackConfig(currentRepo, mgr.GetStackConfig(), currentRepo, false)
 	}
 
 	if *jsonFlag {
@@ -133,6 +137,9 @@ type agentSessionRow struct {
 // resume command so the user knows where to run it.
 //
 // Sorted by (repoPath, scope, displayName) so output is stable across runs.
+// Always sets RepoPath on every row — under --all, knowing which repo a
+// session belongs to is the entire point of the listing, and the text
+// renderer needs the value to group by repo even when --json isn't in play.
 func collectAllReposAgentSessions(currentRepo string) ([]agentSessionRow, error) {
 	all, err := config.LoadAllStackConfigs()
 	if err != nil {
@@ -143,7 +150,7 @@ func collectAllReposAgentSessions(currentRepo string) ([]agentSessionRow, error)
 		if sc == nil {
 			continue
 		}
-		rows = append(rows, collectAgentSessionsFromStackConfig(repoPath, sc, currentRepo)...)
+		rows = append(rows, collectAgentSessionsFromStackConfig(repoPath, sc, currentRepo, true)...)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].RepoPath != rows[j].RepoPath {
@@ -164,11 +171,26 @@ func collectAllReposAgentSessions(currentRepo string) ([]agentSessionRow, error)
 // repoPath is the repo the StackConfig belongs to. currentRepo is the
 // caller's current directory's repo — used to decide whether the resume
 // command needs a `cd <repo> && ` prefix.
-func collectAgentSessionsFromStackConfig(repoPath string, sc *config.StackConfig, currentRepo string) []agentSessionRow {
+//
+// includeRepoPath controls whether the row's RepoPath field is populated.
+// Cross-repo callers (--all) set this to true so the field appears in JSON
+// output and the text renderer can group by repo. Single-repo callers pass
+// false: the help text documents repo_path as "always set under --all", and
+// in single-repo mode every row would carry the same value — redundant noise
+// in JSON output and a silent contract violation.
+func collectAgentSessionsFromStackConfig(repoPath string, sc *config.StackConfig, currentRepo string, includeRepoPath bool) []agentSessionRow {
 	if sc == nil {
 		return nil
 	}
 	rows := make([]agentSessionRow, 0)
+
+	// rowRepoPath is what we stamp on each row. Empty when we're in single-
+	// repo mode (omitempty drops it from JSON); the actual repoPath value is
+	// still used for the resume-command prefix decision below.
+	rowRepoPath := ""
+	if includeRepoPath {
+		rowRepoPath = repoPath
+	}
 
 	// Sort stacks by hash so iteration is deterministic without an explicit
 	// post-sort step (the caller still re-sorts to merge multiple repos in
@@ -196,7 +218,7 @@ func collectAgentSessionsFromStackConfig(repoPath string, sc *config.StackConfig
 			}
 			rows = append(rows, agentSessionRow{
 				Scope:       "stack",
-				RepoPath:    repoPath,
+				RepoPath:    rowRepoPath,
 				StackHash:   s.Hash,
 				StackName:   s.Name,
 				DisplayName: sessionDisplayName(identifier, scopeStack),
@@ -229,7 +251,7 @@ func collectAgentSessionsFromStackConfig(repoPath string, sc *config.StackConfig
 			}
 			rows = append(rows, agentSessionRow{
 				Scope:       "branch",
-				RepoPath:    repoPath,
+				RepoPath:    rowRepoPath,
 				StackHash:   s.Hash,
 				StackName:   s.Name,
 				BranchName:  name,
