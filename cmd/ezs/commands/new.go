@@ -706,21 +706,18 @@ func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noC
 		}
 	}
 	if _, regErr := mgr.RegisterExistingBranch(remoteBranch, worktreePath, baseBranch); regErr == nil {
-		// `ezs new origin/<branch>` always checks out a remote-tracked branch
-		// (typically someone else's PR for review), so flag IsRemote=true so
-		// the (remote) tag renders in `ezs ls`/`ezs status`. The Remote field
-		// determines push behavior: a real fork remote when detectForkRemote
-		// confirms one, otherwise the literal "origin" sentinel. Setting
-		// Remote="origin" — rather than leaving it empty — is what previously
-		// went wrong (empty Remote + IsRemote=true sent every push through
-		// fork-detection, even for same-repo branches). With "origin"
-		// persisted, ResolveBranchRemote short-circuits to it.
+		// IsRemote drives the (remote) tag in render paths; a non-empty
+		// Remote field short-circuits ResolveBranchRemote so subsequent
+		// pushes don't re-run fork detection on every call. "origin" is the
+		// safe sentinel when no fork is involved.
 		forkRemote := detectForkRemote(g, gh, pr)
 		pushRemote := forkRemote
 		if pushRemote == "" {
 			pushRemote = "origin"
 		}
-		mgr.MarkBranchRemote(remoteBranch, prURL, pushRemote)
+		if err := mgr.MarkBranchRemote(remoteBranch, prURL, pushRemote); err != nil {
+			ui.Warn(fmt.Sprintf("Failed to persist remote metadata for '%s': %v", remoteBranch, err))
+		}
 		if forkRemote == "" && pr != nil {
 			savePRToCache(mgr.GetRepoDir(), remoteBranch, pr)
 		}
@@ -780,12 +777,10 @@ func showDiffStatsAgainstBase(g *git.Git, branch, baseBranch string) {
 		return
 	}
 
-	// The base (PR target / inferred main/master) is always upstream-tracked,
-	// so diff against origin/<base> when available — local <base> can be
-	// stale, which would otherwise inflate the diff with every upstream
-	// commit landed since the last local update. Match what fetchDiffStats
-	// (used by `ezs ls`) does for the same case. The branch side stays on
-	// the local ref so the stats reflect the user's working state.
+	// Diff against origin/<base> when it exists: a stale local base would
+	// otherwise pull every upstream commit landed since the last local
+	// update into the count. Branch stays on the local ref so the stats
+	// reflect the user's working state. Mirrors fetchDiffStats.
 	baseRef := upstreamRef(g, baseBranch)
 	branchRef := resolveLocalRef(g, branch)
 

@@ -74,6 +74,77 @@ func TestPrintStack_NoRemoteTagOnUserOwnedRoot(t *testing.T) {
 	}
 }
 
+// formatStackString feeds the fzf preview pane shown in SelectBranch /
+// SelectWorktreeWithStackPreview / SelectStack. PrintStack already renders
+// the (remote) tag, but the fzf preview historically rendered a bare root
+// name with no tag — so a user picking a branch from fzf saw the same stack
+// described differently than `ezs ls` describes it. Lock parity here to keep
+// the two renderers in lockstep.
+func TestFormatStackString_RootRemoteTag(t *testing.T) {
+	stack := &config.Stack{
+		Hash:         "abc1234",
+		Root:         "alice/feature",
+		RootBase:     "main",
+		RootIsRemote: true,
+		Branches: []*config.Branch{
+			{Name: "alice/feature", Parent: "main", IsRemote: true},
+			{Name: "my-feature", Parent: "alice/feature"},
+		},
+	}
+
+	out := formatStackString(stack, "my-feature")
+	rootIdx := strings.Index(out, "alice/feature")
+	if rootIdx == -1 {
+		t.Fatalf("root not rendered in fzf preview, got:\n%s", out)
+	}
+	// Lines in formatStackString are joined with the literal \n escape (fzf
+	// renders them via `printf '%b'`), so split on that — not real newlines.
+	rootSegEnd := rootIdx + strings.Index(out[rootIdx:], `\n`)
+	rootSeg := out[rootIdx:rootSegEnd]
+	if !strings.Contains(rootSeg, "(remote)") {
+		t.Errorf("formatStackString root segment %q missing (remote) tag, full preview:\n%s", rootSeg, out)
+	}
+	if !strings.Contains(out, "my-feature") {
+		t.Fatalf("user branch not rendered, got:\n%s", out)
+	}
+}
+
+// formatStackString must also flag the per-branch (remote) tag for
+// contributors checked in via `ezs new origin/<branch>` — same parity gap
+// the root-level fix above covered, just for tree members.
+func TestFormatStackString_PerBranchRemoteTag(t *testing.T) {
+	stack := &config.Stack{
+		Hash: "abc1234",
+		Root: "main",
+		Branches: []*config.Branch{
+			{Name: "alice/feature", Parent: "main", IsRemote: true},
+			{Name: "my-feature", Parent: "main"},
+		},
+	}
+
+	out := formatStackString(stack, "my-feature")
+	aliceIdx := strings.Index(out, "alice/feature")
+	if aliceIdx == -1 {
+		t.Fatalf("contributor branch not rendered, got:\n%s", out)
+	}
+	aliceSegEnd := aliceIdx + strings.Index(out[aliceIdx:], `\n`)
+	aliceSeg := out[aliceIdx:aliceSegEnd]
+	if !strings.Contains(aliceSeg, "(remote)") {
+		t.Errorf("contributor branch line %q missing (remote) tag", aliceSeg)
+	}
+
+	// Negative: the user's own branch must not pick up the tag.
+	myIdx := strings.Index(out, "my-feature")
+	if myIdx == -1 {
+		t.Fatalf("user branch not rendered, got:\n%s", out)
+	}
+	mySegEnd := myIdx + strings.Index(out[myIdx:], `\n`)
+	mySeg := out[myIdx:mySegEnd]
+	if strings.Contains(mySeg, "(remote)") {
+		t.Errorf("user-owned branch line %q must not show (remote) tag", mySeg)
+	}
+}
+
 func TestSuggestCommand(t *testing.T) {
 	cands := []string{"status", "stack", "sync", "new", "push", "pull"}
 

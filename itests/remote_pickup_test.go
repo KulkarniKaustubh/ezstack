@@ -111,6 +111,18 @@ func TestNewFromRemoteRef_NoPR_PickupRemainsPushable(t *testing.T) {
 	if strings.Contains(string(data), "_nopush") {
 		t.Errorf("stacks.json contains _nopush after plain pickup:\n%s", string(data))
 	}
+	// Positive: the `(remote)` tag is driven off `is_remote: true` in the
+	// cache. Lock the literal string so a future cache-encoding change can't
+	// silently drop the field and erase the tag in `ezs ls`.
+	if !strings.Contains(string(data), `"is_remote": true`) {
+		t.Errorf("stacks.json missing %q after pickup (drives the (remote) tag):\n%s",
+			`"is_remote": true`, string(data))
+	}
+	// And the explicit Remote=origin sentinel that prevents re-detection.
+	if !strings.Contains(string(data), `"remote": "origin"`) {
+		t.Errorf("stacks.json missing %q after pickup (prevents fork-detection re-runs):\n%s",
+			`"remote": "origin"`, string(data))
+	}
 }
 
 // mustRunGit runs a git command in an optional directory, failing the test on

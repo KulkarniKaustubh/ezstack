@@ -659,8 +659,14 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 		}
 	}
 
-	// Print root branch name
-	output.WriteString(fmt.Sprintf("  %s%s%s%s\\n", gray, stack.Root, reset, ""))
+	// Print root branch name; tag with (remote) when the root is an
+	// upstream-tracked branch picked up via `ezs new origin/*` or `-r`,
+	// matching PrintStack so the fzf preview doesn't disagree with `ezs ls`.
+	rootRemoteTag := ""
+	if stack.RootIsRemote {
+		rootRemoteTag = " " + gray + "(remote)" + reset
+	}
+	output.WriteString(fmt.Sprintf("  %s%s%s%s\\n", gray, stack.Root, reset, rootRemoteTag))
 
 	// Recursive tree walker
 	var walkTree func(nodes []*config.Branch, prefix string)
@@ -685,15 +691,20 @@ func formatStackString(stack *config.Stack, currentBranch string) string {
 			prText := fzfPRText(b)
 			prColor := fzfPRColor(b, cyan, yellow, gray, red)
 
+			remoteTag := ""
+			if b.IsRemote {
+				remoteTag = " " + gray + "(remote)" + reset
+			}
+
 			shouldStrike := b.IsMerged || b.PRState == "MERGED" || b.PRState == "CLOSED"
 			if shouldStrike {
-				output.WriteString(fmt.Sprintf("%s%s%s%s%s%s%s  %s%s%s\\n",
+				output.WriteString(fmt.Sprintf("%s%s%s%s%s%s%s%s  %s%s%s\\n",
 					pointer, color, prefix, connector, strikethrough+bold, displayName, reset+strikethrough,
-					prColor, prText, reset))
+					remoteTag, prColor, prText, reset))
 			} else {
-				output.WriteString(fmt.Sprintf("%s%s%s%s%s%s%s  %s%s%s\\n",
+				output.WriteString(fmt.Sprintf("%s%s%s%s%s%s%s%s  %s%s%s\\n",
 					pointer, color, prefix, connector, bold, displayName, reset,
-					prColor, prText, reset))
+					remoteTag, prColor, prText, reset))
 			}
 
 			if children, ok := childrenMap[b.Name]; ok {
