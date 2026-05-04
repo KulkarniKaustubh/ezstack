@@ -442,7 +442,16 @@ func SelectWorktreeWithStackPreview(worktrees []WorktreeInfo, stacks []*config.S
 	return nil, fmt.Errorf("worktree not found: %s", branchName)
 }
 
-// SelectStack uses fzf to select a stack
+// SelectStack uses fzf to select a stack.
+//
+// The YesMode guard lives on the TerminalBackend method (below), NOT on
+// this package-level wrapper. Backend-aware: MCPBackend.SelectStack uses
+// JSON-Schema elicitation (no TTY required), which works correctly under
+// YesMode — a package-level guard would force auto-pick / error and
+// short-circuit the MCP client's natural disambiguation flow.
+// TerminalBackend.SelectStack, in contrast, calls runFzf which DOES hang
+// on a missing TTY, so it has its own guard. Same pattern applies to
+// SelectBranch and SelectOptionWithBack (also dispatched through Backend).
 func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 	return activeBackend.SelectStack(stacks, prompt)
 }
@@ -1573,6 +1582,12 @@ func SelectOptionWithSuggested(options []string, prompt string, suggestedIdx int
 // SelectOptionWithBack uses fzf to select from a list of options with a back option.
 // Returns the 0-based index of the selected option, or ErrBack if back was selected.
 // The back option is displayed as an unnumbered "← back" at the end of the list.
+//
+// As with SelectStack and SelectBranch, the YesMode guard lives on the
+// TerminalBackend method (below), not here. MCPBackend.SelectOptionWithBack
+// uses elicitation rather than fzf and does not hang on a missing TTY,
+// so a package-level guard would short-circuit the elicitation path
+// and break MCP tools that depend on user disambiguation.
 func SelectOptionWithBack(options []string, prompt string) (int, error) {
 	return activeBackend.SelectOptionWithBack(options, prompt)
 }

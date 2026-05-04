@@ -407,3 +407,101 @@ func TestSelectOptionWithBack_YesMode(t *testing.T) {
 		})
 	})
 }
+
+// fakeMCPishBackend simulates a non-Terminal backend (MCPBackend in
+// production). Each Select* method increments a counter and returns a
+// deterministic answer — we only care whether the package-level wrapper
+// dispatched to us at all.
+type fakeMCPishBackend struct {
+	TerminalBackend
+	stackCalls     int
+	optionWithBack int
+	branchCalls    int
+}
+
+func (f *fakeMCPishBackend) SelectStack(stacks []*config.Stack, _ string) (*config.Stack, error) {
+	f.stackCalls++
+	if len(stacks) == 0 {
+		return nil, nil
+	}
+	return stacks[0], nil
+}
+
+func (f *fakeMCPishBackend) SelectOptionWithBack(options []string, _ string) (int, error) {
+	f.optionWithBack++
+	if len(options) == 0 {
+		return -1, nil
+	}
+	return 0, nil
+}
+
+func (f *fakeMCPishBackend) SelectBranch(branches []*config.Branch, _ string) (*config.Branch, error) {
+	f.branchCalls++
+	if len(branches) == 0 {
+		return nil, nil
+	}
+	return branches[0], nil
+}
+
+// TestBackendDispatch_YesMode_PreservesElicitation pins the asymmetric design
+// described in ui.go:445 (and the SelectOptionWithBack docstring): for
+// helpers dispatched through the Backend interface (SelectStack,
+// SelectOptionWithBack, SelectBranch), the YesMode guard must live on the
+// TerminalBackend method, NOT the package-level wrapper. Otherwise an MCP
+// invocation — which installs MCPBackend (uses elicitation, doesn't hang on
+// missing TTY) AND flips YesMode=true — would never reach MCPBackend's
+// elicitation code, breaking multi-stack disambiguation flows that depend
+// on user input via the MCP client.
+//
+// We assert this by replacing activeBackend with a fake that records calls,
+// flipping YesMode=true, and verifying the fake is invoked even when there
+// are 2+ items (the case where TerminalBackend would short-circuit).
+func TestBackendDispatch_YesMode_PreservesElicitation(t *testing.T) {
+	old := activeBackend
+	defer func() { activeBackend = old }()
+	fb := &fakeMCPishBackend{}
+	activeBackend = fb
+
+	withYesMode(t, func() {
+		runWithDeadline(t, 2*time.Second, func() {
+			// SelectStack: 2+ stacks. With package-level guard this would
+			// auto-error and never call the backend. We expect the fake's
+			// SelectStack to be invoked once.
+			stacks := []*config.Stack{{Hash: "abc12345"}, {Hash: "def67890"}}
+			got, err := SelectStack(stacks, "x")
+			if err != nil {
+				t.Errorf("SelectStack(non-Terminal, multi): unexpected err %v", err)
+			}
+			if got != stacks[0] {
+				t.Errorf("SelectStack: got %v, want stacks[0]", got)
+			}
+			if fb.stackCalls != 1 {
+				t.Errorf("SelectStack: backend called %d times, want 1 (regression: package-level guard short-circuited the backend)", fb.stackCalls)
+			}
+
+			// Same for SelectOptionWithBack.
+			idx, err := SelectOptionWithBack([]string{"a", "b", "c"}, "p")
+			if err != nil || idx != 0 {
+				t.Errorf("SelectOptionWithBack: got (%d, %v), want (0, nil)", idx, err)
+			}
+			if fb.optionWithBack != 1 {
+				t.Errorf("SelectOptionWithBack: backend called %d times, want 1", fb.optionWithBack)
+			}
+
+			// SelectBranch dispatches to the backend, which on TerminalBackend
+			// flows through SelectBranchWithStacks (package-level guard).
+			// On a non-Terminal backend it must call SelectBranch directly.
+			branches := []*config.Branch{{Name: "a"}, {Name: "b"}}
+			b, err := SelectBranch(branches, "p")
+			if err != nil {
+				t.Errorf("SelectBranch: unexpected err %v", err)
+			}
+			if b != branches[0] {
+				t.Errorf("SelectBranch: got %v, want branches[0]", b)
+			}
+			if fb.branchCalls != 1 {
+				t.Errorf("SelectBranch: backend called %d times, want 1", fb.branchCalls)
+			}
+		})
+	})
+}

@@ -44,11 +44,14 @@ type Client struct {
 // tooling). Repo names with internal dots — `my-repo.io`, `foo.bar` —
 // are preserved; only the literal `.git` suffix is removed.
 //
-// The third capture group `(?:/.*)?$` accepts and discards extra path
-// segments after the repo name. This lets users paste browser URLs like
+// The non-capturing tail `(?:/[^\s#?]*)?(?:[#?].*)?$` accepts and discards
+// extra path segments after the repo name (and a trailing `?query`/`#anchor`).
+// This lets users paste browser URLs like
 // `https://github.com/owner/repo/tree/main` or `.../pull/123` and have
 // the parser extract just `(owner, repo)` instead of failing — the most
-// common ezstack onboarding mistake before this change.
+// common ezstack onboarding mistake before this change. The `[^\s#?]*`
+// inside the path-tail intentionally excludes `?` and `#` so the
+// query/anchor branch can still claim them when present.
 var gitHubURLRe = regexp.MustCompile(`(?i)(?:^|@|//)github\.com(?::\d+)?[:/]([^/\s#?]+)/([^/\s#?]+?)(?:\.git)?(?:/[^\s#?]*)?(?:[#?].*)?$`)
 
 // NewClient creates a new GitHub client by parsing the remote URL.
