@@ -28,7 +28,7 @@ func Agent(args []string) error {
 %sUSAGE%s
     ezs agent [options] [-- <agent-args>]   Launch agent scoped to a stack
     ezs agent feature|feat "description"    Launch agent to build a feature as stacked branches
-    ezs agent ls|list [-a] [--json]         List tracked AI sessions (-a for all repos)
+    ezs agent ls|list [filter] [--json]     List tracked AI sessions (current repo only)
     ezs agent prompt <flag> <work|feature>  View or edit agent prompt templates
 
 %sMODES%s

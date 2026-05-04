@@ -231,6 +231,11 @@ func splitAgentExtras(args []string) (agentArgs, extras []string) {
 // agent crashes — claude records the conversation as soon as it starts, so
 // resuming next time is still useful, and any non-claude wrapper that bound
 // internal state to the env-exposed UUID can recover too.
+//
+// mode is the launch mode (config.AgentSessionWorkMode or
+// config.AgentSessionFeatureMode); the persist callback writes it alongside
+// the UUID so `ezs agent ls --feature` can filter rows. mode is set at plan
+// resolution time so it's known before the agent process even starts.
 type agentSessionPlan struct {
 	injection *agentSessionInjection
 	persist   func(string) error // no-op for scope-less feature mode
@@ -245,6 +250,9 @@ type agentSessionPlan struct {
 // get CLI flag injection; others get only the EZS_AGENT_SESSION_ID env var
 // (the persisted UUID is what `agent ls` surfaces and what user-supplied
 // wrappers can opt into).
+//
+// Persisted entries are tagged config.AgentSessionWorkMode so `agent ls
+// --feature` can exclude them.
 func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, branchName string, branchScoped, forceFresh bool) *agentSessionPlan {
 	if branchScoped {
 		var stored string
@@ -261,7 +269,7 @@ func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, br
 		return &agentSessionPlan{
 			injection: &inj,
 			persist: func(id string) error {
-				return persistBranchSessionID(repoPath, branchName, id)
+				return persistBranchSessionID(repoPath, branchName, id, config.AgentSessionWorkMode)
 			},
 		}
 	}
@@ -288,7 +296,7 @@ func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, br
 			if stackHash == "" {
 				return nil
 			}
-			return persistStackSessionID(repoPath, stackHash, id)
+			return persistStackSessionID(repoPath, stackHash, id, config.AgentSessionWorkMode)
 		},
 	}
 }
@@ -298,6 +306,12 @@ func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, br
 // feature run is one-shot — we still mint a session ID (so the agent has a
 // stable handle exposed via EZS_AGENT_SESSION_ID) but nothing is persisted
 // on the ezs side because there's no scope to attach to.
+//
+// Persisted entries are tagged config.AgentSessionFeatureMode so `agent ls
+// --feature` includes them. Note that work-mode and feature-mode share the
+// same Stack.AgentSessionID storage slot — running the other mode against
+// the same stack overwrites both the UUID and the mode tag, which means
+// "the most recent launch wins" for resume semantics.
 //
 // Plans are produced for any agent. Claude-family agents get CLI flag
 // injection; others get the env var only.
@@ -319,7 +333,7 @@ func resolveFeatureSession(repoPath, agentCmd string, existingStack *config.Stac
 	return &agentSessionPlan{
 		injection: &inj,
 		persist: func(id string) error {
-			return persistStackSessionID(repoPath, hash, id)
+			return persistStackSessionID(repoPath, hash, id, config.AgentSessionFeatureMode)
 		},
 	}
 }
@@ -338,22 +352,22 @@ func lookupBranchSessionID(repoPath, branchName string) string {
 	return bc.AgentSessionID
 }
 
-// persistBranchSessionID writes the session ID to the branch cache.
-func persistBranchSessionID(repoPath, branchName, sessionID string) error {
+// persistBranchSessionID writes the session ID + mode to the branch cache.
+func persistBranchSessionID(repoPath, branchName, sessionID, mode string) error {
 	mgr, err := stack.NewReadOnlyManager(repoPath)
 	if err != nil {
 		return err
 	}
-	return mgr.SetBranchAgentSessionID(branchName, sessionID)
+	return mgr.SetBranchAgentSessionID(branchName, sessionID, mode)
 }
 
-// persistStackSessionID writes the session ID onto the stack with the given hash.
-func persistStackSessionID(repoPath, stackHash, sessionID string) error {
+// persistStackSessionID writes the session ID + mode onto the stack with the given hash.
+func persistStackSessionID(repoPath, stackHash, sessionID, mode string) error {
 	mgr, err := stack.NewReadOnlyManager(repoPath)
 	if err != nil {
 		return err
 	}
-	return mgr.SetStackAgentSessionID(stackHash, sessionID)
+	return mgr.SetStackAgentSessionID(stackHash, sessionID, mode)
 }
 
 // sessionLogSuffix returns a short " (resumed: <id>)" or " (fresh session: <id>)"

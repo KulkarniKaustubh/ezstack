@@ -180,20 +180,29 @@ type StackConfig struct {
 	origSnapshot *repoData
 }
 
+// AgentSessionWorkMode is the mode tag stored alongside an agent session.
+// "" (empty) is treated as the work-mode default for entries written before
+// mode tracking was added — never write an empty mode for a fresh session.
+const (
+	AgentSessionWorkMode    = "work"    // `ezs agent` default (work session)
+	AgentSessionFeatureMode = "feature" // `ezs agent feature` builder mode
+)
+
 // Stack represents a chain of stacked branches as a tree
 // Hash is the map key in StackConfig.Stacks and is populated at load time.
 type Stack struct {
-	Hash           string       `json:"-"`                          // Populated from map key at load time
-	Name           string       `json:"name,omitempty"`             // Optional user-given name for the stack
-	Root           string       `json:"root"`                       // The base branch (e.g. "main", or a remote branch name)
-	RootBase       string       `json:"root_base,omitempty"`        // The branch the root's PR targets (for computing root diff)
-	RootPRNumber   int          `json:"-"`                          // Runtime-only: derived from RootPRUrl
-	RootPRUrl      string       `json:"root_pr_url,omitempty"`      // PR URL of the root branch (for remote base branches)
-	DeleteDeclined bool         `json:"delete_declined,omitempty"`  // User declined cleanup prompt; don't re-ask
-	AgentSessionID string       `json:"agent_session_id,omitempty"` // UUID of the AI agent session bound to this stack (used by `ezs agent` to resume)
-	Tree           BranchTree   `json:"tree"`                       // The tree of branches
-	Branches       []*Branch    `json:"-"`                          // Runtime-only: populated from Tree for backward compatibility
-	cache          *CacheConfig // Runtime-only: reference to cache for metadata
+	Hash             string       `json:"-"`                            // Populated from map key at load time
+	Name             string       `json:"name,omitempty"`               // Optional user-given name for the stack
+	Root             string       `json:"root"`                         // The base branch (e.g. "main", or a remote branch name)
+	RootBase         string       `json:"root_base,omitempty"`          // The branch the root's PR targets (for computing root diff)
+	RootPRNumber     int          `json:"-"`                            // Runtime-only: derived from RootPRUrl
+	RootPRUrl        string       `json:"root_pr_url,omitempty"`        // PR URL of the root branch (for remote base branches)
+	DeleteDeclined   bool         `json:"delete_declined,omitempty"`    // User declined cleanup prompt; don't re-ask
+	AgentSessionID   string       `json:"agent_session_id,omitempty"`   // UUID of the AI agent session bound to this stack (used by `ezs agent` to resume)
+	AgentSessionMode string       `json:"agent_session_mode,omitempty"` // Mode the session was created in: "work" or "feature". Empty ⇒ legacy entry, treated as "work".
+	Tree             BranchTree   `json:"tree"`                         // The tree of branches
+	Branches         []*Branch    `json:"-"`                            // Runtime-only: populated from Tree for backward compatibility
+	cache            *CacheConfig // Runtime-only: reference to cache for metadata
 }
 
 // DisplayName returns the display string for a stack: "name [hash]" or just hash
@@ -237,6 +246,11 @@ type BranchCache struct {
 	// in branch-scoped (`ezs agent --branch`) mode. Used to resume the same
 	// session on subsequent `ezs agent` runs against this branch.
 	AgentSessionID string `json:"agent_session_id,omitempty"`
+	// AgentSessionMode tags how the session was created. Branch-scoped sessions
+	// are always work-mode (feature mode requires a stack), so this is set to
+	// "work" on write and consumed by `ezs agent ls --feature` to filter rows.
+	// Empty on legacy entries written before mode tracking; treated as "work".
+	AgentSessionMode string `json:"agent_session_mode,omitempty"`
 }
 
 // ClearPRFields zeroes the PR-association fields on this BranchCache while
@@ -1103,81 +1117,6 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 	}
 
 	return sc, nil
-}
-
-// LoadAllStackConfigs returns one StackConfig per repo recorded in
-// stacks.json. Each StackConfig has stack hashes, branch caches, and Branch
-// slices populated — same shape LoadStackConfig produces — so callers can
-// iterate every repo's stacks without needing the per-repo path up front.
-//
-// Used by cross-repo discovery commands like `ezs agent ls --all`. Single-
-// repo callers should keep using LoadStackConfig: it owns the schema-
-// migration write-back, while LoadAllStackConfigs reuses the migrated form
-// LoadStackConfig leaves on disk.
-//
-// To guarantee migration runs even when the cross-repo command is the first
-// ezs invocation on this version, we call LoadStackConfig("") once up
-// front. The "" repo never matches a real key, so we throw the result
-// away — but the call's side effect (read → migrate → atomic-write-back)
-// is what we want. A missing or empty stacks.json is not an error;
-// LoadAllStackConfigs returns an empty map in those cases.
-//
-// Returned StackConfigs are read-only views: their Save() will round-trip
-// through the same locking the regular path uses, but typical -a-flag
-// callers never write so the lock cost is one-time per invocation.
-func LoadAllStackConfigs() (map[string]*StackConfig, error) {
-	// Trigger migration if needed. Idempotent on already-current files.
-	if _, err := LoadStackConfig(""); err != nil {
-		return nil, fmt.Errorf("migrate stacks.json: %w", err)
-	}
-
-	configDir, err := ConfigDir()
-	if err != nil {
-		return nil, err
-	}
-	data, err := os.ReadFile(filepath.Join(configDir, "stacks.json"))
-	if err != nil {
-		if os.IsNotExist(err) {
-			return map[string]*StackConfig{}, nil
-		}
-		return nil, err
-	}
-
-	var file stackConfigFile
-	if err := json.Unmarshal(data, &file); err != nil {
-		return nil, fmt.Errorf("parse stacks.json: %w", err)
-	}
-
-	out := make(map[string]*StackConfig, len(file.Repos))
-	for repoPath, rd := range file.Repos {
-		if rd == nil {
-			continue
-		}
-		if rd.Stacks == nil {
-			rd.Stacks = make(map[string]*Stack)
-		}
-		if rd.Branches == nil {
-			rd.Branches = make(map[string]*BranchCache)
-		}
-		sc := &StackConfig{
-			Stacks: rd.Stacks,
-			Cache: &CacheConfig{
-				Branches:     rd.Branches,
-				origBranches: snapshotBranches(rd.Branches),
-				repoDir:      repoPath,
-			},
-			repoDir:      repoPath,
-			origSnapshot: snapshotRepoData(rd),
-		}
-		for hash, stack := range sc.Stacks {
-			stack.Hash = hash
-			stack.cache = sc.Cache
-			stack.RootPRNumber = PRNumberFromURL(stack.RootPRUrl)
-			stack.PopulateBranches()
-		}
-		out[repoPath] = sc
-	}
-	return out, nil
 }
 
 // snapshotBranches deep-copies a map of *BranchCache pointers via a JSON

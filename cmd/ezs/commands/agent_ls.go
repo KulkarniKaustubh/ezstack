@@ -15,11 +15,16 @@ import (
 
 // agentList implements `ezs agent ls` (alias `ezs agent list`).
 //
-// Walks every stack in the current repo (or every repo when --all is set)
-// and reports any AI session bound to it (stack-scoped) or to one of its
-// branches (branch-scoped). Output is human-friendly by default with a
-// "how to resume" hint, or machine-readable with --json so users can pipe
-// it into jq/scripts.
+// Default scope is "every ezstack-bound AI session in the current repo" —
+// always within the current repo, so users never see noise from unrelated
+// repos in their terminal. Filter flags narrow the view to a smaller scope:
+//
+//   - --branch    show only the session bound to the user's current branch
+//   - --stack     show only sessions bound to the user's current stack
+//   - --feature   show only sessions created via `ezs agent feature`
+//
+// Filters are mutually exclusive: pass at most one. JSON output (--json) is
+// the same shape as the text view minus the cosmetic header/grouping.
 //
 // Empty cases are reported explicitly ("no sessions yet") instead of
 // silently returning nothing — this is one of those commands users run when
@@ -28,41 +33,48 @@ import (
 func agentList(args []string) error {
 	fs := pflag.NewFlagSet("agent ls", pflag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `%sList AI sessions tracked by ezs%s
+		fmt.Fprintf(os.Stderr, `%sList AI sessions tracked by ezs in this repo%s
 
 %sUSAGE%s
-    ezs agent ls [--all] [--json]
-    ezs agent list [--all] [--json]   (alias)
+    ezs agent ls [filter] [--json]
+    ezs agent list [filter] [--json]   (alias)
+
+%sFILTERS%s (mutually exclusive — default is all sessions in current repo)
+    -b, --branch     Show only the session bound to the current branch
+    -s, --stack      Show only sessions bound to the current stack
+    --feature        Show only sessions created via 'ezs agent feature'
 
 %sOPTIONS%s
-    -a, --all   List sessions across every repo recorded in stacks.json,
-                grouped by repo path (default: only the current repo)
-    --json      Emit a machine-readable JSON array instead of the text table
-    -h, --help  Show this help message
+    --json           Emit a machine-readable JSON array instead of the text table
+    -h, --help       Show this help message
 
 %sDESCRIPTION%s
     Each row reports one ezstack-bound AI session: which stack or branch
     it's attached to, the display name shown in the agent's resume picker,
-    a short prefix of the session ID, and the exact 'ezs agent' command
-    that resumes it. Only sessions ezs has minted (display name prefixed
-    with "_ezstack-") are listed; freestanding claude sessions are not.
+    a short prefix of the session ID, the launch mode (work or feature),
+    and the exact 'ezs agent' command that resumes it. Only sessions ezs
+    has minted (display name prefixed with "_ezstack-") are listed.
 
     The text output is grouped: stack-scoped sessions first, then
-    branch-scoped sessions. With --all, an additional outer grouping by
-    repo path is added. JSON output has fields:
+    branch-scoped sessions. JSON fields:
         scope         "stack" | "branch"
-        repo_path     repo the session belongs to (always set under --all)
+        mode          "work" | "feature"  (legacy entries written before
+                      mode tracking show as "work")
         stack_hash    hash of the stack the session belongs to
         stack_name    optional friendly name of the stack
         branch_name   set only when scope == "branch"
         display_name  the "_ezstack-<...>" label passed to the agent CLI
         session_id    full UUID
-        resume_cmd    suggested 'ezs agent' invocation to resume; under
-                      --all, prefixed with 'cd <repo> && ' for sessions
-                      outside the current working directory's repo
-`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
+        resume_cmd    suggested 'ezs agent' invocation to resume
+
+    Filters resolve "current branch" / "current stack" from your git HEAD
+    and ezstack tracking; running them outside a tracked branch errors
+    instead of silently emitting an empty list.
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
-	allFlag := fs.BoolP("all", "a", false, "List sessions across all repos in stacks.json")
+	branchFilter := fs.BoolP("branch", "b", false, "Filter to current branch's session")
+	stackFilter := fs.BoolP("stack", "s", false, "Filter to current stack's sessions")
+	featureFilter := fs.Bool("feature", false, "Filter to feature-mode sessions")
 	jsonFlag := fs.Bool("json", false, "Emit JSON instead of the human-readable table")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
@@ -80,6 +92,28 @@ func agentList(args []string) error {
 		return fmt.Errorf("ezs agent ls takes no positional arguments (got %q)", fs.Arg(0))
 	}
 
+	// Filters are mutually exclusive. A combined filter like `--branch
+	// --stack` is ambiguous (different scopes) and would silently coerce to
+	// one or the other; reject it up front so the user knows their input
+	// didn't mean what they thought.
+	pickedFilters := 0
+	pickedNames := []string{}
+	if *branchFilter {
+		pickedFilters++
+		pickedNames = append(pickedNames, "--branch")
+	}
+	if *stackFilter {
+		pickedFilters++
+		pickedNames = append(pickedNames, "--stack")
+	}
+	if *featureFilter {
+		pickedFilters++
+		pickedNames = append(pickedNames, "--feature")
+	}
+	if pickedFilters > 1 {
+		return fmt.Errorf("filters %v are mutually exclusive — pick at most one", pickedNames)
+	}
+
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -87,33 +121,41 @@ func agentList(args []string) error {
 	g := git.New(cwd)
 	currentRepo := getMainWorktreePath(g)
 
-	var rows []agentSessionRow
-	if *allFlag {
-		rows, err = collectAllReposAgentSessions(currentRepo)
-		if err != nil {
-			return err
+	mgr, err := stack.NewReadOnlyManager(cwd)
+	if err != nil {
+		return err
+	}
+
+	rows := collectAgentSessionsFromStackConfig(currentRepo, mgr.GetStackConfig())
+
+	// Apply the chosen filter (if any). The filter resolution can fail with
+	// a clear "not on a stack branch" error rather than silently emptying
+	// the list — that surface area is a real foot-gun for `agent ls
+	// --branch` when the user is on main.
+	switch {
+	case *branchFilter:
+		currentBranch, brErr := g.CurrentBranch()
+		if brErr != nil || currentBranch == "" || currentBranch == "HEAD" {
+			return fmt.Errorf("--branch needs a tracked current branch; HEAD is %q", currentBranch)
 		}
-	} else {
-		// Single-repo path keeps the read-only manager so reconcile-style
-		// state (worktree presence checks, etc.) is consistent with other
-		// ezs commands. The cross-repo path bypasses Manager because most
-		// of those checks aren't meaningful when listing from outside the
-		// repo's working directory.
-		mgr, mErr := stack.NewReadOnlyManager(cwd)
-		if mErr != nil {
-			return mErr
+		if mgr.GetBranch(currentBranch) == nil {
+			return fmt.Errorf("--branch: current branch %q is not tracked by ezstack", currentBranch)
 		}
-		// includeRepoPath=false: the help text documents `repo_path` as
-		// "always set under --all" — i.e. omitted in single-repo mode where
-		// it would be redundant noise (every row has the same value). The
-		// omitempty JSON tag handles the actual elision.
-		rows = collectAgentSessionsFromStackConfig(currentRepo, mgr.GetStackConfig(), currentRepo, false)
+		rows = filterRowsByBranch(rows, currentBranch)
+	case *stackFilter:
+		s, _, csErr := mgr.GetCurrentStack()
+		if csErr != nil || s == nil {
+			return fmt.Errorf("--stack needs a current stack; %v", csErr)
+		}
+		rows = filterRowsByStack(rows, s.Hash)
+	case *featureFilter:
+		rows = filterRowsByMode(rows, config.AgentSessionFeatureMode)
 	}
 
 	if *jsonFlag {
 		return emitAgentSessionsJSON(rows)
 	}
-	emitAgentSessionsText(rows, currentRepo, *allFlag)
+	emitAgentSessionsText(rows, currentRepo, filterLabel(*branchFilter, *stackFilter, *featureFilter))
 	return nil
 }
 
@@ -121,8 +163,8 @@ func agentList(args []string) error {
 // the JSON contract documented in the help text — don't rename them without
 // also updating the help and any consumer scripts.
 type agentSessionRow struct {
-	Scope       string `json:"scope"` // "stack" or "branch"
-	RepoPath    string `json:"repo_path,omitempty"`
+	Scope       string `json:"scope"`          // "stack" or "branch"
+	Mode        string `json:"mode,omitempty"` // "work" or "feature"; empty on legacy rows
 	StackHash   string `json:"stack_hash"`
 	StackName   string `json:"stack_name,omitempty"`
 	BranchName  string `json:"branch_name,omitempty"`
@@ -131,70 +173,21 @@ type agentSessionRow struct {
 	ResumeCmd   string `json:"resume_cmd"`
 }
 
-// collectAllReposAgentSessions iterates every repo recorded in stacks.json
-// and returns every ezstack-tracked session across all of them. Sessions
-// outside the caller's current repo get a `cd <repo> && ` prefix on their
-// resume command so the user knows where to run it.
+// collectAgentSessionsFromStackConfig pulls every session out of the current
+// repo's StackConfig. Returns an empty slice (not nil) when nothing is
+// tracked, so JSON encoders emit `[]` and emit code paths can len-check
+// without nil guards.
 //
-// Sorted by (repoPath, scope, displayName) so output is stable across runs.
-// Always sets RepoPath on every row — under --all, knowing which repo a
-// session belongs to is the entire point of the listing, and the text
-// renderer needs the value to group by repo even when --json isn't in play.
-func collectAllReposAgentSessions(currentRepo string) ([]agentSessionRow, error) {
-	all, err := config.LoadAllStackConfigs()
-	if err != nil {
-		return nil, err
-	}
-	rows := make([]agentSessionRow, 0)
-	for repoPath, sc := range all {
-		if sc == nil {
-			continue
-		}
-		rows = append(rows, collectAgentSessionsFromStackConfig(repoPath, sc, currentRepo, true)...)
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].RepoPath != rows[j].RepoPath {
-			return rows[i].RepoPath < rows[j].RepoPath
-		}
-		if rows[i].Scope != rows[j].Scope {
-			return rows[i].Scope == "stack"
-		}
-		return rows[i].DisplayName < rows[j].DisplayName
-	})
-	return rows, nil
-}
-
-// collectAgentSessionsFromStackConfig pulls every session out of one repo's
-// StackConfig. Both single-repo (`agent ls`) and cross-repo (`agent ls -a`)
-// paths funnel through here so the row construction is uniform.
-//
-// repoPath is the repo the StackConfig belongs to. currentRepo is the
-// caller's current directory's repo — used to decide whether the resume
-// command needs a `cd <repo> && ` prefix.
-//
-// includeRepoPath controls whether the row's RepoPath field is populated.
-// Cross-repo callers (--all) set this to true so the field appears in JSON
-// output and the text renderer can group by repo. Single-repo callers pass
-// false: the help text documents repo_path as "always set under --all", and
-// in single-repo mode every row would carry the same value — redundant noise
-// in JSON output and a silent contract violation.
-func collectAgentSessionsFromStackConfig(repoPath string, sc *config.StackConfig, currentRepo string, includeRepoPath bool) []agentSessionRow {
+// Branch-scoped sessions are sourced from the cache (keyed by branch name)
+// and only included when the branch still exists in some stack's tree —
+// otherwise we'd emit orphans the user can't actually resume.
+func collectAgentSessionsFromStackConfig(currentRepo string, sc *config.StackConfig) []agentSessionRow {
 	if sc == nil {
 		return nil
 	}
 	rows := make([]agentSessionRow, 0)
 
-	// rowRepoPath is what we stamp on each row. Empty when we're in single-
-	// repo mode (omitempty drops it from JSON); the actual repoPath value is
-	// still used for the resume-command prefix decision below.
-	rowRepoPath := ""
-	if includeRepoPath {
-		rowRepoPath = repoPath
-	}
-
-	// Sort stacks by hash so iteration is deterministic without an explicit
-	// post-sort step (the caller still re-sorts to merge multiple repos in
-	// the cross-repo case).
+	// Sort stacks by hash so iteration is deterministic.
 	hashes := make([]string, 0, len(sc.Stacks))
 	for h := range sc.Stacks {
 		hashes = append(hashes, h)
@@ -218,12 +211,12 @@ func collectAgentSessionsFromStackConfig(repoPath string, sc *config.StackConfig
 			}
 			rows = append(rows, agentSessionRow{
 				Scope:       "stack",
-				RepoPath:    rowRepoPath,
+				Mode:        modeOrDefault(s.AgentSessionMode),
 				StackHash:   s.Hash,
 				StackName:   s.Name,
-				DisplayName: sessionDisplayName(identifier, scopeStack),
+				DisplayName: stackDisplayLabel(s),
 				SessionID:   s.AgentSessionID,
-				ResumeCmd:   prefixResumeCmd(resume, repoPath, currentRepo),
+				ResumeCmd:   resume,
 			})
 		}
 		// Branch-scoped sessions live in the cache, keyed by branch name.
@@ -251,30 +244,97 @@ func collectAgentSessionsFromStackConfig(repoPath string, sc *config.StackConfig
 			}
 			rows = append(rows, agentSessionRow{
 				Scope:       "branch",
-				RepoPath:    rowRepoPath,
+				Mode:        modeOrDefault(bc.AgentSessionMode),
 				StackHash:   s.Hash,
 				StackName:   s.Name,
 				BranchName:  name,
 				DisplayName: sessionDisplayName(name, scopeBranch),
 				SessionID:   bc.AgentSessionID,
-				ResumeCmd:   prefixResumeCmd("ezs agent --branch "+quoteIfNeeded(name), repoPath, currentRepo),
+				ResumeCmd:   "ezs agent --branch " + quoteIfNeeded(name),
 			})
 		}
 	}
 	return rows
 }
 
-// prefixResumeCmd prepends `cd <repo> && ` to the resume command when the
-// session is in a different repo than the caller's cwd. Empty currentRepo
-// or matching repos return cmd unchanged.
-//
-// Single-repo (default) callers pass repoPath == currentRepo, so this is a
-// no-op for them. The cross-repo (-a) path is where it earns its keep.
-func prefixResumeCmd(cmd, repoPath, currentRepo string) string {
-	if repoPath == "" || currentRepo == "" || repoPath == currentRepo {
-		return cmd
+// stackDisplayLabel returns the "_ezstack-<...>" label for a stack-scoped
+// session, picking up the feature-mode prefix when the stack's session was
+// created via `ezs agent feature`. Without the feature-prefix branch, a
+// stack with a feature-mode session would surface as `_ezstack-<name>` —
+// indistinguishable from a work-mode session at the visual level, even
+// though the stored mode tag is correct. Reproducing the launch-time label
+// here keeps `agent ls` consistent with what the user saw in claude's
+// /resume picker.
+func stackDisplayLabel(s *config.Stack) string {
+	identifier := s.Name
+	if identifier == "" {
+		identifier = s.Hash
 	}
-	return "cd " + quoteIfNeeded(repoPath) + " && " + cmd
+	if s.AgentSessionMode == config.AgentSessionFeatureMode {
+		return sessionDisplayName("feature-"+identifier, scopeStack)
+	}
+	return sessionDisplayName(identifier, scopeStack)
+}
+
+// modeOrDefault returns the persisted mode, defaulting to
+// AgentSessionWorkMode for legacy entries that pre-date mode tracking.
+// The empty-string fallback makes JSON output stable: callers can rely on
+// `mode` always being present and parseable.
+func modeOrDefault(mode string) string {
+	if mode == "" {
+		return config.AgentSessionWorkMode
+	}
+	return mode
+}
+
+// filterRowsByBranch keeps only the row whose BranchName matches name.
+// Returns an empty slice (not nil) so JSON output stays as `[]` rather than
+// `null` when the current branch has no session yet.
+func filterRowsByBranch(rows []agentSessionRow, name string) []agentSessionRow {
+	out := make([]agentSessionRow, 0, 1)
+	for _, r := range rows {
+		if r.BranchName == name {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// filterRowsByStack keeps only rows belonging to the stack with hash.
+// Includes both stack-scoped and branch-scoped sessions for that stack.
+func filterRowsByStack(rows []agentSessionRow, hash string) []agentSessionRow {
+	out := make([]agentSessionRow, 0)
+	for _, r := range rows {
+		if r.StackHash == hash {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// filterRowsByMode keeps only rows whose Mode matches.
+func filterRowsByMode(rows []agentSessionRow, mode string) []agentSessionRow {
+	out := make([]agentSessionRow, 0)
+	for _, r := range rows {
+		if r.Mode == mode {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// filterLabel returns a short human-readable description of the active
+// filter for the empty-list message. Empty string when no filter is active.
+func filterLabel(branch, stack, feature bool) string {
+	switch {
+	case branch:
+		return "for the current branch"
+	case stack:
+		return "for the current stack"
+	case feature:
+		return "in feature mode"
+	}
+	return ""
 }
 
 // quoteIfNeeded wraps s in single quotes when it contains any character that
@@ -308,54 +368,36 @@ func quoteIfNeeded(s string) string {
 	return s
 }
 
-// emitAgentSessionsText renders rows in a human-friendly layout. Single-repo
-// mode prints stack-scoped then branch-scoped under one header. --all mode
-// adds an outer grouping by repo path so it's clear which sessions live
-// where.
+// emitAgentSessionsText renders rows in a human-friendly layout grouped as
+// stack-scoped first, branch-scoped after.
 //
-// Empty result is its own helpful message instead of a blank line.
-func emitAgentSessionsText(rows []agentSessionRow, currentRepo string, allMode bool) {
+// Empty result is its own helpful message instead of a blank line. The
+// message names the active filter (when any) so users on `--branch` against
+// a session-less branch don't see "no sessions in <repo>" and assume the
+// command itself is broken.
+func emitAgentSessionsText(rows []agentSessionRow, currentRepo, filterDesc string) {
 	if len(rows) == 0 {
-		if allMode {
-			ui.Info("No tracked AI sessions in any repo yet.")
-		} else {
+		switch {
+		case filterDesc != "":
+			ui.Info(fmt.Sprintf("No tracked AI sessions %s.", filterDesc))
+		default:
 			ui.Info(fmt.Sprintf("No tracked AI sessions in %s yet.", currentRepo))
 		}
 		ui.Info("Run 'ezs agent' to start one — ezs will track it for you.")
 		return
 	}
 
-	if !allMode {
-		fmt.Fprintf(os.Stderr, "%sTracked AI sessions in %s%s\n\n", ui.Bold, currentRepo, ui.Reset)
-		emitGroupedRows(rows)
-		return
+	header := fmt.Sprintf("Tracked AI sessions in %s", currentRepo)
+	if filterDesc != "" {
+		header += " " + filterDesc
 	}
-
-	// --all: group by repo. Rows are already sorted by RepoPath.
-	fmt.Fprintf(os.Stderr, "%sTracked AI sessions across all repos%s\n\n", ui.Bold, ui.Reset)
-	repoOrder := make([]string, 0)
-	byRepo := make(map[string][]agentSessionRow)
-	for _, r := range rows {
-		if _, seen := byRepo[r.RepoPath]; !seen {
-			repoOrder = append(repoOrder, r.RepoPath)
-		}
-		byRepo[r.RepoPath] = append(byRepo[r.RepoPath], r)
-	}
-	for _, repoPath := range repoOrder {
-		// Highlight the user's current repo with a small marker so they can
-		// spot it in a long list.
-		marker := ""
-		if repoPath == currentRepo {
-			marker = " " + ui.Cyan + "(current)" + ui.Reset
-		}
-		fmt.Fprintf(os.Stderr, "%s──── %s%s%s%s%s\n\n", ui.Yellow, ui.Bold, repoPath, ui.Reset, marker, ui.Reset)
-		emitGroupedRows(byRepo[repoPath])
-	}
+	fmt.Fprintf(os.Stderr, "%s%s%s\n\n", ui.Bold, header, ui.Reset)
+	emitGroupedRows(rows)
 }
 
-// emitGroupedRows prints one repo's rows split into stack-scoped and branch-
-// scoped sub-blocks. Extracted so the single-repo and per-repo paths share
-// the inner formatting.
+// emitGroupedRows prints rows split into stack-scoped and branch-scoped
+// sub-blocks. Each row also surfaces its mode tag so users can tell at a
+// glance which session came from `ezs agent` vs `ezs agent feature`.
 func emitGroupedRows(rows []agentSessionRow) {
 	stackRows := filterByScope(rows, "stack")
 	branchRows := filterByScope(rows, "branch")
@@ -367,7 +409,7 @@ func emitGroupedRows(rows []agentSessionRow) {
 			if r.StackName != "" {
 				label = fmt.Sprintf("%s [%s]", r.StackName, r.StackHash)
 			}
-			fmt.Fprintf(os.Stderr, "  %s %s\n", ui.IconStack, ui.Bold+label+ui.Reset)
+			fmt.Fprintf(os.Stderr, "  %s %s %s(%s)%s\n", ui.IconStack, ui.Bold+label+ui.Reset, ui.Gray, r.Mode, ui.Reset)
 			fmt.Fprintf(os.Stderr, "    %sname:%s    %s\n", ui.Gray, ui.Reset, r.DisplayName)
 			fmt.Fprintf(os.Stderr, "    %ssession:%s %s\n", ui.Gray, ui.Reset, shortSessionID(r.SessionID))
 			fmt.Fprintf(os.Stderr, "    %sresume:%s  %s%s%s\n\n", ui.Gray, ui.Reset, ui.Cyan, r.ResumeCmd, ui.Reset)
@@ -381,7 +423,7 @@ func emitGroupedRows(rows []agentSessionRow) {
 			if r.StackName != "" {
 				stackLabel = fmt.Sprintf("%s [%s]", r.StackName, r.StackHash)
 			}
-			fmt.Fprintf(os.Stderr, "  %s %s %s(in %s)%s\n", ui.IconBranch, ui.Bold+r.BranchName+ui.Reset, ui.Gray, stackLabel, ui.Reset)
+			fmt.Fprintf(os.Stderr, "  %s %s %s(in %s, %s)%s\n", ui.IconBranch, ui.Bold+r.BranchName+ui.Reset, ui.Gray, stackLabel, r.Mode, ui.Reset)
 			fmt.Fprintf(os.Stderr, "    %sname:%s    %s\n", ui.Gray, ui.Reset, r.DisplayName)
 			fmt.Fprintf(os.Stderr, "    %ssession:%s %s\n", ui.Gray, ui.Reset, shortSessionID(r.SessionID))
 			fmt.Fprintf(os.Stderr, "    %sresume:%s  %s%s%s\n\n", ui.Gray, ui.Reset, ui.Cyan, r.ResumeCmd, ui.Reset)

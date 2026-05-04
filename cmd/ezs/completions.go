@@ -95,8 +95,8 @@ var prSubcommandFlags = map[string][]string{
 // the default agent mode, so they pick up commandFlags["agent"] correctly.)
 var agentSubcommandFlags = map[string][]string{
 	"prompt": {"--shipped", "--custom", "--repo", "--edit", "--reset", "--help", "-h"},
-	"ls":     {"--all", "-a", "--json", "--help", "-h"},
-	"list":   {"--all", "-a", "--json", "--help", "-h"},
+	"ls":     {"--branch", "-b", "--stack", "-s", "--feature", "--json", "--help", "-h"},
+	"list":   {"--branch", "-b", "--stack", "-s", "--feature", "--json", "--help", "-h"},
 }
 
 // branchPositionalCommands take a branch name as their first positional arg.

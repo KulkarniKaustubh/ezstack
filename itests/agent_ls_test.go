@@ -168,19 +168,20 @@ func TestAgentLs_ListAlias(t *testing.T) {
 	}
 }
 
-// TestAgentLs_AllFlag_CrossRepo verifies the headline of -a: a session
-// minted in one repo's stacks.json is visible from any other directory's
-// `ezs agent ls -a`. We can't easily spin up two real ezstack-configured
-// repos in one test, so we drive this via a single repo + a hand-edited
-// stacks.json that adds a second repo's session entry directly.
-func TestAgentLs_AllFlag_CrossRepo(t *testing.T) {
+// TestAgentLs_NoCrossRepoLeak verifies the deliberate scope choice: agent
+// ls is current-repo-only. Even when stacks.json contains entries for
+// other repos (a real-world configuration with multiple ezstack-tracked
+// repos), `agent ls` from one repo never surfaces sessions from another.
+// This was the user-reported regression that drove the redesign — the
+// previous --all flag pulled in noise from unrelated repos.
+func TestAgentLs_NoCrossRepoLeak(t *testing.T) {
 	env := SetupTestEnv(t)
 	defer env.Cleanup()
 
 	CreateBranchWithCommit(t, env, "feat-here", "main")
 
-	// Mint a session in this repo via a real `ezs agent` run so the JSON
-	// shape on disk matches production exactly.
+	// Mint a real session in this repo so we have a positive baseline to
+	// distinguish from foreign-repo data.
 	logDir := filepath.Join(env.TmpDir, "claude_args")
 	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), agentStubScript(logDir))
 	writeExecutable(t, filepath.Join(env.StubBinDir, "ezs-mcp"), "#!/bin/sh\nexit 0\n")
@@ -188,10 +189,8 @@ func TestAgentLs_AllFlag_CrossRepo(t *testing.T) {
 		t.Fatalf("seed run: %v\n%s", err, out)
 	}
 
-	// Synthesize a second repo's data inside the same stacks.json. This
-	// represents a different working directory the user has configured ezs
-	// against. Format mirrors what LoadStackConfig/Save would write for a
-	// repo with one stack and one stack-scoped session.
+	// Inject a foreign repo's data directly into stacks.json. Format
+	// mirrors what LoadStackConfig/Save would write.
 	stacksPath := filepath.Join(env.ConfigDir, "stacks.json")
 	raw, err := os.ReadFile(stacksPath)
 	if err != nil {
@@ -209,10 +208,11 @@ func TestAgentLs_AllFlag_CrossRepo(t *testing.T) {
 	repos[otherRepo] = map[string]any{
 		"stacks": map[string]any{
 			"deadbef": map[string]any{
-				"name":             "other-feature",
-				"root":             "main",
-				"agent_session_id": "11111111-2222-3333-4444-555555555555",
-				"tree":             map[string]any{},
+				"name":               "other-feature",
+				"root":               "main",
+				"agent_session_id":   "11111111-2222-3333-4444-555555555555",
+				"agent_session_mode": "feature",
+				"tree":               map[string]any{},
 			},
 		},
 		"branches": map[string]any{},
@@ -226,114 +226,288 @@ func TestAgentLs_AllFlag_CrossRepo(t *testing.T) {
 		t.Fatalf("write stacks.json: %v", err)
 	}
 
-	// Default `agent ls` should NOT include the synthetic repo's session.
-	defaultOut, err := runEzsStubbed(t, env, "agent", "ls", "--json")
+	// `agent ls --json` from this repo must not surface the foreign session.
+	out, err := runEzsStubbed(t, env, "agent", "ls", "--json")
 	if err != nil {
-		t.Fatalf("agent ls --json: %v\n%s", err, defaultOut)
+		t.Fatalf("agent ls --json: %v\n%s", err, out)
 	}
-	if strings.Contains(string(defaultOut), "11111111-2222") {
-		t.Errorf("default agent ls should NOT show foreign-repo sessions; got:\n%s", defaultOut)
+	if strings.Contains(string(out), "11111111-2222") {
+		t.Errorf("agent ls leaked foreign-repo session; got:\n%s", out)
 	}
-	if strings.Contains(string(defaultOut), "/tmp/other-repo-for-test") {
-		t.Errorf("default agent ls leaked foreign repo path; got:\n%s", defaultOut)
+	if strings.Contains(string(out), "/tmp/other-repo-for-test") {
+		t.Errorf("agent ls leaked foreign repo path; got:\n%s", out)
 	}
-	// JSON contract: repo_path is documented as "always set under --all"
-	// — i.e. absent in single-repo (default) JSON output. Every row would
-	// otherwise carry the same currentRepo value, which is redundant noise
-	// for jq pipelines. Pin the contract end-to-end so a regression in
-	// collectAgentSessionsFromStackConfig's includeRepoPath plumbing
-	// surfaces here too, not just in the unit-level pin.
-	var defaultRows []map[string]any
-	if err := json.Unmarshal(defaultOut, &defaultRows); err != nil {
-		t.Fatalf("default agent ls --json output isn't valid JSON: %v\n%s", err, defaultOut)
-	}
-	for _, r := range defaultRows {
-		if _, has := r["repo_path"]; has {
-			t.Errorf("default agent ls --json row leaked repo_path field (contract: only set under -a); got: %v", r)
-		}
+	// Local session is still there.
+	if !strings.Contains(string(out), "feat-here") {
+		t.Errorf("agent ls dropped the local session; got:\n%s", out)
 	}
 
-	// `agent ls -a --json` should include both: this repo's session AND
-	// the synthetic one from the other repo.
-	allOut, err := runEzsStubbed(t, env, "agent", "ls", "-a", "--json")
-	if err != nil {
-		t.Fatalf("agent ls -a --json: %v\n%s", err, allOut)
-	}
+	// Repo-path field was removed when --all was retired; pin the absence
+	// so a re-introduction trips this test before users are surprised.
 	var rows []map[string]any
-	if err := json.Unmarshal(allOut, &rows); err != nil {
-		t.Fatalf("agent ls -a --json output isn't valid JSON: %v\n%s", err, allOut)
+	if err := json.Unmarshal(out, &rows); err != nil {
+		t.Fatalf("agent ls --json output isn't valid JSON: %v\n%s", err, out)
 	}
-
-	var seenLocal, seenForeign bool
-	var foreign map[string]any
 	for _, r := range rows {
-		path, _ := r["repo_path"].(string)
-		if path == env.RepoDir {
-			seenLocal = true
+		if _, has := r["repo_path"]; has {
+			t.Errorf("row leaked repo_path field (contract: not set in current-repo-only mode); got: %v", r)
 		}
-		if path == otherRepo {
-			seenForeign = true
-			foreign = r
-		}
-	}
-	if !seenLocal {
-		t.Errorf("agent ls -a missing local repo session; rows: %v", rows)
-	}
-	if !seenForeign {
-		t.Fatalf("agent ls -a missing foreign repo session; rows: %v", rows)
-	}
-
-	// Foreign session's resume command must include `cd <repo> &&` so the
-	// user can paste it from any directory.
-	resume, _ := foreign["resume_cmd"].(string)
-	if !strings.HasPrefix(resume, "cd ") {
-		t.Errorf("foreign resume_cmd missing 'cd' prefix; got %q", resume)
-	}
-	if !strings.Contains(resume, otherRepo) {
-		t.Errorf("foreign resume_cmd missing repo path; got %q", resume)
-	}
-	if !strings.Contains(resume, "ezs agent") {
-		t.Errorf("foreign resume_cmd missing 'ezs agent'; got %q", resume)
-	}
-
-	// Display name must always start with _ezstack-: cross-repo listing
-	// must not surface non-ezstack sessions.
-	display, _ := foreign["display_name"].(string)
-	if !strings.HasPrefix(display, "_ezstack-") {
-		t.Errorf("display_name should be ezstack-prefixed; got %q", display)
 	}
 }
 
-// TestAgentLs_AllFlag_TextHeaderShowsRepos verifies the human-readable
-// output under -a labels each repo with a header so the user can tell
-// which session lives where. This is the user-facing payoff of -a; if the
-// header drifts, the table reads identical to single-repo output.
-func TestAgentLs_AllFlag_TextHeaderShowsRepos(t *testing.T) {
+// TestAgentLs_AllFlagRejected pins the deliberate flag removal: -a / --all
+// previously meant "list across every repo recorded in stacks.json", and
+// users complained that it surfaced unrelated sessions. The redesign drops
+// the flag entirely. Pin the rejection so a future contributor can't
+// silently re-introduce it under a different semantic.
+func TestAgentLs_AllFlagRejected(t *testing.T) {
 	env := SetupTestEnv(t)
 	defer env.Cleanup()
 
-	CreateBranchWithCommit(t, env, "feat-q", "main")
-
-	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"),
-		agentStubScript(filepath.Join(env.TmpDir, "claude_args")))
-	writeExecutable(t, filepath.Join(env.StubBinDir, "ezs-mcp"), "#!/bin/sh\nexit 0\n")
-	if out, err := runEzsStubbed(t, env, "agent", "--branch", "feat-q"); err != nil {
-		t.Fatalf("seed run: %v\n%s", err, out)
-	}
-
 	out, err := runEzsStubbed(t, env, "agent", "ls", "-a")
+	if err == nil {
+		t.Fatalf("expected error for removed -a flag; got success:\n%s", out)
+	}
+	if !strings.Contains(string(out), "unknown shorthand flag") &&
+		!strings.Contains(string(out), "unknown flag") {
+		t.Errorf("error should be about unknown flag; got:\n%s", out)
+	}
+
+	out, err = runEzsStubbed(t, env, "agent", "ls", "--all")
+	if err == nil {
+		t.Fatalf("expected error for removed --all flag; got success:\n%s", out)
+	}
+	if !strings.Contains(string(out), "unknown flag") {
+		t.Errorf("error should be about unknown flag; got:\n%s", out)
+	}
+}
+
+// TestAgentLs_BranchFilter pins `agent ls --branch` (or -b): filter to
+// the session bound to the user's current branch. Run from the worktree
+// of feat-target — the filter must surface that branch's row only.
+func TestAgentLs_BranchFilter(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	// Two branches in the same stack so we can verify the filter narrows.
+	CreateBranchWithCommit(t, env, "feat-target", "main")
+	CreateBranchWithCommit(t, env, "feat-other", "feat-target")
+
+	logDir := filepath.Join(env.TmpDir, "claude_args")
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), agentStubScript(logDir))
+	writeExecutable(t, filepath.Join(env.StubBinDir, "ezs-mcp"), "#!/bin/sh\nexit 0\n")
+
+	// Mint sessions on both branches.
+	for _, br := range []string{"feat-target", "feat-other"} {
+		if out, err := runEzsStubbed(t, env, "agent", "--branch", br); err != nil {
+			t.Fatalf("seed agent run for %s: %v\n%s", br, err, out)
+		}
+	}
+
+	// Run --branch from feat-target's worktree → should match feat-target.
+	runner := runEzsFromDir(t, env, filepath.Join(env.WorktreeDir, "feat-target"))
+	out, err := runner("agent", "ls", "--branch", "--json")
 	if err != nil {
-		t.Fatalf("agent ls -a: %v\n%s", err, out)
+		t.Fatalf("agent ls --branch --json: %v\n%s", err, out)
 	}
-	o := string(out)
-	if !strings.Contains(o, "Tracked AI sessions across all repos") {
-		t.Errorf("expected --all header; got:\n%s", o)
+	var rows []map[string]any
+	if err := json.Unmarshal(out, &rows); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
 	}
-	if !strings.Contains(o, env.RepoDir) {
-		t.Errorf("expected current repo path in output; got:\n%s", o)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row matching feat-target, got %d: %v", len(rows), rows)
 	}
-	if !strings.Contains(o, "(current)") {
-		t.Errorf("expected '(current)' marker on the user's own repo; got:\n%s", o)
+	if got, _ := rows[0]["branch_name"].(string); got != "feat-target" {
+		t.Errorf("branch_name = %q, want feat-target", got)
+	}
+
+	// Short alias -b works too.
+	out, err = runner("agent", "ls", "-b", "--json")
+	if err != nil {
+		t.Fatalf("agent ls -b --json: %v\n%s", err, out)
+	}
+	if err := json.Unmarshal(out, &rows); err != nil {
+		t.Fatalf("invalid JSON for -b: %v\n%s", err, out)
+	}
+	if len(rows) != 1 {
+		t.Errorf("expected 1 row from -b alias, got %d", len(rows))
+	}
+}
+
+// TestAgentLs_BranchFilter_ErrorOffStackBranch covers the "user is on main
+// when they ran --branch" case. We surface a clear error rather than
+// emitting an empty list — silence reads as "broken" for filter commands.
+func TestAgentLs_BranchFilter_ErrorOffStackBranch(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	// No branches set up; cwd is env.RepoDir which is on main.
+	out, err := runEzsStubbed(t, env, "agent", "ls", "--branch")
+	if err == nil {
+		t.Fatalf("expected error from --branch on untracked branch; got success:\n%s", out)
+	}
+	if !strings.Contains(string(out), "not tracked") && !strings.Contains(string(out), "current branch") {
+		t.Errorf("error should mention current branch / tracking; got:\n%s", out)
+	}
+}
+
+// TestAgentLs_StackFilter pins `agent ls --stack`: only sessions
+// belonging to the user's current stack appear. Set up two stacks in the
+// same repo and verify the filter narrows to the cwd's stack.
+func TestAgentLs_StackFilter(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranchWithCommit(t, env, "feat-stack-a", "main")
+	CreateBranchWithCommit(t, env, "feat-stack-b", "main") // separate stack rooted on main
+
+	logDir := filepath.Join(env.TmpDir, "claude_args")
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), agentStubScript(logDir))
+	writeExecutable(t, filepath.Join(env.StubBinDir, "ezs-mcp"), "#!/bin/sh\nexit 0\n")
+
+	// Stack-scoped session for each stack: run `agent` (no --branch) from
+	// each branch's worktree.
+	for _, br := range []string{"feat-stack-a", "feat-stack-b"} {
+		runner := runEzsFromDir(t, env, filepath.Join(env.WorktreeDir, br))
+		if out, err := runner("agent"); err != nil {
+			t.Fatalf("seed agent for %s: %v\n%s", br, err, out)
+		}
+	}
+
+	// Filter from feat-stack-a's worktree.
+	runner := runEzsFromDir(t, env, filepath.Join(env.WorktreeDir, "feat-stack-a"))
+	out, err := runner("agent", "ls", "--stack", "--json")
+	if err != nil {
+		t.Fatalf("agent ls --stack --json: %v\n%s", err, out)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out, &rows); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if len(rows) == 0 {
+		t.Fatalf("expected at least one row in stack scope, got 0: %v", rows)
+	}
+	// All rows must share the same stack hash.
+	wantHash, _ := rows[0]["stack_hash"].(string)
+	if wantHash == "" {
+		t.Fatal("first row missing stack_hash")
+	}
+	for _, r := range rows {
+		if got, _ := r["stack_hash"].(string); got != wantHash {
+			t.Errorf("--stack filter leaked row from another stack: got %q, want %q in %v", got, wantHash, r)
+		}
+	}
+}
+
+// TestAgentLs_FeatureFilter pins `agent ls --feature`: only sessions
+// created via `ezs agent feature` (mode=feature) appear. Without the
+// AgentSessionMode schema field this test would have nothing to filter on.
+func TestAgentLs_FeatureFilter(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	// Seed a stack so feature mode has somewhere to bind.
+	CreateBranchWithCommit(t, env, "feat-base", "main")
+
+	logDir := filepath.Join(env.TmpDir, "claude_args")
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), agentStubScript(logDir))
+	writeExecutable(t, filepath.Join(env.StubBinDir, "ezs-mcp"), "#!/bin/sh\nexit 0\n")
+
+	// Run a work-mode session on feat-base (default `agent`).
+	runner := runEzsFromDir(t, env, filepath.Join(env.WorktreeDir, "feat-base"))
+	if out, err := runner("agent"); err != nil {
+		t.Fatalf("seed work-mode run: %v\n%s", err, out)
+	}
+
+	// `--feature` filter must yield zero rows now (only work-mode session
+	// exists). Empty list is `[]` — not an error.
+	out, err := runner("agent", "ls", "--feature", "--json")
+	if err != nil {
+		t.Fatalf("agent ls --feature --json (work-only): %v\n%s", err, out)
+	}
+	if strings.TrimSpace(string(out)) != "[]" {
+		t.Errorf("expected empty list when no feature sessions exist, got:\n%s", out)
+	}
+
+	// Now run a feature-mode session against another stack so we have one
+	// to surface. Use a different branch so feat-base's stack stays work-mode.
+	CreateBranchWithCommit(t, env, "feat-other", "main")
+	otherStackHash := ""
+	statusOut, err := runner("ls", "-a", "--json")
+	if err != nil {
+		t.Fatalf("ls --json: %v\n%s", err, statusOut)
+	}
+	{
+		var stacks []map[string]any
+		if err := json.Unmarshal(statusOut, &stacks); err != nil {
+			t.Fatalf("ls --json parse: %v\n%s", err, statusOut)
+		}
+		for _, s := range stacks {
+			if branches, ok := s["branches"].([]any); ok {
+				for _, br := range branches {
+					if bm, ok := br.(map[string]any); ok {
+						if bm["name"] == "feat-other" {
+							if h, ok := s["hash"].(string); ok {
+								otherStackHash = h
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	if otherStackHash == "" {
+		t.Fatal("could not resolve hash for feat-other's stack")
+	}
+
+	if out, err := runner("agent", "feature", "-s", otherStackHash, "Test feature"); err != nil {
+		t.Fatalf("seed feature run: %v\n%s", err, out)
+	}
+
+	out, err = runner("agent", "ls", "--feature", "--json")
+	if err != nil {
+		t.Fatalf("agent ls --feature --json: %v\n%s", err, out)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal(out, &rows); err != nil {
+		t.Fatalf("invalid JSON: %v\n%s", err, out)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 feature-mode row, got %d: %v", len(rows), rows)
+	}
+	if got, _ := rows[0]["mode"].(string); got != "feature" {
+		t.Errorf("mode = %q, want feature", got)
+	}
+	if got, _ := rows[0]["stack_hash"].(string); got != otherStackHash {
+		t.Errorf("stack_hash = %q, want %q (feature-mode stack)", got, otherStackHash)
+	}
+	// Display name should carry the "feature-" infix.
+	if got, _ := rows[0]["display_name"].(string); !strings.HasPrefix(got, "_ezstack-feature-") {
+		t.Errorf("display_name = %q, want _ezstack-feature- prefix", got)
+	}
+}
+
+// TestAgentLs_FilterMutualExclusion pins the rejection of combined
+// filters. --branch + --stack is ambiguous (different scopes); silently
+// coercing to one would surprise users.
+func TestAgentLs_FilterMutualExclusion(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	out, err := runEzsStubbed(t, env, "agent", "ls", "--branch", "--stack")
+	if err == nil {
+		t.Fatalf("expected error for combined filters; got success:\n%s", out)
+	}
+	if !strings.Contains(string(out), "mutually exclusive") {
+		t.Errorf("error should mention mutual exclusion; got:\n%s", out)
+	}
+
+	out, err = runEzsStubbed(t, env, "agent", "ls", "--stack", "--feature")
+	if err == nil {
+		t.Fatalf("expected error for --stack + --feature; got success:\n%s", out)
+	}
+	if !strings.Contains(string(out), "mutually exclusive") {
+		t.Errorf("error should mention mutual exclusion; got:\n%s", out)
 	}
 }
 

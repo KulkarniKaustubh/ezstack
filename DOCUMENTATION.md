@@ -509,7 +509,7 @@ Launch an AI agent with full stack context. The agent is scoped to a single stac
 ```
 ezs agent [options] [-- <agent-args>]
 ezs agent feature "description"
-ezs agent ls [--json]
+ezs agent ls [filter] [--json]
 ezs agent prompt <flag> <work|feature>
 
 Modes:
@@ -531,6 +531,11 @@ Options:
     --no-mcp             Do not auto-install/register ezs-mcp; embed docs in
                          the prompt instead (escape hatch for non-claude CLIs
                          or air-gapped environments)
+
+`agent ls` filters (mutually exclusive — default is all sessions in current repo):
+    -b, --branch         Show only the session bound to the current branch
+    -s, --stack          Show only sessions bound to the current stack
+    --feature            Show only sessions created via `ezs agent feature`
 
 Anything after a literal `--` is forwarded to the agent CLI verbatim, so
 you can always pass agent-specific flags ezs doesn't know about (e.g.
@@ -560,9 +565,15 @@ The display name (`_ezstack-<identifier>`) is what shows up in claude's `/resume
 
 **Other agents.** For agent CLIs ezs doesn't recognize, ezs does **not** inject CLI flags (the schema differs per tool — anything we don't understand might misparse them). The session UUID is still minted, persisted, and exposed via `EZS_AGENT_SESSION_ID`, so user-supplied wrappers can read it and wire their own resume logic on top. Combine `--cmd` with `-- <agent-args>` to forward arbitrary flags to such wrappers.
 
-Use `ezs agent ls` (alias `ezs agent list`) to see every tracked session in the current repo, with the stack/branch each session is bound to and the exact `ezs agent` invocation that resumes it. Add `--json` for a machine-readable array suitable for piping into `jq` or other scripts. The JSON object has `scope`, `repo_path`, `stack_hash`, `stack_name`, `branch_name`, `display_name`, `session_id`, and `resume_cmd`.
+Use `ezs agent ls` (alias `ezs agent list`) to see every tracked session in the **current repo**, with the stack/branch each session is bound to and the exact `ezs agent` invocation that resumes it. Add `--json` for a machine-readable array suitable for piping into `jq` or other scripts. The JSON object has `scope`, `mode`, `stack_hash`, `stack_name`, `branch_name`, `display_name`, `session_id`, and `resume_cmd`.
 
-Pass `-a` / `--all` to list ezstack sessions across **every** repo recorded in `~/.ezstack/stacks.json`. Output is grouped by repo path with the user's current repo flagged `(current)`. For sessions outside the current working directory's repo, the suggested `resume_cmd` is prefixed with `cd <repo> && ` so it stays one-step copy-pasteable. Only ezstack-minted sessions (display name prefixed with `_ezstack-`) are listed — freestanding `claude` sessions you started by hand are not surfaced.
+Filter the list with mutually-exclusive scope flags:
+
+- `-b` / `--branch` — show only the session bound to the user's current branch. Errors when the current branch isn't tracked by ezstack.
+- `-s` / `--stack` — show only sessions bound to the user's current stack (both stack-scoped and branch-scoped sessions in that stack). Errors when the cwd isn't on a stack branch.
+- `--feature` — show only sessions created via `ezs agent feature`. The `mode` field on each session row distinguishes work-mode (`"work"`) from feature-mode (`"feature"`); legacy entries written before mode tracking surface as `"work"`.
+
+`agent ls` is intentionally scoped to the current repo only. Sessions from other ezstack-tracked repos in `~/.ezstack/stacks.json` are not surfaced — there's no cross-repo listing flag, by design, because surfacing unrelated sessions creates more confusion than it resolves. Only ezstack-minted sessions (display name prefixed with `_ezstack-`) are listed — freestanding `claude` sessions you started by hand are not.
 
 **`--preset <name>`.** Looks up `~/.ezstack/agent-presets/<name>.md` and appends it to the end of the fully composed prompt under a `## Preset: <name>` header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.
 

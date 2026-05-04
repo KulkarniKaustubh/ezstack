@@ -140,217 +140,278 @@ func TestAgentSessionRow_ResumeCommandShape(t *testing.T) {
 	}
 }
 
-// TestSortAgentSessions verifies the deterministic ordering: stacks first
-// (alphabetical by display name), branches after. Without a stable order
-// the table flips around between runs and `agent ls --json` diffs become
-// useless.
-func TestSortAgentSessions(t *testing.T) {
-	rows := []agentSessionRow{
-		{Scope: "branch", DisplayName: "_ezstack-zeta", BranchName: "zeta"},
-		{Scope: "stack", DisplayName: "_ezstack-bravo", StackHash: "b"},
-		{Scope: "branch", DisplayName: "_ezstack-alpha", BranchName: "alpha"},
-		{Scope: "stack", DisplayName: "_ezstack-alpha", StackHash: "a"},
+// TestModeOrDefault verifies legacy entries (written before mode tracking)
+// surface as "work" — without this, jq pipelines would have to handle the
+// empty-string case explicitly, and the text renderer would print bare
+// parens "()" next to the stack label.
+func TestModeOrDefault(t *testing.T) {
+	cases := map[string]string{
+		"":                                  config.AgentSessionWorkMode,
+		config.AgentSessionWorkMode:         config.AgentSessionWorkMode,
+		config.AgentSessionFeatureMode:      config.AgentSessionFeatureMode,
+		"unrecognized-mode-from-the-future": "unrecognized-mode-from-the-future",
 	}
-	// Re-run the same sort the production code uses (collectAgentSessions
-	// applies it; we replicate via the same comparator here).
-	for i := 0; i < len(rows)-1; i++ {
-		for j := i + 1; j < len(rows); j++ {
-			if !lessAgentRow(rows[i], rows[j]) {
-				rows[i], rows[j] = rows[j], rows[i]
-			}
-		}
-	}
-	want := []string{
-		"stack:_ezstack-alpha",
-		"stack:_ezstack-bravo",
-		"branch:_ezstack-alpha",
-		"branch:_ezstack-zeta",
-	}
-	for i, r := range rows {
-		got := r.Scope + ":" + r.DisplayName
-		if got != want[i] {
-			t.Errorf("position %d: got %s, want %s", i, got, want[i])
+	for in, want := range cases {
+		if got := modeOrDefault(in); got != want {
+			t.Errorf("modeOrDefault(%q) = %q, want %q", in, got, want)
 		}
 	}
 }
 
-// lessAgentRow mirrors the comparator inside collectAgentSessions. Lifted
-// into a test helper to avoid spinning up a full repo just to assert order.
-func lessAgentRow(a, b agentSessionRow) bool {
-	if a.Scope != b.Scope {
-		return a.Scope == "stack"
+// TestStackDisplayLabel confirms feature-mode stack sessions get the
+// "_ezstack-feature-<name>" label that matches what's shown in claude's
+// /resume picker at launch time. Work-mode sessions get the bare
+// "_ezstack-<name>" form.
+func TestStackDisplayLabel(t *testing.T) {
+	work := &config.Stack{Hash: "abc1234", Name: "alpha", AgentSessionMode: config.AgentSessionWorkMode}
+	if got := stackDisplayLabel(work); got != "_ezstack-alpha" {
+		t.Errorf("work-mode label = %q, want _ezstack-alpha", got)
 	}
-	return a.DisplayName < b.DisplayName
-}
-
-// TestPrefixResumeCmd is the regression for the `cd <repo> && ` bit of
-// `agent ls -a`: foreign-repo rows MUST hand the user a one-step
-// copy-pasteable command, but same-repo rows MUST NOT add the prefix
-// (it would be redundant noise on the common path).
-func TestPrefixResumeCmd(t *testing.T) {
-	cases := []struct {
-		name        string
-		cmd         string
-		repoPath    string
-		currentRepo string
-		want        string
-	}{
-		{"same repo passes through", "ezs agent -s abc", "/r1", "/r1", "ezs agent -s abc"},
-		{"empty repoPath passes through", "x", "", "/r", "x"},
-		{"empty currentRepo passes through", "x", "/r", "", "x"},
-		{"different repo gets cd prefix", "ezs agent", "/path/to/other", "/path/to/here",
-			"cd /path/to/other && ezs agent"},
-		{"foreign repo with space gets quoted", "ezs agent", "/path with space", "/here",
-			"cd '/path with space' && ezs agent"},
-		{"foreign repo with single quote gets escaped", "ezs agent", "/O'Brien/repo", "/here",
-			"cd '/O'\\''Brien/repo' && ezs agent"},
+	feature := &config.Stack{Hash: "abc1234", Name: "alpha", AgentSessionMode: config.AgentSessionFeatureMode}
+	if got := stackDisplayLabel(feature); got != "_ezstack-feature-alpha" {
+		t.Errorf("feature-mode label = %q, want _ezstack-feature-alpha", got)
 	}
-	for _, c := range cases {
-		got := prefixResumeCmd(c.cmd, c.repoPath, c.currentRepo)
-		if got != c.want {
-			t.Errorf("%s: got %q, want %q", c.name, got, c.want)
-		}
+	// Empty mode (legacy entry) defaults to work-mode label.
+	legacy := &config.Stack{Hash: "abc1234", Name: "alpha"}
+	if got := stackDisplayLabel(legacy); got != "_ezstack-alpha" {
+		t.Errorf("legacy (empty mode) label = %q, want _ezstack-alpha", got)
+	}
+	// Hash-only fallback when Name is empty.
+	hashOnly := &config.Stack{Hash: "abc1234", AgentSessionMode: config.AgentSessionFeatureMode}
+	if got := stackDisplayLabel(hashOnly); got != "_ezstack-feature-abc1234" {
+		t.Errorf("hash-only feature label = %q, want _ezstack-feature-abc1234", got)
 	}
 }
 
-// TestCollectAgentSessionsFromStackConfig is the unit-level coverage for
-// the per-repo collector that both single-repo (`ls`) and cross-repo
-// (`ls -a`) paths funnel through. Three behaviors matter:
+// TestCollectAgentSessionsFromStackConfig exercises the per-repo collector.
+// Behaviors pinned:
 //
-//   - branches whose cache says they have a session BUT aren't in this
-//     stack's tree must be skipped (the cache is repo-wide; without the
-//     HasBranch filter every stack would re-list every branch's session)
-//   - stack-scoped session row appears once per stack with AgentSessionID
-//   - resume_cmd is prefixed with `cd <repo> && ` only when the row's
-//     repo differs from the caller's currentRepo
+//   - branches whose cache has a session BUT aren't in this stack's tree
+//     are skipped (the cache is repo-wide; without HasBranch every stack
+//     would re-list every branch's session)
+//   - branches with empty AgentSessionID don't produce rows
+//   - stack-scoped sessions surface once per stack with their AgentSessionID
+//   - mode tag is propagated onto the row from the stored AgentSessionMode
+//   - feature-mode stacks get the "_ezstack-feature-<name>" display label
 func TestCollectAgentSessionsFromStackConfig(t *testing.T) {
-	stack := &config.Stack{
-		Hash:           "abc1234",
-		Name:           "my-stack",
-		Root:           "main",
-		AgentSessionID: "uuid-stack",
+	workStack := &config.Stack{
+		Hash:             "abc1234",
+		Name:             "my-stack",
+		Root:             "main",
+		AgentSessionID:   "uuid-stack",
+		AgentSessionMode: config.AgentSessionWorkMode,
 		Tree: config.BranchTree{
 			"feat-x": config.BranchTree{},
 			"feat-y": config.BranchTree{},
 		},
 	}
+	featureStack := &config.Stack{
+		Hash:             "def5678",
+		Name:             "my-feature",
+		Root:             "main",
+		AgentSessionID:   "uuid-feature",
+		AgentSessionMode: config.AgentSessionFeatureMode,
+		Tree: config.BranchTree{
+			"feat-z": config.BranchTree{},
+		},
+	}
 	cache := &config.CacheConfig{
 		Branches: map[string]*config.BranchCache{
-			"feat-x":   {AgentSessionID: "uuid-x"},
-			"feat-y":   {AgentSessionID: ""},          // no session — should not appear
-			"orphan":   {AgentSessionID: "uuid-orph"}, // not in this stack's tree — must be filtered
+			"feat-x":   {AgentSessionID: "uuid-x", AgentSessionMode: config.AgentSessionWorkMode},
+			"feat-y":   {AgentSessionID: ""},                                                         // no session — skip
+			"feat-z":   {},                                                                           // in featureStack but no session
+			"orphan":   {AgentSessionID: "uuid-orph", AgentSessionMode: config.AgentSessionWorkMode}, // not in any stack
 			"untouchd": {},
 		},
 	}
-	stack.SetCache(cache)
-	stack.PopulateBranchesWithCache(cache)
+	workStack.SetCache(cache)
+	workStack.PopulateBranchesWithCache(cache)
+	featureStack.SetCache(cache)
+	featureStack.PopulateBranchesWithCache(cache)
 
 	sc := &config.StackConfig{
-		Stacks: map[string]*config.Stack{"abc1234": stack},
+		Stacks: map[string]*config.Stack{"abc1234": workStack, "def5678": featureStack},
 		Cache:  cache,
 	}
 
-	t.Run("same-repo rows have no cd prefix", func(t *testing.T) {
-		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r", false)
-		if len(rows) != 2 {
-			t.Fatalf("expected 2 rows (1 stack-scoped + 1 branch-scoped feat-x), got %d: %v", len(rows), rows)
-		}
-		for _, r := range rows {
-			if strings.HasPrefix(r.ResumeCmd, "cd ") {
-				t.Errorf("same-repo row %q got unexpected cd prefix: %q", r.DisplayName, r.ResumeCmd)
-			}
+	rows := collectAgentSessionsFromStackConfig("/r", sc)
+
+	t.Run("expected number of rows", func(t *testing.T) {
+		// Expected: 1 stack-scoped (work) + 1 stack-scoped (feature) +
+		// 1 branch-scoped (feat-x). orphan is filtered (not in any tree),
+		// feat-y/feat-z have no session.
+		if len(rows) != 3 {
+			t.Errorf("got %d rows, want 3: %+v", len(rows), rows)
 		}
 	})
 
-	t.Run("single-repo (includeRepoPath=false) omits RepoPath on every row", func(t *testing.T) {
-		// The help text pins repo_path as "always set under --all" — i.e.
-		// absent in single-repo JSON output. omitempty handles that, but
-		// only if we never assign repoPath to RepoPath in the first place.
-		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r", false)
-		if len(rows) == 0 {
-			t.Fatal("expected at least one row")
-		}
-		for _, r := range rows {
-			if r.RepoPath != "" {
-				t.Errorf("single-repo row %q leaked RepoPath=%q", r.DisplayName, r.RepoPath)
-			}
-		}
-	})
-
-	t.Run("cross-repo (includeRepoPath=true) populates RepoPath", func(t *testing.T) {
-		rows := collectAgentSessionsFromStackConfig("/elsewhere", sc, "/here", true)
-		if len(rows) == 0 {
-			t.Fatal("expected at least one row")
-		}
-		for _, r := range rows {
-			if r.RepoPath != "/elsewhere" {
-				t.Errorf("cross-repo row %q has RepoPath=%q, want /elsewhere", r.DisplayName, r.RepoPath)
-			}
-		}
-	})
-
-	t.Run("foreign-repo rows get cd prefix", func(t *testing.T) {
-		// includeRepoPath value doesn't influence the cd prefix — the prefix
-		// is driven by repoPath != currentRepo. Pass true here to mirror
-		// production --all behavior.
-		rows := collectAgentSessionsFromStackConfig("/elsewhere", sc, "/here", true)
-		for _, r := range rows {
-			if !strings.HasPrefix(r.ResumeCmd, "cd /elsewhere && ") {
-				t.Errorf("foreign-repo row %q missing cd prefix; got %q", r.DisplayName, r.ResumeCmd)
-			}
-		}
-	})
-
-	t.Run("orphan branch (in cache, not in stack tree) is filtered out", func(t *testing.T) {
-		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r", false)
+	t.Run("orphan branch (in cache, not in stack tree) is filtered", func(t *testing.T) {
 		for _, r := range rows {
 			if r.BranchName == "orphan" {
-				t.Errorf("orphan branch should not appear in any stack's row list; got %v", r)
+				t.Errorf("orphan branch should not appear; got %v", r)
 			}
 		}
 	})
 
 	t.Run("branch with empty session id is skipped", func(t *testing.T) {
-		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r", false)
 		for _, r := range rows {
-			if r.BranchName == "feat-y" {
-				t.Errorf("feat-y has empty session id; should not produce a row: %v", r)
+			if r.BranchName == "feat-y" || r.BranchName == "feat-z" {
+				t.Errorf("branch %q has empty session id; should not produce a row: %v", r.BranchName, r)
 			}
 		}
 	})
 
-	t.Run("stack-scoped row carries the stack name", func(t *testing.T) {
-		rows := collectAgentSessionsFromStackConfig("/r", sc, "/r", false)
+	t.Run("work-mode stack row carries mode=work and bare display label", func(t *testing.T) {
 		var stackRow *agentSessionRow
 		for i := range rows {
-			if rows[i].Scope == "stack" {
+			if rows[i].Scope == "stack" && rows[i].StackHash == "abc1234" {
 				stackRow = &rows[i]
 				break
 			}
 		}
 		if stackRow == nil {
-			t.Fatal("expected a stack-scoped row")
+			t.Fatal("expected a work-mode stack row")
 		}
-		if stackRow.StackName != "my-stack" {
-			t.Errorf("stack name = %q, want my-stack", stackRow.StackName)
+		if stackRow.Mode != config.AgentSessionWorkMode {
+			t.Errorf("Mode = %q, want %q", stackRow.Mode, config.AgentSessionWorkMode)
 		}
-		if stackRow.SessionID != "uuid-stack" {
-			t.Errorf("session id = %q, want uuid-stack", stackRow.SessionID)
+		if stackRow.DisplayName != "_ezstack-my-stack" {
+			t.Errorf("DisplayName = %q, want _ezstack-my-stack", stackRow.DisplayName)
+		}
+	})
+
+	t.Run("feature-mode stack row carries mode=feature and feature- display label", func(t *testing.T) {
+		var featureRow *agentSessionRow
+		for i := range rows {
+			if rows[i].Scope == "stack" && rows[i].StackHash == "def5678" {
+				featureRow = &rows[i]
+				break
+			}
+		}
+		if featureRow == nil {
+			t.Fatal("expected a feature-mode stack row")
+		}
+		if featureRow.Mode != config.AgentSessionFeatureMode {
+			t.Errorf("Mode = %q, want %q", featureRow.Mode, config.AgentSessionFeatureMode)
+		}
+		if featureRow.DisplayName != "_ezstack-feature-my-feature" {
+			t.Errorf("DisplayName = %q, want _ezstack-feature-my-feature", featureRow.DisplayName)
+		}
+	})
+
+	t.Run("branch-scoped row mode=work (branches can't be feature)", func(t *testing.T) {
+		var branchRow *agentSessionRow
+		for i := range rows {
+			if rows[i].Scope == "branch" {
+				branchRow = &rows[i]
+				break
+			}
+		}
+		if branchRow == nil {
+			t.Fatal("expected a branch-scoped row")
+		}
+		if branchRow.Mode != config.AgentSessionWorkMode {
+			t.Errorf("branch row Mode = %q, want %q", branchRow.Mode, config.AgentSessionWorkMode)
+		}
+	})
+
+	t.Run("rows never carry repo_path or cd-prefixed resume_cmd", func(t *testing.T) {
+		// `agent ls` is current-repo-only now: rows should never carry a
+		// repo_path field, and resume_cmd never needs the cd-prefix.
+		// Pinned here so a regression in the JSON shape or resume builder
+		// surfaces immediately.
+		for _, r := range rows {
+			if strings.HasPrefix(r.ResumeCmd, "cd ") {
+				t.Errorf("row %q has unexpected cd-prefix: %q", r.DisplayName, r.ResumeCmd)
+			}
 		}
 	})
 }
 
 // TestCollectAgentSessions_NilStackConfig pins the defensive return: a
-// nil StackConfig (which the cross-repo loader can hand us if a repo
-// entry is malformed) yields nil instead of panicking.
+// nil StackConfig (which the loader can hand us if a repo entry is
+// malformed) yields nil instead of panicking.
 func TestCollectAgentSessions_NilStackConfig(t *testing.T) {
-	rows := collectAgentSessionsFromStackConfig("/r", nil, "/r", true)
+	rows := collectAgentSessionsFromStackConfig("/r", nil)
 	if rows != nil {
-		t.Errorf("expected nil rows for nil StackConfig (includeRepoPath=true), got %v", rows)
+		t.Errorf("expected nil rows for nil StackConfig, got %v", rows)
 	}
-	rows = collectAgentSessionsFromStackConfig("/r", nil, "/r", false)
-	if rows != nil {
-		t.Errorf("expected nil rows for nil StackConfig (includeRepoPath=false), got %v", rows)
+}
+
+// TestFilterRowsByBranch / ByStack / ByMode pin the three filter helpers
+// behind the --branch / --stack / --feature flags. Each must return a
+// non-nil empty slice on no-match so JSON output stays as `[]`.
+func TestFilterRowsByBranch(t *testing.T) {
+	rows := []agentSessionRow{
+		{Scope: "branch", BranchName: "feat-x", SessionID: "x"},
+		{Scope: "stack", StackHash: "abc", SessionID: "s"},
+		{Scope: "branch", BranchName: "feat-y", SessionID: "y"},
+	}
+	got := filterRowsByBranch(rows, "feat-x")
+	if len(got) != 1 || got[0].SessionID != "x" {
+		t.Errorf("filterRowsByBranch(feat-x) = %+v, want single row x", got)
+	}
+	none := filterRowsByBranch(rows, "missing")
+	if none == nil {
+		t.Error("must return non-nil slice on no-match")
+	}
+	if len(none) != 0 {
+		t.Errorf("expected empty slice, got %d rows", len(none))
+	}
+}
+
+func TestFilterRowsByStack(t *testing.T) {
+	rows := []agentSessionRow{
+		{Scope: "stack", StackHash: "abc", SessionID: "s1"},
+		{Scope: "branch", StackHash: "abc", BranchName: "feat-x", SessionID: "b1"},
+		{Scope: "stack", StackHash: "def", SessionID: "s2"},
+	}
+	got := filterRowsByStack(rows, "abc")
+	if len(got) != 2 {
+		t.Errorf("expected 2 rows for stack abc, got %d: %+v", len(got), got)
+	}
+	none := filterRowsByStack(rows, "missing")
+	if none == nil {
+		t.Error("must return non-nil slice on no-match")
+	}
+	if len(none) != 0 {
+		t.Errorf("expected empty slice, got %d", len(none))
+	}
+}
+
+func TestFilterRowsByMode(t *testing.T) {
+	rows := []agentSessionRow{
+		{Scope: "stack", Mode: config.AgentSessionWorkMode, SessionID: "w"},
+		{Scope: "stack", Mode: config.AgentSessionFeatureMode, SessionID: "f"},
+		{Scope: "branch", Mode: config.AgentSessionWorkMode, SessionID: "bw"},
+	}
+	got := filterRowsByMode(rows, config.AgentSessionFeatureMode)
+	if len(got) != 1 || got[0].SessionID != "f" {
+		t.Errorf("filterRowsByMode(feature) = %+v, want single row f", got)
+	}
+	work := filterRowsByMode(rows, config.AgentSessionWorkMode)
+	if len(work) != 2 {
+		t.Errorf("filterRowsByMode(work) = %d rows, want 2", len(work))
+	}
+}
+
+// TestFilterLabel verifies the human-readable description used in the
+// empty-list message under each filter. Drift here makes the empty
+// message lie about which filter is active.
+func TestFilterLabel(t *testing.T) {
+	cases := []struct {
+		branch, stack, feature bool
+		want                   string
+	}{
+		{false, false, false, ""},
+		{true, false, false, "for the current branch"},
+		{false, true, false, "for the current stack"},
+		{false, false, true, "in feature mode"},
+	}
+	for _, c := range cases {
+		if got := filterLabel(c.branch, c.stack, c.feature); got != c.want {
+			t.Errorf("filterLabel(%v,%v,%v) = %q, want %q", c.branch, c.stack, c.feature, got, c.want)
+		}
 	}
 }
 
@@ -360,6 +421,7 @@ func TestCollectAgentSessions_NilStackConfig(t *testing.T) {
 func TestAgentSessionRow_JSONShape(t *testing.T) {
 	row := agentSessionRow{
 		Scope:       "branch",
+		Mode:        config.AgentSessionWorkMode,
 		StackHash:   "abc1234",
 		StackName:   "my-stack",
 		BranchName:  "feat-x",
@@ -373,6 +435,7 @@ func TestAgentSessionRow_JSONShape(t *testing.T) {
 	}
 	for _, want := range []string{
 		`"scope":"branch"`,
+		`"mode":"work"`,
 		`"stack_hash":"abc1234"`,
 		`"stack_name":"my-stack"`,
 		`"branch_name":"feat-x"`,
@@ -385,9 +448,17 @@ func TestAgentSessionRow_JSONShape(t *testing.T) {
 		}
 	}
 
-	// Optional fields must drop out via omitempty — branch_name has no
-	// meaning on a stack-scoped row and stack_name has no meaning on a
-	// hash-only stack.
+	// `repo_path` was removed when cross-repo --all was dropped; pin the
+	// removal so a re-introduction trips the test before users are
+	// surprised.
+	if strings.Contains(enc, `"repo_path"`) {
+		t.Errorf("JSON should NOT contain repo_path (removed with --all); got:\n%s", enc)
+	}
+
+	// Optional fields drop out via omitempty — branch_name has no meaning
+	// on a stack-scoped row, stack_name has no meaning on a hash-only stack,
+	// and mode drops out only when explicitly set to "" (legacy hand-rolled
+	// rows in tests; production rows always set Mode via modeOrDefault).
 	stackOnly := agentSessionRow{
 		Scope:       "stack",
 		StackHash:   "abc1234",
@@ -399,7 +470,7 @@ func TestAgentSessionRow_JSONShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encode stack-only: %v", err)
 	}
-	for _, banned := range []string{`"stack_name"`, `"branch_name"`, `"repo_path"`} {
+	for _, banned := range []string{`"stack_name"`, `"branch_name"`, `"mode"`, `"repo_path"`} {
 		if strings.Contains(enc, banned) {
 			t.Errorf("stack-only row should omit %s; got:\n%s", banned, enc)
 		}

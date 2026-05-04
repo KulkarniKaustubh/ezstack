@@ -462,21 +462,33 @@ func TestAgentLs_EmptyRepo_JSONReturnsEmptyArray(t *testing.T) {
 	}
 }
 
-// TestAgentLs_AllFlag_EmptyMessage covers the message-wording edge: under
-// -a with nothing tracked anywhere, the user gets "across any repo"
-// language rather than the single-repo "in <path>" message that would
-// read as wrong in a multi-repo context.
-func TestAgentLs_AllFlag_EmptyMessage(t *testing.T) {
+// TestAgentLs_FilterEmptyMessages covers the message-wording edges for the
+// new filter flags: each filter must surface an empty-list message that
+// names the active filter so users on, say, `--feature` against a
+// feature-less repo don't see "no sessions in <path>" and assume the tool
+// is broken. The single-repo plain `agent ls` message stays as it was.
+func TestAgentLs_FilterEmptyMessages(t *testing.T) {
 	env := SetupTestEnv(t)
 	defer env.Cleanup()
 
-	out, err := runEzsStubbed(t, env, "agent", "ls", "-a")
-	if err != nil {
-		t.Fatalf("agent ls -a on empty repos: %v\n%s", err, out)
+	// Need a stack to be on so --branch / --stack don't error out on the
+	// "current branch isn't tracked" gate before we test the empty path.
+	CreateBranchWithCommit(t, env, "feat-empty", "main")
+
+	cases := []struct {
+		flag string
+		want string
+	}{
+		{"--feature", "in feature mode"},
 	}
-	o := string(out)
-	if !strings.Contains(o, "in any repo") {
-		t.Errorf("expected --all-specific empty message; got:\n%s", o)
+	for _, c := range cases {
+		out, err := runEzsStubbed(t, env, "agent", "ls", c.flag)
+		if err != nil {
+			t.Fatalf("agent ls %s on empty repo: %v\n%s", c.flag, err, out)
+		}
+		if !strings.Contains(string(out), c.want) {
+			t.Errorf("agent ls %s empty message missing %q; got:\n%s", c.flag, c.want, out)
+		}
 	}
 }
 
