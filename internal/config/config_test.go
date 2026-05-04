@@ -250,19 +250,8 @@ func TestConfig_SetRepoConfig(t *testing.T) {
 }
 
 func TestConfig_LoadSave(t *testing.T) {
-	// Create a temp directory for config
-	tmpDir, err := os.MkdirTemp("", "config-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+	useEzstackHome(t)
 
-	// Set EZSTACK_HOME to temp dir
-	originalHome := os.Getenv("EZSTACK_HOME")
-	defer os.Setenv("EZSTACK_HOME", originalHome)
-	os.Setenv("EZSTACK_HOME", tmpDir)
-
-	// Create and save config
 	config := &Config{
 		DefaultBaseBranch: "develop",
 		Repos: map[string]*RepoConfig{
@@ -273,8 +262,7 @@ func TestConfig_LoadSave(t *testing.T) {
 		},
 	}
 
-	err = config.Save()
-	if err != nil {
+	if err := config.Save(); err != nil {
 		t.Fatalf("Save() error = %v", err)
 	}
 
@@ -303,15 +291,7 @@ func TestConfig_LoadSave(t *testing.T) {
 // saving disjoint stacks could interleave read/modify/write and one
 // would silently overwrite the other.
 func TestStackConfig_ConcurrentSave_NoLostUpdates(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "stack-concurrent-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	originalHome := os.Getenv("EZSTACK_HOME")
-	defer os.Setenv("EZSTACK_HOME", originalHome)
-	os.Setenv("EZSTACK_HOME", tmpDir)
+	useEzstackHome(t)
 
 	const repoA = "/test/repoA"
 	const repoB = "/test/repoB"
@@ -379,15 +359,7 @@ func TestStackConfig_ConcurrentSave_NoLostUpdates(t *testing.T) {
 // in Save(), the second writer would replace the first writer's stack
 // updates because the in-memory snapshot was stale.
 func TestStackConfig_ConcurrentSave_SameRepo_NoLostUpdates(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "stack-same-repo-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	originalHome := os.Getenv("EZSTACK_HOME")
-	defer os.Setenv("EZSTACK_HOME", originalHome)
-	os.Setenv("EZSTACK_HOME", tmpDir)
+	useEzstackHome(t)
 
 	const repo = "/test/sharedRepo"
 
@@ -1240,8 +1212,20 @@ func TestConfig_SyncStrategy_Persistence(t *testing.T) {
 // of t. Returns a stable repo path suitable as a stacks.json key.
 func setupTempConfig(t *testing.T) string {
 	t.Helper()
-	t.Setenv("EZSTACK_HOME", t.TempDir())
+	useEzstackHome(t)
 	return "/fake/repo"
+}
+
+// useEzstackHome creates a fresh temp dir, points EZSTACK_HOME at it for
+// the lifetime of the test, and returns the dir path. Both effects are
+// automatically reverted on test cleanup. Use this for any config test
+// that touches on-disk state (Save/Load/migration); pass the returned
+// path to filepath.Join when the test needs to inspect the file directly.
+func useEzstackHome(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	t.Setenv("EZSTACK_HOME", dir)
+	return dir
 }
 
 func TestMutateBranchCache_CreatesEntry(t *testing.T) {
