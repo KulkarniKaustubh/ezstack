@@ -931,9 +931,8 @@ func TestPushBranch_PushesNamedBranchNotCurrent(t *testing.T) {
 // contract points required by `pr create --branch <other>`: (1) the push
 // targets the explicitly-named branch, not HEAD, and (2) -u actually sets
 // upstream tracking on the named branch. Without this regression coverage,
-// switching prCreate's first-push site from PushSetUpstream (current-branch
-// only) to PushBranchSetUpstream silently regresses if the helper goes back
-// to using CurrentBranch().
+// PushBranchSetUpstream silently regresses if the helper ever goes back to
+// using CurrentBranch() instead of the named-branch argument.
 func TestPushBranchSetUpstream_PushesNamedBranchAndSetsUpstream(t *testing.T) {
 	dir, cleanup := setupTestRepo(t)
 	defer cleanup()
