@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,26 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 )
+
+// TestFormatPersistFailureWarning pins the contract that a persist
+// failure warning surfaces the unrecoverable session UUID and a
+// concrete recovery command. Pre-fix the warning was a generic "Failed
+// to persist" with the UUID buried in `%v` of the error — users who
+// dismissed it lost their session because there was no way to recover
+// the UUID afterwards.
+func TestFormatPersistFailureWarning(t *testing.T) {
+	msg := formatPersistFailureWarning("550e8400-e29b-41d4-a716-446655440000", "claude", errors.New("disk full"))
+	for _, want := range []string{
+		"550e8400-e29b-41d4-a716-446655440000", // UUID surfaced for manual recovery
+		"disk full",                            // underlying error preserved
+		"claude --resume 550e8400-e29b-41d4-a716-446655440000", // copy-pasteable resume command
+		"fresh session", // honest about consequence: next run won't auto-resume
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("warning missing %q; got:\n%s", want, msg)
+		}
+	}
+}
 
 func TestRenderPrompt(t *testing.T) {
 	template := `Branch: {{BRANCH_NAME}}
