@@ -186,6 +186,33 @@ func TestNewPRGeneratorForAgent_RejectsNonClaude(t *testing.T) {
 	}
 }
 
+// TestBuildAIPRGenerator_RejectsEmptyAgentCommand pins the failure mode when
+// a user runs `pr create --auto` without configuring `agent_command` at all.
+// Before the explicit guard, the call would punch through to the agent-family
+// detector with an empty string, surface as "Claude-family" (technically true:
+// an empty cmd isn't claude), and confuse users who have never set the config.
+func TestBuildAIPRGenerator_RejectsEmptyAgentCommand(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("EZSTACK_HOME", tmpDir)
+
+	// We can't easily invoke buildAIPRGenerator from outside a real repo —
+	// it routes through git.New(cwd) and config.Load — so we exercise the
+	// underlying check by calling newPRGeneratorForAgent with the empty
+	// string directly, which is the exact value buildAIPRGenerator passes
+	// when agent_command is unset (after the explicit "" guard).
+	_, err := newPRGeneratorForAgent("", "/tmp")
+	if err == nil {
+		t.Fatal("expected error when agent_command is empty")
+	}
+	// The user-facing message still mentions Claude-family because that's
+	// the agent kind --auto requires; the empty-string case is folded into
+	// the same error path. If we ever introduce a more specific error, the
+	// test should pin that — for now, "Claude-family" is the contract.
+	if !strings.Contains(err.Error(), "Claude-family") {
+		t.Errorf("error should mention Claude-family; got %v", err)
+	}
+}
+
 // ── truncateForError ───────────────────────────────────────────────────────────
 
 func TestTruncateForError(t *testing.T) {

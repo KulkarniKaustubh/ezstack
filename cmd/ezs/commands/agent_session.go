@@ -14,14 +14,16 @@ import (
 //
 // `ezs agent` lets the user resume a previous AI agent session bound to a
 // branch (branch-scoped) or to the entire stack (stack-scoped). On the first
-// launch we generate a UUID, persist it (on the Branch or Stack), and pass it
-// to the agent CLI so the agent records its session under that ID. On
-// subsequent launches we resume the session by ID instead of starting fresh.
+// launch we generate a UUID, persist it (on the Branch or Stack), and expose
+// it to the agent CLI so the agent records its session under that ID. On
+// subsequent launches we surface the same ID so the agent can resume.
 //
-// Resume is currently implemented for the Claude CLI family because that's
-// the configured default and the only agent we can reliably drive. For other
-// agents we surface the session ID via the EZS_AGENT_SESSION_ID environment
-// variable so user-supplied wrappers can opt in.
+// CLI-flag injection is only performed for Claude-family CLIs (where we know
+// the flag schema: `--session-id`, `--resume`, `--name`). For agents whose
+// argv we don't understand, we still mint and persist the UUID and expose it
+// via the EZS_AGENT_SESSION_ID environment variable — user-supplied wrappers
+// can read that and decide how to use it. This matches what `agent ls`
+// surfaces and keeps the persistence story uniform across agents.
 
 // agentCLIBase returns the lowercase basename of an agent CLI command,
 // stripped of any extension. Used to detect known agent families.
@@ -121,19 +123,22 @@ func sanitizeSessionLabel(s string) string {
 	return out
 }
 
-// claudeSessionInjection describes how a claude-family agent should be
-// invoked given the persisted session state.
+// agentSessionInjection describes how an agent should be invoked given the
+// persisted session state.
 //
-// When resuming an existing session, the prompt is NOT included in the argv —
-// claude opens the prior conversation interactively and the user types into
-// it. When starting a fresh session, the prompt is appended last (existing
-// behavior) so claude lands the user mid-conversation with full context.
-type claudeSessionInjection struct {
+// For claude-family agents we know `--session-id` / `--resume` / `--name`
+// flags, so we inject them into argv and (when resuming) skip appending the
+// prompt — claude reopens the prior conversation interactively. For agents
+// whose argv we don't understand, Args is nil; the session ID is exposed
+// only through EZS_AGENT_SESSION_ID and the prompt is always appended.
+type agentSessionInjection struct {
 	// Args is the prefix of args inserted before any user-supplied extras and
-	// (for fresh sessions) the prompt. Always non-empty when applicable.
+	// (for fresh / non-resuming sessions) the prompt. Empty for non-claude
+	// agents — those see the session via the env var instead.
 	Args []string
 	// IncludePrompt indicates whether the caller should append the rendered
-	// prompt as the final argv. False when resuming.
+	// prompt as the final argv. False only for claude-family resume; true
+	// otherwise (fresh claude or any non-claude invocation).
 	IncludePrompt bool
 	// SessionID is the UUID we either reused or freshly generated. Stored back
 	// on the branch/stack by the caller after a successful spawn.
@@ -142,9 +147,12 @@ type claudeSessionInjection struct {
 	Fresh bool
 }
 
-// buildClaudeSessionArgs computes the session-related argv to inject for a
-// claude-family agent.
+// buildAgentSessionArgs computes the session-related argv (if any) to inject
+// for the configured agent CLI, plus the session ID to persist and expose to
+// the spawned process via EZS_AGENT_SESSION_ID.
 //
+//   - agentCmd is the configured agent command (used to decide whether ezs
+//     can drive the agent's resume semantics directly via flags).
 //   - storedID is the previously-persisted session ID (empty if none).
 //   - displayName is the human-readable label (e.g. "_ezstack-my-stack").
 //   - forceFresh, when true, ignores storedID and mints a new UUID — used by
@@ -152,19 +160,47 @@ type claudeSessionInjection struct {
 //
 // The returned IncludePrompt tells the caller whether to append the prompt
 // to the command line. SessionID is what the caller should persist.
-func buildClaudeSessionArgs(storedID, displayName string, forceFresh bool) claudeSessionInjection {
-	if storedID != "" && !forceFresh {
-		// Resume mode: claude --resume <id> --name <label>
-		return claudeSessionInjection{
-			Args:          []string{"--resume", storedID, "--name", displayName},
-			IncludePrompt: false,
+//
+// For claude-family agents the flags are injected into argv. For other
+// agents Args is empty (we don't risk misparsing flags whose schema we
+// don't know); the session ID still flows through via the env var.
+func buildAgentSessionArgs(agentCmd, storedID, displayName string, forceFresh bool) agentSessionInjection {
+	isClaude := isClaudeFamily(agentCmd)
+	resuming := storedID != "" && !forceFresh
+
+	if resuming {
+		if isClaude {
+			// Resume mode: claude --resume <id> --name <label>; prompt omitted
+			// because claude reopens the prior conversation interactively.
+			return agentSessionInjection{
+				Args:          []string{"--resume", storedID, "--name", displayName},
+				IncludePrompt: false,
+				SessionID:     storedID,
+				Fresh:         false,
+			}
+		}
+		// Non-claude resume: no CLI args (we don't know the agent's resume
+		// flag), session ID exposed via env var, prompt still appended so
+		// the wrapper has something to start from if it doesn't reload state.
+		return agentSessionInjection{
+			Args:          nil,
+			IncludePrompt: true,
 			SessionID:     storedID,
 			Fresh:         false,
 		}
 	}
+
 	id := newSessionID()
-	return claudeSessionInjection{
-		Args:          []string{"--session-id", id, "--name", displayName},
+	if isClaude {
+		return agentSessionInjection{
+			Args:          []string{"--session-id", id, "--name", displayName},
+			IncludePrompt: true,
+			SessionID:     id,
+			Fresh:         true,
+		}
+	}
+	return agentSessionInjection{
+		Args:          nil,
 		IncludePrompt: true,
 		SessionID:     id,
 		Fresh:         true,
@@ -190,26 +226,26 @@ func splitAgentExtras(args []string) (agentArgs, extras []string) {
 
 // agentSessionPlan is the resolved session-tracking plan for one `ezs agent`
 // invocation. The injection (if non-nil) is what the spawn layer pastes into
-// argv. The persist callback is invoked after the agent process exits so the
-// session ID is written even when the agent crashes — claude records the
-// conversation as soon as it starts, so resuming next time is still useful.
+// argv and exposes via EZS_AGENT_SESSION_ID. The persist callback is invoked
+// after the agent process exits so the session ID is written even when the
+// agent crashes — claude records the conversation as soon as it starts, so
+// resuming next time is still useful, and any non-claude wrapper that bound
+// internal state to the env-exposed UUID can recover too.
 type agentSessionPlan struct {
-	injection *claudeSessionInjection
-	persist   func(string) error // no-op for non-claude or scope-less feature mode
+	injection *agentSessionInjection
+	persist   func(string) error // no-op for scope-less feature mode
 }
 
 // resolveWorkSession builds an agentSessionPlan for `ezs agent` work mode.
-// For claude-family agents:
+//
 //   - branchScoped: bind to the branch (cache.AgentSessionID)
 //   - otherwise: bind to the stack (Stack.AgentSessionID)
 //
-// For non-claude agents, returns a no-op plan: ezs has no way to drive
-// resume in tools whose flag schema we don't know. The user can still use
-// `--` to pass their own resume flag through.
+// Plans are produced for any agent (not just claude). Claude-family agents
+// get CLI flag injection; others get only the EZS_AGENT_SESSION_ID env var
+// (the persisted UUID is what `agent ls` surfaces and what user-supplied
+// wrappers can opt into).
 func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, branchName string, branchScoped, forceFresh bool) *agentSessionPlan {
-	if !isClaudeFamily(agentCmd) {
-		return nil
-	}
 	if branchScoped {
 		var stored string
 		if targetStack != nil {
@@ -221,7 +257,7 @@ func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, br
 			}
 		}
 		label := sessionDisplayName(branchName, scopeBranch)
-		inj := buildClaudeSessionArgs(stored, label, forceFresh)
+		inj := buildAgentSessionArgs(agentCmd, stored, label, forceFresh)
 		return &agentSessionPlan{
 			injection: &inj,
 			persist: func(id string) error {
@@ -245,7 +281,7 @@ func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, br
 		}
 	}
 	label := sessionDisplayName(identifier, scopeStack)
-	inj := buildClaudeSessionArgs(stored, label, forceFresh)
+	inj := buildAgentSessionArgs(agentCmd, stored, label, forceFresh)
 	return &agentSessionPlan{
 		injection: &inj,
 		persist: func(id string) error {
@@ -259,17 +295,18 @@ func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, br
 
 // resolveFeatureSession builds a plan for feature-builder mode. When an
 // existing stack is provided we bind the session to it; without a stack the
-// feature run is one-shot and we still mint a session ID (so claude has a
-// stable handle) but nothing is persisted on the ezs side.
+// feature run is one-shot — we still mint a session ID (so the agent has a
+// stable handle exposed via EZS_AGENT_SESSION_ID) but nothing is persisted
+// on the ezs side because there's no scope to attach to.
+//
+// Plans are produced for any agent. Claude-family agents get CLI flag
+// injection; others get the env var only.
 func resolveFeatureSession(repoPath, agentCmd string, existingStack *config.Stack, forceFresh bool) *agentSessionPlan {
-	if !isClaudeFamily(agentCmd) {
-		return nil
-	}
 	if existingStack == nil {
-		// One-shot session: fresh UUID, claude --name "_ezstack-feature".
-		// No persist target.
+		// One-shot session: fresh UUID. forceFresh=true because there's no
+		// stored ID to resume from in this mode regardless of caller intent.
 		label := sessionDisplayName("feature", scopeStack)
-		inj := buildClaudeSessionArgs("", label, true /*forceFresh — nothing to resume*/)
+		inj := buildAgentSessionArgs(agentCmd, "", label, true)
 		return &agentSessionPlan{injection: &inj, persist: func(string) error { return nil }}
 	}
 	identifier := existingStack.Name
@@ -277,7 +314,7 @@ func resolveFeatureSession(repoPath, agentCmd string, existingStack *config.Stac
 		identifier = existingStack.Hash
 	}
 	label := sessionDisplayName("feature-"+identifier, scopeStack)
-	inj := buildClaudeSessionArgs(existingStack.AgentSessionID, label, forceFresh)
+	inj := buildAgentSessionArgs(agentCmd, existingStack.AgentSessionID, label, forceFresh)
 	hash := existingStack.Hash
 	return &agentSessionPlan{
 		injection: &inj,
@@ -337,10 +374,11 @@ func sessionLogSuffix(plan *agentSessionPlan) string {
 }
 
 // printSessionDryRun prints a summary line under the dry-run prompt explaining
-// what session args would have been injected.
+// what session args would have been injected and how the session ID would
+// have been exposed to the agent process.
 func printSessionDryRun(plan *agentSessionPlan) {
 	if plan == nil || plan.injection == nil {
-		fmt.Println("\n── Session: not tracked (non-claude agent or feature one-shot) ──")
+		fmt.Println("\n── Session: not tracked ──")
 		return
 	}
 	mode := "resume"
@@ -348,5 +386,9 @@ func printSessionDryRun(plan *agentSessionPlan) {
 		mode = "fresh"
 	}
 	fmt.Printf("\n── Session: %s, id=%s ──\n", mode, plan.injection.SessionID)
-	fmt.Printf("── Injected args: %s ──\n", strings.Join(plan.injection.Args, " "))
+	if len(plan.injection.Args) > 0 {
+		fmt.Printf("── Injected args: %s ──\n", strings.Join(plan.injection.Args, " "))
+	} else {
+		fmt.Printf("── Injected args: none (agent CLI not recognized; session ID exposed via $%s) ──\n", agentSessionIDEnv)
+	}
 }

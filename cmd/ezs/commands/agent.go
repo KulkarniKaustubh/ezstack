@@ -50,13 +50,20 @@ func Agent(args []string) error {
     stack picker is shown.
 
 %sSESSION TRACKING%s
-    For Claude (the default agent), ezs binds a UUID session to each stack
-    (or branch when --branch is set) and names it "_ezstack-<identifier>".
-    Re-running 'ezs agent' on the same stack/branch resumes the previous
-    conversation by passing 'claude --resume <id>' under the hood. The
-    session ID is also exposed to the agent process as EZS_AGENT_SESSION_ID
-    so non-claude wrappers can opt in. Use --no-resume to start fresh.
+    ezs binds a UUID session to each stack (or branch when --branch is set)
+    and names it "_ezstack-<identifier>". The same UUID is reused on every
+    subsequent run against that stack/branch, so any agent that records
+    state under that ID can resume.
 
+    For Claude, the UUID is injected via 'claude --session-id <id> --name'
+    on the first run and 'claude --resume <id> --name' on later runs, so
+    /resume reopens the prior conversation.
+
+    For other agents, ezs does not inject any flags (the schema differs per
+    CLI) but always exposes the UUID via the EZS_AGENT_SESSION_ID
+    environment variable so user-supplied wrappers can opt in.
+
+    Use --no-resume to mint a brand-new UUID, replacing the persisted one.
     Anything after a standalone '--' is forwarded to the agent CLI verbatim,
     so you can always pass agent-specific flags ezs doesn't know about.
 

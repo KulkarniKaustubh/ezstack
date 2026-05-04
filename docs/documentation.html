@@ -1111,7 +1111,7 @@ Options:
       <p>You can run <code>ezs agent</code> from any branch, including <code>main</code> or other non-stack branches. If you're not on a stack branch, ezstack auto-selects the stack when there is exactly one, or shows an interactive picker when there are multiple stacks. You can always skip the picker with <code>--stack</code> or <code>--branch</code>.</p>
       <p><strong><code>--no-push</code> and <code>EZS_AGENT_NO_PUSH</code>.</strong> When <code>--no-push</code> is passed, the child agent process is launched with <code>EZS_AGENT_NO_PUSH=1</code> in its environment. Tooling run inside the agent session (hooks, helper scripts, nested <code>ezs</code> calls) can check this variable and skip push steps. The variable is only set when <code>--no-push</code> is explicitly used; regular <code>ezs</code> commands never see it.</p>
       <h4 id="session-tracking-and-resumption">Session tracking and resumption</h4>
-      <p>For Claude (the default agent), <code>ezs agent</code> binds a UUID-based session to each stack — or to a single branch when <code>--branch</code> is set — and asks claude to run under that session ID with a display name of <code>_ezstack-&lt;identifier&gt;</code>. The display name is what shows up in claude's <code>/resume</code> picker and the terminal title, so you can tell ezstack-managed sessions apart from ad-hoc ones.</p>
+      <p><code>ezs agent</code> binds a UUID-based session to each stack — or to a single branch when <code>--branch</code> is set — and reuses that UUID on every subsequent run against the same scope. Sessions are persisted in <code>~/.ezstack/stacks.json</code> under <code>agent_session_id</code> (on the stack for stack-scoped runs, on the branch cache for branch-scoped) and survive process restarts. They get cleaned up automatically when you <code>ezs delete</code> the branch or the entire stack.</p>
       <table>
       <thead>
       <tr>
@@ -1122,20 +1122,25 @@ Options:
       <tbody>
       <tr>
       <td>First run for a stack/branch</td>
-      <td>Mints a fresh UUID, passes <code>claude --session-id &lt;uuid&gt; --name &quot;_ezstack-&lt;id&gt;&quot; &quot;&lt;prompt&gt;&quot;</code>, then persists the UUID.</td>
+      <td>Mints a fresh UUID and persists it. Exposes the UUID as <code>EZS_AGENT_SESSION_ID</code> to the spawned agent.</td>
       </tr>
       <tr>
       <td>Subsequent runs</td>
-      <td>Reads the persisted UUID and passes <code>claude --resume &lt;uuid&gt; --name &quot;_ezstack-&lt;id&gt;&quot;</code> (no prompt — claude reopens the prior conversation).</td>
+      <td>Reads the persisted UUID and re-exposes the same value to the agent.</td>
       </tr>
       <tr>
       <td><code>--no-resume</code></td>
-      <td>Forces a brand-new UUID, ignoring any persisted one. The new UUID replaces the old one for future runs.</td>
+      <td>Forces a brand-new UUID, replacing the persisted one for future runs.</td>
       </tr>
       </tbody>
       </table>
-      <p>The session ID is also exposed to the spawned agent as <code>EZS_AGENT_SESSION_ID</code> so non-claude wrappers can opt in by reading that variable. For unknown agent CLIs ezs does <strong>not</strong> inject session flags — anything we don't understand might misparse them — so <code>--resume</code> semantics there are up to the user (combine <code>--cmd</code> with <code>-- &lt;agent-args&gt;</code> to wire your own).</p>
-      <p>Sessions are stored in <code>~/.ezstack/stacks.json</code> under <code>agent_session_id</code> on the stack (stack-scoped) or branch cache (branch-scoped). They survive process restarts but get cleaned up when you <code>ezs delete</code> the branch.</p>
+      <p><strong>Claude integration.</strong> For Claude-family CLIs (<code>claude</code>, <code>claude-code</code>, etc.), ezs additionally injects flags so claude binds its session to ezs's UUID:</p>
+      <ul>
+      <li>First run: <code>claude --session-id &lt;uuid&gt; --name &quot;_ezstack-&lt;identifier&gt;&quot; &quot;&lt;prompt&gt;&quot;</code>.</li>
+      <li>Subsequent runs: <code>claude --resume &lt;uuid&gt; --name &quot;_ezstack-&lt;identifier&gt;&quot;</code> (no prompt — claude reopens the prior conversation interactively).</li>
+      </ul>
+      <p>The display name (<code>_ezstack-&lt;identifier&gt;</code>) is what shows up in claude's <code>/resume</code> picker and the terminal title, so you can tell ezstack-managed sessions apart from ad-hoc ones.</p>
+      <p><strong>Other agents.</strong> For agent CLIs ezs doesn't recognize, ezs does <strong>not</strong> inject CLI flags (the schema differs per tool — anything we don't understand might misparse them). The session UUID is still minted, persisted, and exposed via <code>EZS_AGENT_SESSION_ID</code>, so user-supplied wrappers can read it and wire their own resume logic on top. Combine <code>--cmd</code> with <code>-- &lt;agent-args&gt;</code> to forward arbitrary flags to such wrappers.</p>
       <p>Use <code>ezs agent ls</code> (alias <code>ezs agent list</code>) to see every tracked session in the current repo, with the stack/branch each session is bound to and the exact <code>ezs agent</code> invocation that resumes it. Add <code>--json</code> for a machine-readable array suitable for piping into <code>jq</code> or other scripts. The JSON object has <code>scope</code>, <code>repo_path</code>, <code>stack_hash</code>, <code>stack_name</code>, <code>branch_name</code>, <code>display_name</code>, <code>session_id</code>, and <code>resume_cmd</code>.</p>
       <p>Pass <code>-a</code> / <code>--all</code> to list ezstack sessions across <strong>every</strong> repo recorded in <code>~/.ezstack/stacks.json</code>. Output is grouped by repo path with the user's current repo flagged <code>(current)</code>. For sessions outside the current working directory's repo, the suggested <code>resume_cmd</code> is prefixed with <code>cd &lt;repo&gt; &amp;&amp; </code> so it stays one-step copy-pasteable. Only ezstack-minted sessions (display name prefixed with <code>_ezstack-</code>) are listed — freestanding <code>claude</code> sessions you started by hand are not surfaced.</p>
       <p><strong><code>--preset &lt;name&gt;</code>.</strong> Looks up <code>~/.ezstack/agent-presets/&lt;name&gt;.md</code> and appends it to the end of the fully composed prompt under a <code>## Preset: &lt;name&gt;</code> header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.</p>

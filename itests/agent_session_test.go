@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
 )
 
 // runEzsStubbed runs the built ezs binary inside env.RepoDir with PATH
@@ -221,6 +223,142 @@ func TestAgentSession_NonClaudeAgent_NoSessionInjection(t *testing.T) {
 	}
 }
 
+// TestAgentSession_NonClaudeAgent_ExposesEnvVar pins the documented contract
+// for non-claude agents: ezs does NOT inject CLI flags, but DOES expose the
+// session UUID through EZS_AGENT_SESSION_ID. User-supplied wrappers can read
+// that env var and decide whether to wire their own resume semantics on top.
+//
+// This was the doc/code mismatch the previous review caught — the docs said
+// non-claude wrappers could opt in via the env var, but resolveWorkSession
+// returned nil for them so the var was never set. Pin it from both sides
+// (set on first run, persisted UUID on second run) so it can't regress.
+func TestAgentSession_NonClaudeAgent_ExposesEnvVar(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranchWithCommit(t, env, "feat-env", "main")
+
+	envLog := filepath.Join(env.TmpDir, "aider_env_log.txt")
+	envCaptureStub := `#!/bin/sh
+printf '%s\n' "EZS_AGENT_SESSION_ID=${EZS_AGENT_SESSION_ID:-}" >> "` + envLog + `"
+exit 0
+`
+	writeExecutable(t, filepath.Join(env.StubBinDir, "aider"), envCaptureStub)
+
+	// First run: aider should receive a freshly-minted UUID via the env var.
+	if out, err := runEzsStubbed(t, env, "agent", "--branch", "feat-env", "--cmd", "aider"); err != nil {
+		t.Fatalf("first run: %v\n%s", err, out)
+	}
+	first := readEnvLogLine(t, envLog, 0)
+	firstID := strings.TrimPrefix(first, "EZS_AGENT_SESSION_ID=")
+	if firstID == "" {
+		t.Fatalf("non-claude agent did not receive EZS_AGENT_SESSION_ID on first run; got %q", first)
+	}
+
+	// Second run: the persisted UUID should be re-exposed (no flag injection,
+	// just the env var). Same value as the first run — that's the contract.
+	if out, err := runEzsStubbed(t, env, "agent", "--branch", "feat-env", "--cmd", "aider"); err != nil {
+		t.Fatalf("second run: %v\n%s", err, out)
+	}
+	second := readEnvLogLine(t, envLog, 1)
+	secondID := strings.TrimPrefix(second, "EZS_AGENT_SESSION_ID=")
+	if secondID != firstID {
+		t.Errorf("second run env var should reuse persisted UUID; got %q, want %q", secondID, firstID)
+	}
+
+	// --no-resume: should mint a new UUID and re-expose that one instead.
+	if out, err := runEzsStubbed(t, env, "agent", "--branch", "feat-env", "--cmd", "aider", "--no-resume"); err != nil {
+		t.Fatalf("--no-resume run: %v\n%s", err, out)
+	}
+	third := readEnvLogLine(t, envLog, 2)
+	thirdID := strings.TrimPrefix(third, "EZS_AGENT_SESSION_ID=")
+	if thirdID == "" {
+		t.Fatal("--no-resume did not expose a fresh UUID via env var")
+	}
+	if thirdID == firstID {
+		t.Errorf("--no-resume should mint a new UUID; got the same value %q both times", thirdID)
+	}
+}
+
+// TestAgentSession_ClaudeAgent_ExposesEnvVar mirrors the non-claude env-var
+// test for claude — to make sure we didn't accidentally make CLI injection
+// and env var injection mutually exclusive. Claude consumers should see both.
+func TestAgentSession_ClaudeAgent_ExposesEnvVar(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranchWithCommit(t, env, "feat-claude-env", "main")
+
+	envLog := filepath.Join(env.TmpDir, "claude_env_log.txt")
+	stub := `#!/bin/sh
+if [ "$1" = "mcp" ]; then exit 0; fi
+printf '%s\n' "EZS_AGENT_SESSION_ID=${EZS_AGENT_SESSION_ID:-}" >> "` + envLog + `"
+exit 0
+`
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), stub)
+
+	if out, err := runEzsStubbed(t, env, "agent", "--branch", "feat-claude-env"); err != nil {
+		t.Fatalf("claude run: %v\n%s", err, out)
+	}
+	got := readEnvLogLine(t, envLog, 0)
+	id := strings.TrimPrefix(got, "EZS_AGENT_SESSION_ID=")
+	if id == "" {
+		t.Fatalf("claude must also receive EZS_AGENT_SESSION_ID; got %q", got)
+	}
+}
+
+// TestAgentFeature_ExistingStackResumes covers feature-mode resume: running
+// `ezs agent feature -s <hash> "<desc>"` twice against the same stack must
+// resume the same session ID on the second run. This is the feature-mode
+// counterpart to TestAgentSession_FreshThenResume; without it,
+// resolveFeatureSession's resume branch (existing stack with stored ID) had
+// no integration coverage.
+func TestAgentFeature_ExistingStackResumes(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	// Seed a stack so feature mode binds its session to it. The first branch
+	// implicitly creates the stack and gives us a hash to pass via -s.
+	CreateBranchWithCommit(t, env, "feat-base", "main")
+
+	// Look up the stack hash that owns feat-base.
+	mgr, err := stack.NewReadOnlyManager(env.RepoDir)
+	if err != nil {
+		t.Fatalf("manager: %v", err)
+	}
+	s := mgr.FindStackForBranch("feat-base")
+	if s == nil {
+		t.Fatal("seeded stack not found")
+	}
+	stackHash := s.Hash
+
+	logDir := filepath.Join(env.TmpDir, "claude_args")
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), agentStubScript(logDir))
+	writeExecutable(t, filepath.Join(env.StubBinDir, "ezs-mcp"), "#!/bin/sh\nexit 0\n")
+
+	// First feature run binds a session to the existing stack.
+	if out, err := runEzsStubbed(t, env, "agent", "feature", "-s", stackHash, "Add JWT auth"); err != nil {
+		t.Fatalf("first feature run: %v\n%s", err, out)
+	}
+	first := readArgsLog(t, logDir, 0)
+	id := flagValue(first, "--session-id")
+	if id == "" {
+		t.Fatalf("first feature run missing --session-id; argv: %v", first)
+	}
+
+	// Second feature run with the same stack hash should resume the same ID.
+	if out, err := runEzsStubbed(t, env, "agent", "feature", "-s", stackHash, "Continue auth work"); err != nil {
+		t.Fatalf("second feature run: %v\n%s", err, out)
+	}
+	second := readArgsLog(t, logDir, 1)
+	if got := flagValue(second, "--resume"); got != id {
+		t.Errorf("second feature run --resume = %q, want %q (existing-stack session must be resumed)", got, id)
+	}
+	if flagValue(second, "--session-id") != "" {
+		t.Errorf("second feature run should not start a new --session-id; argv: %v", second)
+	}
+}
+
 // TestAgentSession_StackScopedPersistsToStack verifies that when the agent
 // runs without --branch, the session is bound to the stack hash (not to
 // any individual branch). Switching to a sibling branch and running again
@@ -378,6 +516,22 @@ exit 0
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────────
+
+// readEnvLogLine returns the n-th line written to a stub's env log file.
+// Used by tests that inspect what environment a stub child saw — each stub
+// invocation appends one newline-terminated record. n is 0-based.
+func readEnvLogLine(t *testing.T, path string, n int) string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read env log %s: %v", path, err)
+	}
+	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	if n >= len(lines) {
+		t.Fatalf("env log only has %d entries, asked for index %d (path: %s, content: %q)", len(lines), n, path, string(data))
+	}
+	return lines[n]
+}
 
 // flagValue returns the value following `flag` in argv, or "" if absent.
 // Treats "--flag value" form; doesn't handle "--flag=value" since claude

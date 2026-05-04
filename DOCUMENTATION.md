@@ -543,17 +543,22 @@ You can run `ezs agent` from any branch, including `main` or other non-stack bra
 
 #### Session tracking and resumption
 
-For Claude (the default agent), `ezs agent` binds a UUID-based session to each stack — or to a single branch when `--branch` is set — and asks claude to run under that session ID with a display name of `_ezstack-<identifier>`. The display name is what shows up in claude's `/resume` picker and the terminal title, so you can tell ezstack-managed sessions apart from ad-hoc ones.
+`ezs agent` binds a UUID-based session to each stack — or to a single branch when `--branch` is set — and reuses that UUID on every subsequent run against the same scope. Sessions are persisted in `~/.ezstack/stacks.json` under `agent_session_id` (on the stack for stack-scoped runs, on the branch cache for branch-scoped) and survive process restarts. They get cleaned up automatically when you `ezs delete` the branch or the entire stack.
 
 | Run | What ezs does |
 |-----|----------------|
-| First run for a stack/branch | Mints a fresh UUID, passes `claude --session-id <uuid> --name "_ezstack-<id>" "<prompt>"`, then persists the UUID. |
-| Subsequent runs | Reads the persisted UUID and passes `claude --resume <uuid> --name "_ezstack-<id>"` (no prompt — claude reopens the prior conversation). |
-| `--no-resume` | Forces a brand-new UUID, ignoring any persisted one. The new UUID replaces the old one for future runs. |
+| First run for a stack/branch | Mints a fresh UUID and persists it. Exposes the UUID as `EZS_AGENT_SESSION_ID` to the spawned agent. |
+| Subsequent runs | Reads the persisted UUID and re-exposes the same value to the agent. |
+| `--no-resume` | Forces a brand-new UUID, replacing the persisted one for future runs. |
 
-The session ID is also exposed to the spawned agent as `EZS_AGENT_SESSION_ID` so non-claude wrappers can opt in by reading that variable. For unknown agent CLIs ezs does **not** inject session flags — anything we don't understand might misparse them — so `--resume` semantics there are up to the user (combine `--cmd` with `-- <agent-args>` to wire your own).
+**Claude integration.** For Claude-family CLIs (`claude`, `claude-code`, etc.), ezs additionally injects flags so claude binds its session to ezs's UUID:
 
-Sessions are stored in `~/.ezstack/stacks.json` under `agent_session_id` on the stack (stack-scoped) or branch cache (branch-scoped). They survive process restarts but get cleaned up when you `ezs delete` the branch.
+- First run: `claude --session-id <uuid> --name "_ezstack-<identifier>" "<prompt>"`.
+- Subsequent runs: `claude --resume <uuid> --name "_ezstack-<identifier>"` (no prompt — claude reopens the prior conversation interactively).
+
+The display name (`_ezstack-<identifier>`) is what shows up in claude's `/resume` picker and the terminal title, so you can tell ezstack-managed sessions apart from ad-hoc ones.
+
+**Other agents.** For agent CLIs ezs doesn't recognize, ezs does **not** inject CLI flags (the schema differs per tool — anything we don't understand might misparse them). The session UUID is still minted, persisted, and exposed via `EZS_AGENT_SESSION_ID`, so user-supplied wrappers can read it and wire their own resume logic on top. Combine `--cmd` with `-- <agent-args>` to forward arbitrary flags to such wrappers.
 
 Use `ezs agent ls` (alias `ezs agent list`) to see every tracked session in the current repo, with the stack/branch each session is bound to and the exact `ezs agent` invocation that resumes it. Add `--json` for a machine-readable array suitable for piping into `jq` or other scripts. The JSON object has `scope`, `repo_path`, `stack_hash`, `stack_name`, `branch_name`, `display_name`, `session_id`, and `resume_cmd`.
 

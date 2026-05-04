@@ -16,23 +16,47 @@ func encodeJSONForTest(v any) (string, error) {
 	return string(b), nil
 }
 
-// TestQuoteIfNeeded covers the resume-command quoter used by `agent ls` so
-// stack/branch names containing whitespace produce copy-pasteable shell
-// commands. We don't try to be comprehensive about every shell metachar;
-// we just lean on ShellQuote (which uses single quotes and escapes
-// embedded ones) any time we see whitespace or quoting characters.
+// TestQuoteIfNeeded covers the resume-command quoter used by `agent ls`.
+// The function uses an allowlist (alnum + a small set of POSIX-safe punctuation),
+// so anything outside that — whitespace, $, `, ", ', and shell control chars
+// like &, |, ;, (, ) — must round-trip through ShellQuote. This is what keeps
+// the suggested resume_cmd safe to paste, even when branch names contain
+// metacharacters git allows (& and | in particular pass `git check-ref-format`).
 func TestQuoteIfNeeded(t *testing.T) {
 	cases := map[string]string{
-		"":                  "",
+		// Empty must produce a quoted empty token, not a bare empty string —
+		// otherwise concatenating into "cd " + quoteIfNeeded(path) would tear
+		// the argv if path were ever empty.
+		"": "''",
+		// Allowlisted-only strings: pass through unquoted for readability.
 		"plain":             "plain",
 		"already-safe":      "already-safe",
-		"with space":        "'with space'",
-		"with\ttab":         "'with\ttab'",
-		"O'Brien":           "'O'\\''Brien'", // ShellQuote escapes embedded single quote
-		"has\"quote":        "'has\"quote'",
-		"$variable":         "'$variable'",
-		"`backtick`":        "'`backtick`'",
 		"normal-stuff_v1.2": "normal-stuff_v1.2",
+		"a/b/c.tar.gz":      "a/b/c.tar.gz",
+		"key:value":         "key:value",
+		"a@b.com":           "a@b.com",
+		"100%":              "100%",
+		// Whitespace and quoting:
+		"with space": "'with space'",
+		"with\ttab":  "'with\ttab'",
+		"O'Brien":    "'O'\\''Brien'",
+		"has\"quote": "'has\"quote'",
+		// Shell expansion characters:
+		"$variable":  "'$variable'",
+		"`backtick`": "'`backtick`'",
+		// Shell control characters — the regression that motivated the
+		// allowlist switch. Without this, branch names like "feat&deploy"
+		// or "stage|prod" produced resume_cmd that, when pasted, would
+		// background or pipe into something other than ezs.
+		"feat&deploy": "'feat&deploy'",
+		"stage|prod":  "'stage|prod'",
+		"a;b":         "'a;b'",
+		"sub(shell)":  "'sub(shell)'",
+		"redir>out":   "'redir>out'",
+		"hash#tag":    "'hash#tag'",
+		"glob*":       "'glob*'",
+		"home~":       "'home~'",
+		"new\nline":   "'new\nline'",
 	}
 	for in, want := range cases {
 		if got := quoteIfNeeded(in); got != want {

@@ -255,11 +255,31 @@ func prefixResumeCmd(cmd, repoPath, currentRepo string) string {
 	return "cd " + quoteIfNeeded(repoPath) + " && " + cmd
 }
 
-// quoteIfNeeded wraps s in single quotes when it contains characters a
-// shell would split on. Keeps copy-pasteable resume commands one-liners.
+// quoteIfNeeded wraps s in single quotes when it contains any character that
+// a POSIX shell could interpret. Uses an allowlist (the same conservative set
+// as Python's shlex.quote: alnum, "_", "-", ".", "/", ":", ",", "+", "=",
+// "@", "%") so the output is always safe to paste into a shell — even when
+// branch or repo names contain shell metacharacters like &, |, ;, (, ), <, >,
+// or whitespace.
+//
+// Strings made entirely of safe characters are returned unquoted to keep the
+// common case readable. The empty string is returned as ” so callers that
+// concatenate this into a command (e.g. `cd ` + quoteIfNeeded(path)) never
+// produce a torn argv.
 func quoteIfNeeded(s string) string {
+	if s == "" {
+		return "''"
+	}
 	for _, r := range s {
-		if r == ' ' || r == '\t' || r == '"' || r == '\'' || r == '$' || r == '`' {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '_', r == '-', r == '.', r == '/',
+			r == ':', r == ',', r == '+', r == '=',
+			r == '@', r == '%':
+			// safe — keep scanning
+		default:
 			return ShellQuote(s)
 		}
 	}

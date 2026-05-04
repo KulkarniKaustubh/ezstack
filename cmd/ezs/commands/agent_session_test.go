@@ -3,6 +3,8 @@ package commands
 import (
 	"strings"
 	"testing"
+
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 )
 
 // ── agentCLIBase / isClaudeFamily ──────────────────────────────────────────────
@@ -83,12 +85,12 @@ func TestSessionDisplayName(t *testing.T) {
 	}
 }
 
-// ── buildClaudeSessionArgs ─────────────────────────────────────────────────────
+// ── buildAgentSessionArgs (claude family) ──────────────────────────────────────
 
-func TestBuildClaudeSessionArgs_FreshWhenNoStored(t *testing.T) {
+func TestBuildAgentSessionArgs_ClaudeFreshWhenNoStored(t *testing.T) {
 	withStubSessionID(t, "stub-uuid-1")
 
-	inj := buildClaudeSessionArgs("", "_ezstack-foo", false)
+	inj := buildAgentSessionArgs("claude", "", "_ezstack-foo", false)
 
 	if !inj.Fresh {
 		t.Error("expected Fresh=true when no stored session ID")
@@ -105,10 +107,10 @@ func TestBuildClaudeSessionArgs_FreshWhenNoStored(t *testing.T) {
 	}
 }
 
-func TestBuildClaudeSessionArgs_ResumeWhenStored(t *testing.T) {
+func TestBuildAgentSessionArgs_ClaudeResumeWhenStored(t *testing.T) {
 	withStubSessionID(t, "should-not-be-used")
 
-	inj := buildClaudeSessionArgs("existing-id", "_ezstack-bar", false)
+	inj := buildAgentSessionArgs("claude", "existing-id", "_ezstack-bar", false)
 
 	if inj.Fresh {
 		t.Error("expected Fresh=false when reusing stored session")
@@ -125,10 +127,10 @@ func TestBuildClaudeSessionArgs_ResumeWhenStored(t *testing.T) {
 	}
 }
 
-func TestBuildClaudeSessionArgs_ForceFreshIgnoresStored(t *testing.T) {
+func TestBuildAgentSessionArgs_ClaudeForceFreshIgnoresStored(t *testing.T) {
 	withStubSessionID(t, "fresh-uuid")
 
-	inj := buildClaudeSessionArgs("existing-id", "_ezstack-baz", true)
+	inj := buildAgentSessionArgs("claude", "existing-id", "_ezstack-baz", true)
 
 	if !inj.Fresh {
 		t.Error("--no-resume must override a stored session ID")
@@ -138,6 +140,142 @@ func TestBuildClaudeSessionArgs_ForceFreshIgnoresStored(t *testing.T) {
 	}
 	if !inj.IncludePrompt {
 		t.Error("forced-fresh session should include the prompt in argv")
+	}
+}
+
+// ── buildAgentSessionArgs (non-claude) ─────────────────────────────────────────
+//
+// For agents whose flag schema we don't know, ezs still mints/persists a
+// UUID and exposes it via EZS_AGENT_SESSION_ID, but never injects CLI flags.
+// IncludePrompt stays true in every mode (we have no resume semantics to
+// suppress the prompt for) so wrappers always see the rendered prompt.
+
+func TestBuildAgentSessionArgs_NonClaudeFreshOmitsArgs(t *testing.T) {
+	withStubSessionID(t, "uuid-non-claude-fresh")
+
+	inj := buildAgentSessionArgs("aider --model gpt-4", "", "_ezstack-foo", false)
+
+	if !inj.Fresh {
+		t.Error("expected Fresh=true with no stored ID")
+	}
+	if inj.SessionID != "uuid-non-claude-fresh" {
+		t.Errorf("SessionID = %q, want uuid-non-claude-fresh", inj.SessionID)
+	}
+	if len(inj.Args) != 0 {
+		t.Errorf("non-claude must not get CLI flags injected; got Args=%v", inj.Args)
+	}
+	if !inj.IncludePrompt {
+		t.Error("non-claude fresh session must include the prompt — no resume semantics to skip it")
+	}
+}
+
+func TestBuildAgentSessionArgs_NonClaudeResumeOmitsArgs(t *testing.T) {
+	withStubSessionID(t, "should-not-be-used")
+
+	inj := buildAgentSessionArgs("aider", "stored-id", "_ezstack-bar", false)
+
+	if inj.Fresh {
+		t.Error("expected Fresh=false when reusing stored ID")
+	}
+	if inj.SessionID != "stored-id" {
+		t.Errorf("SessionID = %q, want stored-id", inj.SessionID)
+	}
+	if len(inj.Args) != 0 {
+		t.Errorf("non-claude must not get CLI flags injected on resume; got Args=%v", inj.Args)
+	}
+	if !inj.IncludePrompt {
+		t.Error("non-claude must always include the prompt — wrappers may not auto-reload state")
+	}
+}
+
+func TestBuildAgentSessionArgs_NonClaudeForceFreshMintsNew(t *testing.T) {
+	withStubSessionID(t, "minted-fresh")
+
+	inj := buildAgentSessionArgs("cursor", "stored-id", "_ezstack-baz", true)
+
+	if !inj.Fresh {
+		t.Error("--no-resume must mint a new ID for non-claude too")
+	}
+	if inj.SessionID != "minted-fresh" {
+		t.Errorf("SessionID = %q, want minted-fresh", inj.SessionID)
+	}
+	if len(inj.Args) != 0 {
+		t.Errorf("non-claude must not get CLI flags injected; got Args=%v", inj.Args)
+	}
+}
+
+// ── resolveFeatureSession ──────────────────────────────────────────────────────
+//
+// Feature mode has two shapes: one-shot (no existing stack — mints a UUID
+// but has nowhere to persist it) and existing-stack (binds the session to
+// the supplied stack hash). Both shapes must work for any agent.
+
+func TestResolveFeatureSession_OneShotMintsUUID(t *testing.T) {
+	withStubSessionID(t, "feature-oneshot-uuid")
+
+	plan := resolveFeatureSession("/repo", "claude", nil, false)
+	if plan == nil || plan.injection == nil {
+		t.Fatal("expected non-nil plan for feature one-shot mode")
+	}
+	if plan.injection.SessionID != "feature-oneshot-uuid" {
+		t.Errorf("SessionID = %q, want feature-oneshot-uuid", plan.injection.SessionID)
+	}
+	if !plan.injection.Fresh {
+		t.Error("one-shot must always be Fresh — no stored ID to resume from")
+	}
+	// Persist for one-shot is a no-op (no scope to attach to). It must not
+	// error when invoked, even though there's nothing for it to do.
+	if err := plan.persist("any-id"); err != nil {
+		t.Errorf("one-shot persist should be a no-op, got err=%v", err)
+	}
+}
+
+func TestResolveFeatureSession_OneShotNonClaudeOmitsArgs(t *testing.T) {
+	withStubSessionID(t, "non-claude-oneshot")
+
+	plan := resolveFeatureSession("/repo", "aider", nil, false)
+	if plan == nil || plan.injection == nil {
+		t.Fatal("expected non-nil plan for feature one-shot mode (non-claude)")
+	}
+	if len(plan.injection.Args) != 0 {
+		t.Errorf("non-claude must not get CLI flags injected; got %v", plan.injection.Args)
+	}
+	if !plan.injection.IncludePrompt {
+		t.Error("non-claude feature one-shot must include the prompt")
+	}
+}
+
+func TestResolveFeatureSession_ExistingStackResumes(t *testing.T) {
+	withStubSessionID(t, "should-not-be-used")
+	stack := &config.Stack{Hash: "abc1234", Name: "my-feature", AgentSessionID: "stored-feature-id"}
+
+	plan := resolveFeatureSession("/repo", "claude", stack, false)
+	if plan == nil || plan.injection == nil {
+		t.Fatal("expected non-nil plan for existing-stack feature mode")
+	}
+	if plan.injection.Fresh {
+		t.Error("existing stack with stored ID must resume, not mint fresh")
+	}
+	if plan.injection.SessionID != "stored-feature-id" {
+		t.Errorf("SessionID = %q, want stored-feature-id", plan.injection.SessionID)
+	}
+	// The display label must include the stack identifier so it's
+	// distinguishable in claude's /resume picker.
+	if !containsString(plan.injection.Args, "_ezstack-feature-my-feature") {
+		t.Errorf("expected display name '_ezstack-feature-my-feature' in args; got %v", plan.injection.Args)
+	}
+}
+
+func TestResolveFeatureSession_ExistingStackForceFreshMints(t *testing.T) {
+	withStubSessionID(t, "minted-fresh-feature")
+	stack := &config.Stack{Hash: "abc1234", Name: "my-feature", AgentSessionID: "stored-feature-id"}
+
+	plan := resolveFeatureSession("/repo", "claude", stack, true)
+	if !plan.injection.Fresh {
+		t.Error("--no-resume must mint a new ID even for existing-stack feature")
+	}
+	if plan.injection.SessionID != "minted-fresh-feature" {
+		t.Errorf("SessionID = %q, want minted-fresh-feature", plan.injection.SessionID)
 	}
 }
 
@@ -231,12 +369,12 @@ func TestSessionLogSuffix_Empty(t *testing.T) {
 }
 
 func TestSessionLogSuffix_FreshAndResume(t *testing.T) {
-	fresh := &agentSessionPlan{injection: &claudeSessionInjection{SessionID: "abcdef0123", Fresh: true}}
+	fresh := &agentSessionPlan{injection: &agentSessionInjection{SessionID: "abcdef0123", Fresh: true}}
 	if got := sessionLogSuffix(fresh); !strings.Contains(got, "new session") || !strings.Contains(got, "abcdef01") {
 		t.Errorf("fresh suffix = %q", got)
 	}
 
-	resume := &agentSessionPlan{injection: &claudeSessionInjection{SessionID: "abcdef0123", Fresh: false}}
+	resume := &agentSessionPlan{injection: &agentSessionInjection{SessionID: "abcdef0123", Fresh: false}}
 	if got := sessionLogSuffix(resume); !strings.Contains(got, "resuming") || !strings.Contains(got, "abcdef01") {
 		t.Errorf("resume suffix = %q", got)
 	}
