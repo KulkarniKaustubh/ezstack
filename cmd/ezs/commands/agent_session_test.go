@@ -33,16 +33,16 @@ func TestAgentCLIBase(t *testing.T) {
 
 func TestIsClaudeFamily(t *testing.T) {
 	cases := map[string]bool{
-		"claude":                       true,
-		"claude --model opus":          true,
-		"/usr/local/bin/claude":        true,
-		"claude-code":                  true,
-		"claude_dev":                   true,
-		"my-claude":                    false, // doesn't start with claude
-		"aider":                        false,
-		"cursor":                       false,
-		"/usr/bin/something-claude-y":  false,
-		"":                             false,
+		"claude":                      true,
+		"claude --model opus":         true,
+		"/usr/local/bin/claude":       true,
+		"claude-code":                 true,
+		"claude_dev":                  true,
+		"my-claude":                   false, // doesn't start with claude
+		"aider":                       false,
+		"cursor":                      false,
+		"/usr/bin/something-claude-y": false,
+		"":                            false,
 	}
 	for in, want := range cases {
 		if got := isClaudeFamily(in); got != want {
@@ -55,16 +55,16 @@ func TestIsClaudeFamily(t *testing.T) {
 
 func TestSanitizeSessionLabel(t *testing.T) {
 	cases := map[string]string{
-		"":                  "session",
-		"feature-auth":      "feature-auth",
-		"my stack":          "my-stack",
-		"a/b/c":             "a-b-c",
-		"foo:bar":           "foo-bar",
-		"   ":               "session", // trim leading/trailing hyphens, fallback
-		"hello!!!world":     "hello-world",
-		"v1.2.3":            "v1.2.3",
-		"a.b_c-d":           "a.b_c-d",
-		"!!!":               "session",
+		"":                         "session",
+		"feature-auth":             "feature-auth",
+		"my stack":                 "my-stack",
+		"a/b/c":                    "a-b-c",
+		"foo:bar":                  "foo-bar",
+		"   ":                      "session", // trim leading/trailing hyphens, fallback
+		"hello!!!world":            "hello-world",
+		"v1.2.3":                   "v1.2.3",
+		"a.b_c-d":                  "a.b_c-d",
+		"!!!":                      "session",
 		"branch with spaces and 🎉": "branch-with-spaces-and",
 	}
 	for in, want := range cases {

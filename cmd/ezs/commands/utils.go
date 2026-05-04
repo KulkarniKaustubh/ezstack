@@ -1189,6 +1189,7 @@ var commandExamples = map[string][][2]string{
 		{"ezs agent", "Launch the agent on the current stack"},
 		{"ezs agent feature \"add JWT auth\"", "Build a feature as stacked branches"},
 		{"ezs agent ls", "List tracked AI sessions in this repo"},
+		{"ezs agent ls -a", "List tracked AI sessions across every repo"},
 		{"ezs agent ls --json", "Emit tracked sessions as JSON for scripting"},
 		{"ezs agent --preset reviewer", "Use a saved prompt preset"},
 		{"ezs agent --no-push", "Block any auto-push during the agent run"},

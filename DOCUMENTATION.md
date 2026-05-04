@@ -555,7 +555,9 @@ The session ID is also exposed to the spawned agent as `EZS_AGENT_SESSION_ID` so
 
 Sessions are stored in `~/.ezstack/stacks.json` under `agent_session_id` on the stack (stack-scoped) or branch cache (branch-scoped). They survive process restarts but get cleaned up when you `ezs delete` the branch.
 
-Use `ezs agent ls` (alias `ezs agent list`) to see every tracked session in the current repo, with the stack/branch each session is bound to and the exact `ezs agent` invocation that resumes it. Add `--json` for a machine-readable array suitable for piping into `jq` or other scripts. The JSON object has `scope`, `stack_hash`, `stack_name`, `branch_name`, `display_name`, `session_id`, and `resume_cmd`.
+Use `ezs agent ls` (alias `ezs agent list`) to see every tracked session in the current repo, with the stack/branch each session is bound to and the exact `ezs agent` invocation that resumes it. Add `--json` for a machine-readable array suitable for piping into `jq` or other scripts. The JSON object has `scope`, `repo_path`, `stack_hash`, `stack_name`, `branch_name`, `display_name`, `session_id`, and `resume_cmd`.
+
+Pass `-a` / `--all` to list ezstack sessions across **every** repo recorded in `~/.ezstack/stacks.json`. Output is grouped by repo path with the user's current repo flagged `(current)`. For sessions outside the current working directory's repo, the suggested `resume_cmd` is prefixed with `cd <repo> && ` so it stays one-step copy-pasteable. Only ezstack-minted sessions (display name prefixed with `_ezstack-`) are listed — freestanding `claude` sessions you started by hand are not surfaced.
 
 **`--preset <name>`.** Looks up `~/.ezstack/agent-presets/<name>.md` and appends it to the end of the fully composed prompt under a `## Preset: <name>` header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.
 

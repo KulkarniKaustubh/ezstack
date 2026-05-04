@@ -169,6 +169,14 @@ func (m *Manager) GetConfig() *config.Config {
 	return m.config
 }
 
+// GetStackConfig returns the loaded per-repo stack config (stacks, branch
+// cache). Used by read-only commands like `ezs agent ls` that need to
+// iterate the same data the manager already has, without paying the cost
+// of a second LoadStackConfig.
+func (m *Manager) GetStackConfig() *config.StackConfig {
+	return m.stackConfig
+}
+
 // Reconcile silently reconciles ezstack config with git reality.
 // It detects renamed branches, removes orphaned entries, and cleans up
 // missing worktrees. This runs automatically when a Manager is created,

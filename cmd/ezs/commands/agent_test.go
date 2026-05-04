@@ -651,6 +651,20 @@ func TestBuildRenderedFeaturePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "Create it: ezs -y new") {
 		t.Error("feature prompt without stack should describe creating branches")
 	}
+	// Feature prompt must instruct the agent to name the stack with a short
+	// label after the first branch — without this, fresh-stack feature runs
+	// leave the stack named after a hash and `ezs agent ls` rows read like
+	// noise. The 5-word ceiling and "after the FIRST branch" timing are the
+	// load-bearing parts of the rule; pin both.
+	if !strings.Contains(prompt, "ezs stack rename") {
+		t.Error("feature prompt should instruct the agent to rename the stack")
+	}
+	if !strings.Contains(prompt, "≤5 words") {
+		t.Error("feature prompt should pin the stack-name length budget at ≤5 words")
+	}
+	if !strings.Contains(prompt, "FIRST branch") {
+		t.Error("feature prompt should specify the rename happens after the first branch")
+	}
 }
 
 func TestBuildRenderedFeaturePromptWithExistingStack(t *testing.T) {

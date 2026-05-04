@@ -84,12 +84,12 @@ func TestParseAIPRResponse_EscapedQuotesInsideString(t *testing.T) {
 
 func TestParseAIPRResponse_RejectsMissingFields(t *testing.T) {
 	cases := []string{
-		`{"title":"only title"}`,                  // missing body
-		`{"body":"only body"}`,                    // missing title
-		`{"title":"   ","body":"non-empty"}`,      // whitespace-only title
-		`{"title":"non-empty","body":"   "}`,      // whitespace-only body
-		`no json here at all`,                     // no object
-		`{"title":"abc","body":"def"`,             // unclosed
+		`{"title":"only title"}`,             // missing body
+		`{"body":"only body"}`,               // missing title
+		`{"title":"   ","body":"non-empty"}`, // whitespace-only title
+		`{"title":"non-empty","body":"   "}`, // whitespace-only body
+		`no json here at all`,                // no object
+		`{"title":"abc","body":"def"`,        // unclosed
 	}
 	for _, raw := range cases {
 		if _, err := parseAIPRResponse(raw); err == nil {
@@ -136,8 +136,8 @@ func TestBuildAIPRPrompt_Substitutes(t *testing.T) {
 		"feat-auth",
 		"main",
 		"diff content here",
-		"abcdef0 Add auth",  // 7-char short hash + subject
-		"fedcba Fix typo",   // hash <= 7 chars passed through
+		"abcdef0 Add auth", // 7-char short hash + subject
+		"fedcba Fix typo",  // hash <= 7 chars passed through
 		"## Summary",
 		"## Test plan",
 	} {

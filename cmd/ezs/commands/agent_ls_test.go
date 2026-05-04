@@ -21,16 +21,16 @@ func encodeJSONForTest(v any) (string, error) {
 // embedded ones) any time we see whitespace or quoting characters.
 func TestQuoteIfNeeded(t *testing.T) {
 	cases := map[string]string{
-		"":                     "",
-		"plain":                "plain",
-		"already-safe":         "already-safe",
-		"with space":           "'with space'",
-		"with\ttab":            "'with\ttab'",
-		"O'Brien":              "'O'\\''Brien'", // ShellQuote escapes embedded single quote
-		"has\"quote":           "'has\"quote'",
-		"$variable":            "'$variable'",
-		"`backtick`":           "'`backtick`'",
-		"normal-stuff_v1.2":    "normal-stuff_v1.2",
+		"":                  "",
+		"plain":             "plain",
+		"already-safe":      "already-safe",
+		"with space":        "'with space'",
+		"with\ttab":         "'with\ttab'",
+		"O'Brien":           "'O'\\''Brien'", // ShellQuote escapes embedded single quote
+		"has\"quote":        "'has\"quote'",
+		"$variable":         "'$variable'",
+		"`backtick`":        "'`backtick`'",
+		"normal-stuff_v1.2": "normal-stuff_v1.2",
 	}
 	for in, want := range cases {
 		if got := quoteIfNeeded(in); got != want {

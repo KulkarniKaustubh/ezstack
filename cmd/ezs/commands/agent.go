@@ -28,7 +28,7 @@ func Agent(args []string) error {
 %sUSAGE%s
     ezs agent [options] [-- <agent-args>]   Launch agent scoped to a stack
     ezs agent feature|feat "description"    Launch agent to build a feature as stacked branches
-    ezs agent ls|list [--json]              List tracked AI sessions in this repo
+    ezs agent ls|list [-a] [--json]         List tracked AI sessions (-a for all repos)
     ezs agent prompt <flag> <work|feature>  View or edit agent prompt templates
 
 %sMODES%s
@@ -1063,7 +1063,16 @@ changes in them and add new branches to this stack as needed.
    c. Implement the focused change for this branch
    d. Commit: ezs -y commit -m "descriptive message"
    e. Push: ezs -y push
-4. After all branches are created, show the final stack with: ezs ls`
+4. After the FIRST branch is created (this implicitly creates the stack), give
+   the stack a SHORT descriptive name with: ezs stack rename <stack-hash> <name>
+   - The name MUST be ≤5 words; 1–3 words is strongly preferred.
+   - Lowercase, hyphenated, no quotes (e.g. "jwt-auth", "rate-limiter",
+     "audit-fixes", "cli-ux-pass"). Avoid filler words like "feature", "add",
+     "implement".
+   - Get <stack-hash> from "ezs ls -a" or the stack hash printed by "ezs new".
+   - Do this BEFORE creating any subsequent branches so the rest of the stack
+     inherits the named identity.
+5. After all branches are created, show the final stack with: ezs ls`
 	}
 
 	return buildComposedPrompt(defaultFeaturePromptTemplate, vars, repoPath, "feature")
@@ -1165,7 +1174,7 @@ type agentSpawnSpec struct {
 	workDir   string
 	prompt    string
 	noPush    bool
-	extraArgs []string        // tokens after `--` on the ezs command line
+	extraArgs []string          // tokens after `--` on the ezs command line
 	session   *agentSessionPlan // session injection plan (nil for non-claude or if disabled)
 }
 

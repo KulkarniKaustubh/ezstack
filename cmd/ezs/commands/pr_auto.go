@@ -104,7 +104,7 @@ func (c *claudePRGenerator) Generate(prompt string) (aiPRResult, error) {
 
 // parseAIPRResponse extracts a JSON {"title","body"} object from the agent's
 // output. It tolerates leading/trailing whitespace, an optional `\`\`\`json`
-// (or bare `\`\`\``) code fence, and any prose before/after the object.
+// (or bare `\`\`\“) code fence, and any prose before/after the object.
 //
 // Strategy: scan for the first `{` and the matching closing `}` (depth-aware,
 // honoring strings) and decode that span as JSON. If the model wraps the
