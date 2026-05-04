@@ -17,11 +17,15 @@ package git
 var ProgressStart func(message string) (stop func())
 
 // startProgress is the internal call site used by long-running git ops.
-// Always returns a non-nil stop function so callers can `defer stop()`
-// without nil checks.
+// Always returns a non-nil stop function so callers can use the
+// `defer startProgress(...)()` pattern without nil checks — even if a
+// future hook implementation forgets to return a stop func.
 func startProgress(message string) func() {
 	if ProgressStart == nil {
 		return func() {}
 	}
-	return ProgressStart(message)
+	if stop := ProgressStart(message); stop != nil {
+		return stop
+	}
+	return func() {}
 }

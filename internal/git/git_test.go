@@ -1052,7 +1052,7 @@ func TestPushForceBranch_PushesNamedBranchNotCurrent(t *testing.T) {
 // TestHasDivergedFromRemote covers the four states a branch can be in
 // relative to a remote ref: no remote, in-sync, local-ahead, true
 // divergence. Each case is exercised against a non-"origin" remote so the
-// fork-aware path is real, not just a pass-through to HasDivergedFromOrigin.
+// fork-aware path is real, not just hardcoded to "origin".
 func TestHasDivergedFromRemote(t *testing.T) {
 	dir, cleanup := setupTestRepo(t)
 	defer cleanup()

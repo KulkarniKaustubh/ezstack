@@ -603,21 +603,10 @@ func TestMergeRepoData_ThreeWayMerge(t *testing.T) {
 }
 
 func TestStackConfig_LoadSave(t *testing.T) {
-	// Create a temp directory for config
-	tmpDir, err := os.MkdirTemp("", "stack-config-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	// Set EZSTACK_HOME to temp dir
-	originalHome := os.Getenv("EZSTACK_HOME")
-	defer os.Setenv("EZSTACK_HOME", originalHome)
-	os.Setenv("EZSTACK_HOME", tmpDir)
+	useEzstackHome(t)
 
 	repoDir := "/test/repo"
 
-	// Create stack config
 	stackCfg, err := LoadStackConfig(repoDir)
 	if err != nil {
 		t.Fatalf("LoadStackConfig() error = %v", err)
@@ -686,17 +675,9 @@ func TestStackConfig_LoadSave(t *testing.T) {
 	}
 }
 
+// TestStackConfig_MultiRepo verifies stack configs are isolated per repo.
 func TestStackConfig_MultiRepo(t *testing.T) {
-	// Test that stack configs are isolated per repo
-	tmpDir, err := os.MkdirTemp("", "stack-multi-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	originalHome := os.Getenv("EZSTACK_HOME")
-	defer os.Setenv("EZSTACK_HOME", originalHome)
-	os.Setenv("EZSTACK_HOME", tmpDir)
+	useEzstackHome(t)
 
 	// Create stack for repo1
 	repo1Cfg, _ := LoadStackConfig("/repo1")
@@ -762,19 +743,10 @@ func TestStack_DisplayName(t *testing.T) {
 }
 
 func TestStackConfig_NamePersistence(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "stack-name-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	originalHome := os.Getenv("EZSTACK_HOME")
-	defer os.Setenv("EZSTACK_HOME", originalHome)
-	os.Setenv("EZSTACK_HOME", tmpDir)
+	useEzstackHome(t)
 
 	repoDir := "/test/repo"
 
-	// Create stack with a name
 	stackCfg, err := LoadStackConfig(repoDir)
 	if err != nil {
 		t.Fatalf("LoadStackConfig() error = %v", err)
@@ -1108,15 +1080,7 @@ func TestConfig_GetSyncStrategy(t *testing.T) {
 // explicit-true, and explicit-false cases. Pointer-bools are easy to lose
 // when JSON tags drift, so the round-trip is the contract.
 func TestConfig_InitSubmodules_Persistence(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "ezstack-config-init-sub-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
-
-	originalHome := os.Getenv("EZSTACK_HOME")
-	defer os.Setenv("EZSTACK_HOME", originalHome)
-	os.Setenv("EZSTACK_HOME", tmpDir)
+	useEzstackHome(t)
 
 	trueVal := true
 	falseVal := false
@@ -1163,19 +1127,10 @@ func TestConfig_InitSubmodules_Persistence(t *testing.T) {
 	}
 }
 
+// TestConfig_SyncStrategy_Persistence verifies sync_strategy survives the save/load cycle.
 func TestConfig_SyncStrategy_Persistence(t *testing.T) {
-	// Test that sync_strategy survives save/load cycle
-	tmpDir, err := os.MkdirTemp("", "ezstack-config-test-*")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(tmpDir)
+	useEzstackHome(t)
 
-	originalHome := os.Getenv("EZSTACK_HOME")
-	defer os.Setenv("EZSTACK_HOME", originalHome)
-	os.Setenv("EZSTACK_HOME", tmpDir)
-
-	// Create config with sync_strategy
 	cfg := &Config{
 		DefaultBaseBranch: "main",
 		Repos: map[string]*RepoConfig{
