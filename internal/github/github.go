@@ -31,6 +31,7 @@ type Client struct {
 //   - HTTPS:             https://[user[:pw]@]github.com[:port]/owner/repo[.git][/]
 //   - SSH-protocol URI:  ssh://git@github.com[:port]/owner/repo[.git]
 //   - git protocol:      git://github.com[:port]/owner/repo[.git]
+//   - Browser URLs:      https://github.com/owner/repo/{tree,pull,blob,...}/...
 //
 // The host is anchored on `(^|@|//)` — start of string (bare-SCP form),
 // after a userinfo `@` (SSH or HTTPS-with-credentials), or after the
@@ -42,7 +43,13 @@ type Client struct {
 // stripped case-insensitively (some repos surface as `.GIT` from older
 // tooling). Repo names with internal dots — `my-repo.io`, `foo.bar` —
 // are preserved; only the literal `.git` suffix is removed.
-var gitHubURLRe = regexp.MustCompile(`(?i)(?:^|@|//)github\.com(?::\d+)?[:/]([^/\s#?]+)/([^/\s#?]+?)(?:\.git)?/?(?:[#?].*)?$`)
+//
+// The third capture group `(?:/.*)?$` accepts and discards extra path
+// segments after the repo name. This lets users paste browser URLs like
+// `https://github.com/owner/repo/tree/main` or `.../pull/123` and have
+// the parser extract just `(owner, repo)` instead of failing — the most
+// common ezstack onboarding mistake before this change.
+var gitHubURLRe = regexp.MustCompile(`(?i)(?:^|@|//)github\.com(?::\d+)?[:/]([^/\s#?]+)/([^/\s#?]+?)(?:\.git)?(?:/[^\s#?]*)?(?:[#?].*)?$`)
 
 // NewClient creates a new GitHub client by parsing the remote URL.
 // Accepts SSH, HTTPS, ssh://, and git:// URLs against github.com — including

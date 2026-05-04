@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 )
 
 // withYesMode flips YesMode for the duration of fn and restores it
@@ -218,4 +220,186 @@ type fakeBackend struct {
 func (f *fakeBackend) PromptRequired(prompt string) string {
 	f.promptRequiredCalls++
 	return f.promptRequiredAnswer
+}
+
+// runWithDeadline guards against test regressions where a Select* helper
+// reaches its fzf invocation despite YesMode being on — `exec.Command("fzf",
+// ...)` against a missing TTY would block indefinitely. The deadline is
+// generous so a slow CI doesn't false-fail; the failure mode under regression
+// is "blocks forever", so any reasonable bound catches it.
+func runWithDeadline(t *testing.T, d time.Duration, fn func()) {
+	t.Helper()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fn()
+	}()
+	select {
+	case <-done:
+	case <-time.After(d):
+		t.Fatalf("Select* call did not complete within %s — YesMode guard regressed and the helper is blocked on fzf / TTY", d)
+	}
+}
+
+// TestSelectBranchWithStacks_YesMode pins three contracts:
+// (1) zero branches → not-found error, not a hang.
+// (2) one branch → return it without prompting (callers that already
+//     narrowed don't pay an interactive cost).
+// (3) multiple branches → structured "multiple ... match" error naming the
+//     candidates, so MCP / scripted callers can surface guidance.
+// The deadline guard catches the regression mode (block on fzf with no TTY).
+func TestSelectBranchWithStacks_YesMode(t *testing.T) {
+	withYesMode(t, func() {
+		runWithDeadline(t, 2*time.Second, func() {
+			// (1) empty
+			if _, err := SelectBranchWithStacks(nil, nil, "x"); err == nil || !strings.Contains(err.Error(), "no branches") {
+				t.Errorf("empty branches: want 'no branches' err, got %v", err)
+			}
+
+			// (2) single
+			only := &config.Branch{Name: "only"}
+			got, err := SelectBranchWithStacks([]*config.Branch{only}, nil, "x")
+			if err != nil {
+				t.Fatalf("single branch: unexpected err %v", err)
+			}
+			if got != only {
+				t.Errorf("single branch: got %v, want %v", got, only)
+			}
+
+			// (3) multiple → structured error
+			a := &config.Branch{Name: "a"}
+			b := &config.Branch{Name: "b"}
+			_, err = SelectBranchWithStacks([]*config.Branch{a, b}, nil, "x")
+			if err == nil {
+				t.Fatal("multiple branches under YesMode: expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), "multiple branches") {
+				t.Errorf("multi err = %q, want 'multiple branches' substring", err)
+			}
+			if !strings.Contains(err.Error(), "a") || !strings.Contains(err.Error(), "b") {
+				t.Errorf("multi err must name candidates a & b: %q", err)
+			}
+		})
+	})
+}
+
+// TestSelectBranch_YesMode pins that the public SelectBranch wrapper (which
+// dispatches to TerminalBackend.SelectBranch → SelectBranchWithStacks) honors
+// the same YesMode contract. Without this test, a future backend rewrite
+// could route around the guard.
+func TestSelectBranch_YesMode(t *testing.T) {
+	withYesMode(t, func() {
+		runWithDeadline(t, 2*time.Second, func() {
+			only := &config.Branch{Name: "only"}
+			got, err := SelectBranch([]*config.Branch{only}, "x")
+			if err != nil || got != only {
+				t.Errorf("SelectBranch(single): got (%v, %v), want (%v, nil)", got, err, only)
+			}
+
+			_, err = SelectBranch([]*config.Branch{{Name: "a"}, {Name: "b"}}, "x")
+			if err == nil {
+				t.Errorf("SelectBranch(multi) under YesMode: expected error, got nil")
+			}
+		})
+	})
+}
+
+// TestSelectWorktree_YesMode mirrors the SelectBranch contract for
+// SelectWorktree (the non-stack-preview variant). The stack-preview variant
+// already had a guard before this change; the bare SelectWorktree was the
+// regression path.
+func TestSelectWorktree_YesMode(t *testing.T) {
+	withYesMode(t, func() {
+		runWithDeadline(t, 2*time.Second, func() {
+			one := []WorktreeInfo{{Branch: "feat", Path: "/tmp/feat"}}
+			got, err := SelectWorktree(one, "x")
+			if err != nil {
+				t.Fatalf("single worktree: unexpected err %v", err)
+			}
+			if got == nil || got.Branch != "feat" {
+				t.Errorf("single worktree: got %+v, want branch=feat", got)
+			}
+
+			two := []WorktreeInfo{{Branch: "a"}, {Branch: "b"}}
+			_, err = SelectWorktree(two, "x")
+			if err == nil {
+				t.Fatal("multi worktrees: expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), "multiple worktrees") {
+				t.Errorf("multi err = %q, want 'multiple worktrees' substring", err)
+			}
+		})
+	})
+}
+
+// TestSelectStack_YesMode pins that the SelectStack helper either auto-picks
+// a single stack or surfaces a structured error listing candidates — never
+// blocks on fzf.
+func TestSelectStack_YesMode(t *testing.T) {
+	withYesMode(t, func() {
+		runWithDeadline(t, 2*time.Second, func() {
+			one := []*config.Stack{{Hash: "abc12345"}}
+			got, err := SelectStack(one, "x")
+			if err != nil || got != one[0] {
+				t.Errorf("single stack: got (%v, %v), want (%v, nil)", got, err, one[0])
+			}
+
+			two := []*config.Stack{{Hash: "abc12345"}, {Hash: "def67890"}}
+			_, err = SelectStack(two, "x")
+			if err == nil {
+				t.Fatal("multi stacks: expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), "multiple stacks") {
+				t.Errorf("multi err = %q, want 'multiple stacks' substring", err)
+			}
+		})
+	})
+}
+
+// TestSelectOptionWithSuggested_YesMode pins three resolution cases in
+// priority order: (a) suggested index in range → return it; (b) no suggestion
+// but only one option → return 0; (c) ambiguous → structured error. The
+// suggestion-first ordering matters: many ezstack code paths (e.g. parent
+// pickers) compute a sensible default and fall back to interactive only when
+// they can't.
+func TestSelectOptionWithSuggested_YesMode(t *testing.T) {
+	withYesMode(t, func() {
+		runWithDeadline(t, 2*time.Second, func() {
+			// (a) honor suggestion
+			idx, err := SelectOptionWithSuggested([]string{"x", "y", "z"}, "p", 2)
+			if err != nil || idx != 2 {
+				t.Errorf("suggested=2: got (%d, %v), want (2, nil)", idx, err)
+			}
+			// (b) single option
+			idx, err = SelectOptionWithSuggested([]string{"only"}, "p", -1)
+			if err != nil || idx != 0 {
+				t.Errorf("single option: got (%d, %v), want (0, nil)", idx, err)
+			}
+			// (c) ambiguous + no suggestion
+			_, err = SelectOptionWithSuggested([]string{"a", "b"}, "p", -1)
+			if err == nil || !strings.Contains(err.Error(), "multiple options") {
+				t.Errorf("ambiguous: want 'multiple options' err, got %v", err)
+			}
+		})
+	})
+}
+
+// TestSelectOptionWithBack_YesMode pins that the back-menu variant either
+// auto-picks the lone option or errors loudly. Critically: this helper has
+// no "suggested" parameter — the only safe auto-resolution is len==1, since
+// silently picking option [0] under YesMode would let MCP scripts proceed
+// past a menu they didn't actually consent to.
+func TestSelectOptionWithBack_YesMode(t *testing.T) {
+	withYesMode(t, func() {
+		runWithDeadline(t, 2*time.Second, func() {
+			idx, err := SelectOptionWithBack([]string{"only"}, "p")
+			if err != nil || idx != 0 {
+				t.Errorf("single: got (%d, %v), want (0, nil)", idx, err)
+			}
+			_, err = SelectOptionWithBack([]string{"a", "b", "c"}, "p")
+			if err == nil || !strings.Contains(err.Error(), "multiple options") {
+				t.Errorf("multi: want 'multiple options' err, got %v", err)
+			}
+		})
+	})
 }

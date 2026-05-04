@@ -33,14 +33,21 @@ func PRNumberFromURL(url string) int {
 	return n
 }
 
-var v *viper.Viper
-
-func init() {
-	v = viper.New()
+// newViper builds a fresh Viper instance with the EZSTACK_-prefixed env
+// binding and built-in defaults. We do NOT share a package-level Viper
+// across calls: Viper's Set*/ReadInConfig path mutates internal maps
+// without synchronization, so concurrent Load() in the same process
+// (e.g. ezs-mcp serving parallel tool calls, or any other goroutine
+// driver) would race the global singleton. A per-call instance is
+// cheap (a few map allocations) and makes Load() safe to call from
+// multiple goroutines.
+func newViper() *viper.Viper {
+	v := viper.New()
 	v.SetEnvPrefix("EZSTACK")
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	v.AutomaticEnv()
 	v.SetDefault("default_base_branch", "main")
+	return v
 }
 
 // Config holds the global configuration for ezstack
@@ -814,6 +821,7 @@ func Load() (*Config, error) {
 
 	configPath := filepath.Join(configDir, "config.json")
 
+	v := newViper()
 	v.SetConfigFile(configPath)
 	v.SetConfigType("json")
 	if err := v.ReadInConfig(); err != nil {
@@ -1027,9 +1035,20 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 				fmt.Fprintf(os.Stderr, "Warning: failed to persist migration: %v\n", err)
 			}
 			lock.release()
+		} else if errors.Is(lockErr, ErrLockTimeout) {
+			// Peer is actively holding the lock and is also migrating
+			// (because they read the same old-version file we did).
+			// Migration is idempotent, so our in-memory `data` is already
+			// the correct target form — skip the persist step. The peer's
+			// write will land; the next Load will pick up the persisted
+			// copy. Racing with an unlocked atomicWriteFile here would
+			// resurrect exactly the torn-write bug the lock prevents.
+			fmt.Fprintf(os.Stderr, "ezs: stacks.json migration: peer process is migrating; skipping our persist step (their write will land)\n")
 		} else {
-			// Fall back to the unlocked write so a busted lock subsystem
-			// (permission, fs limit) doesn't block all use of ezs.
+			// Lock subsystem itself is broken (permission denied, FS limit,
+			// missing parent dir). Fall back to an unlocked write so a
+			// genuinely busted lock backend doesn't block all use of ezs.
+			// Only this branch races; the timeout branch above does not.
 			if err := atomicWriteFile(stackPath, data, 0644); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to persist migration: %v\n", err)
 			}
@@ -1085,13 +1104,26 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 // round-trip. Used by CacheConfig load paths to capture the on-disk state
 // for a later three-way merge in Save. Returns an empty (non-nil) map on
 // nil input.
+//
+// Errors from Marshal/Unmarshal are surfaced via stderr (and the returned
+// map ends up empty). Both fields involved are JSON-tagged so this should
+// never fail in practice — but if it does, the silent path used to leave
+// `out` partially populated, which then made the three-way merge see a
+// stale "orig" and could drop concurrent peer updates. Loud failure is
+// vastly preferable to silent data loss.
 func snapshotBranches(branches map[string]*BranchCache) map[string]*BranchCache {
 	out := make(map[string]*BranchCache, len(branches))
 	if len(branches) == 0 {
 		return out
 	}
-	if buf, err := json.Marshal(branches); err == nil {
-		_ = json.Unmarshal(buf, &out)
+	buf, err := json.Marshal(branches)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ezstack: snapshotBranches: marshal failed (%v); merge will see empty orig — peer updates may be lost\n", err)
+		return out
+	}
+	if err := json.Unmarshal(buf, &out); err != nil {
+		fmt.Fprintf(os.Stderr, "ezstack: snapshotBranches: unmarshal failed (%v); merge will see empty orig — peer updates may be lost\n", err)
+		return make(map[string]*BranchCache)
 	}
 	if out == nil {
 		out = make(map[string]*BranchCache)
@@ -1103,6 +1135,10 @@ func snapshotBranches(branches map[string]*BranchCache) map[string]*BranchCache 
 // later mutations to the live `*Stack` / `*BranchCache` pointers don't
 // affect the captured snapshot. Returns an empty (non-nil) repoData on
 // nil input so callers can compare without a nil check.
+//
+// As with snapshotBranches, Marshal/Unmarshal errors are surfaced via
+// stderr instead of silently swallowed. A round-trip failure here makes
+// the three-way merge see a stale orig and can drop a peer's update.
 func snapshotRepoData(rd *repoData) *repoData {
 	out := &repoData{
 		Stacks:   make(map[string]*Stack),
@@ -1111,8 +1147,17 @@ func snapshotRepoData(rd *repoData) *repoData {
 	if rd == nil {
 		return out
 	}
-	if buf, err := json.Marshal(rd); err == nil {
-		_ = json.Unmarshal(buf, out)
+	buf, err := json.Marshal(rd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ezstack: snapshotRepoData: marshal failed (%v); merge will see empty orig — peer updates may be lost\n", err)
+		return out
+	}
+	if err := json.Unmarshal(buf, out); err != nil {
+		fmt.Fprintf(os.Stderr, "ezstack: snapshotRepoData: unmarshal failed (%v); merge will see empty orig — peer updates may be lost\n", err)
+		return &repoData{
+			Stacks:   make(map[string]*Stack),
+			Branches: make(map[string]*BranchCache),
+		}
 	}
 	if out.Stacks == nil {
 		out.Stacks = make(map[string]*Stack)
@@ -1292,6 +1337,16 @@ func mergeRepoData(orig, mine, theirs *repoData) *repoData {
 // so that adding a field to repoData without extending mergeRepoData
 // becomes a hard test failure rather than a latent data-loss bug.
 const mergedRepoDataFieldCount = 2
+
+// mergedGlobalConfigFieldCount is the same tripwire for the top-level
+// Config struct. mergeGlobalConfig handles three fields today:
+// DefaultBaseBranch (scalar, peer-fill-if-empty), GitHubToken (same), and
+// Repos (per-repo map merge). If a future contributor adds a fourth field
+// — say "Telemetry" or "Notifications" — and forgets to extend
+// mergeGlobalConfig, two parallel `ezs config set` calls (or any peer
+// process) would silently drop one writer's update of the new field. The
+// reflection test in config_audit_test.go catches that at build time.
+const mergedGlobalConfigFieldCount = 3
 
 // IsFullyMerged returns true if every branch in the stack is marked as merged
 func (s *Stack) IsFullyMerged(cache *CacheConfig) bool {

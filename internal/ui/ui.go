@@ -239,10 +239,25 @@ func (t *TerminalBackend) SelectBranch(branches []*config.Branch, prompt string)
 	return SelectBranchWithStacks(branches, nil, prompt)
 }
 
-// SelectBranchWithStacks uses fzf to select a branch with optional stack preview
+// SelectBranchWithStacks uses fzf to select a branch with optional stack preview.
+//
+// Under YesMode (MCP / -y) we cannot run fzf — there's no controlling
+// terminal — so multi-match calls fail loudly with a structured error
+// instead of hanging. The exact-match path (single branch) returns it
+// without prompting so callers that already narrowed don't pay the cost.
 func SelectBranchWithStacks(branches []*config.Branch, stacks []*config.Stack, prompt string) (*config.Branch, error) {
 	if len(branches) == 0 {
 		return nil, fmt.Errorf("no branches to select from")
+	}
+	if YesMode {
+		if len(branches) == 1 {
+			return branches[0], nil
+		}
+		names := make([]string, 0, len(branches))
+		for _, b := range branches {
+			names = append(names, b.Name)
+		}
+		return nil, fmt.Errorf("multiple branches match (%s) — disambiguate with an exact branch name; interactive selection is unavailable in -y / MCP mode", strings.Join(names, ", "))
 	}
 
 	// Build fzf input with preview data embedded
@@ -316,10 +331,22 @@ type WorktreeInfo struct {
 	Branch string
 }
 
-// SelectWorktree uses fzf to select a worktree from a list
+// SelectWorktree uses fzf to select a worktree from a list.
+// Under YesMode it returns the lone worktree if there is only one and errors
+// loudly otherwise, mirroring SelectWorktreeWithStackPreview.
 func SelectWorktree(worktrees []WorktreeInfo, prompt string) (*WorktreeInfo, error) {
 	if len(worktrees) == 0 {
 		return nil, fmt.Errorf("no worktrees to select from")
+	}
+	if YesMode {
+		if len(worktrees) == 1 {
+			return &worktrees[0], nil
+		}
+		names := make([]string, 0, len(worktrees))
+		for _, w := range worktrees {
+			names = append(names, w.Branch)
+		}
+		return nil, fmt.Errorf("multiple worktrees match (%s) — disambiguate with an exact branch name; interactive selection is unavailable in -y / MCP mode", strings.Join(names, ", "))
 	}
 
 	var input strings.Builder
@@ -423,6 +450,16 @@ func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 func (t *TerminalBackend) SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 	if len(stacks) == 0 {
 		return nil, fmt.Errorf("no stacks to select from")
+	}
+	if YesMode {
+		if len(stacks) == 1 {
+			return stacks[0], nil
+		}
+		names := make([]string, 0, len(stacks))
+		for _, s := range stacks {
+			names = append(names, s.DisplayName())
+		}
+		return nil, fmt.Errorf("multiple stacks match (%s) — disambiguate with --stack <hash>; interactive selection is unavailable in -y / MCP mode", strings.Join(names, ", "))
 	}
 
 	var input strings.Builder
@@ -1481,13 +1518,27 @@ func (t *TerminalBackend) SelectOption(options []string, prompt string) (int, er
 	return SelectOptionWithSuggested(options, prompt, -1)
 }
 
-// SelectOptionWithSuggested uses fzf to select from a list of options
-// suggestedIdx is the 0-based index of the suggested option (-1 for none)
-// The suggested option will be marked with "(suggested)" and appear first
-// Returns the 0-based index of the selected option
+// SelectOptionWithSuggested uses fzf to select from a list of options.
+// suggestedIdx is the 0-based index of the suggested option (-1 for none).
+// The suggested option will be marked with "(suggested)" and appear first.
+// Returns the 0-based index of the selected option.
+//
+// Under YesMode it auto-resolves: if a suggested option is provided, that's
+// the answer; if a single option is the only choice, return it; otherwise
+// fail loudly so MCP / -y callers surface a structured error rather than
+// hanging on fzf with no TTY.
 func SelectOptionWithSuggested(options []string, prompt string, suggestedIdx int) (int, error) {
 	if len(options) == 0 {
 		return -1, fmt.Errorf("no options to select from")
+	}
+	if YesMode {
+		if suggestedIdx >= 0 && suggestedIdx < len(options) {
+			return suggestedIdx, nil
+		}
+		if len(options) == 1 {
+			return 0, nil
+		}
+		return -1, fmt.Errorf("multiple options for %q (%s) and no suggested default — provide an explicit choice; interactive selection is unavailable in -y / MCP mode", prompt, strings.Join(options, ", "))
 	}
 
 	var input strings.Builder
@@ -1529,6 +1580,12 @@ func SelectOptionWithBack(options []string, prompt string) (int, error) {
 func (t *TerminalBackend) SelectOptionWithBack(options []string, prompt string) (int, error) {
 	if len(options) == 0 {
 		return -1, fmt.Errorf("no options to select from")
+	}
+	if YesMode {
+		if len(options) == 1 {
+			return 0, nil
+		}
+		return -1, fmt.Errorf("multiple options for %q (%s) — provide an explicit choice; interactive selection is unavailable in -y / MCP mode", prompt, strings.Join(options, ", "))
 	}
 
 	var input strings.Builder

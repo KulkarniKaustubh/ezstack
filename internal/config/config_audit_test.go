@@ -1,12 +1,16 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestMergeRepoData_AllFieldsCovered is a "tripwire" guard. The
@@ -32,6 +36,27 @@ func TestMergeRepoData_AllFieldsCovered(t *testing.T) {
 				"Update mergeRepoData to merge the new field, then bump "+
 				"mergedRepoDataFieldCount in config.go.",
 			got, mergedRepoDataFieldCount,
+		)
+	}
+}
+
+// TestMergeGlobalConfig_AllFieldsCovered is the same tripwire for the
+// top-level Config struct. The original PR added a tripwire for repoData
+// only; if a future contributor adds (say) a Telemetry or Notifications
+// field to Config and forgets to extend mergeGlobalConfig, two parallel
+// `ezs config set` runs would silently drop one writer's update. Failing
+// the build is cheaper than discovering this in production.
+func TestMergeGlobalConfig_AllFieldsCovered(t *testing.T) {
+	got := reflect.TypeOf(Config{}).NumField()
+	if got != mergedGlobalConfigFieldCount {
+		t.Fatalf(
+			"Config has %d fields but mergeGlobalConfig claims to merge %d. "+
+				"A new field was added to Config without extending "+
+				"mergeGlobalConfig — concurrent peer-process updates of "+
+				"the new field would be silently dropped. "+
+				"Update mergeGlobalConfig and bump "+
+				"mergedGlobalConfigFieldCount in config.go.",
+			got, mergedGlobalConfigFieldCount,
 		)
 	}
 }
@@ -297,5 +322,90 @@ func TestLoadStackConfig_MigrationDoesNotRaceWithConcurrentLoads(t *testing.T) {
 	}
 	if f.Version != currentStackConfigVersion {
 		t.Errorf("file version = %d, want %d (migration didn't complete)", f.Version, currentStackConfigVersion)
+	}
+}
+
+// TestLoadStackConfig_MigrationLockTimeout_DoesNotRaceUnlockedWrite pins the
+// fix for a subtle bug: the original migration code fell back to an UNLOCKED
+// atomicWriteFile on any acquireFileLock error, including the
+// "timed out waiting for peer" case. That defeated the migration lock — two
+// processes could time each other out and both write concurrently.
+//
+// The fix distinguishes ErrLockTimeout (peer holds it; skip our persist;
+// migration is idempotent so peer's write will land) from "lock subsystem
+// broken" (open errors, etc.; fall back to unlocked write because the lock
+// is unusable anyway). This test simulates the timeout case by holding the
+// lock from a parallel goroutine for longer than LockTimeout, then verifies:
+//
+//  1. LoadStackConfig still returns success (no error propagated to caller)
+//  2. The disk file is NOT touched by us during the window where the peer
+//     holds it (no torn write). The peer's eventual release+write produces
+//     the only on-disk persistence.
+//
+// We use a short LockTimeout (50ms) and LockPollInterval (5ms) so the test
+// completes in well under a second.
+func TestLoadStackConfig_MigrationLockTimeout_DoesNotRaceUnlockedWrite(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("EZSTACK_HOME", tmpDir)
+
+	// Seed a v1 stacks.json that needs migration.
+	v1 := stackConfigFile{Version: 1, Repos: map[string]*repoData{
+		"/repo": {Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}},
+	}}
+	data, _ := json.MarshalIndent(v1, "", "  ")
+	stackPath := filepath.Join(tmpDir, "stacks.json")
+	if err := os.WriteFile(stackPath, data, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Capture original lock-tunable values and restore on exit.
+	origTimeout, origPoll := LockTimeout, LockPollInterval
+	defer func() { LockTimeout, LockPollInterval = origTimeout, origPoll }()
+	LockTimeout = 100 * time.Millisecond
+	LockPollInterval = 5 * time.Millisecond
+
+	// Hold the lock from a peer goroutine. Use the actual acquire helper so
+	// tryAcquireFileLockOnce sees the lock as held by another fd.
+	peerLock, err := acquireFileLock(stackPath + ".lock")
+	if err != nil {
+		t.Fatalf("peer acquire: %v", err)
+	}
+
+	// Read disk content NOW so we can compare after the migration attempt.
+	preData, _ := os.ReadFile(stackPath)
+
+	// Capture stderr to verify the user-facing notice fires.
+	r, w, _ := os.Pipe()
+	origStderr := os.Stderr
+	os.Stderr = w
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := LoadStackConfig("/repo")
+		done <- err
+	}()
+
+	loadErr := <-done
+	os.Stderr = origStderr
+	w.Close()
+	stderrBytes, _ := io.ReadAll(r)
+	stderrStr := string(stderrBytes)
+
+	// Release the peer lock so test cleanup is clean.
+	peerLock.release()
+
+	if loadErr != nil {
+		t.Fatalf("LoadStackConfig returned error during peer-held migration: %v", loadErr)
+	}
+
+	// Disk file MUST NOT have been written to during our timeout window —
+	// peer still holds the lock and migration hasn't completed yet.
+	postData, _ := os.ReadFile(stackPath)
+	if !bytes.Equal(preData, postData) {
+		t.Errorf("disk file was modified during peer-held migration window — unlocked-fallback regression. before=%d bytes, after=%d bytes", len(preData), len(postData))
+	}
+
+	if !strings.Contains(stderrStr, "peer process is migrating") {
+		t.Errorf("expected user-facing 'peer process is migrating' notice on stderr; got: %q", stderrStr)
 	}
 }

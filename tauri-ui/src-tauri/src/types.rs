@@ -33,10 +33,10 @@ pub struct StatusBranch {
     pub mergeable: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub review_state: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub additions: Option<i32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub deletions: Option<i32>,
+    // additions / deletions live on `branch` (flattened above). Defining
+    // them here too made serde emit two values for the same JSON key —
+    // ambiguous on serialize and last-write-wins on deserialize — exactly
+    // the bug the Go side fixed in statusBranchJSON. Read via `b.branch.additions`.
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

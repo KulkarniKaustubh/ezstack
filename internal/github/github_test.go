@@ -169,6 +169,67 @@ func TestNewClient(t *testing.T) {
 			remoteURL: "https://my-github.com/owner/repo.git",
 			wantErr:   true,
 		},
+		// Browser-style URLs: users routinely paste these into `ezs new` /
+		// `ezs config set` flows. Pre-fix the regex required the path to
+		// end at the repo name, so these all errored out — a common
+		// onboarding failure. The trailing path is now accepted and
+		// discarded; we extract just (owner, repo).
+		{
+			name:      "Browser tree URL",
+			remoteURL: "https://github.com/owner/repo/tree/main",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser pull URL",
+			remoteURL: "https://github.com/owner/repo/pull/123",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser blob URL with file path",
+			remoteURL: "https://github.com/owner/repo/blob/main/README.md",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser issues URL",
+			remoteURL: "https://github.com/owner/repo/issues/42",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser actions URL",
+			remoteURL: "https://github.com/owner/repo/actions/runs/123",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser tree URL with .git in path (rare but well-formed)",
+			remoteURL: "https://github.com/owner/repo.git/tree/main",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser URL with anchor on a deep path",
+			remoteURL: "https://github.com/owner/repo/blob/main/foo.go#L10",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser URL with query string on a deep path",
+			remoteURL: "https://github.com/owner/repo/tree/main?w=1",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
 	}
 
 	for _, tt := range tests {

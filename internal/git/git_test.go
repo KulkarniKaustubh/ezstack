@@ -1169,3 +1169,109 @@ func TestHasDivergedFromOrigin_DelegatesToRemote(t *testing.T) {
 		t.Errorf("delegation mismatch: origin=(%v,%d,%d), remote=(%v,%d,%d)", d1, a1, b1, d2, a2, b2)
 	}
 }
+
+// TestRemoteHasBranch_OriginAndFork pins the contract that pushChildBranches
+// uses to gate "never publish a branch the user hasn't shared". Pre-fix, the
+// existence check was hardcoded to origin and would return false for a
+// fork-tracked branch even when the branch did exist on the user's fork —
+// which would either resurrect the silent-publish bug (if the gate's polarity
+// flips) or block legitimate fork pushes.
+//
+// Three cases:
+//  1. Branch exists on origin → RemoteHasBranch("origin", b) == true,
+//     RemoteHasBranch("fork-user", b) == false.
+//  2. Branch exists on a fork remote ("fork-user") but not origin → reverse.
+//  3. Empty remote string → defaults to origin (consistency with the rest of
+//     the API). This is the migration-friendly default; a future caller that
+//     accidentally passes "" still gets the historical origin-only behavior.
+func TestRemoteHasBranch_OriginAndFork(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	// Two bare remotes: origin and fork-user. Push different branches to each.
+	originBare, err := os.MkdirTemp("", "remote-has-branch-origin-*")
+	if err != nil {
+		t.Fatalf("mkdtemp origin: %v", err)
+	}
+	defer os.RemoveAll(originBare)
+	forkBare, err := os.MkdirTemp("", "remote-has-branch-fork-*")
+	if err != nil {
+		t.Fatalf("mkdtemp fork: %v", err)
+	}
+	defer os.RemoveAll(forkBare)
+
+	for _, b := range []string{originBare, forkBare} {
+		if err := exec.Command("git", "init", "--bare", "-b", "main", b).Run(); err != nil {
+			t.Fatalf("init bare %s: %v", b, err)
+		}
+	}
+	if err := exec.Command("git", "-C", dir, "remote", "add", "origin", originBare).Run(); err != nil {
+		t.Fatalf("add origin: %v", err)
+	}
+	if err := exec.Command("git", "-C", dir, "remote", "add", "fork-user", forkBare).Run(); err != nil {
+		t.Fatalf("add fork-user: %v", err)
+	}
+
+	// Create "shared" on top of main, push to origin.
+	if err := exec.Command("git", "-C", dir, "checkout", "-b", "shared").Run(); err != nil {
+		t.Fatalf("co -b shared: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s.txt"), []byte("s\n"), 0644); err != nil {
+		t.Fatalf("write s: %v", err)
+	}
+	exec.Command("git", "-C", dir, "add", ".").Run()
+	exec.Command("git", "-C", dir, "commit", "-m", "shared").Run()
+	if err := exec.Command("git", "-C", dir, "push", "origin", "shared").Run(); err != nil {
+		t.Fatalf("push shared origin: %v", err)
+	}
+
+	// Create "fork-only" on top of main, push to fork-user only.
+	exec.Command("git", "-C", dir, "checkout", "main").Run()
+	if err := exec.Command("git", "-C", dir, "checkout", "-b", "fork-only").Run(); err != nil {
+		t.Fatalf("co -b fork-only: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("f\n"), 0644); err != nil {
+		t.Fatalf("write f: %v", err)
+	}
+	exec.Command("git", "-C", dir, "add", ".").Run()
+	exec.Command("git", "-C", dir, "commit", "-m", "fork-only").Run()
+	if err := exec.Command("git", "-C", dir, "push", "fork-user", "fork-only").Run(); err != nil {
+		t.Fatalf("push fork-only fork-user: %v", err)
+	}
+
+	g := New(dir)
+
+	// Case 1: shared exists on origin only.
+	if !g.RemoteHasBranch("origin", "shared") {
+		t.Errorf("origin/shared should exist, got false")
+	}
+	if g.RemoteHasBranch("fork-user", "shared") {
+		t.Errorf("fork-user/shared should NOT exist, got true")
+	}
+
+	// Case 2: fork-only exists on fork-user only.
+	if g.RemoteHasBranch("origin", "fork-only") {
+		t.Errorf("origin/fork-only should NOT exist, got true")
+	}
+	if !g.RemoteHasBranch("fork-user", "fork-only") {
+		t.Errorf("fork-user/fork-only should exist, got false")
+	}
+
+	// Case 3: empty remote defaults to origin.
+	if !g.RemoteHasBranch("", "shared") {
+		t.Errorf("RemoteHasBranch(\"\", shared) should default to origin and return true")
+	}
+	if g.RemoteHasBranch("", "fork-only") {
+		t.Errorf("RemoteHasBranch(\"\", fork-only) should default to origin and return false")
+	}
+
+	// Case 4: nonexistent branch returns false.
+	if g.RemoteHasBranch("origin", "never-existed") {
+		t.Errorf("RemoteHasBranch on missing branch should return false")
+	}
+
+	// Case 5: nonexistent remote returns false (does NOT panic / error).
+	if g.RemoteHasBranch("ghost-remote", "shared") {
+		t.Errorf("RemoteHasBranch on missing remote should return false")
+	}
+}

@@ -6,6 +6,11 @@ export interface Branch {
   pr_number?: number;
   pr_url?: string;
   worktree_path?: string;
+  // Per-branch line deltas relative to parent. The CLI started emitting
+  // these in v4.7; the Rust types.rs::Branch struct mirrors them, and the
+  // frontend reads them on the StatusBranch subclass via inheritance.
+  additions?: number;
+  deletions?: number;
 }
 
 export interface StatusBranch extends Branch {
@@ -14,15 +19,38 @@ export interface StatusBranch extends Branch {
   ci_summary?: string;
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   review_state?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
-  additions?: number;
-  deletions?: number;
+  // additions/deletions are inherited from Branch above.
 }
 
-export interface StatusStack {
+// Stack root metadata. The CLI emits these so the desktop can display the
+// PR status and line counts of the root branch (typically the one that
+// targets `main`) without recomputing from `branches`. They are optional
+// because old CLIs (< v4.7) don't emit them and the frontend must still
+// render those payloads.
+export interface StackRootInfo {
+  root_base?: string;
+  root_pr_number?: number;
+  root_pr_url?: string;
+  root_additions?: number;
+  root_deletions?: number;
+}
+
+export interface StatusStack extends StackRootInfo {
   hash: string;
   name?: string;
   root: string;
   branches: StatusBranch[];
+}
+
+// Mirrors Rust types.rs::Stack — the non-status variant the CLI emits for
+// commands that don't enrich with PR/CI state. The desktop primarily uses
+// StatusStack but having Stack defined keeps the schemas symmetric (and
+// type-checked) so future commands that return plain Stack don't drift.
+export interface Stack extends StackRootInfo {
+  hash: string;
+  name?: string;
+  root: string;
+  branches: Branch[];
 }
 
 export interface RepoConfig {

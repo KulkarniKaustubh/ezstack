@@ -13,6 +13,14 @@ import (
 // exhaustion, ENOENT on the parent dir, etc.) and surfaced verbatim.
 var errLockHeld = errors.New("lock held by another process")
 
+// ErrLockTimeout is returned by acquireFileLock when LockTimeout elapses
+// while a peer process actively holds the lock. Callers can distinguish
+// this from "lock subsystem broken" failures (open errors, permission
+// denied) so they can decide whether unlocked-fallback is appropriate.
+// In particular, the LoadStackConfig migration path uses this to skip
+// the persist step rather than racing the peer with an unlocked write.
+var ErrLockTimeout = errors.New("timed out waiting for lock held by another process")
+
 // LockWaitNotice is the duration we'll silently wait for the lock before
 // printing a "waiting" message to stderr. Tunable for tests.
 var LockWaitNotice = 2 * time.Second
@@ -55,9 +63,9 @@ func acquireFileLock(path string) (*fileLock, error) {
 		}
 		if time.Now().After(deadline) {
 			return nil, fmt.Errorf(
-				"timed out after %s waiting for lock %s — another ezs process appears stuck. "+
+				"%w: %s after %s — another ezs process appears stuck. "+
 					"Check `ps` for hung ezs processes; if none, delete the lock file and retry",
-				LockTimeout, path,
+				ErrLockTimeout, path, LockTimeout,
 			)
 		}
 		if !noticed && time.Now().After(noticeAt) {
