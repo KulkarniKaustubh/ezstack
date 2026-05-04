@@ -324,6 +324,45 @@ func TestManager_RegisterRemoteBranch(t *testing.T) {
 	}
 }
 
+// RootIsRemote is the signal PrintStack uses to render the "(remote)" tag on
+// the stack root for `ezs new -r` flows. Any regression here means the tag
+// silently disappears even though the root really is a tracked remote branch.
+func TestManager_RegisterRemoteBranch_SetsRootIsRemote(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+
+	hash, err := mgr.RegisterRemoteBranch("remote-feature", "main", 42, "https://github.com/org/repo/pull/42")
+	if err != nil {
+		t.Fatalf("RegisterRemoteBranch() error = %v", err)
+	}
+
+	stacks := mgr.ListStacks()
+	var s *config.Stack
+	for _, st := range stacks {
+		if st.Hash == hash {
+			s = st
+			break
+		}
+	}
+	if s == nil {
+		t.Fatalf("stack with hash %q not found", hash)
+	}
+	if !s.RootIsRemote {
+		t.Errorf("RootIsRemote = false, want true for stack registered via RegisterRemoteBranch")
+	}
+
+	// Confirm it survives a reload from disk so the field is persisted, not
+	// just runtime state.
+	mgr2, _ := NewManager(repoDir)
+	for _, st := range mgr2.ListStacks() {
+		if st.Hash == hash && !st.RootIsRemote {
+			t.Errorf("RootIsRemote not persisted across reload")
+		}
+	}
+}
+
 func TestManager_RegisterRemoteBranch_AddChildBranch(t *testing.T) {
 	repoDir, _, cleanup := setupTestEnv(t)
 	defer cleanup()

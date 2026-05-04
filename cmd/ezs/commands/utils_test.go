@@ -294,6 +294,84 @@ func TestFetchDiffStats_BaseDriftedFromOrigin(t *testing.T) {
 	}
 }
 
+// TestShowDiffStatsAgainstBase_BaseDriftedFromOrigin is the same drifted-base
+// scenario as TestFetchDiffStats_BaseDriftedFromOrigin (which covers `ezs ls`)
+// but applied to the post-create info message printed by `ezs new origin/*`
+// and `ezs new -r`. Both should agree on the diff size; previously they
+// didn't, because showDiffStatsAgainstBase used resolveLocalRef for the base
+// and inherited stale local main, while fetchDiffStats already used
+// upstreamRef.
+func TestShowDiffStatsAgainstBase_BaseDriftedFromOrigin(t *testing.T) {
+	originDir := t.TempDir()
+	runIn := func(t *testing.T, dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git -C %s %v: %v\n%s", dir, args, err, out)
+		}
+	}
+	runIn(t, originDir, "init", "-q", "--bare", "-b", "main")
+
+	upstreamDir := t.TempDir()
+	runIn(t, upstreamDir, "init", "-q", "-b", "main")
+	runIn(t, upstreamDir, "config", "user.email", "up@test.com")
+	runIn(t, upstreamDir, "config", "user.name", "Up")
+	runIn(t, upstreamDir, "remote", "add", "origin", originDir)
+	if err := os.WriteFile(filepath.Join(upstreamDir, "README"), []byte("seed\n"), 0644); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	runIn(t, upstreamDir, "add", ".")
+	runIn(t, upstreamDir, "commit", "-qm", "seed")
+	runIn(t, upstreamDir, "push", "-q", "origin", "main")
+
+	localDir := t.TempDir()
+	runIn(t, localDir, "clone", "-q", "-b", "main", originDir, ".")
+	runIn(t, localDir, "config", "user.email", "me@test.com")
+	runIn(t, localDir, "config", "user.name", "Me")
+
+	// Local feature branch with a small delta of its own (3 added lines).
+	runIn(t, localDir, "checkout", "-qb", "feature")
+	if err := os.WriteFile(filepath.Join(localDir, "feature.txt"), []byte("a\nb\nc\n"), 0644); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	runIn(t, localDir, "add", ".")
+	runIn(t, localDir, "commit", "-qm", "feature work")
+
+	// Upstream advances main with a much larger commit. After fetch, local main
+	// stays put; origin/main moves ahead. This is the drifted state.
+	var bigBuf strings.Builder
+	for i := 0; i < 10; i++ {
+		bigBuf.WriteString("upstream-line\n")
+	}
+	if err := os.WriteFile(filepath.Join(upstreamDir, "upstream.txt"), []byte(bigBuf.String()), 0644); err != nil {
+		t.Fatalf("write upstream: %v", err)
+	}
+	runIn(t, upstreamDir, "add", ".")
+	runIn(t, upstreamDir, "commit", "-qm", "upstream advance")
+	runIn(t, upstreamDir, "push", "-q", "origin", "main")
+
+	runIn(t, localDir, "fetch", "-q", "origin")
+	// Rebase feature onto origin/main without fast-forwarding local main
+	// (mirrors how `ezs sync` and a fresh `ezs new origin/<branch>` checkout
+	// land relative to a stale local base).
+	runIn(t, localDir, "rebase", "-q", "origin/main")
+
+	// Capture the stderr line emitted by showDiffStatsAgainstBase. The
+	// captureStdAndErr helper lives in doctor_test.go in this package.
+	g := git.New(localDir)
+	_, stderr := captureStdAndErr(t, func() {
+		showDiffStatsAgainstBase(g, "feature", "main")
+	})
+
+	if !strings.Contains(stderr, "+3") || !strings.Contains(stderr, "-0") {
+		t.Errorf("expected +3/-0 in info message (feature's own delta), got:\n%s", stderr)
+	}
+	// Sanity: the base-drift bug would show +13 (3 feature + 10 upstream).
+	if strings.Contains(stderr, "+13") {
+		t.Errorf("base drift leaked in: stderr contains +13, want +3:\n%s", stderr)
+	}
+}
+
 func TestShellQuote(t *testing.T) {
 	tests := []struct {
 		input string

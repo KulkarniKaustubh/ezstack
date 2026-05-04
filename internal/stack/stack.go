@@ -271,6 +271,7 @@ func (m *Manager) RegisterRemoteBranch(branchName, baseBranch string, prNumber i
 		RootBase:     baseBranch,
 		RootPRNumber: prNumber,
 		RootPRUrl:    prURL,
+		RootIsRemote: true,
 		Tree:         config.BranchTree{},
 	}
 	m.stackConfig.Stacks[hash] = stack

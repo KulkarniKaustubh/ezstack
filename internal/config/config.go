@@ -189,6 +189,7 @@ type Stack struct {
 	RootBase       string       `json:"root_base,omitempty"`       // The branch the root's PR targets (for computing root diff)
 	RootPRNumber   int          `json:"-"`                         // Runtime-only: derived from RootPRUrl
 	RootPRUrl      string       `json:"root_pr_url,omitempty"`     // PR URL of the root branch (for remote base branches)
+	RootIsRemote   bool         `json:"root_is_remote,omitempty"`  // Root is a remote-tracked branch (set by RegisterRemoteBranch); drives the (remote) tag in PrintStack
 	DeleteDeclined bool         `json:"delete_declined,omitempty"` // User declined cleanup prompt; don't re-ask
 	Tree           BranchTree   `json:"tree"`                      // The tree of branches
 	Branches       []*Branch    `json:"-"`                         // Runtime-only: populated from Tree for backward compatibility

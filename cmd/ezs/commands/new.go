@@ -706,15 +706,22 @@ func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noC
 		}
 	}
 	if _, regErr := mgr.RegisterExistingBranch(remoteBranch, worktreePath, baseBranch); regErr == nil {
-		// Only mark the branch as remote-contributor when we actually detected a fork
-		// (or a fork with push forbidden). detectForkRemote returns "" for same-repo PRs
-		// and for "no PR yet" — in those cases the branch is your own and should be
-		// pushed to origin like any other. Previously MarkBranchRemote was called
-		// unconditionally, which poisoned same-repo branches into the fork-detection
-		// path on every push.
-		if forkRemote := detectForkRemote(g, gh, pr); forkRemote != "" {
-			mgr.MarkBranchRemote(remoteBranch, prURL, forkRemote)
-		} else if pr != nil {
+		// `ezs new origin/<branch>` always checks out a remote-tracked branch
+		// (typically someone else's PR for review), so flag IsRemote=true so
+		// the (remote) tag renders in `ezs ls`/`ezs status`. The Remote field
+		// determines push behavior: a real fork remote when detectForkRemote
+		// confirms one, otherwise the literal "origin" sentinel. Setting
+		// Remote="origin" — rather than leaving it empty — is what previously
+		// went wrong (empty Remote + IsRemote=true sent every push through
+		// fork-detection, even for same-repo branches). With "origin"
+		// persisted, ResolveBranchRemote short-circuits to it.
+		forkRemote := detectForkRemote(g, gh, pr)
+		pushRemote := forkRemote
+		if pushRemote == "" {
+			pushRemote = "origin"
+		}
+		mgr.MarkBranchRemote(remoteBranch, prURL, pushRemote)
+		if forkRemote == "" && pr != nil {
 			savePRToCache(mgr.GetRepoDir(), remoteBranch, pr)
 		}
 	}
@@ -773,9 +780,13 @@ func showDiffStatsAgainstBase(g *git.Git, branch, baseBranch string) {
 		return
 	}
 
-	// Diff against the LOCAL base and LOCAL branch so stats reflect the
-	// user's working state rather than possibly-stale origin refs.
-	baseRef := resolveLocalRef(g, baseBranch)
+	// The base (PR target / inferred main/master) is always upstream-tracked,
+	// so diff against origin/<base> when available — local <base> can be
+	// stale, which would otherwise inflate the diff with every upstream
+	// commit landed since the last local update. Match what fetchDiffStats
+	// (used by `ezs ls`) does for the same case. The branch side stays on
+	// the local ref so the stats reflect the user's working state.
+	baseRef := upstreamRef(g, baseBranch)
 	branchRef := resolveLocalRef(g, branch)
 
 	added, removed, err := g.GetDiffStat(baseRef, branchRef)

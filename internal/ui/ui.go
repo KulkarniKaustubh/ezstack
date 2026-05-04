@@ -739,6 +739,9 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 
 	// Print root branch name with optional PR info and diff stats
 	rootLine := fmt.Sprintf("  %s%s%s", Gray, stack.Root, Reset)
+	if stack.RootIsRemote {
+		rootLine += " " + Gray + "(remote)" + Reset
+	}
 	if stack.RootPRNumber > 0 {
 		prText := fmt.Sprintf("[PR #%d", stack.RootPRNumber)
 		if stack.RootBase != "" {
