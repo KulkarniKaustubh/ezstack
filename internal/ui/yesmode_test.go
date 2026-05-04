@@ -244,9 +244,13 @@ func runWithDeadline(t *testing.T, d time.Duration, fn func()) {
 // TestSelectBranchWithStacks_YesMode pins three contracts:
 // (1) zero branches → not-found error, not a hang.
 // (2) one branch → return it without prompting (callers that already
-//     narrowed don't pay an interactive cost).
+//
+//	narrowed don't pay an interactive cost).
+//
 // (3) multiple branches → structured "multiple ... match" error naming the
-//     candidates, so MCP / scripted callers can surface guidance.
+//
+//	candidates, so MCP / scripted callers can surface guidance.
+//
 // The deadline guard catches the regression mode (block on fzf with no TTY).
 func TestSelectBranchWithStacks_YesMode(t *testing.T) {
 	withYesMode(t, func() {
