@@ -14,6 +14,8 @@ const branch = (name: string, parent = "main") => ({
   parent,
   is_merged: false,
   is_current: false,
+  additions: 0,
+  deletions: 0,
 });
 
 describe("buildParentPickChoices", () => {

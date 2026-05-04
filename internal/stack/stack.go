@@ -1309,6 +1309,48 @@ func (m *Manager) DetectRenamedBranches(orphaned []string, untracked []git.Workt
 	return renames
 }
 
+// mergeBranchCaches combines two BranchCache pointers — the renamed-from
+// entry (`old`) and the pre-existing renamed-to entry (`new`) — into a
+// single BranchCache that loses no information from either side. For each
+// field, the rule is "non-empty wins; on tie, prefer `old` because the
+// rename targets the same logical branch and `old` carried the
+// authoritative PR/merge metadata before the rename".
+//
+// Both inputs are assumed non-nil; callers handle the nil cases inline.
+func mergeBranchCaches(old, new *config.BranchCache) *config.BranchCache {
+	out := *old // start from old (preserves zero values too)
+
+	if out.WorktreePath == "" && new.WorktreePath != "" {
+		out.WorktreePath = new.WorktreePath
+	}
+	if out.PRUrl == "" && new.PRUrl != "" {
+		out.PRUrl = new.PRUrl
+		out.PRNumber = new.PRNumber
+		// PRState only makes sense with the PR it describes; pull it in too
+		// so the new entry's state doesn't outlive its URL.
+		out.PRState = new.PRState
+	}
+	if out.PRState == "" && new.PRState != "" {
+		out.PRState = new.PRState
+	}
+	if !out.IsMerged && new.IsMerged {
+		// IsMerged is only ever flipped on; if either side has the merged
+		// flag set we should preserve it.
+		out.IsMerged = true
+	}
+	if !out.IsRemote && new.IsRemote {
+		out.IsRemote = true
+	}
+	if out.Remote == "" && new.Remote != "" {
+		out.Remote = new.Remote
+	}
+	if out.PreSyncCommit == "" && new.PreSyncCommit != "" {
+		out.PreSyncCommit = new.PreSyncCommit
+		out.PreSyncCommitAt = new.PreSyncCommitAt
+	}
+	return &out
+}
+
 // ApplyBranchRenames updates the config to reflect branch renames.
 // For each rename, it updates the tree key, moves the cache entry, and preserves all metadata.
 func (m *Manager) ApplyBranchRenames(renames []RenamedBranchInfo) error {
@@ -1324,14 +1366,37 @@ func (m *Manager) ApplyBranchRenames(renames []RenamedBranchInfo) error {
 			// Rename in tree (hash stays stable - stack identity doesn't change)
 			stack.RenameBranchInTree(rename.OldName, rename.NewName)
 
-			// Move cache entry: copy old metadata to new key, delete old key
+			// Move cache entry: copy old metadata to new key, delete old key.
+			//
+			// Collision policy (when `newName` already has a cache entry):
+			//   - If `oldCache` carries data the new entry doesn't (PRUrl,
+			//     PRState, IsMerged, Remote, PreSyncCommit), prefer `oldCache`
+			//     and merge any non-empty new-entry fields into it. The old
+			//     entry is the authoritative one — rename targets the same
+			//     branch, and the new-name entry is typically a stub auto-
+			//     created by a concurrent worktree-listing pass.
+			//   - Otherwise keep the new entry as-is (concurrent peer
+			//     populated it with valid data first, and our oldCache had
+			//     no extra information to add).
+			//
+			// Pre-fix this branch silently dropped `oldCache` whenever the
+			// new name pre-existed, losing PR URL / merged flag history.
 			oldCache := cache.GetBranchCache(rename.OldName)
-			if oldCache != nil {
+			newCache := cache.GetBranchCache(rename.NewName)
+			switch {
+			case newCache == nil && oldCache != nil:
 				cache.SetBranchCache(rename.NewName, oldCache)
-			} else {
+			case newCache == nil:
 				cache.SetBranchCache(rename.NewName, &config.BranchCache{
 					WorktreePath: rename.WorktreePath,
 				})
+			case oldCache != nil:
+				// Both exist. Keep `oldCache` if it has fields newCache lacks;
+				// otherwise newCache wins and we just drop oldCache. We also
+				// fold in any field newCache uniquely had so neither side
+				// loses data.
+				merged := mergeBranchCaches(oldCache, newCache)
+				cache.SetBranchCache(rename.NewName, merged)
 			}
 			delete(cache.Branches, rename.OldName)
 

@@ -59,6 +59,27 @@ func TestNewClient(t *testing.T) {
 			wantErr:   false,
 		},
 		{
+			name:      "Repo name with dot is preserved",
+			remoteURL: "https://github.com/owner/my-repo.io.git",
+			wantOwner: "owner",
+			wantRepo:  "my-repo.io",
+			wantErr:   false,
+		},
+		{
+			name:      "Repo name with dot, no .git suffix",
+			remoteURL: "git@github.com:owner/foo.bar",
+			wantOwner: "owner",
+			wantRepo:  "foo.bar",
+			wantErr:   false,
+		},
+		{
+			name:      "HTTPS URL with trailing slash",
+			remoteURL: "https://github.com/owner/repo/",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
 			name:      "Invalid URL - no github.com",
 			remoteURL: "git@gitlab.com:owner/repo.git",
 			wantErr:   true,
@@ -72,6 +93,142 @@ func TestNewClient(t *testing.T) {
 			name:      "Empty URL",
 			remoteURL: "",
 			wantErr:   true,
+		},
+		// Hardened regex (audit M-tier): ports, anchors, query strings,
+		// uppercase .GIT, and embedded github.com look-alikes used to
+		// either fail to match or false-positive. Each line below is a
+		// previously-broken case.
+		{
+			name:      "HTTPS URL with explicit port",
+			remoteURL: "https://github.com:443/owner/repo.git",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "ssh:// scheme with port",
+			remoteURL: "ssh://git@github.com:22/owner/repo.git",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "git:// scheme",
+			remoteURL: "git://github.com/owner/repo.git",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "HTTPS URL with userinfo",
+			remoteURL: "https://user:token@github.com/owner/repo.git",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "URL with anchor strips anchor from repo name",
+			remoteURL: "https://github.com/owner/repo.git#readme",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "URL with query string strips query from repo name",
+			remoteURL: "https://github.com/owner/repo.git?ref=main",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Uppercase .GIT suffix is stripped (case-insensitive)",
+			remoteURL: "git@github.com:OWNER/REPO.GIT",
+			wantOwner: "OWNER",
+			wantRepo:  "REPO",
+			wantErr:   false,
+		},
+		{
+			name:      "Mixed case .Git suffix is stripped",
+			remoteURL: "https://github.com/owner/repo.Git",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		// False-positive guards: the old regex matched anywhere
+		// "github.com" appeared as a substring; the anchored form
+		// requires a `^|@|/` boundary so unrelated hosts that happen to
+		// embed "github.com" in their path don't get misparsed as
+		// github.com URLs.
+		{
+			name:      "Invalid - github.com only as path segment of another host",
+			remoteURL: "https://example.com/proxy/github.com/owner/repo.git",
+			wantErr:   true,
+		},
+		{
+			name:      "Invalid - host containing github.com but not equal",
+			remoteURL: "https://my-github.com/owner/repo.git",
+			wantErr:   true,
+		},
+		// Browser-style URLs: users routinely paste these into `ezs new` /
+		// `ezs config set` flows. Pre-fix the regex required the path to
+		// end at the repo name, so these all errored out — a common
+		// onboarding failure. The trailing path is now accepted and
+		// discarded; we extract just (owner, repo).
+		{
+			name:      "Browser tree URL",
+			remoteURL: "https://github.com/owner/repo/tree/main",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser pull URL",
+			remoteURL: "https://github.com/owner/repo/pull/123",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser blob URL with file path",
+			remoteURL: "https://github.com/owner/repo/blob/main/README.md",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser issues URL",
+			remoteURL: "https://github.com/owner/repo/issues/42",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser actions URL",
+			remoteURL: "https://github.com/owner/repo/actions/runs/123",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser tree URL with .git in path (rare but well-formed)",
+			remoteURL: "https://github.com/owner/repo.git/tree/main",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser URL with anchor on a deep path",
+			remoteURL: "https://github.com/owner/repo/blob/main/foo.go#L10",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
+		},
+		{
+			name:      "Browser URL with query string on a deep path",
+			remoteURL: "https://github.com/owner/repo/tree/main?w=1",
+			wantOwner: "owner",
+			wantRepo:  "repo",
+			wantErr:   false,
 		},
 	}
 

@@ -373,6 +373,263 @@ func TestStackConfig_ConcurrentSave_NoLostUpdates(t *testing.T) {
 	}
 }
 
+// TestStackConfig_ConcurrentSave_SameRepo_NoLostUpdates covers the harder
+// race that the existing flock alone could not prevent: two processes
+// touching *different stacks of the same repo*. Before the three-way merge
+// in Save(), the second writer would replace the first writer's stack
+// updates because the in-memory snapshot was stale.
+func TestStackConfig_ConcurrentSave_SameRepo_NoLostUpdates(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "stack-same-repo-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	originalHome := os.Getenv("EZSTACK_HOME")
+	defer os.Setenv("EZSTACK_HOME", originalHome)
+	os.Setenv("EZSTACK_HOME", tmpDir)
+
+	const repo = "/test/sharedRepo"
+
+	// Two writers add disjoint stacks to the same repo's section. With the
+	// pre-merge code, late writers' Save() would clobber early writers' new
+	// stacks because the in-memory map didn't include them.
+	const iters = 20
+	done := make(chan error, 2)
+	worker := func(prefix string) {
+		for i := 0; i < iters; i++ {
+			sc, err := LoadStackConfig(repo)
+			if err != nil {
+				done <- err
+				return
+			}
+			name := prefix + "-" + string(rune('a'+i))
+			hash := GenerateStackHash(name)
+			sc.Stacks[hash] = &Stack{
+				Hash: hash,
+				Root: "main",
+				Tree: BranchTree{name: BranchTree{}},
+			}
+			if err := sc.Save(repo); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}
+	go worker("alpha")
+	go worker("beta")
+	for i := 0; i < 2; i++ {
+		if err := <-done; err != nil {
+			t.Fatalf("worker error: %v", err)
+		}
+	}
+
+	final, _ := LoadStackConfig(repo)
+	if len(final.Stacks) != iters*2 {
+		t.Errorf("repo has %d stacks, want %d — concurrent same-repo save lost updates", len(final.Stacks), iters*2)
+	}
+}
+
+// TestMergeRepoData_ThreeWayMerge spot-checks the merge logic in isolation
+// since same-repo concurrency relies on it being correct for additions,
+// modifications, deletions, and "we didn't touch it" cases.
+func TestMergeRepoData_ThreeWayMerge(t *testing.T) {
+	mkStack := func(hash, root string) *Stack {
+		return &Stack{Hash: hash, Root: root, Tree: BranchTree{}}
+	}
+
+	t.Run("we add a stack — keep it", func(t *testing.T) {
+		orig := &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+		mine := &repoData{Stacks: map[string]*Stack{"aaa": mkStack("aaa", "main")}, Branches: map[string]*BranchCache{}}
+		theirs := &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+		got := mergeRepoData(orig, mine, theirs)
+		if _, ok := got.Stacks["aaa"]; !ok {
+			t.Fatal("our addition was dropped")
+		}
+	})
+
+	t.Run("they added a stack we never saw — keep theirs", func(t *testing.T) {
+		orig := &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+		mine := &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+		theirs := &repoData{Stacks: map[string]*Stack{"bbb": mkStack("bbb", "main")}, Branches: map[string]*BranchCache{}}
+		got := mergeRepoData(orig, mine, theirs)
+		if _, ok := got.Stacks["bbb"]; !ok {
+			t.Fatal("their addition was overwritten by our empty state")
+		}
+	})
+
+	t.Run("we modified, they unchanged — keep ours", func(t *testing.T) {
+		orig := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "main")}, Branches: map[string]*BranchCache{}}
+		modified := mkStack("x", "develop")
+		mine := &repoData{Stacks: map[string]*Stack{"x": modified}, Branches: map[string]*BranchCache{}}
+		theirs := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "main")}, Branches: map[string]*BranchCache{}}
+		got := mergeRepoData(orig, mine, theirs)
+		if got.Stacks["x"].Root != "develop" {
+			t.Fatalf("our modification was lost; got root=%q", got.Stacks["x"].Root)
+		}
+	})
+
+	t.Run("we unchanged, they modified — keep theirs", func(t *testing.T) {
+		orig := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "main")}, Branches: map[string]*BranchCache{}}
+		mine := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "main")}, Branches: map[string]*BranchCache{}}
+		theirs := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "develop")}, Branches: map[string]*BranchCache{}}
+		got := mergeRepoData(orig, mine, theirs)
+		if got.Stacks["x"].Root != "develop" {
+			t.Fatalf("theirs modification was clobbered by our untouched copy; got root=%q", got.Stacks["x"].Root)
+		}
+	})
+
+	t.Run("we deleted, they unchanged — stays deleted", func(t *testing.T) {
+		orig := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "main")}, Branches: map[string]*BranchCache{}}
+		mine := &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+		theirs := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "main")}, Branches: map[string]*BranchCache{}}
+		got := mergeRepoData(orig, mine, theirs)
+		if _, ok := got.Stacks["x"]; ok {
+			t.Fatal("our deletion was reverted by their unchanged copy")
+		}
+	})
+
+	t.Run("nil orig is treated as empty (fresh config)", func(t *testing.T) {
+		mine := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "main")}, Branches: map[string]*BranchCache{}}
+		theirs := &repoData{Stacks: map[string]*Stack{"y": mkStack("y", "main")}, Branches: map[string]*BranchCache{}}
+		got := mergeRepoData(nil, mine, theirs)
+		if _, ok := got.Stacks["x"]; !ok {
+			t.Fatal("our addition was lost when orig was nil")
+		}
+		if _, ok := got.Stacks["y"]; !ok {
+			t.Fatal("their addition was lost when orig was nil")
+		}
+	})
+
+	t.Run("same-stack concurrent edit fires MergeConflictHook", func(t *testing.T) {
+		// Both we and they modified stack "x" relative to orig in *different*
+		// ways. Last-writer-wins is documented behavior, but the hook must
+		// fire so the loss isn't silent.
+		var got []string
+		prev := MergeConflictHook
+		MergeConflictHook = func(kind, key string) { got = append(got, kind+":"+key) }
+		defer func() { MergeConflictHook = prev }()
+
+		orig := &repoData{
+			Stacks:   map[string]*Stack{"x": mkStack("x", "main")},
+			Branches: map[string]*BranchCache{},
+		}
+		mine := &repoData{
+			Stacks:   map[string]*Stack{"x": mkStack("x", "develop")},
+			Branches: map[string]*BranchCache{},
+		}
+		theirs := &repoData{
+			Stacks:   map[string]*Stack{"x": mkStack("x", "release")},
+			Branches: map[string]*BranchCache{},
+		}
+		merged := mergeRepoData(orig, mine, theirs)
+		if merged.Stacks["x"].Root != "develop" {
+			t.Errorf("last-writer-wins broke: got root=%q, want %q", merged.Stacks["x"].Root, "develop")
+		}
+		if len(got) != 1 || got[0] != "stack:x" {
+			t.Errorf("hook calls = %v, want exactly [\"stack:x\"]", got)
+		}
+	})
+
+	t.Run("different-stack concurrent edits do NOT fire hook", func(t *testing.T) {
+		// We modify x; they modify y. Neither overwrote the other — no
+		// conflict, no hook. False positives here would noisify every save.
+		var got []string
+		prev := MergeConflictHook
+		MergeConflictHook = func(kind, key string) { got = append(got, kind+":"+key) }
+		defer func() { MergeConflictHook = prev }()
+
+		orig := &repoData{
+			Stacks: map[string]*Stack{
+				"x": mkStack("x", "main"),
+				"y": mkStack("y", "main"),
+			},
+			Branches: map[string]*BranchCache{},
+		}
+		mine := &repoData{
+			Stacks: map[string]*Stack{
+				"x": mkStack("x", "develop"),
+				"y": mkStack("y", "main"), // unchanged
+			},
+			Branches: map[string]*BranchCache{},
+		}
+		theirs := &repoData{
+			Stacks: map[string]*Stack{
+				"x": mkStack("x", "main"), // unchanged
+				"y": mkStack("y", "release"),
+			},
+			Branches: map[string]*BranchCache{},
+		}
+		merged := mergeRepoData(orig, mine, theirs)
+		if merged.Stacks["x"].Root != "develop" || merged.Stacks["y"].Root != "release" {
+			t.Errorf("merge failed to preserve disjoint edits: %+v", merged.Stacks)
+		}
+		if len(got) != 0 {
+			t.Errorf("hook fired on disjoint edits: %v", got)
+		}
+	})
+
+	t.Run("identical concurrent edit does NOT fire hook", func(t *testing.T) {
+		// We and they made the *same* change. There's no information loss
+		// — the hook should not fire.
+		var got []string
+		prev := MergeConflictHook
+		MergeConflictHook = func(kind, key string) { got = append(got, kind+":"+key) }
+		defer func() { MergeConflictHook = prev }()
+
+		orig := &repoData{
+			Stacks:   map[string]*Stack{"x": mkStack("x", "main")},
+			Branches: map[string]*BranchCache{},
+		}
+		mine := &repoData{
+			Stacks:   map[string]*Stack{"x": mkStack("x", "develop")},
+			Branches: map[string]*BranchCache{},
+		}
+		theirs := &repoData{
+			Stacks:   map[string]*Stack{"x": mkStack("x", "develop")},
+			Branches: map[string]*BranchCache{},
+		}
+		_ = mergeRepoData(orig, mine, theirs)
+		if len(got) != 0 {
+			t.Errorf("hook fired on identical edits: %v", got)
+		}
+	})
+
+	t.Run("same-branch concurrent edit fires hook with kind=branch", func(t *testing.T) {
+		var got []string
+		prev := MergeConflictHook
+		MergeConflictHook = func(kind, key string) { got = append(got, kind+":"+key) }
+		defer func() { MergeConflictHook = prev }()
+
+		orig := &repoData{
+			Stacks: map[string]*Stack{},
+			Branches: map[string]*BranchCache{
+				"feat": {PRUrl: "u0", PRState: "OPEN"},
+			},
+		}
+		mine := &repoData{
+			Stacks: map[string]*Stack{},
+			Branches: map[string]*BranchCache{
+				"feat": {PRUrl: "u-mine", PRState: "OPEN"},
+			},
+		}
+		theirs := &repoData{
+			Stacks: map[string]*Stack{},
+			Branches: map[string]*BranchCache{
+				"feat": {PRUrl: "u-theirs", PRState: "OPEN"},
+			},
+		}
+		merged := mergeRepoData(orig, mine, theirs)
+		if merged.Branches["feat"].PRUrl != "u-mine" {
+			t.Errorf("last-writer-wins broke for branch: %+v", merged.Branches["feat"])
+		}
+		if len(got) != 1 || got[0] != "branch:feat" {
+			t.Errorf("hook calls = %v, want exactly [\"branch:feat\"]", got)
+		}
+	})
+}
+
 func TestStackConfig_LoadSave(t *testing.T) {
 	// Create a temp directory for config
 	tmpDir, err := os.MkdirTemp("", "stack-config-test-*")
@@ -1293,5 +1550,42 @@ func TestMutateBranchCache_PreservesNonPRFields(t *testing.T) {
 	}
 	if bc.WorktreePath != "/wt/feature" || !bc.IsRemote || bc.Remote != "fork" {
 		t.Errorf("non-PR fields touched: %+v", bc)
+	}
+}
+
+// TestRemoveBranchFromTree_PreservesSiblingSubtree covers the case where the
+// branch we remove has a child whose name collides with an existing sibling
+// at the parent level. Without the merge, the existing sibling's subtree
+// would be silently overwritten and any branches under it dropped.
+func TestRemoveBranchFromTree_PreservesSiblingSubtree(t *testing.T) {
+	s := &Stack{
+		Hash: "abc1234",
+		Root: "main",
+		Tree: BranchTree{
+			"feat-A": BranchTree{
+				"feat-shared": BranchTree{
+					"feat-A-grandchild": BranchTree{},
+				},
+			},
+			"feat-shared": BranchTree{
+				"feat-shared-grandchild": BranchTree{},
+			},
+		},
+	}
+
+	s.RemoveBranch("feat-A")
+
+	shared, ok := s.Tree["feat-shared"]
+	if !ok {
+		t.Fatal("feat-shared was removed entirely; expected the merged subtree to survive")
+	}
+	if _, ok := shared["feat-shared-grandchild"]; !ok {
+		t.Error("original feat-shared-grandchild was lost; the existing subtree was clobbered")
+	}
+	if _, ok := shared["feat-A-grandchild"]; !ok {
+		t.Error("feat-A-grandchild was not reparented under feat-shared")
+	}
+	if _, ok := s.Tree["feat-A"]; ok {
+		t.Error("feat-A is still in the tree")
 	}
 }

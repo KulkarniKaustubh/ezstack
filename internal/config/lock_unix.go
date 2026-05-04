@@ -3,6 +3,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"syscall"
@@ -15,13 +16,20 @@ type fileLock struct {
 	f *os.File
 }
 
-func acquireFileLock(path string) (*fileLock, error) {
+// tryAcquireFileLockOnce attempts a single non-blocking flock. Returns
+// errLockHeld if another process owns the lock; any other error indicates
+// a real failure (e.g. permissions, parent dir missing). The shared
+// acquireFileLock in lock.go wraps this in a poll/timeout loop.
+func tryAcquireFileLockOnce(path string) (*fileLock, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, errLockHeld
+		}
 		return nil, err
 	}
 	return &fileLock{f: f}, nil

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,14 +33,21 @@ func PRNumberFromURL(url string) int {
 	return n
 }
 
-var v *viper.Viper
-
-func init() {
-	v = viper.New()
+// newViper builds a fresh Viper instance with the EZSTACK_-prefixed env
+// binding and built-in defaults. We do NOT share a package-level Viper
+// across calls: Viper's Set*/ReadInConfig path mutates internal maps
+// without synchronization, so concurrent Load() in the same process
+// (e.g. ezs-mcp serving parallel tool calls, or any other goroutine
+// driver) would race the global singleton. A per-call instance is
+// cheap (a few map allocations) and makes Load() safe to call from
+// multiple goroutines.
+func newViper() *viper.Viper {
+	v := viper.New()
 	v.SetEnvPrefix("EZSTACK")
 	v.SetEnvKeyReplacer(strings.NewReplacer("-", "_"))
 	v.AutomaticEnv()
 	v.SetDefault("default_base_branch", "main")
+	return v
 }
 
 // Config holds the global configuration for ezstack
@@ -164,6 +172,12 @@ type StackConfig struct {
 	Stacks  map[string]*Stack `json:"stacks"`
 	Cache   *CacheConfig      `json:"-"` // loaded alongside stacks, not serialized separately
 	repoDir string            // internal, not serialized - used for saving
+
+	// origSnapshot captures this repo's data as it existed on disk at load
+	// time. Save() uses it as the common ancestor for a three-way merge so
+	// that concurrent modifications by another ezstack process don't get
+	// silently overwritten. nil for fresh configs.
+	origSnapshot *repoData
 }
 
 // Stack represents a chain of stacked branches as a tree
@@ -235,6 +249,16 @@ func (bc *BranchCache) ClearPRFields() {
 type CacheConfig struct {
 	Branches map[string]*BranchCache `json:"branches"`
 	repoDir  string
+
+	// origBranches captures Branches as it existed on disk at load time, so
+	// CacheConfig.Save can do a three-way merge against any concurrent
+	// peer-process changes instead of wholesale-replacing the on-disk map.
+	// Same semantics as StackConfig.origSnapshot.Branches. nil for caches
+	// that were not loaded from disk (e.g. tests building CacheConfig
+	// in-memory) — Save treats nil as "no changes from us are unmergeable
+	// with theirs", which is equivalent to the pre-fix behavior in that
+	// edge case.
+	origBranches map[string]*BranchCache
 }
 
 // Branch represents a single branch in a stack, constructed from the tree and cache at runtime.
@@ -316,7 +340,10 @@ type legacyConfig struct {
 }
 
 // atomicWriteFile writes data to a file atomically by writing to a temp file
-// in the same directory, fsyncing it, and then renaming over the destination.
+// in the same directory, fsyncing it, renaming over the destination, and then
+// fsyncing the parent directory so the rename itself is durable on filesystems
+// where rename ordering vs. data persistence isn't otherwise guaranteed
+// (APFS, ZFS, NFS).
 //
 // fsync before rename is what makes "atomic" actually durable: without it, a
 // crash between rename and the OS flushing dirty pages can leave the renamed
@@ -355,7 +382,22 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 		os.Remove(tmpPath)
 		return err
 	}
+	syncDir(dir)
 	return nil
+}
+
+// syncDir fsyncs a directory so that a recent rename inside it is durable.
+// Best-effort: errors are ignored because (a) Windows rejects directory fsync
+// with EINVAL and (b) some filesystems return ENOTSUP. The atomic rename has
+// already happened; missing the directory sync is a small durability hit, not
+// a correctness bug.
+func syncDir(dir string) {
+	d, err := os.Open(dir)
+	if err != nil {
+		return
+	}
+	_ = d.Sync()
+	d.Close()
 }
 
 // migrateStackConfig migrates stacks.json data from srcVersion to dstVersion.
@@ -779,6 +821,7 @@ func Load() (*Config, error) {
 
 	configPath := filepath.Join(configDir, "config.json")
 
+	v := newViper()
 	v.SetConfigFile(configPath)
 	v.SetConfigType("json")
 	if err := v.ReadInConfig(); err != nil {
@@ -819,7 +862,19 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// Save saves the configuration to ~/.ezstack/config.json
+// Save persists the configuration to ~/.ezstack/config.json under the same
+// per-process lock model used by StackConfig.Save: acquire flock, reload
+// the on-disk file, merge our changes against any concurrent peer's
+// changes, then atomicWriteFile.
+//
+// Without this, two parallel `ezs config set …` runs (or any path that
+// auto-saves the global config) silently lost the earlier writer's update.
+// The merge is map-level (per-repo): if peer added or modified another
+// repo's RepoConfig while we were holding `c` in memory, their entry
+// survives. Same-repo concurrent edits resolve last-writer-wins because
+// `c.Repos` doesn't carry a load-time snapshot — that's a documented
+// limitation, not a regression: pre-PR, every save was last-writer-wins
+// across the whole file.
 func (c *Config) Save() error {
 	configDir, err := ConfigDir()
 	if err != nil {
@@ -830,12 +885,73 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	data, err := json.MarshalIndent(c, "", "  ")
+	configPath := filepath.Join(configDir, "config.json")
+
+	lock, lockErr := acquireFileLock(configPath + ".lock")
+	if lockErr != nil {
+		return lockErr
+	}
+	defer lock.release()
+
+	// Reload disk state under the lock so we can merge against it. If the
+	// file doesn't exist (first save), there's nothing to merge.
+	merged := c
+	if data, readErr := os.ReadFile(configPath); readErr == nil {
+		var disk Config
+		if err := json.Unmarshal(data, &disk); err == nil {
+			merged = mergeGlobalConfig(&disk, c)
+		}
+	} else if !os.IsNotExist(readErr) {
+		return readErr
+	}
+
+	data, err := json.MarshalIndent(merged, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return atomicWriteFile(filepath.Join(configDir, "config.json"), data, 0644)
+	if err := atomicWriteFile(configPath, data, 0644); err != nil {
+		return err
+	}
+
+	// Mirror merged result back into the receiver so any subsequent
+	// in-process Save() picks up peer additions instead of clobbering them.
+	*c = *merged
+	return nil
+}
+
+// mergeGlobalConfig combines the in-memory config (`mine`) with the disk
+// state read under the lock (`theirs`). Scalar fields prefer mine
+// (last-writer-wins, preserving the pre-fix behavior); the Repos map is
+// merged so a peer's addition of a different repo's config survives our
+// save.
+func mergeGlobalConfig(theirs, mine *Config) *Config {
+	if mine == nil {
+		return theirs
+	}
+	if theirs == nil {
+		return mine
+	}
+	out := &Config{
+		DefaultBaseBranch: mine.DefaultBaseBranch,
+		GitHubToken:       mine.GitHubToken,
+		Repos:             make(map[string]*RepoConfig),
+	}
+	// Preserve scalar last-writer-wins for fields we directly set.
+	if out.DefaultBaseBranch == "" && theirs.DefaultBaseBranch != "" {
+		// Don't fight a peer who set a default we never had.
+		out.DefaultBaseBranch = theirs.DefaultBaseBranch
+	}
+	if out.GitHubToken == "" && theirs.GitHubToken != "" {
+		out.GitHubToken = theirs.GitHubToken
+	}
+	for path, rc := range theirs.Repos {
+		out.Repos[path] = rc
+	}
+	for path, rc := range mine.Repos {
+		out.Repos[path] = rc
+	}
+	return out
 }
 
 // LoadStackConfig loads stack metadata and branch cache for a specific repo from $HOME/.ezstack/stacks.json
@@ -896,9 +1012,48 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to migrate stacks.json: %w", err)
 		}
-		if err := atomicWriteFile(stackPath, data, 0644); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to persist migration: %v\n", err)
+		// Persist the migrated form under the same lock model used by Save
+		// so two processes opening an old config concurrently can't both
+		// write at once. The migration is idempotent (re-running it on
+		// already-migrated data is a no-op), so worst-case both processes
+		// write the same bytes; the lock is purely a "no torn writes"
+		// guarantee.
+		if lock, lockErr := acquireFileLock(stackPath + ".lock"); lockErr == nil {
+			// Re-read disk under the lock — if a peer migrated first, prefer
+			// their result (still our target version) rather than rewriting.
+			if cur, readErr := os.ReadFile(stackPath); readErr == nil {
+				var curVer struct {
+					Version int `json:"version"`
+				}
+				if json.Unmarshal(cur, &curVer) == nil && curVer.Version >= currentStackConfigVersion {
+					data = cur
+					lock.release()
+					goto migrated
+				}
+			}
+			if err := atomicWriteFile(stackPath, data, 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to persist migration: %v\n", err)
+			}
+			lock.release()
+		} else if errors.Is(lockErr, ErrLockTimeout) {
+			// Peer is actively holding the lock and is also migrating
+			// (because they read the same old-version file we did).
+			// Migration is idempotent, so our in-memory `data` is already
+			// the correct target form — skip the persist step. The peer's
+			// write will land; the next Load will pick up the persisted
+			// copy. Racing with an unlocked atomicWriteFile here would
+			// resurrect exactly the torn-write bug the lock prevents.
+			fmt.Fprintf(os.Stderr, "ezs: stacks.json migration: peer process is migrating; skipping our persist step (their write will land)\n")
+		} else {
+			// Lock subsystem itself is broken (permission denied, FS limit,
+			// missing parent dir). Fall back to an unlocked write so a
+			// genuinely busted lock backend doesn't block all use of ezs.
+			// Only this branch races; the timeout branch above does not.
+			if err := atomicWriteFile(stackPath, data, 0644); err != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to persist migration: %v\n", err)
+			}
 		}
+	migrated:
 	}
 
 	var file stackConfigFile
@@ -927,10 +1082,12 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 	sc := &StackConfig{
 		Stacks: rd.Stacks,
 		Cache: &CacheConfig{
-			Branches: rd.Branches,
-			repoDir:  repoDir,
+			Branches:     rd.Branches,
+			origBranches: snapshotBranches(rd.Branches),
+			repoDir:      repoDir,
 		},
-		repoDir: repoDir,
+		repoDir:      repoDir,
+		origSnapshot: snapshotRepoData(rd),
 	}
 
 	for hash, stack := range sc.Stacks {
@@ -942,6 +1099,254 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 
 	return sc, nil
 }
+
+// snapshotBranches deep-copies a map of *BranchCache pointers via a JSON
+// round-trip. Used by CacheConfig load paths to capture the on-disk state
+// for a later three-way merge in Save. Returns an empty (non-nil) map on
+// nil input.
+//
+// Errors from Marshal/Unmarshal are surfaced via stderr (and the returned
+// map ends up empty). Both fields involved are JSON-tagged so this should
+// never fail in practice — but if it does, the silent path used to leave
+// `out` partially populated, which then made the three-way merge see a
+// stale "orig" and could drop concurrent peer updates. Loud failure is
+// vastly preferable to silent data loss.
+func snapshotBranches(branches map[string]*BranchCache) map[string]*BranchCache {
+	out := make(map[string]*BranchCache, len(branches))
+	if len(branches) == 0 {
+		return out
+	}
+	buf, err := json.Marshal(branches)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ezstack: snapshotBranches: marshal failed (%v); merge will see empty orig — peer updates may be lost\n", err)
+		return out
+	}
+	if err := json.Unmarshal(buf, &out); err != nil {
+		fmt.Fprintf(os.Stderr, "ezstack: snapshotBranches: unmarshal failed (%v); merge will see empty orig — peer updates may be lost\n", err)
+		return make(map[string]*BranchCache)
+	}
+	if out == nil {
+		out = make(map[string]*BranchCache)
+	}
+	return out
+}
+
+// snapshotRepoData deep-copies a repoData via a JSON round-trip so that
+// later mutations to the live `*Stack` / `*BranchCache` pointers don't
+// affect the captured snapshot. Returns an empty (non-nil) repoData on
+// nil input so callers can compare without a nil check.
+//
+// As with snapshotBranches, Marshal/Unmarshal errors are surfaced via
+// stderr instead of silently swallowed. A round-trip failure here makes
+// the three-way merge see a stale orig and can drop a peer's update.
+func snapshotRepoData(rd *repoData) *repoData {
+	out := &repoData{
+		Stacks:   make(map[string]*Stack),
+		Branches: make(map[string]*BranchCache),
+	}
+	if rd == nil {
+		return out
+	}
+	buf, err := json.Marshal(rd)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "ezstack: snapshotRepoData: marshal failed (%v); merge will see empty orig — peer updates may be lost\n", err)
+		return out
+	}
+	if err := json.Unmarshal(buf, out); err != nil {
+		fmt.Fprintf(os.Stderr, "ezstack: snapshotRepoData: unmarshal failed (%v); merge will see empty orig — peer updates may be lost\n", err)
+		return &repoData{
+			Stacks:   make(map[string]*Stack),
+			Branches: make(map[string]*BranchCache),
+		}
+	}
+	if out.Stacks == nil {
+		out.Stacks = make(map[string]*Stack)
+	}
+	if out.Branches == nil {
+		out.Branches = make(map[string]*BranchCache)
+	}
+	return out
+}
+
+// jsonEqual compares two values by their JSON serialization. Returns false
+// if either side fails to marshal — we prefer "treat as different" over
+// "treat as equal" for safety.
+func jsonEqual(a, b any) bool {
+	aJSON, errA := json.Marshal(a)
+	bJSON, errB := json.Marshal(b)
+	if errA != nil || errB != nil {
+		return false
+	}
+	return bytes.Equal(aJSON, bJSON)
+}
+
+// MergeConflictHook is invoked once per (kind, key) where the three-way
+// merge encountered a same-target concurrent edit (mine != orig AND
+// theirs != orig AND theirs != mine). Kind is "stack" or "branch". The
+// merge resolves last-writer-wins (mine), but the hook gives the caller a
+// chance to log or surface the fact that a peer's update is being
+// overwritten.
+//
+// Default writes a one-line warning to stderr. Tests override it to
+// capture the call. Set to a no-op func to silence (callers that want
+// silence: don't use nil — that path is reserved for "default behavior").
+var MergeConflictHook func(kind, key string) = func(kind, key string) {
+	fmt.Fprintf(os.Stderr,
+		"ezs: warning: concurrent edit to %s %q detected during save; "+
+			"another ezs process modified the same %s in between our load and save. "+
+			"Their changes were overwritten (last-writer-wins).\n",
+		kind, key, kind,
+	)
+}
+
+// mergeBranches performs a three-way merge over branch-cache maps using
+// the same semantics as mergeRepoData (mine wins on us-modified, theirs
+// fills in on we-didn't-touch, deletions and additions from either side
+// survive). Same-target concurrent edits fire MergeConflictHook with kind
+// "branch".
+func mergeBranches(orig, mine, theirs map[string]*BranchCache) map[string]*BranchCache {
+	if orig == nil {
+		orig = map[string]*BranchCache{}
+	}
+	if theirs == nil {
+		theirs = map[string]*BranchCache{}
+	}
+	merged := make(map[string]*BranchCache)
+	notify := func(key string) {
+		if MergeConflictHook != nil {
+			MergeConflictHook("branch", key)
+		}
+	}
+	seen := make(map[string]bool, len(mine))
+	for name, mineB := range mine {
+		seen[name] = true
+		origB, hadOrig := orig[name]
+		if hadOrig && jsonEqual(origB, mineB) {
+			if theirB, hasTheirs := theirs[name]; hasTheirs {
+				merged[name] = theirB
+			}
+			continue
+		}
+		if hadOrig {
+			if theirB, hasTheirs := theirs[name]; hasTheirs &&
+				!jsonEqual(theirB, origB) && !jsonEqual(theirB, mineB) {
+				notify(name)
+			}
+		}
+		merged[name] = mineB
+	}
+	for name, theirB := range theirs {
+		if seen[name] {
+			continue
+		}
+		if _, wasOrig := orig[name]; wasOrig {
+			continue // we deleted it
+		}
+		merged[name] = theirB
+	}
+	return merged
+}
+
+// mergeStacks performs a three-way merge over stack maps using the same
+// semantics as mergeBranches (kind="stack" for the conflict hook).
+func mergeStacks(orig, mine, theirs map[string]*Stack) map[string]*Stack {
+	if orig == nil {
+		orig = map[string]*Stack{}
+	}
+	if theirs == nil {
+		theirs = map[string]*Stack{}
+	}
+	merged := make(map[string]*Stack)
+	notify := func(key string) {
+		if MergeConflictHook != nil {
+			MergeConflictHook("stack", key)
+		}
+	}
+	seen := make(map[string]bool, len(mine))
+	for hash, mineS := range mine {
+		seen[hash] = true
+		origS, hadOrig := orig[hash]
+		if hadOrig && jsonEqual(origS, mineS) {
+			if theirS, hasTheirs := theirs[hash]; hasTheirs {
+				merged[hash] = theirS
+			}
+			continue
+		}
+		if hadOrig {
+			if theirS, hasTheirs := theirs[hash]; hasTheirs &&
+				!jsonEqual(theirS, origS) && !jsonEqual(theirS, mineS) {
+				notify(hash)
+			}
+		}
+		merged[hash] = mineS
+	}
+	for hash, theirS := range theirs {
+		if seen[hash] {
+			continue
+		}
+		if _, wasOrig := orig[hash]; wasOrig {
+			continue // we deleted it
+		}
+		merged[hash] = theirS
+	}
+	return merged
+}
+
+// mergeRepoData performs a three-way merge between the disk state at load
+// time (orig), the in-memory state we want to write (mine), and the disk
+// state right now (theirs, which may include another process's changes).
+//
+// Per stack/branch:
+//   - If we modified it (mine != orig) → take mine
+//   - If we didn't touch it (mine == orig) → take theirs (preserves another
+//     process's concurrent updates, including deletions)
+//   - If we added (in mine, not in orig) → take mine
+//   - If we deleted (in orig, not in mine) → omit (deletion wins)
+//   - If theirs added (in theirs, not in orig, not in mine) → take theirs
+//
+// Concurrent modifications to the *same* stack/branch from two processes
+// resolve last-writer-wins, but we fire MergeConflictHook so the loss
+// isn't silent. The common case (two processes touching different stacks
+// of the same repo) remains lossless.
+//
+// IMPORTANT: when adding a new field to repoData, also extend this
+// function. TestMergeRepoData_AllFieldsCovered (config_test.go) uses
+// reflection to fail loudly if a new repoData field is left unmerged —
+// without that guard the new field's peer-process updates would be
+// silently overwritten on every Save.
+func mergeRepoData(orig, mine, theirs *repoData) *repoData {
+	if orig == nil {
+		orig = &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+	}
+	if theirs == nil {
+		theirs = &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+	}
+	if mine == nil {
+		mine = &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+	}
+	return &repoData{
+		Stacks:   mergeStacks(orig.Stacks, mine.Stacks, theirs.Stacks),
+		Branches: mergeBranches(orig.Branches, mine.Branches, theirs.Branches),
+	}
+}
+
+// mergedRepoDataFieldCount returns the number of repoData fields that
+// mergeRepoData currently knows how to merge. Updated whenever the
+// function gains a new field. TestMergeRepoData_AllFieldsCovered
+// cross-checks this against reflect.TypeOf((*repoData)(nil)).Elem().NumField()
+// so that adding a field to repoData without extending mergeRepoData
+// becomes a hard test failure rather than a latent data-loss bug.
+const mergedRepoDataFieldCount = 2
+
+// mergedGlobalConfigFieldCount is the same tripwire for the top-level
+// Config struct. mergeGlobalConfig handles three fields today:
+// DefaultBaseBranch (scalar, peer-fill-if-empty), GitHubToken (same), and
+// Repos (per-repo map merge). If a future contributor adds a fourth field
+// — say "Telemetry" or "Notifications" — and forgets to extend
+// mergeGlobalConfig, two parallel `ezs config set` calls (or any peer
+// process) would silently drop one writer's update of the new field. The
+// reflection test in config_audit_test.go catches that at build time.
+const mergedGlobalConfigFieldCount = 3
 
 // IsFullyMerged returns true if every branch in the stack is marked as merged
 func (s *Stack) IsFullyMerged(cache *CacheConfig) bool {
@@ -1025,18 +1430,32 @@ func (sc *StackConfig) Save(repoDir string) error {
 		branches = sc.Cache.Branches
 	}
 
-	file.Version = currentStackConfigVersion
-	file.Repos[targetRepo] = &repoData{
+	mine := &repoData{
 		Stacks:   sc.Stacks,
 		Branches: branches,
 	}
+
+	// Three-way merge against any concurrent on-disk changes since we loaded.
+	// Without this, two parallel ezs invocations on different stacks of the
+	// same repo silently lose one process's writes.
+	merged := mergeRepoData(sc.origSnapshot, mine, file.Repos[targetRepo])
+
+	file.Version = currentStackConfigVersion
+	file.Repos[targetRepo] = merged
 
 	newData, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return atomicWriteFile(stackPath, newData, 0644)
+	if err := atomicWriteFile(stackPath, newData, 0644); err != nil {
+		return err
+	}
+
+	// Refresh our snapshot so a subsequent Save in the same process treats the
+	// just-written data as the new common ancestor for any further changes.
+	sc.origSnapshot = snapshotRepoData(merged)
+	return nil
 }
 
 // LoadCacheConfig loads cached branch metadata. This now delegates to the combined stacks file.
@@ -1055,8 +1474,9 @@ func LoadCacheConfig(repoDir string) (*CacheConfig, error) {
 		if err := json.Unmarshal(data, &file); err == nil && file.Repos != nil {
 			if rd, ok := file.Repos[repoDir]; ok && rd != nil && rd.Branches != nil {
 				return &CacheConfig{
-					Branches: rd.Branches,
-					repoDir:  repoDir,
+					Branches:     rd.Branches,
+					origBranches: snapshotBranches(rd.Branches),
+					repoDir:      repoDir,
 				}, nil
 			}
 		}
@@ -1194,8 +1614,16 @@ func MutateBranchCache(repoDir, branchName string, fn func(current *BranchCache)
 	return atomicWriteFile(stackPath, newData, 0644)
 }
 
-// Save writes the cache data back to the combined stacks.json file.
-// This loads the current stacks.json, updates the branches for this repo, and writes it back atomically.
+// Save writes the cache data back to the combined stacks.json file under
+// the per-process file lock and a three-way merge against any concurrent
+// peer-process changes to the branch cache. Without the merge, a parallel
+// `ezs sync` (which writes via StackConfig.Save / MutateBranchCache) could
+// add a new branch entry between our load and save, and our wholesale-
+// replace of `rd.Branches` would silently delete it.
+//
+// Prefer MutateBranchCache for narrow updates — it scopes the RMW window to
+// a single branch under the same lock and avoids carrying stale state. This
+// path remains for callers that need to rewrite multiple entries together.
 func (cc *CacheConfig) Save(repoDir string) error {
 	configDir, err := ConfigDir()
 	if err != nil {
@@ -1238,14 +1666,25 @@ func (cc *CacheConfig) Save(repoDir string) error {
 	}
 
 	file.Version = currentStackConfigVersion
-	rd.Branches = cc.Branches
+	// Three-way merge against the disk's branches: orig is what we read at
+	// load time, mine is the in-memory map we want to write, theirs is the
+	// branches map currently on disk under this lock. Same semantics as
+	// StackConfig.Save's mergeRepoData call.
+	rd.Branches = mergeBranches(cc.origBranches, cc.Branches, rd.Branches)
 
 	newData, err := json.MarshalIndent(file, "", "  ")
 	if err != nil {
 		return err
 	}
 
-	return atomicWriteFile(stackPath, newData, 0644)
+	if err := atomicWriteFile(stackPath, newData, 0644); err != nil {
+		return err
+	}
+
+	// Refresh snapshot so a subsequent Save in the same process treats this
+	// as the new common ancestor.
+	cc.origBranches = snapshotBranches(rd.Branches)
+	return nil
 }
 
 // GetBranches returns a flat list of branches from the tree structure
@@ -1347,13 +1786,21 @@ func (s *Stack) RemoveBranch(branchName string) {
 	s.removeBranchFromTree(s.Tree, branchName)
 }
 
-// removeBranchFromTree recursively finds and removes the branch
+// removeBranchFromTree recursively finds and removes the branch.
+// When the removed branch has children, they are reparented one level up.
+// If a child has the same name as a sibling already at the parent level
+// (rare but possible after a rename or import), we merge that child's
+// subtree into the existing sibling rather than overwriting it — losing
+// the existing subtree would silently drop branches from config.
 func (s *Stack) removeBranchFromTree(tree BranchTree, branchName string) bool {
 	for name, children := range tree {
 		if name == branchName {
-			// Move children up to this branch's parent (which is the current tree)
 			for childName, childTree := range children {
-				tree[childName] = childTree
+				if existing, collides := tree[childName]; collides {
+					mergeBranchTrees(existing, childTree)
+				} else {
+					tree[childName] = childTree
+				}
 			}
 			delete(tree, branchName)
 			return true
@@ -1363,6 +1810,19 @@ func (s *Stack) removeBranchFromTree(tree BranchTree, branchName string) bool {
 		}
 	}
 	return false
+}
+
+// mergeBranchTrees recursively merges src into dst, preserving any
+// non-overlapping subtrees on both sides. When the same name appears in
+// both, descend and merge.
+func mergeBranchTrees(dst, src BranchTree) {
+	for name, srcChildren := range src {
+		if dstChildren, ok := dst[name]; ok {
+			mergeBranchTrees(dstChildren, srcChildren)
+		} else {
+			dst[name] = srcChildren
+		}
+	}
 }
 
 // ReparentBranch moves a branch to be under a new parent

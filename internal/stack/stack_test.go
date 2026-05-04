@@ -1617,3 +1617,161 @@ func TestManager_CreateBranch_TargetSpecificStack(t *testing.T) {
 		t.Errorf("feature-c should be in stack %s, got %v", sbHash, sc)
 	}
 }
+
+// TestApplyBranchRenames_CollisionPreservesPRMetadata pins the data-loss
+// fix: when renaming `old` → `new` and `new` already has a cache entry
+// (e.g. a stub created by a concurrent worktree-listing pass), the rename
+// must preserve `old`'s PR URL / merged flag rather than silently dropping
+// them. Pre-fix, the entire move was skipped on collision and `old`'s
+// cache entry was deleted — so `pr_url`, `pr_state`, and `is_merged`
+// vanished after a rename whenever the new name pre-existed.
+//
+// This test uses ListLocalBranches-friendly setup: we create both `old-name`
+// and `new-name` as real git branches so Reconcile() doesn't prune them.
+// Then we seed cache entries for both, run ApplyBranchRenames, and verify
+// `new-name` ends up with `old-name`'s rich data (not clobbered).
+func TestApplyBranchRenames_CollisionPreservesPRMetadata(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	if _, err := mgr.CreateBranch("old-name", "main", "", ""); err != nil {
+		t.Fatalf("create old-name: %v", err)
+	}
+	if _, err := mgr.CreateBranch("new-name", "main", "", ""); err != nil {
+		t.Fatalf("create new-name: %v", err)
+	}
+
+	mgr, _ = NewManager(repoDir)
+	cache := mgr.stackConfig.Cache
+
+	// Seed the OLD entry with rich PR metadata.
+	cache.SetBranchCache("old-name", &config.BranchCache{
+		WorktreePath: "/wt/old",
+		PRUrl:        "https://github.com/owner/repo/pull/42",
+		PRNumber:     42,
+		PRState:      "OPEN",
+		IsMerged:     false,
+		Remote:       "fork-user",
+	})
+	// Seed the NEW entry as a stub (only WorktreePath set) — simulating
+	// a concurrent process that auto-created it without PR data.
+	cache.SetBranchCache("new-name", &config.BranchCache{
+		WorktreePath: "/wt/new-stub",
+	})
+
+	if err := mgr.ApplyBranchRenames([]RenamedBranchInfo{
+		{OldName: "old-name", NewName: "new-name", WorktreePath: "/wt/new"},
+	}); err != nil {
+		t.Fatalf("ApplyBranchRenames: %v", err)
+	}
+
+	// Inspect the in-memory cache directly — this avoids Reconcile's orphan
+	// pruning, which would otherwise strip new-name because we never
+	// actually `git branch -m`'d it. The point of this test is to pin the
+	// rename merge logic, not the Reconcile dance.
+	got := cache.GetBranchCache("new-name")
+	if got == nil {
+		t.Fatal("new-name cache entry missing after rename")
+	}
+	if got.PRUrl != "https://github.com/owner/repo/pull/42" {
+		t.Errorf("PRUrl = %q, want preserved from old (regression: rename clobbered PR URL)", got.PRUrl)
+	}
+	if got.PRNumber != 42 {
+		t.Errorf("PRNumber = %d, want 42", got.PRNumber)
+	}
+	if got.PRState != "OPEN" {
+		t.Errorf("PRState = %q, want OPEN", got.PRState)
+	}
+	if got.Remote != "fork-user" {
+		t.Errorf("Remote = %q, want fork-user (regression: rename lost fork remote)", got.Remote)
+	}
+	if cache.GetBranchCache("old-name") != nil {
+		t.Error("old-name cache entry should be deleted after rename")
+	}
+}
+
+// TestApplyBranchRenames_CollisionMergesNonOverlappingFields covers the
+// "both sides carry information" case: old has a PR, new has a worktree.
+// The merge must produce an entry that has BOTH — not whichever side
+// happened to win an overwrite.
+func TestApplyBranchRenames_CollisionMergesNonOverlappingFields(t *testing.T) {
+	repoDir, _, cleanup := setupTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	if _, err := mgr.CreateBranch("old-name", "main", "", ""); err != nil {
+		t.Fatalf("create old-name: %v", err)
+	}
+
+	mgr, _ = NewManager(repoDir)
+	cache := mgr.stackConfig.Cache
+
+	cache.SetBranchCache("old-name", &config.BranchCache{
+		// old has the PR data but no worktree path (e.g. branch was tracked remotely)
+		PRUrl:    "https://github.com/owner/repo/pull/7",
+		PRNumber: 7,
+		PRState:  "MERGED",
+		IsMerged: true,
+		IsRemote: true,
+	})
+	cache.SetBranchCache("new-name", &config.BranchCache{
+		// new has the worktree but no PR data
+		WorktreePath: "/wt/new-actual",
+	})
+
+	if err := mgr.ApplyBranchRenames([]RenamedBranchInfo{
+		{OldName: "old-name", NewName: "new-name"},
+	}); err != nil {
+		t.Fatalf("ApplyBranchRenames: %v", err)
+	}
+
+	got := cache.GetBranchCache("new-name")
+	if got == nil {
+		t.Fatal("new-name cache entry missing")
+	}
+	if got.PRUrl != "https://github.com/owner/repo/pull/7" {
+		t.Errorf("PRUrl = %q, want merged from old", got.PRUrl)
+	}
+	if !got.IsMerged {
+		t.Error("IsMerged = false, want true (preserved from old)")
+	}
+	if got.WorktreePath != "/wt/new-actual" {
+		t.Errorf("WorktreePath = %q, want preserved from new (regression: merge lost new entry's data)", got.WorktreePath)
+	}
+}
+
+// TestMergeBranchCaches_PrefersOldThenFillsFromNew is a unit-level pin on
+// the merge helper itself, independent of the Manager save dance. It
+// captures the priority rules: non-empty old wins; empty old gets filled
+// from new; boolean-or for IsMerged / IsRemote.
+func TestMergeBranchCaches_PrefersOldThenFillsFromNew(t *testing.T) {
+	old := &config.BranchCache{
+		PRUrl:    "old-pr",
+		PRNumber: 1,
+		PRState:  "OPEN",
+		Remote:   "fork-a",
+	}
+	newE := &config.BranchCache{
+		WorktreePath: "/wt",
+		PRUrl:        "new-pr", // should NOT win
+		IsMerged:     true,
+		IsRemote:     true,
+	}
+	got := mergeBranchCaches(old, newE)
+	if got.PRUrl != "old-pr" {
+		t.Errorf("PRUrl = %q, want old-pr (old wins on conflict)", got.PRUrl)
+	}
+	if got.WorktreePath != "/wt" {
+		t.Errorf("WorktreePath = %q, want /wt (filled from new)", got.WorktreePath)
+	}
+	if !got.IsMerged {
+		t.Error("IsMerged = false, want true (boolean OR from new)")
+	}
+	if !got.IsRemote {
+		t.Error("IsRemote = false, want true (boolean OR from new)")
+	}
+	if got.Remote != "fork-a" {
+		t.Errorf("Remote = %q, want fork-a (old wins)", got.Remote)
+	}
+}

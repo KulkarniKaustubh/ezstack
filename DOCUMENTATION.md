@@ -548,7 +548,7 @@ When the configured agent CLI is `claude`, `ezs agent` automatically:
    falling back to `@latest` for untagged dev builds.
 2. **Registers `ezs-mcp` with Claude Code at user scope** (equivalent to
    running `claude mcp add ezstack --scope user -- ezs-mcp` yourself), so
-   the full 21-tool ezstack surface is available to the agent from the
+   the full 25-tool ezstack surface is available to the agent from the
    first message.
 3. **Swaps the shipped prompt for a short MCP stub** that tells the agent
    to prefer MCP tools over shelling out to `ezs`. The large

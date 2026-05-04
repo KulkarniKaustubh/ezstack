@@ -4,6 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -163,6 +166,91 @@ func TestCaptureCommand_PropagatesError(t *testing.T) {
 	}
 }
 
+// TestCaptureCommand_RestoresGlobalsOnPanic is the regression test for the
+// MCP-bricked-by-panic bug: prior to wrapping restoration in defer, a
+// panic inside fn() left os.Stdout/os.Stderr pinned to the (now-closed)
+// captureCommand pipes. Subsequent tool calls then wrote into EBADF and
+// the MCP server couldn't recover. We assert (a) the panic propagates,
+// (b) stdout/stderr are restored, (c) a follow-up captureCommand still
+// works end-to-end (the harshest signal that pipe lifecycle is clean).
+func TestCaptureCommand_RestoresGlobalsOnPanic(t *testing.T) {
+	origOut, origErr := os.Stdout, os.Stderr
+
+	func() {
+		defer func() {
+			r := recover()
+			if r == nil {
+				t.Fatal("expected panic to propagate, got none")
+			}
+			if got, ok := r.(string); !ok || got != "boom from fn" {
+				t.Errorf("recovered %v, want %q", r, "boom from fn")
+			}
+		}()
+		_, _, _ = captureCommand(func([]string) error {
+			fmt.Fprint(os.Stdout, "partial output before panic")
+			panic("boom from fn")
+		}, nil)
+	}()
+
+	// Stdout/stderr must be back to the test process's originals so any
+	// further test logging (or subsequent captureCommand calls) goes to
+	// the right place.
+	if os.Stdout != origOut {
+		t.Error("os.Stdout was not restored after fn panicked")
+	}
+	if os.Stderr != origErr {
+		t.Error("os.Stderr was not restored after fn panicked")
+	}
+
+	// Round-trip a normal call. If the previous panic leaked a goroutine
+	// or left a half-closed pipe behind, this either deadlocks or returns
+	// stale output. Either way: red.
+	stdout, stderr, err := captureCommand(func([]string) error {
+		fmt.Fprint(os.Stdout, "normal-out")
+		fmt.Fprint(os.Stderr, "normal-err")
+		return nil
+	}, nil)
+	if err != nil {
+		t.Fatalf("captureCommand after recovered panic: %v", err)
+	}
+	if stdout != "normal-out" {
+		t.Errorf("stdout = %q, want %q (panicked call may have leaked into the next pipe)", stdout, "normal-out")
+	}
+	if stderr != "normal-err" {
+		t.Errorf("stderr = %q, want %q", stderr, "normal-err")
+	}
+}
+
+// TestCaptureCommand_RestoresGlobalsOnRuntimePanic is the same contract as
+// the explicit panic test above but for an *implicit* runtime panic
+// (nil-pointer deref). This catches the case where someone "fixes" the
+// panic-restoration by wrapping fn() in a recover() — that would prevent
+// runtime panics from propagating, which would mask real bugs.
+func TestCaptureCommand_RestoresGlobalsOnRuntimePanic(t *testing.T) {
+	origOut, origErr := os.Stdout, os.Stderr
+
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected runtime panic to propagate")
+			}
+		}()
+		_, _, _ = captureCommand(func([]string) error {
+			var p *int
+			_ = *p // boom
+			return nil
+		}, nil)
+	}()
+
+	if os.Stdout != origOut || os.Stderr != origErr {
+		t.Error("os.Stdout/Stderr not restored after runtime panic")
+	}
+
+	if _, _, err := captureCommand(func([]string) error { return nil }, nil); err != nil {
+		t.Fatalf("follow-up captureCommand failed: %v", err)
+	}
+}
+
 // TestCaptureCommand_LargeOutput is the regression test for the pipe-buffer
 // deadlock fix: without concurrent drainers, a command writing more than the
 // ~64KB pipe buffer would block forever on the write side. 256KB is well
@@ -259,3 +347,48 @@ func TestToolMu_SerializesHandlers(t *testing.T) {
 		t.Errorf("toolMu did not serialize: peak concurrency = %d, want 1", peak)
 	}
 }
+
+// TestEzsMcpVersionOutputFormat pins the exact format of `ezs-mcp --version`
+// stdout. The VS Code extension's activation gate parses it with a regex
+// anchored on the literal "version " keyword
+// (vscode-extension/src/ezsCli.ts::parseVersionSemver). Drift in this format
+// — say, swapping order to "version ezstack-mcp 4.7.6" or printing only
+// "4.7.6\n" without the keyword — silently breaks the extension's min-CLI
+// check, which then never warns even on incompatible CLIs.
+//
+// We build the binary once via `go build` and exec it. This is closer to a
+// real user invocation than calling main() directly: it catches changes to
+// the flag parser, the cmd/ezs-mcp init order, or any wrapper that might be
+// added around the print site in the future.
+func TestEzsMcpVersionOutputFormat(t *testing.T) {
+	// Build into a temp dir; t.TempDir is cleaned up by the test framework.
+	bin := filepath.Join(t.TempDir(), "ezs-mcp")
+	build := exec.Command("go", "build", "-o", bin, ".")
+	build.Dir = "."
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build: %v: %s", err, out)
+	}
+
+	out, err := exec.Command(bin, "--version").CombinedOutput()
+	if err != nil {
+		t.Fatalf("ezs-mcp --version: %v: %s", err, out)
+	}
+	got := strings.TrimSpace(string(out))
+
+	// The exact format the extension matches against. We assert two parts:
+	//   1. Starts with "ezstack-mcp version " — anchors the regex.
+	//   2. Followed by a semver triple (the version package's actual value).
+	// We don't assert the literal version because that drifts every release.
+	const wantPrefix = "ezstack-mcp version "
+	if !strings.HasPrefix(got, wantPrefix) {
+		t.Fatalf("ezs-mcp --version output = %q, expected to start with %q. The VS Code extension's parseVersionSemver regex is anchored on the literal 'version ' keyword and will silently fail to match if the prefix changes.", got, wantPrefix)
+	}
+	tail := strings.TrimPrefix(got, wantPrefix)
+	if !semverTripleRe.MatchString(tail) {
+		t.Errorf("ezs-mcp --version trailing = %q, expected a semver triple (X.Y.Z[-suffix][+meta]). Drift here would break the extension's min-CLI gate.", tail)
+	}
+}
+
+// semverTripleRe is the same anchored shape parseVersionSemver uses
+// (lenient on prerelease/build-metadata suffixes).
+var semverTripleRe = regexp.MustCompile(`^v?\d+\.\d+\.\d+([-+].*)?$`)

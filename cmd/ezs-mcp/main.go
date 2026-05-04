@@ -36,7 +36,12 @@ func main() {
 		os.Exit(2)
 	}
 	if *showVersion {
-		fmt.Println(version.Version)
+		// Match the ezs CLI's "ezstack version X.Y.Z" output format so the
+		// VS Code extension's regex (anchored on the literal "version "
+		// keyword) recognizes both binaries identically. Pre-fix this
+		// printed only the bare semver, which silently failed the
+		// extension's min-CLI gate when it was pointed at ezs-mcp.
+		fmt.Printf("ezstack-mcp version %s\n", version.Version)
 		return
 	}
 	// --upgrade-tag / --upgrade-force are meaningless without --upgrade or
@@ -152,19 +157,24 @@ func captureCommand(fn func([]string) error, args []string) (stdout, stderr stri
 	go func() { defer wg.Done(); io.Copy(&outBuf, rOut) }()
 	go func() { defer wg.Done(); io.Copy(&errBuf, rErr) }()
 
+	// Restore stdout/stderr and unblock the drain goroutines even if fn panics —
+	// otherwise os.Stdout/Stderr stay pinned to closed pipes and subsequent
+	// tool calls write into EBADF, silently bricking the MCP server.
 	os.Stdout = wOut
 	os.Stderr = wErr
+	defer func() {
+		os.Stdout = origStdout
+		os.Stderr = origStderr
+		wOut.Close()
+		wErr.Close()
+		wg.Wait()
+		rOut.Close()
+		rErr.Close()
+		stdout = strings.TrimSpace(outBuf.String())
+		stderr = strings.TrimSpace(errBuf.String())
+	}()
 	cmdErr = fn(args)
-	wOut.Close()
-	wErr.Close()
-	os.Stdout = origStdout
-	os.Stderr = origStderr
-
-	wg.Wait()
-	rOut.Close()
-	rErr.Close()
-
-	return strings.TrimSpace(outBuf.String()), strings.TrimSpace(errBuf.String()), cmdErr
+	return
 }
 
 // runCommand is a convenience wrapper: prefers JSON stdout, falls back to ANSI-stripped stderr.
@@ -478,7 +488,7 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_pr_merge",
-			mcp.WithDescription("Merge the pull request for a branch. Use branch to target a specific branch when not on a stack branch."),
+			mcp.WithDescription("Merge the pull request for a branch. Use branch to target a specific branch when not on a stack branch. Side effect: after a successful merge the CLI auto-syncs the local stack (equivalent to `ezs sync -s`) so any rebased descendant branches land cleanly — this runs non-interactively under MCP YesMode."),
 			mcp.WithString("branch", mcp.Description("Branch whose PR to merge (defaults to current branch)")),
 			mcp.WithString("method", mcp.Description("Merge method: merge, squash, rebase (default: squash)")),
 			mcp.WithDestructiveHintAnnotation(true),

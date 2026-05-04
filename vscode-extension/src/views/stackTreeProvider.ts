@@ -260,16 +260,16 @@ export class StackTreeProvider
       fetched = await this.cli.statusStacks(true);
     } catch {
       try {
-        // Fallback: basic listStacks lacks status fields — normalize so
-        // downstream consumers don't see `undefined` where they expect
-        // booleans / paths.
+        // Fallback: basic listStacks lacks PR/CI status fields, but
+        // is_merged and worktree_path are already on BranchJSON — preserve
+        // them so merged branches don't render as not-merged just because
+        // gh is unavailable.
         const basic = await this.cli.listStacks(true);
         fetched = basic.map((s) => ({
           ...s,
           branches: s.branches.map((b) => ({
             ...b,
-            is_merged: false,
-            worktree_path: (b as unknown as { worktree_path?: string }).worktree_path ?? "",
+            worktree_path: b.worktree_path ?? "",
           })),
         })) as unknown as StatusStackJSON[];
       } catch {

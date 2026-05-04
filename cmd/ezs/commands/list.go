@@ -154,7 +154,10 @@ type statusStackJSON struct {
 	Branches     []statusBranchJSON `json:"branches"`
 }
 
-// statusBranchJSON extends branchJSON with PR and CI status fields
+// statusBranchJSON extends branchJSON with PR and CI status fields.
+// Additions/Deletions live on the embedded branchJSON — do not redeclare
+// them here, or Go's JSON encoder will silently shadow the inner copy and
+// any caller that sets only the inner field will see zeros in the output.
 type statusBranchJSON struct {
 	branchJSON
 	PRState     string `json:"pr_state,omitempty"`
@@ -162,8 +165,6 @@ type statusBranchJSON struct {
 	CISummary   string `json:"ci_summary,omitempty"`
 	Mergeable   string `json:"mergeable,omitempty"`
 	ReviewState string `json:"review_state,omitempty"`
-	Additions   int    `json:"additions"`
-	Deletions   int    `json:"deletions"`
 }
 
 // printStacksJSON outputs stacks as JSON to stdout
@@ -256,8 +257,8 @@ func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusM
 					sbj.CISummary = bs.CISummary
 					sbj.Mergeable = bs.Mergeable
 					sbj.ReviewState = bs.ReviewState
-					sbj.Additions = bs.Additions
-					sbj.Deletions = bs.Deletions
+					sbj.branchJSON.Additions = bs.Additions
+					sbj.branchJSON.Deletions = bs.Deletions
 				}
 			}
 			sj.Branches = append(sj.Branches, sbj)
@@ -393,6 +394,10 @@ func Status(args []string) error {
 
 	stacks := mgr.ListStacks()
 	if len(stacks) == 0 {
+		if *jsonFlag {
+			fmt.Fprintln(os.Stdout, "[]")
+			return nil
+		}
 		ui.Info("No stacks found. Create one with: ezs new <branch-name>")
 		return nil
 	}

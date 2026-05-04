@@ -4,11 +4,8 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import {
-  DiffOutputJSON,
-  LogOutputJSON,
   StackJSON,
   StatusStackJSON,
-  SyncInfoJSON,
   WorktreeGitStatus,
 } from "./types";
 
@@ -263,6 +260,42 @@ export class EzsCli {
     return out.trim();
   }
 
+  /**
+   * Return the parsed semver of the resolved `ezs` binary, or null if the
+   * version line couldn't be parsed. Used by the activation gate to detect
+   * when the extension is paired with a too-old CLI that lacks features the
+   * extension calls (e.g. `--cascade`, `--draft-all`, `pr stack`,
+   * `config export/import`, `stack rename`, `agent --preset`).
+   *
+   * Matches `ezstack version X.Y.Z` (the literal `cmd/ezs/main.go` format)
+   * with optional pre-release/build suffix (e.g. `4.7.0-rc.1+abc`). The
+   * leading "version " anchor is intentional: it stops a trailing build
+   * hash like `1.2.3-2025.05.03+abc` from contributing a spurious second
+   * triple match further down the string.
+   */
+  async getVersionSemver(): Promise<{ major: number; minor: number; patch: number } | null> {
+    try {
+      const out = await this.getVersion();
+      const m = out.match(/version\s+v?(\d+)\.(\d+)\.(\d+)\b/i);
+      if (!m) return null;
+      return { major: parseInt(m[1], 10), minor: parseInt(m[2], 10), patch: parseInt(m[3], 10) };
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Exposed only for tests — `getVersion` shells out to the CLI and is
+   * inconvenient to stub. parseVersionSemver runs the same regex against
+   * an arbitrary string so tests can pin both happy-path output and
+   * adversarial inputs (build metadata, garbage, blank lines).
+   */
+  static parseVersionSemver(out: string): { major: number; minor: number; patch: number } | null {
+    const m = out.match(/version\s+v?(\d+)\.(\d+)\.(\d+)\b/i);
+    if (!m) return null;
+    return { major: parseInt(m[1], 10), minor: parseInt(m[2], 10), patch: parseInt(m[3], 10) };
+  }
+
   async getLocalBranches(): Promise<string[]> {
     const out = await this.execGit(["branch", "--format=%(refname:short)"]);
     return out.trim().split("\n").filter(Boolean);
@@ -284,15 +317,6 @@ export class EzsCli {
     }
     const out = await this.exec(args);
     return EzsCli.parseJSON(out, "status --json");
-  }
-
-  async syncDryRun(all = false): Promise<SyncInfoJSON[]> {
-    const args = ["sync", "--dry-run", "--json"];
-    if (all) {
-      args.push("--all");
-    }
-    const out = await this.exec(args);
-    return EzsCli.parseJSON(out, "sync --dry-run --json");
   }
 
   // ── Mutations (headless with -y) ──
@@ -429,21 +453,6 @@ export class EzsCli {
 
   async syncBranch(branch: string): Promise<void> {
     await this.execYes(["sync", "--branch", branch]);
-  }
-
-  async diffJSON(branch: string): Promise<DiffOutputJSON> {
-    const out = await this.exec(["diff", "--branch", branch, "--json"]);
-    return EzsCli.parseJSON(out, "diff --json");
-  }
-
-  async logJSON(branch: string): Promise<LogOutputJSON> {
-    const out = await this.exec(["log", "--branch", branch, "--json"]);
-    return EzsCli.parseJSON(out, "log --json");
-  }
-
-  async statusBranch(branch: string): Promise<StatusStackJSON[]> {
-    const out = await this.exec(["status", "--branch", branch, "--json"]);
-    return EzsCli.parseJSON(out, "status --branch --json");
   }
 
   // ── Interactive (terminal) ──

@@ -3,6 +3,7 @@ package ui
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -238,10 +239,25 @@ func (t *TerminalBackend) SelectBranch(branches []*config.Branch, prompt string)
 	return SelectBranchWithStacks(branches, nil, prompt)
 }
 
-// SelectBranchWithStacks uses fzf to select a branch with optional stack preview
+// SelectBranchWithStacks uses fzf to select a branch with optional stack preview.
+//
+// Under YesMode (MCP / -y) we cannot run fzf — there's no controlling
+// terminal — so multi-match calls fail loudly with a structured error
+// instead of hanging. The exact-match path (single branch) returns it
+// without prompting so callers that already narrowed don't pay the cost.
 func SelectBranchWithStacks(branches []*config.Branch, stacks []*config.Stack, prompt string) (*config.Branch, error) {
 	if len(branches) == 0 {
 		return nil, fmt.Errorf("no branches to select from")
+	}
+	if YesMode {
+		if len(branches) == 1 {
+			return branches[0], nil
+		}
+		names := make([]string, 0, len(branches))
+		for _, b := range branches {
+			names = append(names, b.Name)
+		}
+		return nil, fmt.Errorf("multiple branches match (%s) — disambiguate with an exact branch name; interactive selection is unavailable in -y / MCP mode", strings.Join(names, ", "))
 	}
 
 	// Build fzf input with preview data embedded
@@ -315,10 +331,22 @@ type WorktreeInfo struct {
 	Branch string
 }
 
-// SelectWorktree uses fzf to select a worktree from a list
+// SelectWorktree uses fzf to select a worktree from a list.
+// Under YesMode it returns the lone worktree if there is only one and errors
+// loudly otherwise, mirroring SelectWorktreeWithStackPreview.
 func SelectWorktree(worktrees []WorktreeInfo, prompt string) (*WorktreeInfo, error) {
 	if len(worktrees) == 0 {
 		return nil, fmt.Errorf("no worktrees to select from")
+	}
+	if YesMode {
+		if len(worktrees) == 1 {
+			return &worktrees[0], nil
+		}
+		names := make([]string, 0, len(worktrees))
+		for _, w := range worktrees {
+			names = append(names, w.Branch)
+		}
+		return nil, fmt.Errorf("multiple worktrees match (%s) — disambiguate with an exact branch name; interactive selection is unavailable in -y / MCP mode", strings.Join(names, ", "))
 	}
 
 	var input strings.Builder
@@ -347,11 +375,23 @@ func SelectWorktree(worktrees []WorktreeInfo, prompt string) (*WorktreeInfo, err
 	return nil, fmt.Errorf("worktree not found: %s", branchName)
 }
 
-// SelectWorktreeWithStackPreview uses fzf to select a worktree with stack preview
-// For worktrees not in any stack, the preview shows "Not part of a stack"
+// SelectWorktreeWithStackPreview uses fzf to select a worktree with stack preview.
+// For worktrees not in any stack, the preview shows "Not part of a stack".
+//
+// Under YesMode (MCP / -y) we cannot run fzf — there's no controlling terminal
+// — so multi-match calls fail loudly with a structured error instead of
+// hanging on an interactive prompt. The exact-match path (single worktree)
+// still works because callers handle len==1 before reaching here.
 func SelectWorktreeWithStackPreview(worktrees []WorktreeInfo, stacks []*config.Stack, prompt string) (*WorktreeInfo, error) {
 	if len(worktrees) == 0 {
 		return nil, fmt.Errorf("no worktrees to select from")
+	}
+	if YesMode && len(worktrees) > 1 {
+		names := make([]string, 0, len(worktrees))
+		for _, w := range worktrees {
+			names = append(names, w.Branch)
+		}
+		return nil, fmt.Errorf("multiple worktrees match (%s) — disambiguate with an exact branch name; interactive selection is unavailable in -y / MCP mode", strings.Join(names, ", "))
 	}
 
 	// Build a map of branch -> stack for quick lookup
@@ -402,7 +442,16 @@ func SelectWorktreeWithStackPreview(worktrees []WorktreeInfo, stacks []*config.S
 	return nil, fmt.Errorf("worktree not found: %s", branchName)
 }
 
-// SelectStack uses fzf to select a stack
+// SelectStack uses fzf to select a stack.
+//
+// The YesMode guard lives on the TerminalBackend method (below), NOT on
+// this package-level wrapper. Backend-aware: MCPBackend.SelectStack uses
+// JSON-Schema elicitation (no TTY required), which works correctly under
+// YesMode — a package-level guard would force auto-pick / error and
+// short-circuit the MCP client's natural disambiguation flow.
+// TerminalBackend.SelectStack, in contrast, calls runFzf which DOES hang
+// on a missing TTY, so it has its own guard. Same pattern applies to
+// SelectBranch and SelectOptionWithBack (also dispatched through Backend).
 func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 	return activeBackend.SelectStack(stacks, prompt)
 }
@@ -410,6 +459,16 @@ func SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 func (t *TerminalBackend) SelectStack(stacks []*config.Stack, prompt string) (*config.Stack, error) {
 	if len(stacks) == 0 {
 		return nil, fmt.Errorf("no stacks to select from")
+	}
+	if YesMode {
+		if len(stacks) == 1 {
+			return stacks[0], nil
+		}
+		names := make([]string, 0, len(stacks))
+		for _, s := range stacks {
+			names = append(names, s.DisplayName())
+		}
+		return nil, fmt.Errorf("multiple stacks match (%s) — disambiguate with --stack <hash>; interactive selection is unavailable in -y / MCP mode", strings.Join(names, ", "))
 	}
 
 	var input strings.Builder
@@ -1088,8 +1147,22 @@ func (t *TerminalBackend) ConfirmWithDefault(prompt string, defaultYes bool) boo
 // options is the list of options to display
 // prompt is the question to ask
 // defaultIdx is the 0-based index of the default selected option
-// Returns the 0-based index of the selected option, or -1 if cancelled
+// Returns the 0-based index of the selected option, or -1 if cancelled.
+//
+// Honors YesMode: under MCP / -y the menu auto-resolves to defaultIdx
+// instead of trying to drive a TTY that isn't there. Without this guard,
+// MCP tool calls that route through SelectTUI hang indefinitely waiting
+// for keystrokes from a controlling terminal.
 func SelectTUI(options []string, prompt string, defaultIdx int) int {
+	if YesMode {
+		if len(options) == 0 {
+			return -1
+		}
+		if defaultIdx < 0 || defaultIdx >= len(options) {
+			defaultIdx = 0
+		}
+		return defaultIdx
+	}
 	return activeBackend.Select(options, prompt, defaultIdx)
 }
 
@@ -1218,7 +1291,17 @@ func Info(msg string) {
 
 // Prompt asks for text input with a prompt and optional default value
 // Returns the user input or the default if empty input is given
+// Prompt asks the user a question and returns their answer, or `defaultVal`
+// if they pressed Enter. Honors YesMode: under MCP / -y the function returns
+// the default immediately rather than blocking on readline against a stdin
+// that no terminal will ever feed. Without this guard, MCP tool calls that
+// route through Prompt — most notably `ezstack_pr_create` without a `title`
+// arg — hang forever.
 func Prompt(prompt, defaultVal string) string {
+	if YesMode {
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ %q%s\n", Bold, Yellow, Reset, prompt, Green, defaultVal, Reset)
+		return defaultVal
+	}
 	return activeBackend.Prompt(prompt, defaultVal)
 }
 
@@ -1272,8 +1355,14 @@ func (t *TerminalBackend) Prompt(prompt, defaultVal string) string {
 }
 
 // PromptPath asks for a file path with tab completion support
-// Returns the user input or the default if empty input is given
+// Returns the user input or the default if empty input is given. Like
+// Prompt, returns the default immediately under YesMode so MCP / -y callers
+// don't hang on a missing TTY.
 func PromptPath(promptText, defaultVal string) string {
+	if YesMode {
+		fmt.Fprintf(os.Stderr, "%s%s?%s %s %s→ %q%s\n", Bold, Yellow, Reset, promptText, Green, defaultVal, Reset)
+		return defaultVal
+	}
 	// Print the question on its own line first
 	fmt.Fprintf(os.Stderr, "%s%s?%s %s\n", Bold, Yellow, Reset, promptText)
 
@@ -1361,8 +1450,22 @@ func pathCompleterFunc(prefix string) *readline.PrefixCompleter {
 	return readline.PcItem(prefix)
 }
 
-// PromptRequired asks for text input and keeps asking until a non-empty value is provided
+// ErrPromptRequiredInYesMode is returned (panic-free) by callers that opt
+// into the error-returning variant of PromptRequired. Direct PromptRequired
+// callers under YesMode get an os.Exit since they have no way to recover.
+var ErrPromptRequiredInYesMode = errors.New("required prompt cannot be answered in non-interactive mode")
+
+// PromptRequired asks for text input and keeps asking until a non-empty
+// value is provided. Under YesMode there is no human to keep asking, so the
+// loop would spin forever on closed stdin. Print a clear diagnostic and exit
+// rather than hang the MCP server / scripted run indefinitely.
 func PromptRequired(prompt string) string {
+	if YesMode {
+		fmt.Fprintf(os.Stderr,
+			"ezs: error: required prompt %q cannot be answered in non-interactive mode (YesMode/-y/MCP). "+
+				"Re-run interactively or pass the value explicitly via the relevant flag.\n", prompt)
+		os.Exit(2)
+	}
 	return activeBackend.PromptRequired(prompt)
 }
 
@@ -1424,13 +1527,27 @@ func (t *TerminalBackend) SelectOption(options []string, prompt string) (int, er
 	return SelectOptionWithSuggested(options, prompt, -1)
 }
 
-// SelectOptionWithSuggested uses fzf to select from a list of options
-// suggestedIdx is the 0-based index of the suggested option (-1 for none)
-// The suggested option will be marked with "(suggested)" and appear first
-// Returns the 0-based index of the selected option
+// SelectOptionWithSuggested uses fzf to select from a list of options.
+// suggestedIdx is the 0-based index of the suggested option (-1 for none).
+// The suggested option will be marked with "(suggested)" and appear first.
+// Returns the 0-based index of the selected option.
+//
+// Under YesMode it auto-resolves: if a suggested option is provided, that's
+// the answer; if a single option is the only choice, return it; otherwise
+// fail loudly so MCP / -y callers surface a structured error rather than
+// hanging on fzf with no TTY.
 func SelectOptionWithSuggested(options []string, prompt string, suggestedIdx int) (int, error) {
 	if len(options) == 0 {
 		return -1, fmt.Errorf("no options to select from")
+	}
+	if YesMode {
+		if suggestedIdx >= 0 && suggestedIdx < len(options) {
+			return suggestedIdx, nil
+		}
+		if len(options) == 1 {
+			return 0, nil
+		}
+		return -1, fmt.Errorf("multiple options for %q (%s) and no suggested default — provide an explicit choice; interactive selection is unavailable in -y / MCP mode", prompt, strings.Join(options, ", "))
 	}
 
 	var input strings.Builder
@@ -1465,6 +1582,12 @@ func SelectOptionWithSuggested(options []string, prompt string, suggestedIdx int
 // SelectOptionWithBack uses fzf to select from a list of options with a back option.
 // Returns the 0-based index of the selected option, or ErrBack if back was selected.
 // The back option is displayed as an unnumbered "← back" at the end of the list.
+//
+// As with SelectStack and SelectBranch, the YesMode guard lives on the
+// TerminalBackend method (below), not here. MCPBackend.SelectOptionWithBack
+// uses elicitation rather than fzf and does not hang on a missing TTY,
+// so a package-level guard would short-circuit the elicitation path
+// and break MCP tools that depend on user disambiguation.
 func SelectOptionWithBack(options []string, prompt string) (int, error) {
 	return activeBackend.SelectOptionWithBack(options, prompt)
 }
@@ -1472,6 +1595,12 @@ func SelectOptionWithBack(options []string, prompt string) (int, error) {
 func (t *TerminalBackend) SelectOptionWithBack(options []string, prompt string) (int, error) {
 	if len(options) == 0 {
 		return -1, fmt.Errorf("no options to select from")
+	}
+	if YesMode {
+		if len(options) == 1 {
+			return 0, nil
+		}
+		return -1, fmt.Errorf("multiple options for %q (%s) — provide an explicit choice; interactive selection is unavailable in -y / MCP mode", prompt, strings.Join(options, ", "))
 	}
 
 	var input strings.Builder
@@ -1619,7 +1748,26 @@ func WithSpinner(message string, fn func() error) error {
 // and returns the edited content. If the user saves and exits, the content is returned.
 // If the user aborts (empty file or error), an error is returned.
 // The editor is determined by $EDITOR, $VISUAL, or falls back to "vim".
+//
+// Under YesMode there's no controlling terminal for $EDITOR to draw on, so
+// the editor would hang indefinitely. Skip it and return the initial
+// content unchanged — MCP / -y callers that want to edit should pass the
+// content via the relevant flag instead.
 func EditWithEditor(initialContent, fileExtension string) (string, error) {
+	if YesMode {
+		fmt.Fprintf(os.Stderr, "%sezs: skipping interactive editor in non-interactive mode (using initial content)%s\n", Gray, Reset)
+		return strings.TrimSpace(initialContent), nil
+	}
+	// Belt-and-braces: even when YesMode is off, an MCP-style invocation
+	// has no TTY for $EDITOR to draw on. Detect that and short-circuit
+	// rather than launch vim against /dev/null and hang. The TTY check
+	// covers stdin/stdout — most editors require both. We deliberately
+	// require BOTH to be terminals so a user redirecting only stdout
+	// (e.g. `ezs ... > file`) is not misclassified.
+	if !term.IsTerminal(int(os.Stdin.Fd())) || !term.IsTerminal(int(os.Stdout.Fd())) {
+		fmt.Fprintf(os.Stderr, "%sezs: no terminal attached, skipping interactive editor%s\n", Gray, Reset)
+		return strings.TrimSpace(initialContent), nil
+	}
 	// Get the editor from environment
 	editor := os.Getenv("EDITOR")
 	if editor == "" {

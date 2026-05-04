@@ -23,13 +23,21 @@ type fileLock struct {
 const lockBytesLow = 0xFFFFFFFF
 const lockBytesHigh = 0xFFFFFFFF
 
-func acquireFileLock(path string) (*fileLock, error) {
+// tryAcquireFileLockOnce attempts a single non-blocking LockFileEx.
+// Returns errLockHeld if another process owns the lock; any other error
+// indicates a real failure. The shared acquireFileLock in lock.go wraps
+// this in a poll/timeout loop so callers get a consistent wait/timeout
+// experience across platforms.
+func tryAcquireFileLockOnce(path string) (*fileLock, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
 	if err != nil {
 		return nil, err
 	}
-	if err := lockHandle(windows.Handle(f.Fd()), false); err != nil {
+	if err := lockHandle(windows.Handle(f.Fd()), true); err != nil {
 		f.Close()
+		if errors.Is(err, windows.ERROR_LOCK_VIOLATION) {
+			return nil, errLockHeld
+		}
 		return nil, err
 	}
 	return &fileLock{f: f}, nil

@@ -360,9 +360,7 @@ func pushChildBranches(g *git.Git, synced []stack.RebaseResult, force bool) {
 		if remote == config.RemoteNoPush {
 			continue
 		}
-		// RemoteBranchExists only checks origin; for non-origin remotes we
-		// skip the existence check and let git decide.
-		if remote == "origin" && !g.RemoteBranchExists(r.Branch) {
+		if !g.RemoteHasBranch(remote, r.Branch) {
 			continue
 		}
 		if err := g.PushBranch(r.Branch, force, remote); err != nil {

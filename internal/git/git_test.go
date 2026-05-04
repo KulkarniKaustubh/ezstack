@@ -1018,3 +1018,260 @@ func TestPushBranchSetUpstream_PushesNamedBranchAndSetsUpstream(t *testing.T) {
 		t.Errorf("branch.feature.merge = %q, want %q", got, "refs/heads/feature")
 	}
 }
+
+// TestPushForceBranch_PushesNamedBranchNotCurrent mirrors the PushBranch
+// regression coverage for the force-with-lease path. PushForce reads
+// CurrentBranch(); PushForceBranch must not.
+func TestPushForceBranch_PushesNamedBranchNotCurrent(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	if out, err := exec.Command("git", "-C", dir, "branch", "feature").CombinedOutput(); err != nil {
+		t.Fatalf("create feature branch: %v: %s", err, out)
+	}
+	if err := exec.Command("git", "-C", dir, "checkout", "feature").Run(); err != nil {
+		t.Fatalf("checkout feature: %v", err)
+	}
+	featureFile := filepath.Join(dir, "feature.txt")
+	if err := os.WriteFile(featureFile, []byte("feature-only\n"), 0644); err != nil {
+		t.Fatalf("write feature.txt: %v", err)
+	}
+	exec.Command("git", "-C", dir, "add", ".").Run()
+	exec.Command("git", "-C", dir, "commit", "-m", "feature commit").Run()
+	if err := exec.Command("git", "-C", dir, "checkout", "main").Run(); err != nil {
+		t.Fatalf("checkout main: %v", err)
+	}
+
+	bare, err := os.MkdirTemp("", "push-force-branch-remote-*")
+	if err != nil {
+		t.Fatalf("mkdtemp remote: %v", err)
+	}
+	defer os.RemoveAll(bare)
+	if err := exec.Command("git", "init", "--bare", "-b", "main", bare).Run(); err != nil {
+		t.Fatalf("init bare: %v", err)
+	}
+	if err := exec.Command("git", "-C", dir, "remote", "add", "origin", bare).Run(); err != nil {
+		t.Fatalf("add remote: %v", err)
+	}
+
+	g := New(dir)
+	if err := g.PushForceBranch("feature", "origin"); err != nil {
+		t.Fatalf("PushForceBranch(feature): %v", err)
+	}
+
+	if out, err := exec.Command("git", "-C", bare, "rev-parse", "--verify", "refs/heads/feature").CombinedOutput(); err != nil {
+		t.Errorf("feature was not force-pushed: %v: %s", err, out)
+	}
+	if err := exec.Command("git", "-C", bare, "rev-parse", "--verify", "refs/heads/main").Run(); err == nil {
+		t.Error("main was pushed despite PushForceBranch being called with 'feature'; force-push leaked CurrentBranch()")
+	}
+}
+
+// TestHasDivergedFromRemote covers the four states a branch can be in
+// relative to a remote ref: no remote, in-sync, local-ahead, true
+// divergence. Each case is exercised against a non-"origin" remote so the
+// fork-aware path is real, not just a pass-through to HasDivergedFromOrigin.
+func TestHasDivergedFromRemote(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	// No remote yet -> not diverged, no error.
+	diverged, ahead, behind, err := g.HasDivergedFromRemote("main", "fork")
+	if err != nil {
+		t.Fatalf("missing remote returned error: %v", err)
+	}
+	if diverged || ahead != 0 || behind != 0 {
+		t.Errorf("missing remote: got diverged=%v ahead=%d behind=%d, want all zero/false", diverged, ahead, behind)
+	}
+
+	// Set up bare and push main so we have a baseline.
+	bare, err := os.MkdirTemp("", "diverged-remote-*")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	defer os.RemoveAll(bare)
+	if err := exec.Command("git", "init", "--bare", "-b", "main", bare).Run(); err != nil {
+		t.Fatalf("init bare: %v", err)
+	}
+	if err := exec.Command("git", "-C", dir, "remote", "add", "fork", bare).Run(); err != nil {
+		t.Fatalf("add fork remote: %v", err)
+	}
+	if err := exec.Command("git", "-C", dir, "push", "fork", "main").Run(); err != nil {
+		t.Fatalf("push to fork: %v", err)
+	}
+	if err := exec.Command("git", "-C", dir, "fetch", "fork").Run(); err != nil {
+		t.Fatalf("fetch fork: %v", err)
+	}
+
+	// In-sync -> not diverged, ahead/behind zero.
+	diverged, ahead, behind, err = g.HasDivergedFromRemote("main", "fork")
+	if err != nil {
+		t.Fatalf("in-sync error: %v", err)
+	}
+	if diverged || ahead != 0 || behind != 0 {
+		t.Errorf("in-sync: got diverged=%v ahead=%d behind=%d, want all zero/false", diverged, ahead, behind)
+	}
+
+	// Add a local commit that fork doesn't have -> ahead, not diverged.
+	if err := os.WriteFile(filepath.Join(dir, "local-only.txt"), []byte("x\n"), 0644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	exec.Command("git", "-C", dir, "add", ".").Run()
+	exec.Command("git", "-C", dir, "commit", "-m", "local only").Run()
+	diverged, ahead, behind, err = g.HasDivergedFromRemote("main", "fork")
+	if err != nil {
+		t.Fatalf("ahead error: %v", err)
+	}
+	if diverged || ahead == 0 || behind != 0 {
+		t.Errorf("local-ahead: got diverged=%v ahead=%d behind=%d, want diverged=false ahead>0 behind=0", diverged, ahead, behind)
+	}
+
+	// Now actually diverge: rewind local main, push a different commit to
+	// fork, fetch, leave local with the old "local only" commit. This is the
+	// hardest path for the function — it must report both ahead AND behind.
+	headBeforeDiverge, _ := g.run("rev-parse", "HEAD")
+	exec.Command("git", "-C", dir, "reset", "--hard", "HEAD~1").Run()
+	if err := os.WriteFile(filepath.Join(dir, "fork-only.txt"), []byte("y\n"), 0644); err != nil {
+		t.Fatalf("write fork-only: %v", err)
+	}
+	exec.Command("git", "-C", dir, "add", ".").Run()
+	exec.Command("git", "-C", dir, "commit", "-m", "fork only").Run()
+	exec.Command("git", "-C", dir, "push", "-f", "fork", "main").Run()
+	exec.Command("git", "-C", dir, "reset", "--hard", strings.TrimSpace(headBeforeDiverge)).Run()
+	exec.Command("git", "-C", dir, "fetch", "fork").Run()
+
+	diverged, ahead, behind, err = g.HasDivergedFromRemote("main", "fork")
+	if err != nil {
+		t.Fatalf("diverged error: %v", err)
+	}
+	if !diverged || ahead == 0 || behind == 0 {
+		t.Errorf("diverged: got diverged=%v ahead=%d behind=%d, want diverged=true ahead>0 behind>0", diverged, ahead, behind)
+	}
+}
+
+// TestHasDivergedFromOrigin_DelegatesToRemote ensures the deprecated
+// wrapper behaves identically to the explicit-remote form for the origin
+// case, so existing callers see no behavior change after the refactor.
+func TestHasDivergedFromOrigin_DelegatesToRemote(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+
+	d1, a1, b1, err1 := g.HasDivergedFromOrigin("main")
+	d2, a2, b2, err2 := g.HasDivergedFromRemote("main", "origin")
+	if (err1 == nil) != (err2 == nil) {
+		t.Fatalf("error parity: origin err=%v, remote err=%v", err1, err2)
+	}
+	if d1 != d2 || a1 != a2 || b1 != b2 {
+		t.Errorf("delegation mismatch: origin=(%v,%d,%d), remote=(%v,%d,%d)", d1, a1, b1, d2, a2, b2)
+	}
+}
+
+// TestRemoteHasBranch_OriginAndFork pins the contract that pushChildBranches
+// uses to gate "never publish a branch the user hasn't shared". Pre-fix, the
+// existence check was hardcoded to origin and would return false for a
+// fork-tracked branch even when the branch did exist on the user's fork —
+// which would either resurrect the silent-publish bug (if the gate's polarity
+// flips) or block legitimate fork pushes.
+//
+// Three cases:
+//  1. Branch exists on origin → RemoteHasBranch("origin", b) == true,
+//     RemoteHasBranch("fork-user", b) == false.
+//  2. Branch exists on a fork remote ("fork-user") but not origin → reverse.
+//  3. Empty remote string → defaults to origin (consistency with the rest of
+//     the API). This is the migration-friendly default; a future caller that
+//     accidentally passes "" still gets the historical origin-only behavior.
+func TestRemoteHasBranch_OriginAndFork(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	// Two bare remotes: origin and fork-user. Push different branches to each.
+	originBare, err := os.MkdirTemp("", "remote-has-branch-origin-*")
+	if err != nil {
+		t.Fatalf("mkdtemp origin: %v", err)
+	}
+	defer os.RemoveAll(originBare)
+	forkBare, err := os.MkdirTemp("", "remote-has-branch-fork-*")
+	if err != nil {
+		t.Fatalf("mkdtemp fork: %v", err)
+	}
+	defer os.RemoveAll(forkBare)
+
+	for _, b := range []string{originBare, forkBare} {
+		if err := exec.Command("git", "init", "--bare", "-b", "main", b).Run(); err != nil {
+			t.Fatalf("init bare %s: %v", b, err)
+		}
+	}
+	if err := exec.Command("git", "-C", dir, "remote", "add", "origin", originBare).Run(); err != nil {
+		t.Fatalf("add origin: %v", err)
+	}
+	if err := exec.Command("git", "-C", dir, "remote", "add", "fork-user", forkBare).Run(); err != nil {
+		t.Fatalf("add fork-user: %v", err)
+	}
+
+	// Create "shared" on top of main, push to origin.
+	if err := exec.Command("git", "-C", dir, "checkout", "-b", "shared").Run(); err != nil {
+		t.Fatalf("co -b shared: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s.txt"), []byte("s\n"), 0644); err != nil {
+		t.Fatalf("write s: %v", err)
+	}
+	exec.Command("git", "-C", dir, "add", ".").Run()
+	exec.Command("git", "-C", dir, "commit", "-m", "shared").Run()
+	if err := exec.Command("git", "-C", dir, "push", "origin", "shared").Run(); err != nil {
+		t.Fatalf("push shared origin: %v", err)
+	}
+
+	// Create "fork-only" on top of main, push to fork-user only.
+	exec.Command("git", "-C", dir, "checkout", "main").Run()
+	if err := exec.Command("git", "-C", dir, "checkout", "-b", "fork-only").Run(); err != nil {
+		t.Fatalf("co -b fork-only: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("f\n"), 0644); err != nil {
+		t.Fatalf("write f: %v", err)
+	}
+	exec.Command("git", "-C", dir, "add", ".").Run()
+	exec.Command("git", "-C", dir, "commit", "-m", "fork-only").Run()
+	if err := exec.Command("git", "-C", dir, "push", "fork-user", "fork-only").Run(); err != nil {
+		t.Fatalf("push fork-only fork-user: %v", err)
+	}
+
+	g := New(dir)
+
+	// Case 1: shared exists on origin only.
+	if !g.RemoteHasBranch("origin", "shared") {
+		t.Errorf("origin/shared should exist, got false")
+	}
+	if g.RemoteHasBranch("fork-user", "shared") {
+		t.Errorf("fork-user/shared should NOT exist, got true")
+	}
+
+	// Case 2: fork-only exists on fork-user only.
+	if g.RemoteHasBranch("origin", "fork-only") {
+		t.Errorf("origin/fork-only should NOT exist, got true")
+	}
+	if !g.RemoteHasBranch("fork-user", "fork-only") {
+		t.Errorf("fork-user/fork-only should exist, got false")
+	}
+
+	// Case 3: empty remote defaults to origin.
+	if !g.RemoteHasBranch("", "shared") {
+		t.Errorf("RemoteHasBranch(\"\", shared) should default to origin and return true")
+	}
+	if g.RemoteHasBranch("", "fork-only") {
+		t.Errorf("RemoteHasBranch(\"\", fork-only) should default to origin and return false")
+	}
+
+	// Case 4: nonexistent branch returns false.
+	if g.RemoteHasBranch("origin", "never-existed") {
+		t.Errorf("RemoteHasBranch on missing branch should return false")
+	}
+
+	// Case 5: nonexistent remote returns false (does NOT panic / error).
+	if g.RemoteHasBranch("ghost-remote", "shared") {
+		t.Errorf("RemoteHasBranch on missing remote should return false")
+	}
+}

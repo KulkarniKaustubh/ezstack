@@ -97,6 +97,15 @@ if [ -f "$FILE" ] && command -v node >/dev/null 2>&1; then
     changed+=("tauri-ui/package-lock.json")
 fi
 
+# 7b. Tauri desktop frontend version constant — displayed in the title bar and
+#     settings dialog. Until this file is bumped, the desktop UI shows a stale
+#     version string even though the Cargo binary itself reports the right one.
+FILE="$REPO_ROOT/tauri-ui/src/version.ts"
+if [ -f "$FILE" ]; then
+    sed -i.bak "s/APP_VERSION = \"[^\"]*\"/APP_VERSION = \"$NEW_VERSION\"/" "$FILE"
+    changed+=("tauri-ui/src/version.ts")
+fi
+
 # 8. Tauri desktop tauri.conf.json
 FILE="$REPO_ROOT/tauri-ui/src-tauri/tauri.conf.json"
 if [ -f "$FILE" ]; then
