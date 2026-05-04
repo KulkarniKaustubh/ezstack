@@ -31,9 +31,10 @@ func runEzsStubbed(t *testing.T, env *TestEnv, args ...string) ([]byte, error) {
 // records the full argv to a per-invocation file inside logDir. Files are
 // named "0", "1", "2", … in invocation order.
 //
-// Per-invocation files are necessary because the agent prompt embedded in
-// argv contains newlines — a single shared log file with newline-separated
-// records would shred a single invocation across many lines.
+// We separate args with NUL bytes (printf '%s\0') because the rendered
+// agent prompt arg contains newlines — a per-line scheme would shred one
+// arg across many "lines" and break any test that wants to inspect the
+// prompt body. NUL is safe: argv strings cannot contain NUL on POSIX.
 func agentStubScript(logDir string) string {
 	return `#!/bin/sh
 if [ "$1" = "mcp" ]; then exit 0; fi
@@ -41,14 +42,15 @@ mkdir -p "` + logDir + `"
 n=$(ls "` + logDir + `" 2>/dev/null | wc -l | tr -d ' ')
 file="` + logDir + `/$n"
 for arg in "$@"; do
-  printf '%s\n' "$arg" >> "$file"
+  printf '%s\0' "$arg" >> "$file"
 done
 exit 0
 `
 }
 
 // readArgsLog returns the full agent argv (one entry per arg) for a given
-// invocation index (0-based).
+// invocation index (0-based). Splits on NUL because the stub uses NUL as
+// the inter-arg separator.
 func readArgsLog(t *testing.T, logDir string, want int) []string {
 	t.Helper()
 	path := filepath.Join(logDir, fmt.Sprintf("%d", want))
@@ -61,9 +63,8 @@ func readArgsLog(t *testing.T, logDir string, want int) []string {
 		}
 		t.Fatalf("invocation %d not found at %s (existing: %v): %v", want, path, names, err)
 	}
-	// Strip the single trailing newline added by `printf '%s\n'`.
-	out := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	// Empty file → []string{""}; normalize to nil so callers see a clean empty.
+	// Strip the trailing NUL added by the final printf, then split.
+	out := strings.Split(strings.TrimRight(string(data), "\x00"), "\x00")
 	if len(out) == 1 && out[0] == "" {
 		return nil
 	}
@@ -265,6 +266,79 @@ func TestAgentSession_StackScopedPersistsToStack(t *testing.T) {
 	second := readArgsLog(t, logDir, 1)
 	if got := flagValue(second, "--resume"); got != id {
 		t.Errorf("second run --resume = %q, want %q (stack-scoped session should persist across sibling branches)", got, id)
+	}
+}
+
+// TestAgentFeature_PromptIncludesStackRenameInstruction is the
+// integration-level pin for the "name the stack with ≤5 words" rule baked
+// into the feature-mode prompt. Without this, a regression that drops the
+// rename instructions during template rendering would slip through unit
+// tests that only assert on the raw template body.
+func TestAgentFeature_PromptIncludesStackRenameInstruction(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	logDir := filepath.Join(env.TmpDir, "claude_args")
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), agentStubScript(logDir))
+	writeExecutable(t, filepath.Join(env.StubBinDir, "ezs-mcp"), "#!/bin/sh\nexit 0\n")
+
+	if out, err := runEzsStubbed(t, env, "agent", "feature", "Add JWT auth"); err != nil {
+		t.Fatalf("agent feature run: %v\n%s", err, out)
+	}
+
+	// The prompt arg is the very last token in argv. agentStubScript writes
+	// each arg on its own line, so the last line of invocation 0's file is
+	// the prompt body.
+	argv := readArgsLog(t, logDir, 0)
+	if len(argv) == 0 {
+		t.Fatal("stub claude was not invoked with any args")
+	}
+	prompt := argv[len(argv)-1]
+
+	for _, want := range []string{
+		"Add JWT auth",     // feature description survives template rendering
+		"ezs stack rename", // the rename instruction is in the rendered prompt
+		"≤5 words",         // length budget is preserved
+		"FIRST branch",     // timing constraint is preserved
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("feature prompt missing %q (first 400 chars):\n%s", want, truncate(prompt, 400))
+		}
+	}
+}
+
+// TestAgentLs_EmptyRepo_JSONReturnsEmptyArray pins the JSON contract for
+// empty results: `[]`, not null and not an error. Scripts piping through
+// jq need a stable empty-list shape.
+func TestAgentLs_EmptyRepo_JSONReturnsEmptyArray(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	out, err := runEzsStubbed(t, env, "agent", "ls", "--json")
+	if err != nil {
+		t.Fatalf("agent ls --json on empty repo: %v\n%s", err, out)
+	}
+	trimmed := strings.TrimSpace(string(out))
+	if trimmed != "[]" {
+		t.Errorf("expected empty JSON array, got %q", trimmed)
+	}
+}
+
+// TestAgentLs_AllFlag_EmptyMessage covers the message-wording edge: under
+// -a with nothing tracked anywhere, the user gets "across any repo"
+// language rather than the single-repo "in <path>" message that would
+// read as wrong in a multi-repo context.
+func TestAgentLs_AllFlag_EmptyMessage(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	out, err := runEzsStubbed(t, env, "agent", "ls", "-a")
+	if err != nil {
+		t.Fatalf("agent ls -a on empty repos: %v\n%s", err, out)
+	}
+	o := string(out)
+	if !strings.Contains(o, "in any repo") {
+		t.Errorf("expected --all-specific empty message; got:\n%s", o)
 	}
 }
 
