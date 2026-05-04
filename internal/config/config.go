@@ -183,15 +183,16 @@ type StackConfig struct {
 // Stack represents a chain of stacked branches as a tree
 // Hash is the map key in StackConfig.Stacks and is populated at load time.
 type Stack struct {
-	Hash           string       `json:"-"`                         // Populated from map key at load time
-	Name           string       `json:"name,omitempty"`            // Optional user-given name for the stack
-	Root           string       `json:"root"`                      // The base branch (e.g. "main", or a remote branch name)
-	RootBase       string       `json:"root_base,omitempty"`       // The branch the root's PR targets (for computing root diff)
-	RootPRNumber   int          `json:"-"`                         // Runtime-only: derived from RootPRUrl
-	RootPRUrl      string       `json:"root_pr_url,omitempty"`     // PR URL of the root branch (for remote base branches)
-	DeleteDeclined bool         `json:"delete_declined,omitempty"` // User declined cleanup prompt; don't re-ask
-	Tree           BranchTree   `json:"tree"`                      // The tree of branches
-	Branches       []*Branch    `json:"-"`                         // Runtime-only: populated from Tree for backward compatibility
+	Hash           string       `json:"-"`                          // Populated from map key at load time
+	Name           string       `json:"name,omitempty"`             // Optional user-given name for the stack
+	Root           string       `json:"root"`                       // The base branch (e.g. "main", or a remote branch name)
+	RootBase       string       `json:"root_base,omitempty"`        // The branch the root's PR targets (for computing root diff)
+	RootPRNumber   int          `json:"-"`                          // Runtime-only: derived from RootPRUrl
+	RootPRUrl      string       `json:"root_pr_url,omitempty"`      // PR URL of the root branch (for remote base branches)
+	DeleteDeclined bool         `json:"delete_declined,omitempty"`  // User declined cleanup prompt; don't re-ask
+	AgentSessionID string       `json:"agent_session_id,omitempty"` // UUID of the AI agent session bound to this stack (used by `ezs agent` to resume)
+	Tree           BranchTree   `json:"tree"`                       // The tree of branches
+	Branches       []*Branch    `json:"-"`                          // Runtime-only: populated from Tree for backward compatibility
 	cache          *CacheConfig // Runtime-only: reference to cache for metadata
 }
 
@@ -232,6 +233,10 @@ type BranchCache struct {
 	// runs that no longer have a worktree to introspect — without this, a
 	// crashed checkout-based sync would leave its snapshot in cache forever.
 	PreSyncCommitAt int64 `json:"pre_sync_commit_at,omitempty"`
+	// AgentSessionID is the UUID of the AI agent session bound to this branch
+	// in branch-scoped (`ezs agent --branch`) mode. Used to resume the same
+	// session on subsequent `ezs agent` runs against this branch.
+	AgentSessionID string `json:"agent_session_id,omitempty"`
 }
 
 // ClearPRFields zeroes the PR-association fields on this BranchCache while

@@ -564,6 +564,33 @@ func (m *Manager) SetBranchRemote(branchName, remote string) error {
 	return m.stackConfig.Save(m.repoDir)
 }
 
+// SetStackAgentSessionID stores the AI agent session UUID on the stack with
+// the given hash and persists. Used by `ezs agent` to remember which session
+// is bound to a stack so subsequent invocations can resume it. An empty
+// sessionID clears the binding.
+func (m *Manager) SetStackAgentSessionID(stackHash, sessionID string) error {
+	s, ok := m.stackConfig.Stacks[stackHash]
+	if !ok {
+		return fmt.Errorf("stack %s not found", stackHash)
+	}
+	s.AgentSessionID = sessionID
+	return m.stackConfig.Save(m.repoDir)
+}
+
+// SetBranchAgentSessionID stores the AI agent session UUID on a branch and
+// persists. Used by `ezs agent --branch` to remember branch-scoped sessions.
+// An empty sessionID clears the binding.
+func (m *Manager) SetBranchAgentSessionID(branchName, sessionID string) error {
+	cache := m.stackConfig.Cache
+	bc := cache.GetBranchCache(branchName)
+	if bc == nil {
+		bc = &config.BranchCache{}
+	}
+	bc.AgentSessionID = sessionID
+	cache.SetBranchCache(branchName, bc)
+	return m.stackConfig.Save(m.repoDir)
+}
+
 // GetTreeChildren returns child branches based on the original tree structure (BaseBranch),
 // not the effective parent. This is used for navigation (up/down) where we want to
 // follow the tree hierarchy even when parents have been merged and children reparented.

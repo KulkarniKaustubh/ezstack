@@ -208,17 +208,26 @@ func prDraftAllForce(force bool) error {
 	if err != nil {
 		return err
 	}
-	return prCreateAllDraft(currentStack, true, force)
+	return prCreateAllDraft(currentStack, true, force, nil)
 }
 
 // prCreateAll creates PRs for all branches in the stack that don't have PRs
 func prCreateAll(currentStack *config.Stack) error {
-	return prCreateAllDraft(currentStack, false, false)
+	return prCreateAllDraft(currentStack, false, false, nil)
 }
 
 // prCreateAllForce mirrors prCreateAll but threads the --force flag through.
 func prCreateAllForce(currentStack *config.Stack, force bool) error {
-	return prCreateAllDraft(currentStack, false, force)
+	return prCreateAllDraft(currentStack, false, force, nil)
+}
+
+// prCreateAllForceAI is `pr create --stack --auto`: same as prCreateAllForce
+// but uses the supplied AI generator to draft per-branch title and body. The
+// generator is a hard dependency — caller must construct it via
+// newPRGeneratorForAgent so the agent-detection error fires before any PRs
+// are pushed.
+func prCreateAllForceAI(currentStack *config.Stack, force bool, gen aiPRGenerator) error {
+	return prCreateAllDraft(currentStack, false, force, gen)
 }
 
 // prCreateAllDraft handles `pr create --stack` and `pr --draft-all`.
@@ -234,7 +243,12 @@ func prCreateAllForce(currentStack *config.Stack, force bool) error {
 //     exists, else queue.
 //
 // commitsAhead == 0 always disqualifies a branch — there's nothing to PR.
-func prCreateAllDraft(currentStack *config.Stack, draft, force bool) error {
+//
+// aiGen, when non-nil, is used to draft per-branch title/body before each
+// gh.CreatePR. A per-branch failure falls back to the formatBranchTitle
+// default with an empty body, with a warning — one bad branch shouldn't
+// derail the rest of the stack.
+func prCreateAllDraft(currentStack *config.Stack, draft, force bool, aiGen aiPRGenerator) error {
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -343,7 +357,25 @@ func prCreateAllDraft(currentStack *config.Stack, draft, force bool) error {
 			continue
 		}
 
-		pr, err := gh.CreatePR(formatBranchTitle(b.Name), "", b.Name, b.Parent, draft)
+		// Title/body resolution: --auto runs the AI generator per branch and
+		// falls back to formatBranchTitle on error. We compute these AFTER
+		// the push so the diff between origin/<parent> and the just-pushed
+		// branch is fresh — the AI's diff context matches what reviewers
+		// will see on GitHub.
+		prTitle := formatBranchTitle(b.Name)
+		prBody := ""
+		if aiGen != nil {
+			ui.Info(fmt.Sprintf("Asking AI to draft PR for %s...", b.Name))
+			res, err := generatePRContent(g, aiGen, b)
+			if err != nil {
+				ui.Warn(fmt.Sprintf("--auto for %s: %v (using fallback title)", b.Name, err))
+			} else {
+				prTitle = res.Title
+				prBody = res.Body
+			}
+		}
+
+		pr, err := gh.CreatePR(prTitle, prBody, b.Name, b.Parent, draft)
 		if err != nil {
 			ui.Warn(fmt.Sprintf("Failed to create PR for %s: %v", b.Name, err))
 			failed++
@@ -388,6 +420,12 @@ func prCreate(args []string) error {
     -b, --body <body>      PR body/description
     -d, --draft            Create as draft PR
     --branch <name>        Create PR for a specific branch (instead of current)
+    --auto, --ai           Use the configured AI agent (agent_command) to draft
+                           the PR title and body from the branch's diff, commit
+                           messages, and the repo's PR template. Combine with
+                           --stack to draft a body for every branch in the
+                           stack. -t/-b take priority and override the AI's
+                           output for the field they specify.
     -f, --force            Create a new PR even if one already exists for the branch
                            (alias: --recreate). Skips the confirmation prompt so
                            scripts don't deadlock on stdin — the warning is still
@@ -401,6 +439,8 @@ func prCreate(args []string) error {
 	body := fs.StringP("body", "b", "", "PR body")
 	draft := fs.BoolP("draft", "d", false, "Create as draft PR")
 	branchFlag := fs.String("branch", "", "Create PR for a specific branch")
+	autoFlag := fs.Bool("auto", false, "Use the configured AI agent to draft PR title and body")
+	aiFlag := fs.Bool("ai", false, "Alias for --auto")
 	force := fs.BoolP("force", "f", false, "Create a new PR even if one already exists")
 	recreate := fs.Bool("recreate", false, "Alias for --force")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
@@ -427,10 +467,22 @@ func prCreate(args []string) error {
 	}
 
 	forceCreate := *force || *recreate
+	useAuto := *autoFlag || *aiFlag
 
 	if *draftAll {
 		if *title != "" || *body != "" || *branchFlag != "" {
 			ui.Warn("--draft-all creates one PR per branch with auto-generated titles; -t/-b/--branch are ignored")
+		}
+		if useAuto {
+			gen, err := buildAIPRGenerator(cwd)
+			if err != nil {
+				return err
+			}
+			currentStack, _, csErr := mgr.GetCurrentStack()
+			if csErr != nil {
+				return csErr
+			}
+			return prCreateAllDraft(currentStack, true, forceCreate, gen)
 		}
 		return prDraftAllForce(forceCreate)
 	}
@@ -441,6 +493,13 @@ func prCreate(args []string) error {
 		currentStack, _, err := mgr.GetCurrentStack()
 		if err != nil {
 			return err
+		}
+		if useAuto {
+			gen, err := buildAIPRGenerator(cwd)
+			if err != nil {
+				return err
+			}
+			return prCreateAllForceAI(currentStack, forceCreate, gen)
 		}
 		return prCreateAllForce(currentStack, forceCreate)
 	}
@@ -538,6 +597,28 @@ func prCreate(args []string) error {
 	// Reaching here means: no live PR (terminal state or never existed), or
 	// --force was confirmed. The branch cache has been reconciled by
 	// refreshPRStateFromGitHub. Proceed to create.
+
+	// --auto: ask the AI agent to draft title and body up front. -t/-b
+	// values still win over the AI output for the field they specify, so
+	// users can pin a title and let the AI fill the body, or vice versa.
+	if useAuto {
+		gen, genErr := buildAIPRGenerator(cwd)
+		if genErr != nil {
+			return genErr
+		}
+		ui.Info("Asking AI agent to draft PR title and body...")
+		res, aiErr := generatePRContent(g, gen, branch)
+		if aiErr != nil {
+			return fmt.Errorf("--auto: %w", aiErr)
+		}
+		if *title == "" {
+			*title = res.Title
+		}
+		if *body == "" {
+			*body = res.Body
+		}
+		ui.Success(fmt.Sprintf("AI draft ready: title=%q (body %d chars)", res.Title, len(res.Body)))
+	}
 
 	prTitle := *title
 	if prTitle == "" {

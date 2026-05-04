@@ -507,7 +507,7 @@ ezs stack
 Launch an AI agent with full stack context. The agent is scoped to a single stack and receives stack structure, branch info, and ezstack documentation automatically. **Requires worktree mode** (`use_worktrees: true`) — the agent needs separate working directories for each branch to work in isolation without disrupting your workspace.
 
 ```
-ezs agent [options]
+ezs agent [options] [-- <agent-args>]
 ezs agent feature "description"
 ezs agent prompt <flag> <work|feature>
 
@@ -520,6 +520,7 @@ Options:
     --cmd <command>      Agent CLI to use (default: configured or "claude")
     -s, --stack <hash>   Stack to work on (hash prefix or "name")
     -b, --branch <name>  Branch to work in (implies stack)
+    --no-resume          Start a fresh session even if one exists for this branch/stack
     --dry-run            Print the composed prompt and exit (don't launch agent)
     --save-prompt <file> Write the composed prompt to <file> (pairs well with --dry-run)
     --no-push            Set EZS_AGENT_NO_PUSH=1 in the spawned agent's environment
@@ -528,11 +529,29 @@ Options:
     --no-mcp             Do not auto-install/register ezs-mcp; embed docs in
                          the prompt instead (escape hatch for non-claude CLIs
                          or air-gapped environments)
+
+Anything after a literal `--` is forwarded to the agent CLI verbatim, so
+you can always pass agent-specific flags ezs doesn't know about (e.g.
+`ezs agent -- --debug --model opus`).
 ```
 
 You can run `ezs agent` from any branch, including `main` or other non-stack branches. If you're not on a stack branch, ezstack auto-selects the stack when there is exactly one, or shows an interactive picker when there are multiple stacks. You can always skip the picker with `--stack` or `--branch`.
 
 **`--no-push` and `EZS_AGENT_NO_PUSH`.** When `--no-push` is passed, the child agent process is launched with `EZS_AGENT_NO_PUSH=1` in its environment. Tooling run inside the agent session (hooks, helper scripts, nested `ezs` calls) can check this variable and skip push steps. The variable is only set when `--no-push` is explicitly used; regular `ezs` commands never see it.
+
+#### Session tracking and resumption
+
+For Claude (the default agent), `ezs agent` binds a UUID-based session to each stack — or to a single branch when `--branch` is set — and asks claude to run under that session ID with a display name of `_ezstack-<identifier>`. The display name is what shows up in claude's `/resume` picker and the terminal title, so you can tell ezstack-managed sessions apart from ad-hoc ones.
+
+| Run | What ezs does |
+|-----|----------------|
+| First run for a stack/branch | Mints a fresh UUID, passes `claude --session-id <uuid> --name "_ezstack-<id>" "<prompt>"`, then persists the UUID. |
+| Subsequent runs | Reads the persisted UUID and passes `claude --resume <uuid> --name "_ezstack-<id>"` (no prompt — claude reopens the prior conversation). |
+| `--no-resume` | Forces a brand-new UUID, ignoring any persisted one. The new UUID replaces the old one for future runs. |
+
+The session ID is also exposed to the spawned agent as `EZS_AGENT_SESSION_ID` so non-claude wrappers can opt in by reading that variable. For unknown agent CLIs ezs does **not** inject session flags — anything we don't understand might misparse them — so `--resume` semantics there are up to the user (combine `--cmd` with `-- <agent-args>` to wire your own).
+
+Sessions are stored in `~/.ezstack/stacks.json` under `agent_session_id` on the stack (stack-scoped) or branch cache (branch-scoped). They survive process restarts but get cleaned up when you `ezs delete` the branch.
 
 **`--preset <name>`.** Looks up `~/.ezstack/agent-presets/<name>.md` and appends it to the end of the fully composed prompt under a `## Preset: <name>` header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.
 
@@ -931,11 +950,15 @@ Options:
     -b, --body <body>      PR body/description
     -d, --draft            Create as draft PR
     --branch <name>        Create PR for a specific branch (instead of current)
+    --auto, --ai           Use the configured AI agent to draft PR title and body
+                           from the diff and the repo's PR template
     -f, --force            Create a new PR even if one already exists
                            (alias: --recreate)
 ```
 
 **`--force`.** Bypasses the existing-PR guard. When the cached PR has been merged or closed, this is a no-op (the cached terminal state already lets create proceed). When the cached PR is still live on GitHub, a warning is printed and a new PR is created — the existing PR stays open and GitHub may reject the new PR as a duplicate. `--force` does not prompt, so scripts can pass it without holding stdin open.
+
+**`--auto` (alias `--ai`).** Hands the branch's diff, commit messages, and the repo's `pull_request_template.md` to the configured AI agent (`agent_command`) and asks it to fill in `{title, body}`. The result is fed into the regular create flow, so all the usual gating still happens — push, base validation, fork detection, stack-description update. Combine with `-s` / `--stack` to draft a body for every branch in the stack in one go. `-t` / `-b` always win over the AI's output for the field they specify, so you can pin a title and let the AI handle just the body (or vice versa). `--auto` currently requires a Claude-family agent because that's the only CLI ezs can drive non-interactively with predictable JSON output; passing `--cmd` to point at a different binary will be rejected with a clear error. The PR template's location is the standard set GitHub looks at: `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `docs/pull_request_template.md`, and the repo-root variants.
 
 #### `ezs pr draft`
 

@@ -446,11 +446,13 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_pr_create",
-			mcp.WithDescription("Create a pull request for a branch. Use branch to target a specific branch when not on a stack branch."),
+			mcp.WithDescription("Create a pull request for a branch. Use branch to target a specific branch when not on a stack branch. Set auto=true to have the configured AI agent draft the title and body from the diff and the repo's PR template; combine auto=true with stack=true to auto-draft for every branch in the stack. -t/-b values still win over the AI output."),
 			mcp.WithString("branch", mcp.Description("Branch to create PR for (defaults to current branch)")),
 			mcp.WithString("title", mcp.Description("PR title (defaults to branch name)")),
 			mcp.WithString("body", mcp.Description("PR body / description")),
 			mcp.WithBoolean("draft", mcp.Description("Create as draft PR")),
+			mcp.WithBoolean("stack", mcp.Description("Create PRs for every branch in the current stack")),
+			mcp.WithBoolean("auto", mcp.Description("Use the configured AI agent to draft PR title/body from diff + template")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.PR, func(req mcp.CallToolRequest) []string {
@@ -459,6 +461,8 @@ func registerTools(s *server.MCPServer) {
 			stringFlag(&args, req, "title", "--title")
 			stringFlag(&args, req, "body", "--body")
 			boolFlag(&args, req, "draft", "--draft")
+			boolFlag(&args, req, "stack", "--stack")
+			boolFlag(&args, req, "auto", "--auto")
 			return args
 		}),
 	)

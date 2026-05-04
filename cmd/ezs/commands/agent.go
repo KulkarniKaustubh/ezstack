@@ -26,7 +26,7 @@ func Agent(args []string) error {
 		fmt.Fprintf(os.Stderr, `%sLaunch AI agent with stack context%s
 
 %sUSAGE%s
-    ezs agent [options]                     Launch agent scoped to a stack
+    ezs agent [options] [-- <agent-args>]   Launch agent scoped to a stack
     ezs agent feature|feat "description"    Launch agent to build a feature as stacked branches
     ezs agent prompt <flag> <work|feature>  View or edit agent prompt templates
 
@@ -39,12 +39,24 @@ func Agent(args []string) error {
     --cmd <command>      Agent CLI to use (default: configured or "claude")
     -s, --stack <hash>   Stack to work on (hash prefix or "name")
     -b, --branch <name>  Branch to work in (implies --stack from branch's stack)
+    --no-resume          Start a fresh agent session even if one exists for this branch/stack
     --dry-run            Print the composed prompt and exit (don't launch agent)
     -h, --help           Show this help message
 
     If both --stack and --branch are specified, --branch takes priority.
     If neither is specified and you're not on a stacked branch, an interactive
     stack picker is shown.
+
+%sSESSION TRACKING%s
+    For Claude (the default agent), ezs binds a UUID session to each stack
+    (or branch when --branch is set) and names it "_ezstack-<identifier>".
+    Re-running 'ezs agent' on the same stack/branch resumes the previous
+    conversation by passing 'claude --resume <id>' under the hood. The
+    session ID is also exposed to the agent process as EZS_AGENT_SESSION_ID
+    so non-claude wrappers can opt in. Use --no-resume to start fresh.
+
+    Anything after a standalone '--' is forwarded to the agent CLI verbatim,
+    so you can always pass agent-specific flags ezs doesn't know about.
 
 %sCONFIGURATION%s
     Set default agent: ezs config set agent_command <command>
@@ -62,6 +74,12 @@ func Agent(args []string) error {
     %s# Launch agent on a specific branch%s
     ezs agent --branch feature-auth
 
+    %s# Force a brand-new session, ignoring any saved one%s
+    ezs agent --no-resume
+
+    %s# Forward arbitrary flags to the agent CLI%s
+    ezs agent -- --debug --model opus
+
     %s# Build a feature as stacked branches%s
     ezs agent feature "Add user authentication with JWT tokens"
 
@@ -73,9 +91,9 @@ func Agent(args []string) error {
 
     %s# Edit repo-specific work instructions%s
     ezs agent prompt --edit --repo work
-`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset,
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset,
 			ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset,
-			ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset)
+			ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset, ui.Yellow, ui.Reset)
 	}
 
 	// Check for prompt subcommand early — before parsing agent flags,
@@ -86,6 +104,12 @@ func Agent(args []string) error {
 		return agentPrompt(rest)
 	}
 
+	// Split off any tokens following a literal "--": those are pass-through
+	// args handed to the agent CLI verbatim (e.g. `ezs agent -- --resume <id>`
+	// becomes `claude --resume <id> ...`). This lets users wield any flag
+	// their agent supports without ezs having to enumerate them.
+	args, agentExtraArgs := splitAgentExtras(args)
+
 	cmdFlag := fs.String("cmd", "", "Agent CLI to use (overrides config)")
 	stackFlag := fs.StringP("stack", "s", "", "Stack hash prefix or name")
 	branchFlag := fs.StringP("branch", "b", "", "Branch to work in")
@@ -94,6 +118,7 @@ func Agent(args []string) error {
 	noPushFlag := fs.Bool("no-push", false, "Block auto-push during the agent run (sets EZS_AGENT_NO_PUSH=1)")
 	presetFlag := fs.String("preset", "", "Append ~/.ezstack/agent-presets/<name>.md to the composed prompt")
 	noMCPFlag := fs.Bool("no-mcp", false, "Do not auto-install/register the ezstack MCP server; embed docs in the prompt instead")
+	noResumeFlag := fs.Bool("no-resume", false, "Start a fresh AI agent session even if a resumable one exists for this branch/stack")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
 	if err := fs.Parse(args); err != nil {
@@ -153,6 +178,8 @@ func Agent(args []string) error {
 		noPush:     *noPushFlag,
 		preset:     *presetFlag,
 		useMCP:     ensureEzstackMCP(agentCmd, *noMCPFlag, *dryRunFlag),
+		noResume:   *noResumeFlag,
+		extraArgs:  agentExtraArgs,
 	}
 
 	// Feature mode — optionally uses an existing stack if one is available
@@ -199,6 +226,8 @@ type agentExtras struct {
 	noPush     bool
 	preset     string
 	useMCP     bool
+	noResume   bool     // --no-resume: ignore any persisted session and start fresh
+	extraArgs  []string // tokens after a literal "--", passed to the agent CLI verbatim
 }
 
 // ── Prompt subcommand ──────────────────────────────────────────────────────────
@@ -754,20 +783,31 @@ func agentWork(g *git.Git, agentCmd, repoPath string, targetStack *config.Stack,
 		ui.Info(fmt.Sprintf("Saved composed prompt to %s", extras.savePrompt))
 	}
 
+	// Resolve session before dry-run so the dry-run output reflects whether
+	// the user would resume or start fresh.
+	sess := resolveWorkSession(repoPath, agentCmd, targetStack, ctx.branchName, branchScoped, extras.noResume)
+
 	if extras.dryRun {
 		printDryRunPrompt("work", prompt)
+		printSessionDryRun(sess)
 		return nil
 	}
 
-	if branchScoped {
-		workDir := resolveWorkDir(ctx.branchName, ctx.worktreePath, repoPath, targetStack)
-		ui.Info(fmt.Sprintf("Launching %s in %s mode on branch '%s'...", agentCmd, ui.Bold+"branch"+ui.Reset, ctx.branchName))
-		return spawnAgentProcess(agentCmd, workDir, prompt, extras.noPush)
+	spec := agentSpawnSpec{
+		agentCmd:  agentCmd,
+		prompt:    prompt,
+		noPush:    extras.noPush,
+		extraArgs: extras.extraArgs,
+		session:   sess,
 	}
-
-	workDir := resolveWorkDir("", "", repoPath, targetStack)
-	ui.Info(fmt.Sprintf("Launching %s in %s mode on stack '%s'...", agentCmd, ui.Bold+"stack"+ui.Reset, targetStack.DisplayName()))
-	return spawnAgentProcess(agentCmd, workDir, prompt, extras.noPush)
+	if branchScoped {
+		spec.workDir = resolveWorkDir(ctx.branchName, ctx.worktreePath, repoPath, targetStack)
+		ui.Info(fmt.Sprintf("Launching %s in %s mode on branch '%s'%s...", agentCmd, ui.Bold+"branch"+ui.Reset, ctx.branchName, sessionLogSuffix(sess)))
+	} else {
+		spec.workDir = resolveWorkDir("", "", repoPath, targetStack)
+		ui.Info(fmt.Sprintf("Launching %s in %s mode on stack '%s'%s...", agentCmd, ui.Bold+"stack"+ui.Reset, targetStack.DisplayName(), sessionLogSuffix(sess)))
+	}
+	return spawnAgentProcess(spec)
 }
 
 // agentFeature launches the agent in feature builder mode.
@@ -790,13 +830,25 @@ func agentFeature(agentCmd, repoPath, description string, existingStack *config.
 		ui.Info(fmt.Sprintf("Saved composed prompt to %s", extras.savePrompt))
 	}
 
+	// Feature mode binds its session to an existing stack when one was given,
+	// otherwise the session is one-shot (no stable identifier to resume from).
+	sess := resolveFeatureSession(repoPath, agentCmd, existingStack, extras.noResume)
+
 	if extras.dryRun {
 		printDryRunPrompt("feature", prompt)
+		printSessionDryRun(sess)
 		return nil
 	}
 
-	ui.Info(fmt.Sprintf("Launching %s in %s mode...", agentCmd, ui.Bold+"feature builder"+ui.Reset))
-	return spawnAgentProcess(agentCmd, repoPath, prompt, extras.noPush)
+	ui.Info(fmt.Sprintf("Launching %s in %s mode%s...", agentCmd, ui.Bold+"feature builder"+ui.Reset, sessionLogSuffix(sess)))
+	return spawnAgentProcess(agentSpawnSpec{
+		agentCmd:  agentCmd,
+		workDir:   repoPath,
+		prompt:    prompt,
+		noPush:    extras.noPush,
+		extraArgs: extras.extraArgs,
+		session:   sess,
+	})
 }
 
 // resolveWorkDir returns the best working directory for the agent.
@@ -1099,52 +1151,117 @@ func expandHome(p string) string {
 	return p
 }
 
-// spawnAgentProcess launches the agent CLI with the rendered prompt.
-// The full prompt is passed as the first visible user message in the agent's
-// UI. When noPush is true the child process receives EZS_AGENT_NO_PUSH=1 in
-// its environment only — the parent's env is never mutated, so the ban does
-// not leak to later commands in the same shell session.
-func spawnAgentProcess(agentCmd, workDir, prompt string, noPush bool) error {
-	fields := strings.Fields(agentCmd)
+// agentSpawnSpec bundles the inputs to spawnAgentProcess. Grouping them as a
+// struct keeps the call sites readable as the number of optional knobs
+// (session injection, --, no-push, etc.) grows.
+type agentSpawnSpec struct {
+	agentCmd  string
+	workDir   string
+	prompt    string
+	noPush    bool
+	extraArgs []string        // tokens after `--` on the ezs command line
+	session   *agentSessionPlan // session injection plan (nil for non-claude or if disabled)
+}
+
+// spawnAgentProcess launches the agent CLI with the rendered prompt and any
+// session injection. When noPush is true the child receives EZS_AGENT_NO_PUSH=1
+// in its environment only — the parent's env is never mutated, so the ban
+// doesn't leak to later commands in the same shell session.
+//
+// On a successful spawn, the resolved session ID is persisted (so the next
+// invocation can resume) via the session plan's Persist callback.
+func spawnAgentProcess(spec agentSpawnSpec) error {
+	fields := strings.Fields(spec.agentCmd)
 	if len(fields) == 0 {
 		return fmt.Errorf("agent_command is empty")
 	}
-	args := append(fields[1:], prompt)
+
+	// Build argv: <preconfigured args from agent_command> [session args] [extras]
+	// [prompt-or-nothing]. Order matters — putting extras after session lets
+	// the user override (e.g. by passing their own --resume) but in practice
+	// claude warns on dup flags rather than honoring last-wins. That's a
+	// "don't shoot yourself" situation; we don't try to dedupe.
+	args := append([]string{}, fields[1:]...)
+	includePrompt := true
+	if spec.session != nil && spec.session.injection != nil {
+		args = append(args, spec.session.injection.Args...)
+		includePrompt = spec.session.injection.IncludePrompt
+	}
+	args = append(args, spec.extraArgs...)
+	if includePrompt {
+		args = append(args, spec.prompt)
+	}
+
 	cmd := exec.Command(fields[0], args...)
-	cmd.Dir = workDir
+	cmd.Dir = spec.workDir
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	cmd.Env = agentProcessEnv(os.Environ(), noPush)
+	sessionEnvID := ""
+	if spec.session != nil && spec.session.injection != nil {
+		sessionEnvID = spec.session.injection.SessionID
+	}
+	cmd.Env = agentProcessEnv(os.Environ(), spec.noPush, sessionEnvID)
 
-	if err := cmd.Run(); err != nil {
+	runErr := cmd.Run()
+
+	// Persist the session ID after the spawn even if the agent exited
+	// non-zero — claude records the session as soon as it starts, so the
+	// user should still be able to resume it next time. The persist call is
+	// best-effort; failures are surfaced as warnings, not fatal.
+	if spec.session != nil && spec.session.persist != nil && spec.session.injection != nil && spec.session.injection.SessionID != "" {
+		if err := spec.session.persist(spec.session.injection.SessionID); err != nil {
+			ui.Warn(fmt.Sprintf("Failed to persist agent session ID: %v", err))
+		}
+	}
+
+	if runErr != nil {
 		// If the agent exited with a non-zero code, propagate it cleanly
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			os.Exit(exitErr.ExitCode())
 		}
-		return err
+		return runErr
 	}
 	return nil
 }
+
+// agentSessionIDEnv is the env var name we expose to the spawned agent so
+// non-claude wrappers can identify which session ezstack expected to use.
+// Claude itself uses --session-id/--resume; this var is purely informational
+// for user scripts.
+const agentSessionIDEnv = "EZS_AGENT_SESSION_ID"
 
 // agentProcessEnv returns the env slice for the spawned agent. When noPush
 // is true, EZS_AGENT_NO_PUSH=1 is appended (and any pre-existing copy is
 // dropped to keep a single authoritative entry). When noPush is false, any
 // EZS_AGENT_NO_PUSH variable inherited from the parent is filtered out so a
 // nested agent session can't accidentally inherit a gate from an outer one
-// the user didn't ask to propagate. Extracted for testability: nothing else
-// about spawnAgentProcess can be exercised without running a real command.
-func agentProcessEnv(parentEnv []string, noPush bool) []string {
-	prefix := agentNoPushEnv + "="
-	env := make([]string, 0, len(parentEnv)+1)
+// the user didn't ask to propagate.
+//
+// sessionID, when non-empty, is exposed to the child as EZS_AGENT_SESSION_ID;
+// any pre-existing inherited value is stripped so a nested agent doesn't see
+// a stale ID from its parent. Empty sessionID strips the var entirely.
+//
+// Extracted for testability: nothing else about spawnAgentProcess can be
+// exercised without running a real command.
+func agentProcessEnv(parentEnv []string, noPush bool, sessionID string) []string {
+	noPushPrefix := agentNoPushEnv + "="
+	sessionPrefix := agentSessionIDEnv + "="
+	env := make([]string, 0, len(parentEnv)+2)
 	for _, kv := range parentEnv {
-		if strings.HasPrefix(kv, prefix) {
+		if strings.HasPrefix(kv, noPushPrefix) {
 			continue // either we'll re-add it or we want it gone
+		}
+		if strings.HasPrefix(kv, sessionPrefix) {
+			continue // ditto for the session ID
 		}
 		env = append(env, kv)
 	}
 	if noPush {
-		env = append(env, prefix+"1")
+		env = append(env, noPushPrefix+"1")
+	}
+	if sessionID != "" {
+		env = append(env, sessionPrefix+sessionID)
 	}
 	return env
 }

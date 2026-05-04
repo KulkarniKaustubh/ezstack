@@ -1,0 +1,343 @@
+package itests
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// runEzsStubbed runs the built ezs binary inside env.RepoDir with PATH
+// stubbed to env.StubBinDir, so tests can shadow `claude` / `aider` /
+// `ezs-mcp` with their own scripts. Differs from runEzs (defined in
+// cli_flag_validation_test.go) in two ways: it returns the raw bytes
+// (callers parse them) and it overrides PATH to put the stubs first.
+func runEzsStubbed(t *testing.T, env *TestEnv, args ...string) ([]byte, error) {
+	t.Helper()
+	ezsBin := buildEzsBinary(t)
+	cmd := exec.Command(ezsBin, args...)
+	cmd.Dir = env.RepoDir
+	cmd.Env = append(os.Environ(),
+		"EZSTACK_HOME="+env.ConfigDir,
+		"PATH="+env.StubBinDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+	return cmd.CombinedOutput()
+}
+
+// agentStubScript returns a shell script body that, on each invocation,
+// records the full argv to a per-invocation file inside logDir. Files are
+// named "0", "1", "2", … in invocation order.
+//
+// Per-invocation files are necessary because the agent prompt embedded in
+// argv contains newlines — a single shared log file with newline-separated
+// records would shred a single invocation across many lines.
+func agentStubScript(logDir string) string {
+	return `#!/bin/sh
+if [ "$1" = "mcp" ]; then exit 0; fi
+mkdir -p "` + logDir + `"
+n=$(ls "` + logDir + `" 2>/dev/null | wc -l | tr -d ' ')
+file="` + logDir + `/$n"
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$file"
+done
+exit 0
+`
+}
+
+// readArgsLog returns the full agent argv (one entry per arg) for a given
+// invocation index (0-based).
+func readArgsLog(t *testing.T, logDir string, want int) []string {
+	t.Helper()
+	path := filepath.Join(logDir, fmt.Sprintf("%d", want))
+	data, err := os.ReadFile(path)
+	if err != nil {
+		entries, _ := os.ReadDir(logDir)
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		t.Fatalf("invocation %d not found at %s (existing: %v): %v", want, path, names, err)
+	}
+	// Strip the single trailing newline added by `printf '%s\n'`.
+	out := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
+	// Empty file → []string{""}; normalize to nil so callers see a clean empty.
+	if len(out) == 1 && out[0] == "" {
+		return nil
+	}
+	return out
+}
+
+// TestAgentSession_FreshThenResume covers the round-trip: first `ezs agent`
+// run mints a session ID and passes it via --session-id. Second run for the
+// same stack reads the persisted ID and passes --resume.
+//
+// This is THE regression for issue #16 — every other test in this suite
+// depends on it staying green.
+func TestAgentSession_FreshThenResume(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranchWithCommit(t, env, "feature-x", "main")
+
+	// Per-invocation argv files so embedded newlines in the prompt arg can't
+	// shred records across lines.
+	logDir := filepath.Join(env.TmpDir, "claude_args")
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), agentStubScript(logDir))
+	writeExecutable(t, filepath.Join(env.StubBinDir, "ezs-mcp"), "#!/bin/sh\nexit 0\n")
+
+	// First run: should mint a fresh UUID and pass --session-id <uuid>.
+	out, err := runEzsStubbed(t, env, "agent", "--branch", "feature-x")
+	if err != nil {
+		t.Fatalf("first run failed: %v\n%s", err, out)
+	}
+
+	first := readArgsLog(t, logDir, 0)
+	sessionID := flagValue(first, "--session-id")
+	if sessionID == "" {
+		t.Fatalf("first run did not pass --session-id; argv: %v", first)
+	}
+	if !flagValueContains(first, "--name", "_ezstack-feature-x") {
+		t.Errorf("first run --name should be _ezstack-feature-x; argv: %v", first)
+	}
+	if flagValue(first, "--resume") != "" {
+		t.Errorf("first run unexpectedly used --resume; argv: %v", first)
+	}
+
+	// Second run: should pick up the persisted UUID and pass --resume.
+	out, err = runEzsStubbed(t, env, "agent", "--branch", "feature-x")
+	if err != nil {
+		t.Fatalf("second run failed: %v\n%s", err, out)
+	}
+	second := readArgsLog(t, logDir, 1)
+	if got := flagValue(second, "--resume"); got != sessionID {
+		t.Errorf("second run --resume = %q, want %q (argv: %v)", got, sessionID, second)
+	}
+	if flagValue(second, "--session-id") != "" {
+		t.Errorf("second run should not use --session-id when resuming; argv: %v", second)
+	}
+}
+
+// TestAgentSession_NoResumeFlag covers --no-resume: even with a persisted
+// session ID, the user can force a fresh one. The stored ID gets replaced.
+func TestAgentSession_NoResumeFlag(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranchWithCommit(t, env, "feat-y", "main")
+
+	logDir := filepath.Join(env.TmpDir, "claude_args")
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), agentStubScript(logDir))
+
+	// First run mints a session.
+	if out, err := runEzsStubbed(t, env, "agent", "--branch", "feat-y"); err != nil {
+		t.Fatalf("first run: %v\n%s", err, out)
+	}
+	first := readArgsLog(t, logDir, 0)
+	originalID := flagValue(first, "--session-id")
+	if originalID == "" {
+		t.Fatalf("first run missing --session-id; argv: %v", first)
+	}
+
+	// Second run with --no-resume: should mint a NEW UUID and pass --session-id again.
+	if out, err := runEzsStubbed(t, env, "agent", "--branch", "feat-y", "--no-resume"); err != nil {
+		t.Fatalf("second run with --no-resume: %v\n%s", err, out)
+	}
+	second := readArgsLog(t, logDir, 1)
+	if flagValue(second, "--resume") != "" {
+		t.Errorf("--no-resume must not use --resume; argv: %v", second)
+	}
+	newID := flagValue(second, "--session-id")
+	if newID == "" {
+		t.Fatalf("--no-resume should mint a fresh --session-id; argv: %v", second)
+	}
+	if newID == originalID {
+		t.Errorf("--no-resume should replace session ID; got the same %q both runs", newID)
+	}
+
+	// Third run (no flag) should now resume the *new* ID, proving the
+	// post-spawn persist actually wrote.
+	if out, err := runEzsStubbed(t, env, "agent", "--branch", "feat-y"); err != nil {
+		t.Fatalf("third run: %v\n%s", err, out)
+	}
+	third := readArgsLog(t, logDir, 2)
+	if got := flagValue(third, "--resume"); got != newID {
+		t.Errorf("third run --resume = %q, want fresh ID %q", got, newID)
+	}
+}
+
+// TestAgentSession_PassthroughExtras covers `ezs agent -- <agent-args>`: any
+// tokens after `--` should appear verbatim in the agent CLI invocation.
+func TestAgentSession_PassthroughExtras(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranchWithCommit(t, env, "feat-z", "main")
+
+	logDir := filepath.Join(env.TmpDir, "claude_args")
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), agentStubScript(logDir))
+
+	if out, err := runEzsStubbed(t, env, "agent", "--branch", "feat-z", "--", "--debug", "--model", "opus"); err != nil {
+		t.Fatalf("run with extras: %v\n%s", err, out)
+	}
+	argv := readArgsLog(t, logDir, 0)
+	// All three pass-through tokens must appear, in order, somewhere in the argv.
+	wantSeq := []string{"--debug", "--model", "opus"}
+	if !containsSeq(argv, wantSeq) {
+		t.Errorf("expected pass-through %v in argv; got %v", wantSeq, argv)
+	}
+}
+
+// TestAgentSession_NonClaudeAgent_NoSessionInjection ensures we don't
+// silently inject --session-id/--resume into agents we don't understand.
+// A user pointing agent_command at, say, `aider` should see plain argv
+// (only the prompt) — anything else risks misparsing.
+func TestAgentSession_NonClaudeAgent_NoSessionInjection(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranchWithCommit(t, env, "feat-q", "main")
+
+	logDir := filepath.Join(env.TmpDir, "aider_args")
+	// Reuse the same stub generator: aider's "mcp" arg never matches because
+	// ezs only does MCP setup for claude-family agents.
+	writeExecutable(t, filepath.Join(env.StubBinDir, "aider"), agentStubScript(logDir))
+
+	if out, err := runEzsStubbed(t, env, "agent", "--branch", "feat-q", "--cmd", "aider"); err != nil {
+		t.Fatalf("run with aider: %v\n%s", err, out)
+	}
+	argv := readArgsLog(t, logDir, 0)
+	if flagValue(argv, "--session-id") != "" {
+		t.Errorf("aider must not receive --session-id; argv: %v", argv)
+	}
+	if flagValue(argv, "--resume") != "" {
+		t.Errorf("aider must not receive --resume; argv: %v", argv)
+	}
+	if flagValue(argv, "--name") != "" {
+		t.Errorf("aider must not receive --name; argv: %v", argv)
+	}
+}
+
+// TestAgentSession_StackScopedPersistsToStack verifies that when the agent
+// runs without --branch, the session is bound to the stack hash (not to
+// any individual branch). Switching to a sibling branch and running again
+// resumes the same session.
+func TestAgentSession_StackScopedPersistsToStack(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	// Two branches in the same stack.
+	CreateBranchWithCommit(t, env, "feat-a", "main")
+	CreateBranchWithCommit(t, env, "feat-b", "feat-a")
+
+	logDir := filepath.Join(env.TmpDir, "claude_args")
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), agentStubScript(logDir))
+
+	// First run from feat-a's worktree (no --branch flag) → stack-scoped.
+	cmd := exec.Command(buildEzsBinary(t), "agent")
+	cmd.Dir = filepath.Join(env.WorktreeDir, "feat-a")
+	cmd.Env = append(os.Environ(),
+		"EZSTACK_HOME="+env.ConfigDir,
+		"PATH="+env.StubBinDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("first run: %v\n%s", err, out)
+	}
+	first := readArgsLog(t, logDir, 0)
+	id := flagValue(first, "--session-id")
+	if id == "" {
+		t.Fatalf("first run missing --session-id; argv: %v", first)
+	}
+
+	// Second run from feat-b's worktree (different branch, same stack) →
+	// must resume the SAME session.
+	cmd = exec.Command(buildEzsBinary(t), "agent")
+	cmd.Dir = filepath.Join(env.WorktreeDir, "feat-b")
+	cmd.Env = append(os.Environ(),
+		"EZSTACK_HOME="+env.ConfigDir,
+		"PATH="+env.StubBinDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+	)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("second run: %v\n%s", err, out)
+	}
+	second := readArgsLog(t, logDir, 1)
+	if got := flagValue(second, "--resume"); got != id {
+		t.Errorf("second run --resume = %q, want %q (stack-scoped session should persist across sibling branches)", got, id)
+	}
+}
+
+// TestAgentSession_PersistedToStacksJSON verifies the on-disk shape: after a
+// run, $EZSTACK_HOME/stacks.json contains an `agent_session_id` field on the
+// stack (or branch cache). We don't constrain the JSON path beyond that — if
+// the field appears anywhere, the persistence layer is wired up correctly.
+func TestAgentSession_PersistedToStacksJSON(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	CreateBranchWithCommit(t, env, "feat-persisted", "main")
+
+	stub := `#!/bin/sh
+if [ "$1" = "mcp" ]; then exit 0; fi
+exit 0
+`
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), stub)
+
+	if out, err := runEzsStubbed(t, env, "agent", "--branch", "feat-persisted"); err != nil {
+		t.Fatalf("run: %v\n%s", err, out)
+	}
+
+	data, err := os.ReadFile(filepath.Join(env.ConfigDir, "stacks.json"))
+	if err != nil {
+		t.Fatalf("read stacks.json: %v", err)
+	}
+	if !strings.Contains(string(data), "agent_session_id") {
+		t.Errorf("stacks.json missing agent_session_id field; content:\n%s", string(data))
+	}
+
+	// Sanity: the JSON should still parse (we didn't break the schema).
+	var raw any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Errorf("stacks.json is no longer valid JSON: %v", err)
+	}
+}
+
+// ── helpers ────────────────────────────────────────────────────────────────────
+
+// flagValue returns the value following `flag` in argv, or "" if absent.
+// Treats "--flag value" form; doesn't handle "--flag=value" since claude
+// doesn't use that style and our injection always uses two-token form.
+func flagValue(argv []string, flag string) string {
+	for i, a := range argv {
+		if a == flag && i+1 < len(argv) {
+			return argv[i+1]
+		}
+	}
+	return ""
+}
+
+// flagValueContains returns true if argv contains the flag and its value
+// equals or contains substr (substring match for forgiving comparisons).
+func flagValueContains(argv []string, flag, substr string) bool {
+	v := flagValue(argv, flag)
+	return v != "" && strings.Contains(v, substr)
+}
+
+// containsSeq returns true if argv contains every element of seq, in order
+// (not necessarily contiguous).
+func containsSeq(argv, seq []string) bool {
+	if len(seq) == 0 {
+		return true
+	}
+	idx := 0
+	for _, a := range argv {
+		if a == seq[idx] {
+			idx++
+			if idx == len(seq) {
+				return true
+			}
+		}
+	}
+	return false
+}
