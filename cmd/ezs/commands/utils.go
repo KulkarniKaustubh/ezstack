@@ -42,25 +42,25 @@ func BuildHookContext() *hooks.Context {
 	return ctx
 }
 
-// IsShellWrapped returns true if ezs is running through the shell wrapper function.
+// isShellWrapped returns true if ezs is running through the shell wrapper function.
 // When true, stdout "cd <path>" will be eval'd by the shell. When false, the tool
 // should print the path to stderr and tell the user to cd manually.
-func IsShellWrapped() bool {
+func isShellWrapped() bool {
 	return os.Getenv("EZS_SHELL_WRAPPER") == "1"
 }
 
-// ShellQuote returns a single-quoted shell string, escaping any embedded single quotes.
-func ShellQuote(s string) string {
+// shellQuote returns a single-quoted shell string, escaping any embedded single quotes.
+func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
 // EmitCd outputs a cd command to stdout if running through the shell wrapper,
 // otherwise prints a message to stderr telling the user to cd manually.
 func EmitCd(path string) {
-	if IsShellWrapped() {
-		fmt.Printf("cd %s\n", ShellQuote(path))
+	if isShellWrapped() {
+		fmt.Printf("cd %s\n", shellQuote(path))
 	} else {
-		ui.Info(fmt.Sprintf("Run: cd %s", ShellQuote(path)))
+		ui.Info(fmt.Sprintf("Run: cd %s", shellQuote(path)))
 		ui.Info("Tip: Add to your shell config for automatic cd: eval \"$(ezs --shell-init)\"")
 	}
 }
@@ -1288,16 +1288,6 @@ func PrintExamples(cmdName string) {
 		fmt.Fprintf(os.Stdout, "  %s# %s%s\n", ui.Gray, ex[1], ui.Reset)
 		fmt.Fprintf(os.Stdout, "  %s%s%s\n\n", ui.Cyan, ex[0], ui.Reset)
 	}
-}
-
-// CommandsWithExamples returns the list of commands that have registered
-// examples. Used by docs generation and tests.
-func CommandsWithExamples() []string {
-	out := make([]string, 0, len(commandExamples))
-	for k := range commandExamples {
-		out = append(out, k)
-	}
-	return out
 }
 
 // NavigateToBranch navigates to a branch by cd-ing to its worktree or checking out the branch.

@@ -1368,11 +1368,6 @@ func (s *Stack) PopulateBranches() {
 	s.Branches = s.GetBranches(s.cache)
 }
 
-// SetCache sets the cache for this stack, allowing branch metadata to be loaded
-func (s *Stack) SetCache(cache *CacheConfig) {
-	s.cache = cache
-}
-
 // PopulateBranchesWithCache rebuilds the Branches slice using the provided cache
 func (s *Stack) PopulateBranchesWithCache(cache *CacheConfig) {
 	s.cache = cache

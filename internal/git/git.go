@@ -473,12 +473,6 @@ func isMissingRefError(err error) bool {
 		strings.Contains(msg, "not a valid object name")
 }
 
-// IsLocalAheadOfOrigin checks if the local branch has commits not in origin.
-// Deprecated: Use IsLocalAheadOfRemote instead.
-func (g *Git) IsLocalAheadOfOrigin(branch string) (bool, error) {
-	return g.IsLocalAheadOfRemote(branch, "origin")
-}
-
 // RemoteBranchExists checks if a branch exists on `origin`.
 // Use RemoteHasBranch when the remote may not be `origin` (e.g. fork remotes).
 func (g *Git) RemoteBranchExists(branch string) bool {
@@ -577,15 +571,6 @@ func (g *Git) HasDivergedFromRemote(branch, remote string) (bool, int, int, erro
 
 	hasDiverged := localAhead > 0 && remoteBehind > 0
 	return hasDiverged, localAhead, remoteBehind, nil
-}
-
-// HasDivergedFromOrigin is a convenience wrapper for the common case.
-//
-// Deprecated: prefer HasDivergedFromRemote(branch, remote) so callers in
-// fork workflows can target the contributor's fork remote instead of
-// silently inspecting `origin`.
-func (g *Git) HasDivergedFromOrigin(branch string) (bool, int, int, error) {
-	return g.HasDivergedFromRemote(branch, "origin")
 }
 
 // RebaseResult contains the result of a rebase operation
