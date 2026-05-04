@@ -773,24 +773,6 @@ func TestIsLocalAheadOfRemote(t *testing.T) {
 	}
 }
 
-func TestIsLocalAheadOfOrigin_DelegatesToRemote(t *testing.T) {
-	dir, cleanup := setupTestRepo(t)
-	defer cleanup()
-
-	g := New(dir)
-
-	// Deprecated wrapper should work the same
-	ahead1, err1 := g.IsLocalAheadOfOrigin("main")
-	ahead2, err2 := g.IsLocalAheadOfRemote("main", "origin")
-
-	if err1 != nil || err2 != nil {
-		t.Fatalf("errors: %v, %v", err1, err2)
-	}
-	if ahead1 != ahead2 {
-		t.Errorf("IsLocalAheadOfOrigin = %v, IsLocalAheadOfRemote = %v, should match", ahead1, ahead2)
-	}
-}
-
 func TestFindRemoteByOwner(t *testing.T) {
 	dir, cleanup := setupTestRepo(t)
 	defer cleanup()
@@ -949,9 +931,8 @@ func TestPushBranch_PushesNamedBranchNotCurrent(t *testing.T) {
 // contract points required by `pr create --branch <other>`: (1) the push
 // targets the explicitly-named branch, not HEAD, and (2) -u actually sets
 // upstream tracking on the named branch. Without this regression coverage,
-// switching prCreate's first-push site from PushSetUpstream (current-branch
-// only) to PushBranchSetUpstream silently regresses if the helper goes back
-// to using CurrentBranch().
+// PushBranchSetUpstream silently regresses if the helper ever goes back to
+// using CurrentBranch() instead of the named-branch argument.
 func TestPushBranchSetUpstream_PushesNamedBranchAndSetsUpstream(t *testing.T) {
 	dir, cleanup := setupTestRepo(t)
 	defer cleanup()
@@ -1070,7 +1051,7 @@ func TestPushForceBranch_PushesNamedBranchNotCurrent(t *testing.T) {
 // TestHasDivergedFromRemote covers the four states a branch can be in
 // relative to a remote ref: no remote, in-sync, local-ahead, true
 // divergence. Each case is exercised against a non-"origin" remote so the
-// fork-aware path is real, not just a pass-through to HasDivergedFromOrigin.
+// fork-aware path is real, not just hardcoded to "origin".
 func TestHasDivergedFromRemote(t *testing.T) {
 	dir, cleanup := setupTestRepo(t)
 	defer cleanup()
@@ -1148,25 +1129,6 @@ func TestHasDivergedFromRemote(t *testing.T) {
 	}
 	if !diverged || ahead == 0 || behind == 0 {
 		t.Errorf("diverged: got diverged=%v ahead=%d behind=%d, want diverged=true ahead>0 behind>0", diverged, ahead, behind)
-	}
-}
-
-// TestHasDivergedFromOrigin_DelegatesToRemote ensures the deprecated
-// wrapper behaves identically to the explicit-remote form for the origin
-// case, so existing callers see no behavior change after the refactor.
-func TestHasDivergedFromOrigin_DelegatesToRemote(t *testing.T) {
-	dir, cleanup := setupTestRepo(t)
-	defer cleanup()
-
-	g := New(dir)
-
-	d1, a1, b1, err1 := g.HasDivergedFromOrigin("main")
-	d2, a2, b2, err2 := g.HasDivergedFromRemote("main", "origin")
-	if (err1 == nil) != (err2 == nil) {
-		t.Fatalf("error parity: origin err=%v, remote err=%v", err1, err2)
-	}
-	if d1 != d2 || a1 != a2 || b1 != b2 {
-		t.Errorf("delegation mismatch: origin=(%v,%d,%d), remote=(%v,%d,%d)", d1, a1, b1, d2, a2, b2)
 	}
 }
 

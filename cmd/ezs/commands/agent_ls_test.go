@@ -224,9 +224,7 @@ func TestCollectAgentSessionsFromStackConfig(t *testing.T) {
 			"untouchd": {},
 		},
 	}
-	workStack.SetCache(cache)
 	workStack.PopulateBranchesWithCache(cache)
-	featureStack.SetCache(cache)
 	featureStack.PopulateBranchesWithCache(cache)
 
 	sc := &config.StackConfig{

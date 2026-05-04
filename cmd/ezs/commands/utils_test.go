@@ -312,9 +312,9 @@ func TestShellQuote(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.input, func(t *testing.T) {
-			got := ShellQuote(tt.input)
+			got := shellQuote(tt.input)
 			if got != tt.want {
-				t.Errorf("ShellQuote(%q) = %q, want %q", tt.input, got, tt.want)
+				t.Errorf("shellQuote(%q) = %q, want %q", tt.input, got, tt.want)
 			}
 		})
 	}

@@ -14,6 +14,19 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
 )
 
+// init wires the optional progress hook in internal/git so long-running ops
+// (rebase, merge, fetch, worktree add) show a delayed spinner. The hook is
+// defined in git as a nil-by-default function variable so the package stays a
+// leaf — config, stack, the docs/MCP binaries, and tests all consume git
+// without inheriting ui's surface. The interactive `ezs` binary opts in here.
+func init() {
+	git.ProgressStart = func(message string) func() {
+		s := ui.NewDelayedSpinner(message)
+		s.Start()
+		return s.Stop
+	}
+}
+
 // knownCommands is the set of dispatchable ezs subcommands (including aliases).
 // Used to decide whether to trigger auto-setup before dispatch — we don't want
 // to run first-time setup just because the user typed a typo.

@@ -362,7 +362,7 @@ func quoteIfNeeded(s string) string {
 			r == '@', r == '%':
 			// safe — keep scanning
 		default:
-			return ShellQuote(s)
+			return shellQuote(s)
 		}
 	}
 	return s
