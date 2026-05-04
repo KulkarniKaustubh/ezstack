@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 )
 
 // Git wraps git operations
@@ -41,30 +39,12 @@ func (g *Git) run(args ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-// runWithSpinner executes a git command with a delayed loading spinner
-// The spinner only shows if the command takes longer than ui.SpinnerDelay
+// runWithSpinner executes a git command with a delayed progress indicator
+// (when ProgressStart is wired). When the hook is nil this is equivalent
+// to plain run.
 func (g *Git) runWithSpinner(message string, args ...string) (string, error) {
-	var result string
-	var cmdErr error
-
-	err := ui.WithSpinner(message, func() error {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = g.RepoDir
-		var stdout, stderr bytes.Buffer
-		cmd.Stdout = &stdout
-		cmd.Stderr = &stderr
-		cmdErr = cmd.Run()
-		if cmdErr != nil {
-			return fmt.Errorf("git %s failed: %s\n%s", strings.Join(args, " "), cmdErr, stderr.String())
-		}
-		result = strings.TrimSpace(stdout.String())
-		return nil
-	})
-
-	if err != nil {
-		return "", err
-	}
-	return result, nil
+	defer startProgress(message)()
+	return g.run(args...)
 }
 
 // RunInteractive runs a git command interactively (for rebase with conflicts)
@@ -473,12 +453,6 @@ func isMissingRefError(err error) bool {
 		strings.Contains(msg, "not a valid object name")
 }
 
-// IsLocalAheadOfOrigin checks if the local branch has commits not in origin.
-// Deprecated: Use IsLocalAheadOfRemote instead.
-func (g *Git) IsLocalAheadOfOrigin(branch string) (bool, error) {
-	return g.IsLocalAheadOfRemote(branch, "origin")
-}
-
 // RemoteBranchExists checks if a branch exists on `origin`.
 // Use RemoteHasBranch when the remote may not be `origin` (e.g. fork remotes).
 func (g *Git) RemoteBranchExists(branch string) bool {
@@ -579,15 +553,6 @@ func (g *Git) HasDivergedFromRemote(branch, remote string) (bool, int, int, erro
 	return hasDiverged, localAhead, remoteBehind, nil
 }
 
-// HasDivergedFromOrigin is a convenience wrapper for the common case.
-//
-// Deprecated: prefer HasDivergedFromRemote(branch, remote) so callers in
-// fork workflows can target the contributor's fork remote instead of
-// silently inspecting `origin`.
-func (g *Git) HasDivergedFromOrigin(branch string) (bool, int, int, error) {
-	return g.HasDivergedFromRemote(branch, "origin")
-}
-
 // RebaseResult contains the result of a rebase operation
 type RebaseResult struct {
 	Success     bool
@@ -598,9 +563,7 @@ type RebaseResult struct {
 // RebaseNonInteractive rebases current branch onto target without interactive mode
 // Returns structured result instead of just error for better conflict handling
 func (g *Git) RebaseNonInteractive(target string) RebaseResult {
-	spinner := ui.NewDelayedSpinner(fmt.Sprintf("Rebasing onto %s...", target))
-	spinner.Start()
-	defer spinner.Stop()
+	defer startProgress(fmt.Sprintf("Rebasing onto %s...", target))()
 
 	cmd := exec.Command("git", "rebase", target)
 	cmd.Dir = g.RepoDir
@@ -629,9 +592,7 @@ func (g *Git) RebaseNonInteractive(target string) RebaseResult {
 // RebaseOntoNonInteractive rebases commits from oldBase to current onto newBase
 // Returns structured result for better conflict handling
 func (g *Git) RebaseOntoNonInteractive(newBase, oldBase string) RebaseResult {
-	spinner := ui.NewDelayedSpinner(fmt.Sprintf("Rebasing onto %s...", newBase))
-	spinner.Start()
-	defer spinner.Stop()
+	defer startProgress(fmt.Sprintf("Rebasing onto %s...", newBase))()
 
 	cmd := exec.Command("git", "rebase", "--onto", newBase, oldBase)
 	cmd.Dir = g.RepoDir
@@ -674,9 +635,7 @@ func (g *Git) RebaseOnto(newBase, oldBase string) error {
 // MergeNonInteractive merges target into the current branch without interactive mode
 // Returns structured result for conflict handling, matching RebaseResult for compatibility
 func (g *Git) MergeNonInteractive(target string) RebaseResult {
-	spinner := ui.NewDelayedSpinner(fmt.Sprintf("Merging %s...", target))
-	spinner.Start()
-	defer spinner.Stop()
+	defer startProgress(fmt.Sprintf("Merging %s...", target))()
 
 	cmd := exec.Command("git", "merge", target, "--no-edit")
 	cmd.Dir = g.RepoDir

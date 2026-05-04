@@ -54,7 +54,7 @@ var configKeys = []string{
 // here that the parser doesn't actually accept — it'll trip direction (2)
 // and confuse users who tab-complete to a flag the binary then rejects.
 var commandFlags = map[string][]string{
-	"agent":    {"--cmd", "--stack", "-s", "--branch", "-b", "--dry-run", "--save-prompt", "--no-push", "--preset", "--no-mcp", "--help", "-h"},
+	"agent":    {"--cmd", "--stack", "-s", "--branch", "-b", "--dry-run", "--save-prompt", "--no-push", "--preset", "--no-mcp", "--no-resume", "--help", "-h"},
 	"amend":    {"--merge", "--rebase", "--push", "--push-children", "--no-push", "--help", "-h"},
 	"commit":   {"--merge", "--rebase", "--push", "--push-children", "--no-push", "--help", "-h"},
 	"config":   {"--help", "-h"},
@@ -81,7 +81,7 @@ var commandFlags = map[string][]string{
 // `ezs pr create --<TAB>` surfaces create's flags rather than just the
 // top-level `--help`/`-h` from `pr` itself. Same drift-gate test applies.
 var prSubcommandFlags = map[string][]string{
-	"create": {"--stack", "-s", "--draft-all", "--title", "-t", "--body", "-b", "--draft", "-d", "--branch", "--help", "-h"},
+	"create": {"--stack", "-s", "--draft-all", "--title", "-t", "--body", "-b", "--draft", "-d", "--branch", "--auto", "--ai", "--force", "-f", "--recreate", "--help", "-h"},
 	"update": {"--branch", "--help", "-h"},
 	"merge":  {"--method", "-m", "--branch", "--no-delete-branch", "--help", "-h"},
 	"draft":  {"--branch", "--help", "-h"},
@@ -95,6 +95,8 @@ var prSubcommandFlags = map[string][]string{
 // the default agent mode, so they pick up commandFlags["agent"] correctly.)
 var agentSubcommandFlags = map[string][]string{
 	"prompt": {"--shipped", "--custom", "--repo", "--edit", "--reset", "--help", "-h"},
+	"ls":     {"--branch", "-b", "--stack", "-s", "--feature", "--json", "--help", "-h"},
+	"list":   {"--branch", "-b", "--stack", "-s", "--feature", "--json", "--help", "-h"},
 }
 
 // branchPositionalCommands take a branch name as their first positional arg.
@@ -271,6 +273,8 @@ func printCompletions(args []string) {
 		if len(args) == 2 {
 			fmt.Println("feature")
 			fmt.Println("feat")
+			fmt.Println("ls")
+			fmt.Println("list")
 			fmt.Println("prompt")
 			return
 		}

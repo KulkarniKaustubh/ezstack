@@ -68,8 +68,7 @@ func TestMergeGlobalConfig_AllFieldsCovered(t *testing.T) {
 // a naked Load → mutate → write with no lock or merge — A's read of
 // disk happened before B's write, A's write clobbered B's repo entry.
 func TestConfig_ConcurrentSave_DifferentRepos_NoLostUpdates(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("EZSTACK_HOME", tmpDir)
+	useEzstackHome(t)
 
 	// Seed an empty config so both goroutines load a real file.
 	seed := &Config{Repos: map[string]*RepoConfig{}}
@@ -132,8 +131,7 @@ func TestConfig_ConcurrentSave_DifferentRepos_NoLostUpdates(t *testing.T) {
 // in-memory copy, captured before B's write landed) and silently delete
 // the peer's entry.
 func TestConfig_Save_PreservesPeerAddedRepos(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("EZSTACK_HOME", tmpDir)
+	useEzstackHome(t)
 
 	// A and B each load before either has saved.
 	a, _ := Load()
@@ -169,8 +167,7 @@ func TestConfig_Save_PreservesPeerAddedRepos(t *testing.T) {
 // regression that forgot to release the lock would deadlock on the
 // second save.
 func TestConfig_Save_LockDoesNotBlockSingleProcess(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("EZSTACK_HOME", tmpDir)
+	useEzstackHome(t)
 
 	cfg, _ := Load()
 	cfg.DefaultBaseBranch = "main"
@@ -188,8 +185,7 @@ func TestConfig_Save_LockDoesNotBlockSingleProcess(t *testing.T) {
 // silently dropped. The fix uses a three-way merge keyed on the
 // origBranches snapshot captured at load time.
 func TestCacheConfig_Save_MergesPeerAddedBranches(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("EZSTACK_HOME", tmpDir)
+	useEzstackHome(t)
 
 	const repo = "/test/repo"
 
@@ -241,8 +237,7 @@ func TestCacheConfig_Save_MergesPeerAddedBranches(t *testing.T) {
 // origBranches has it and Branches doesn't) and the peer's add still
 // survives.
 func TestCacheConfig_Save_DeleteSurvivesPeerAdd(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("EZSTACK_HOME", tmpDir)
+	useEzstackHome(t)
 
 	const repo = "/test/repo"
 	if err := MutateBranchCache(repo, "to-delete", func(_ *BranchCache) (*BranchCache, error) {
@@ -281,8 +276,7 @@ func TestCacheConfig_Save_DeleteSurvivesPeerAdd(t *testing.T) {
 // duplicated effort"). Verify that after N concurrent loads, the file
 // version is current and the content is parseable.
 func TestLoadStackConfig_MigrationDoesNotRaceWithConcurrentLoads(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("EZSTACK_HOME", tmpDir)
+	tmpDir := useEzstackHome(t)
 
 	// Seed a v1 stacks.json (oldest format the migration chain handles).
 	v1 := stackConfigFile{Version: 1, Repos: map[string]*repoData{
@@ -345,8 +339,7 @@ func TestLoadStackConfig_MigrationDoesNotRaceWithConcurrentLoads(t *testing.T) {
 // We use a short LockTimeout (50ms) and LockPollInterval (5ms) so the test
 // completes in well under a second.
 func TestLoadStackConfig_MigrationLockTimeout_DoesNotRaceUnlockedWrite(t *testing.T) {
-	tmpDir := t.TempDir()
-	t.Setenv("EZSTACK_HOME", tmpDir)
+	tmpDir := useEzstackHome(t)
 
 	// Seed a v1 stacks.json that needs migration.
 	v1 := stackConfigFile{Version: 1, Repos: map[string]*repoData{

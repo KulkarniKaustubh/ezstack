@@ -169,6 +169,14 @@ func (m *Manager) GetConfig() *config.Config {
 	return m.config
 }
 
+// GetStackConfig returns the loaded per-repo stack config (stacks, branch
+// cache). Used by read-only commands like `ezs agent ls` that need to
+// iterate the same data the manager already has, without paying the cost
+// of a second LoadStackConfig.
+func (m *Manager) GetStackConfig() *config.StackConfig {
+	return m.stackConfig
+}
+
 // Reconcile silently reconciles ezstack config with git reality.
 // It detects renamed branches, removes orphaned entries, and cleans up
 // missing worktrees. This runs automatically when a Manager is created,
@@ -561,6 +569,48 @@ func (m *Manager) SetBranchRemote(branchName, remote string) error {
 		bc = &config.BranchCache{}
 	}
 	bc.Remote = remote
+	cache.SetBranchCache(branchName, bc)
+	return m.stackConfig.Save(m.repoDir)
+}
+
+// SetStackAgentSessionID stores the AI agent session UUID on the stack with
+// the given hash and persists. mode is the launch mode the session was
+// created in (config.AgentSessionWorkMode or config.AgentSessionFeatureMode);
+// it's persisted alongside the UUID so `ezs agent ls --feature` can filter
+// rows by their origin mode. An empty sessionID clears both the binding and
+// the mode tag.
+func (m *Manager) SetStackAgentSessionID(stackHash, sessionID, mode string) error {
+	s, ok := m.stackConfig.Stacks[stackHash]
+	if !ok {
+		return fmt.Errorf("stack %s not found", stackHash)
+	}
+	s.AgentSessionID = sessionID
+	if sessionID == "" {
+		s.AgentSessionMode = ""
+	} else {
+		s.AgentSessionMode = mode
+	}
+	return m.stackConfig.Save(m.repoDir)
+}
+
+// SetBranchAgentSessionID stores the AI agent session UUID on a branch and
+// persists. Used by `ezs agent --branch` to remember branch-scoped sessions.
+// mode is the launch mode (work-only in practice for branch-scoped, since
+// feature mode requires a stack); it's stored for symmetry with stack-scoped
+// sessions and consumed by `agent ls --feature`. An empty sessionID clears
+// both the UUID and mode.
+func (m *Manager) SetBranchAgentSessionID(branchName, sessionID, mode string) error {
+	cache := m.stackConfig.Cache
+	bc := cache.GetBranchCache(branchName)
+	if bc == nil {
+		bc = &config.BranchCache{}
+	}
+	bc.AgentSessionID = sessionID
+	if sessionID == "" {
+		bc.AgentSessionMode = ""
+	} else {
+		bc.AgentSessionMode = mode
+	}
 	cache.SetBranchCache(branchName, bc)
 	return m.stackConfig.Save(m.repoDir)
 }
