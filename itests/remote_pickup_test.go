@@ -11,19 +11,19 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
 )
 
-// TestNewFromRemoteRef_NoPR_DoesNotFlagIsRemote is the end-to-end regression
-// test for the bug where `ezs new origin/<branch>` always marked the picked-up
-// branch as IsRemote=true, even for branches that simply didn't have a PR yet.
-// That spurious flag was then interpreted by `ezs push` as "this branch came
-// from another contributor's fork" and latched the branch into config.RemoteNoPush,
-// silently blocking every subsequent push to the user's own branch.
+// TestNewFromRemoteRef_NoPR_PickupRemainsPushable guards the regression that
+// previously came from `ezs new origin/<branch>` calling MarkBranchRemote with
+// an empty Remote string: that combination (IsRemote=true, Remote="") sent
+// every subsequent push through fork-detection, which on a same-repo PR with no
+// fork would persist the _nopush sentinel and silently block all pushes.
 //
-// The fix in cmd/ezs/commands/new.go only calls MarkBranchRemote when a fork
-// was actually detected (detectForkRemote returned non-empty). For same-repo
-// pickups — which is the overwhelming common case when users pull up their own
-// in-flight branches with `ezs new origin/<name>` — the branch is registered
-// like any normal branch, with IsRemote=false.
-func TestNewFromRemoteRef_NoPR_DoesNotFlagIsRemote(t *testing.T) {
+// Today the pickup IS marked IsRemote=true so the (remote) tag renders in
+// `ezs ls`/`ezs status` (the user explicitly asked for that tag on origin/*
+// and -r flows). The push-safety contract is preserved by also persisting
+// Remote="origin" — ResolveBranchRemote short-circuits on a non-empty Remote
+// without re-running fork detection, so the branch stays pushable and never
+// flips into _nopush.
+func TestNewFromRemoteRef_NoPR_PickupRemainsPushable(t *testing.T) {
 	env := SetupTestEnv(t)
 	defer env.Cleanup()
 	useStubBackend(t)
@@ -86,19 +86,23 @@ func TestNewFromRemoteRef_NoPR_DoesNotFlagIsRemote(t *testing.T) {
 	if b == nil {
 		t.Fatalf("branch %q was not registered", pickupBranch)
 	}
-	if b.IsRemote {
-		t.Errorf("branch %q was flagged IsRemote=true despite no PR and no fork — the bug regressed", pickupBranch)
+	// Pickup is intentionally flagged IsRemote so the (remote) tag renders.
+	if !b.IsRemote {
+		t.Errorf("branch %q expected IsRemote=true on pickup so PrintStack can show (remote)", pickupBranch)
 	}
-	if b.Remote != "" {
-		t.Errorf("branch %q has Remote=%q persisted; nothing should have been latched", pickupBranch, b.Remote)
+	// And Remote is anchored to "origin" so nothing re-runs fork detection.
+	if b.Remote != "origin" {
+		t.Errorf("branch %q expected Remote=%q (sentinel that anchors push to origin), got %q",
+			pickupBranch, "origin", b.Remote)
 	}
 	if !b.CanPush() {
 		t.Errorf("branch %q CanPush()=false — a plain same-repo pickup must remain pushable", pickupBranch)
 	}
 
-	// Belt-and-suspenders: the _nopush sentinel must not appear anywhere in the
-	// persisted stacks.json for this repo. The literal string check catches any
-	// accidental persistence, even if the Branch struct decoding drifts later.
+	// The _nopush sentinel must not appear anywhere in the persisted stacks.json
+	// for this repo: that's the literal regression we were guarding against.
+	// The literal string check catches any accidental persistence, even if the
+	// Branch struct decoding drifts later.
 	stacksPath := filepath.Join(env.ConfigDir, "stacks.json")
 	data, err := os.ReadFile(stacksPath)
 	if err != nil {
@@ -107,8 +111,17 @@ func TestNewFromRemoteRef_NoPR_DoesNotFlagIsRemote(t *testing.T) {
 	if strings.Contains(string(data), "_nopush") {
 		t.Errorf("stacks.json contains _nopush after plain pickup:\n%s", string(data))
 	}
-	if strings.Contains(string(data), `"is_remote": true`) {
-		t.Errorf("stacks.json contains is_remote=true after plain pickup:\n%s", string(data))
+	// Positive: the `(remote)` tag is driven off `is_remote: true` in the
+	// cache. Lock the literal string so a future cache-encoding change can't
+	// silently drop the field and erase the tag in `ezs ls`.
+	if !strings.Contains(string(data), `"is_remote": true`) {
+		t.Errorf("stacks.json missing %q after pickup (drives the (remote) tag):\n%s",
+			`"is_remote": true`, string(data))
+	}
+	// And the explicit Remote=origin sentinel that prevents re-detection.
+	if !strings.Contains(string(data), `"remote": "origin"`) {
+		t.Errorf("stacks.json missing %q after pickup (prevents fork-detection re-runs):\n%s",
+			`"remote": "origin"`, string(data))
 	}
 }
 

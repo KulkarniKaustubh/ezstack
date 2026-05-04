@@ -197,6 +197,7 @@ type Stack struct {
 	RootBase         string       `json:"root_base,omitempty"`          // The branch the root's PR targets (for computing root diff)
 	RootPRNumber     int          `json:"-"`                            // Runtime-only: derived from RootPRUrl
 	RootPRUrl        string       `json:"root_pr_url,omitempty"`        // PR URL of the root branch (for remote base branches)
+	RootIsRemote     bool         `json:"root_is_remote,omitempty"`     // Root is a remote-tracked branch (set by RegisterRemoteBranch); drives the (remote) tag in PrintStack
 	DeleteDeclined   bool         `json:"delete_declined,omitempty"`    // User declined cleanup prompt; don't re-ask
 	AgentSessionID   string       `json:"agent_session_id,omitempty"`   // UUID of the AI agent session bound to this stack (used by `ezs agent` to resume)
 	AgentSessionMode string       `json:"agent_session_mode,omitempty"` // Mode the session was created in: "work" or "feature". Empty ⇒ legacy entry, treated as "work".

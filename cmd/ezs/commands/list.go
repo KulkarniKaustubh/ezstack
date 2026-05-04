@@ -123,6 +123,7 @@ type stackJSON struct {
 	RootBase     string       `json:"root_base,omitempty"`
 	RootPRNumber int          `json:"root_pr_number,omitempty"`
 	RootPRUrl    string       `json:"root_pr_url,omitempty"`
+	RootIsRemote bool         `json:"root_is_remote,omitempty"`
 	RootAdds     int          `json:"root_additions,omitempty"`
 	RootDels     int          `json:"root_deletions,omitempty"`
 	Branches     []branchJSON `json:"branches"`
@@ -134,6 +135,7 @@ type branchJSON struct {
 	Parent       string `json:"parent"`
 	IsMerged     bool   `json:"is_merged"`
 	IsCurrent    bool   `json:"is_current"`
+	IsRemote     bool   `json:"is_remote,omitempty"`
 	PRNumber     int    `json:"pr_number,omitempty"`
 	PRUrl        string `json:"pr_url,omitempty"`
 	WorktreePath string `json:"worktree_path,omitempty"`
@@ -149,6 +151,7 @@ type statusStackJSON struct {
 	RootBase     string             `json:"root_base,omitempty"`
 	RootPRNumber int                `json:"root_pr_number,omitempty"`
 	RootPRUrl    string             `json:"root_pr_url,omitempty"`
+	RootIsRemote bool               `json:"root_is_remote,omitempty"`
 	RootAdds     int                `json:"root_additions,omitempty"`
 	RootDels     int                `json:"root_deletions,omitempty"`
 	Branches     []statusBranchJSON `json:"branches"`
@@ -178,6 +181,7 @@ func printStacksJSON(stacks []*config.Stack, currentBranch string, diffMaps []ma
 			RootBase:     s.RootBase,
 			RootPRNumber: s.RootPRNumber,
 			RootPRUrl:    s.RootPRUrl,
+			RootIsRemote: s.RootIsRemote,
 			Branches:     make([]branchJSON, 0, len(s.Branches)),
 		}
 		var dm map[string]*ui.BranchStatus
@@ -196,6 +200,7 @@ func printStacksJSON(stacks []*config.Stack, currentBranch string, diffMaps []ma
 				Parent:       b.Parent,
 				IsMerged:     b.IsMerged,
 				IsCurrent:    b.Name == currentBranch,
+				IsRemote:     b.IsRemote,
 				PRNumber:     b.PRNumber,
 				PRUrl:        b.PRUrl,
 				WorktreePath: b.WorktreePath,
@@ -226,6 +231,7 @@ func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusM
 			RootBase:     s.RootBase,
 			RootPRNumber: s.RootPRNumber,
 			RootPRUrl:    s.RootPRUrl,
+			RootIsRemote: s.RootIsRemote,
 			Branches:     make([]statusBranchJSON, 0, len(s.Branches)),
 		}
 		var sm map[string]*ui.BranchStatus
@@ -245,6 +251,7 @@ func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusM
 					Parent:       b.Parent,
 					IsMerged:     b.IsMerged,
 					IsCurrent:    b.Name == currentBranch,
+					IsRemote:     b.IsRemote,
 					PRNumber:     b.PRNumber,
 					PRUrl:        b.PRUrl,
 					WorktreePath: b.WorktreePath,
