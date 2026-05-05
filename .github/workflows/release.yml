@@ -252,34 +252,37 @@ jobs:
         run: |
           # Strip leading 'v' from tag
           VERSION="${GITHUB_REF_NAME#v}"
+          # The script writes the list of files it touched to $BUMP_FILES_OUT
+          # so the "Commit and push" step below can stage exactly that set.
+          # Keeping a single source of truth prevents the two lists from
+          # drifting (previous bug: tauri-ui/src/version.ts was bumped but
+          # never committed, leaving the desktop title bar stale on main).
+          export BUMP_FILES_OUT="$RUNNER_TEMP/bump-files.txt"
           ./scripts/bump-version.sh "$VERSION"
+          echo "BUMP_FILES_OUT=$BUMP_FILES_OUT" >> "$GITHUB_ENV"
 
       - name: Regenerate docs from source
         run: make docs
 
       - name: Commit and push
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           VERSION="${GITHUB_REF_NAME#v}"
-          git add \
-            VERSION \
-            internal/version/version.go \
-            vscode-extension/package.json \
-            vscode-extension/package-lock.json \
-            vscode-extension/README.md \
-            tauri-ui/package.json \
-            tauri-ui/package-lock.json \
-            tauri-ui/src-tauri/tauri.conf.json \
-            tauri-ui/src-tauri/Cargo.toml \
-            tauri-ui/src-tauri/Cargo.lock \
-            DOCUMENTATION.md \
-            docs/index.html \
-            docs/vscode.html \
-            docs/agent.html \
-            docs/nvim.html \
-            docs/desktop.html \
-            docs/documentation.html
+          if [ ! -s "$BUMP_FILES_OUT" ]; then
+            echo "::error::bump-version.sh produced no file list at $BUMP_FILES_OUT"
+            exit 1
+          fi
+          # Read the list into an array via `while read` — portable across
+          # bash 3.2 (macOS default) and bash 5 (Linux runners). `xargs -a`
+          # / `-d` and `mapfile` aren't both available everywhere. The `--`
+          # stops `git add` interpreting any leading-dash path as a flag.
+          files=()
+          while IFS= read -r line; do
+            [ -n "$line" ] && files+=("$line")
+          done < "$BUMP_FILES_OUT"
+          git add -- "${files[@]}"
           git diff --cached --quiet && echo "Nothing to commit" && exit 0
           git commit -m "bump version references to v${VERSION}"
           git push

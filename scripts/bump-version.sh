@@ -164,3 +164,16 @@ echo "Updated ${#changed[@]} files:"
 for f in "${changed[@]}"; do
     echo "  ✓ $f"
 done
+
+# Optionally emit the bare list of changed files to a path specified via
+# BUMP_FILES_OUT. release.yml's "Commit and push" step consumes this so its
+# `git add` list stays in lockstep with the files this script touches —
+# previously the two lists drifted (tauri-ui/src/version.ts was bumped here
+# but never committed by CI, leaving the desktop title bar showing stale
+# versions on main after every release).
+if [ -n "${BUMP_FILES_OUT:-}" ]; then
+    : > "$BUMP_FILES_OUT"
+    for f in "${changed[@]}"; do
+        printf '%s\n' "$f" >> "$BUMP_FILES_OUT"
+    done
+fi
