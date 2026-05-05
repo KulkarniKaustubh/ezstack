@@ -1059,6 +1059,19 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		return nil, fmt.Errorf("failed to read stacks.json version: %w", err)
 	}
 
+	// Refuse to load a stacks.json written by a newer ezstack. We can't
+	// downgrade the schema, and silently parsing newer JSON as the older
+	// schema would drop fields the old binary doesn't recognize — the next
+	// Save would write back the truncated form, losing data the newer
+	// binary intentionally stored. Surface this loudly so the user upgrades.
+	if versionCheck.Version > currentStackConfigVersion {
+		return nil, fmt.Errorf(
+			"stacks.json schema version %d is newer than this ezstack binary supports (max %d) — "+
+				"upgrade ezstack (`ezs upgrade` or download a newer release) before continuing; "+
+				"refusing to load to avoid silently dropping fields",
+			versionCheck.Version, currentStackConfigVersion)
+	}
+
 	if versionCheck.Version < currentStackConfigVersion {
 		data, err = migrateStackConfig(data, versionCheck.Version, currentStackConfigVersion)
 		if err != nil {
