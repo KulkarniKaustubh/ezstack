@@ -168,6 +168,43 @@ type stackConfigFile struct {
 	Repos   map[string]*repoData `json:"repos"`
 }
 
+// readStackConfigVersion returns the schema version stored at the top of a
+// stacks.json byte payload. It only parses the version field — no other
+// structural validation — so it is cheap enough to call before every
+// load-modify-save sequence. Empty input is treated as version 0 so
+// callers can distinguish "no file yet" from "newer-than-supported".
+func readStackConfigVersion(data []byte) (int, error) {
+	if len(data) == 0 {
+		return 0, nil
+	}
+	var versionCheck struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &versionCheck); err != nil {
+		return 0, fmt.Errorf("failed to read stacks.json version: %w", err)
+	}
+	return versionCheck.Version, nil
+}
+
+// refuseNewerStackConfig returns a uniform actionable error when the
+// on-disk stacks.json was written by a newer ezstack than this binary
+// supports. Every read+write path must call this before unmarshaling into
+// stackConfigFile — without the guard, json.Unmarshal silently drops
+// fields the older schema doesn't know about, and the next write would
+// persist the truncated form, losing data the newer binary intentionally
+// stored. Returns nil for current and older schemas (older is migrated by
+// the caller).
+func refuseNewerStackConfig(version int) error {
+	if version > currentStackConfigVersion {
+		return fmt.Errorf(
+			"stacks.json schema version %d is newer than this ezstack binary supports (max %d) — "+
+				"upgrade ezstack (`ezs upgrade` or download a newer release) before continuing; "+
+				"refusing to load to avoid silently dropping fields",
+			version, currentStackConfigVersion)
+	}
+	return nil
+}
+
 // StackConfig holds metadata about stacks for a single repo
 type StackConfig struct {
 	Stacks  map[string]*Stack `json:"stacks"`
@@ -1052,15 +1089,16 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		}
 	}
 
-	var versionCheck struct {
-		Version int `json:"version"`
+	versionCheck, err := readStackConfigVersion(data)
+	if err != nil {
+		return nil, err
 	}
-	if err := json.Unmarshal(data, &versionCheck); err != nil {
-		return nil, fmt.Errorf("failed to read stacks.json version: %w", err)
+	if err := refuseNewerStackConfig(versionCheck); err != nil {
+		return nil, err
 	}
 
-	if versionCheck.Version < currentStackConfigVersion {
-		data, err = migrateStackConfig(data, versionCheck.Version, currentStackConfigVersion)
+	if versionCheck < currentStackConfigVersion {
+		data, err = migrateStackConfig(data, versionCheck, currentStackConfigVersion)
 		if err != nil {
 			return nil, fmt.Errorf("failed to migrate stacks.json: %w", err)
 		}
@@ -1073,14 +1111,22 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		if lock, lockErr := acquireFileLock(stackPath + ".lock"); lockErr == nil {
 			// Re-read disk under the lock — if a peer migrated first, prefer
 			// their result (still our target version) rather than rewriting.
+			// If the peer wrote a *newer*-than-supported version (e.g. a
+			// concurrent v6 binary mid-upgrade), refuse: silently swapping
+			// `data` for the newer payload and falling through to the
+			// stackConfigFile unmarshal would drop fields the older schema
+			// doesn't recognize. The lock release is explicit on every exit.
 			if cur, readErr := os.ReadFile(stackPath); readErr == nil {
-				var curVer struct {
-					Version int `json:"version"`
-				}
-				if json.Unmarshal(cur, &curVer) == nil && curVer.Version >= currentStackConfigVersion {
-					data = cur
-					lock.release()
-					goto migrated
+				if curVer, vErr := readStackConfigVersion(cur); vErr == nil {
+					if err := refuseNewerStackConfig(curVer); err != nil {
+						lock.release()
+						return nil, err
+					}
+					if curVer >= currentStackConfigVersion {
+						data = cur
+						lock.release()
+						goto migrated
+					}
 				}
 			}
 			if err := atomicWriteFile(stackPath, data, 0600); err != nil {
@@ -1453,6 +1499,19 @@ func (sc *StackConfig) Save(repoDir string) error {
 		}
 		file.Repos = make(map[string]*repoData)
 	} else {
+		// Refuse to overwrite a stacks.json a newer ezstack wrote — the
+		// unmarshal below would silently drop fields the older schema
+		// doesn't recognize, and the atomicWriteFile near the bottom of
+		// this function would persist the truncated form. Surface a
+		// clear upgrade prompt instead. The lock above guarantees no
+		// peer can flip the file between this check and the write.
+		version, vErr := readStackConfigVersion(data)
+		if vErr != nil {
+			return vErr
+		}
+		if err := refuseNewerStackConfig(version); err != nil {
+			return err
+		}
 		if err := json.Unmarshal(data, &file); err != nil {
 			return err
 		}
@@ -1511,6 +1570,17 @@ func LoadCacheConfig(repoDir string) (*CacheConfig, error) {
 	stackPath := filepath.Join(configDir, "stacks.json")
 	data, err := os.ReadFile(stackPath)
 	if err == nil {
+		// Refuse to read a newer-schema file — silently parsing as the
+		// older schema would drop fields, and if the caller subsequently
+		// invokes CacheConfig.Save, the truncated form would be persisted.
+		// Same failure mode as LoadStackConfig's guard.
+		version, vErr := readStackConfigVersion(data)
+		if vErr != nil {
+			return nil, vErr
+		}
+		if err := refuseNewerStackConfig(version); err != nil {
+			return nil, err
+		}
 		var file stackConfigFile
 		if err := json.Unmarshal(data, &file); err == nil && file.Repos != nil {
 			if rd, ok := file.Repos[repoDir]; ok && rd != nil && rd.Branches != nil {
@@ -1609,6 +1679,15 @@ func MutateBranchCache(repoDir, branchName string, fn func(current *BranchCache)
 			return fmt.Errorf("failed to read stacks.json: %w", err)
 		}
 	} else if len(data) > 0 {
+		// Refuse to overwrite a newer-schema stacks.json — see the
+		// matching guard in StackConfig.Save for the failure mode.
+		version, vErr := readStackConfigVersion(data)
+		if vErr != nil {
+			return vErr
+		}
+		if err := refuseNewerStackConfig(version); err != nil {
+			return err
+		}
 		if uErr := json.Unmarshal(data, &file); uErr != nil {
 			return fmt.Errorf("failed to parse stacks.json: %w", uErr)
 		}
@@ -1690,6 +1769,15 @@ func (cc *CacheConfig) Save(repoDir string) error {
 			return fmt.Errorf("failed to read stacks.json: %w", err)
 		}
 	} else {
+		// Refuse to overwrite a newer-schema stacks.json — same failure
+		// mode as in StackConfig.Save / MutateBranchCache.
+		version, vErr := readStackConfigVersion(data)
+		if vErr != nil {
+			return vErr
+		}
+		if err := refuseNewerStackConfig(version); err != nil {
+			return err
+		}
 		if uErr := json.Unmarshal(data, &file); uErr != nil {
 			return fmt.Errorf("failed to parse stacks.json: %w", uErr)
 		}

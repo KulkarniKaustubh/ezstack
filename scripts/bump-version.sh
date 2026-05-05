@@ -146,7 +146,10 @@ fi
 # 12. Docs HTML files — rewrite any `vX.Y.Z` or `ezstack[-_]X.Y.Z` token to the new
 #     version. Using a regex (instead of matching OLD_VERSION literally) means stale
 #     refs from prior skipped bumps get caught automatically on the next run.
-for doc in docs/index.html docs/vscode.html docs/agent.html docs/nvim.html docs/desktop.html docs/documentation.html; do
+#     IMPORTANT: every published HTML page that carries a footer version belongs
+#     in this list — adding a new page without listing it here lets the footer
+#     drift silently across releases (cf. docs/mcp.html stuck at v4.7.5).
+for doc in docs/index.html docs/vscode.html docs/agent.html docs/nvim.html docs/desktop.html docs/mcp.html docs/documentation.html; do
     FILE="$REPO_ROOT/$doc"
     if [ -f "$FILE" ]; then
         sed -i.bak \
@@ -164,3 +167,16 @@ echo "Updated ${#changed[@]} files:"
 for f in "${changed[@]}"; do
     echo "  ✓ $f"
 done
+
+# Optionally emit the bare list of changed files to a path specified via
+# BUMP_FILES_OUT. release.yml's "Commit and push" step consumes this so its
+# `git add` list stays in lockstep with the files this script touches —
+# previously the two lists drifted (tauri-ui/src/version.ts was bumped here
+# but never committed by CI, leaving the desktop title bar showing stale
+# versions on main after every release).
+if [ -n "${BUMP_FILES_OUT:-}" ]; then
+    : > "$BUMP_FILES_OUT"
+    for f in "${changed[@]}"; do
+        printf '%s\n' "$f" >> "$BUMP_FILES_OUT"
+    done
+fi
