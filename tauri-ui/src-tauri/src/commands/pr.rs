@@ -71,3 +71,29 @@ pub fn pr_update_stack(state: State<'_, ConnectionState>, repo_path: String) -> 
     let conn = state.0.lock().map_err(|e| e.to_string())?.clone();
     run_ezs_auto(conn.as_ref(), &repo_path, &["-y", "pr", "stack"])
 }
+
+/// Reconcile the local PR cache from GitHub. Use after PRs are merged,
+/// closed, or re-targeted via the GitHub UI to bring `get_stacks_status`
+/// back in sync.
+///
+/// `stack` and `branch` are mutually exclusive on the CLI side; we
+/// resolve the conflict client-side by giving `stack` precedence so
+/// callers that pass both don't surface the CLI's rejection error.
+/// When both are `None` the CLI defaults to the current branch.
+#[tauri::command]
+pub fn pr_refresh(
+    state: State<'_, ConnectionState>,
+    repo_path: String,
+    branch: Option<String>,
+    stack: Option<bool>,
+) -> Result<CommandResult, String> {
+    let conn = state.0.lock().map_err(|e| e.to_string())?.clone();
+    let mut args: Vec<&str> = vec!["-y", "pr", "refresh"];
+    if stack.unwrap_or(false) {
+        args.push("--stack");
+    } else if let Some(ref b) = branch {
+        args.push("--branch");
+        args.push(b);
+    }
+    run_ezs_auto(conn.as_ref(), &repo_path, &args)
+}

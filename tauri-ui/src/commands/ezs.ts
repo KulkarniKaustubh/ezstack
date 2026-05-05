@@ -259,6 +259,137 @@ export async function configImport(
   return invoke<CommandResult>("config_import", { repoPath, filePath });
 }
 
+// ─── CLI parity additions (commit/amend/diff/log/stack/unstack/pr_refresh) ──
+// Same orphan-binding shape as the bundle additions above: the Rust handlers
+// in src-tauri wrap each CLI feature end-to-end, but the React UI doesn't
+// call them yet (a commit/amend dialog, a diffstat / log panel, an
+// add-to-stack flow, and a "refresh PR cache" button are the intended
+// integration points). Keeping the bindings live so the next UI change set
+// can pick them up without round-tripping through Rust again.
+
+/** Strategy override for {@link commit} / {@link amend}. `default` keeps
+ *  the configured `sync_strategy`. */
+export type SyncStrategy = "default" | "merge" | "rebase";
+
+/**
+ * Commit and auto-sync child branches. The Tauri layer always passes
+ * `--no-push` because the desktop surface has no place to answer the
+ * CLI's interactive push prompt; pushes are explicit user actions via
+ * {@link pushBranch}. `all=true` maps to `git commit -a`.
+ */
+export async function commit(
+  repoPath: string,
+  message: string,
+  opts?: { all?: boolean; strategy?: SyncStrategy },
+): Promise<CommandResult> {
+  return invoke<CommandResult>("commit", {
+    repoPath,
+    message,
+    all: opts?.all ?? false,
+    strategy: opts?.strategy ?? "default",
+  });
+}
+
+/**
+ * Amend the last commit and auto-sync children.
+ *
+ * When `message` is empty/undefined the existing commit message is
+ * preserved (`--no-edit`). Like {@link commit}, push is suppressed —
+ * amend rewrites history, so the intended follow-up is
+ * `pushBranch(repoPath, false, true)` with `force=true`.
+ */
+export async function amend(
+  repoPath: string,
+  opts?: { message?: string; all?: boolean; strategy?: SyncStrategy },
+): Promise<CommandResult> {
+  return invoke<CommandResult>("amend", {
+    repoPath,
+    message: opts?.message ?? null,
+    all: opts?.all ?? false,
+    strategy: opts?.strategy ?? "default",
+  });
+}
+
+/** Display mode for {@link diffBranch}. JSON returns the file-level numstat
+ *  (parse stdout with `JSON.parse`); stat returns `git diff --stat` text. */
+export type DiffMode = "json" | "stat";
+
+/**
+ * Diff a branch against its parent in the stack. Returns the raw
+ * `CommandResult` so the caller can decide between JSON and text
+ * rendering. When `branch` is omitted, the CLI defaults to the
+ * current branch.
+ */
+export async function diffBranch(
+  repoPath: string,
+  opts?: { branch?: string; mode?: DiffMode },
+): Promise<CommandResult> {
+  return invoke<CommandResult>("diff_branch", {
+    repoPath,
+    branch: opts?.branch ?? null,
+    mode: opts?.mode ?? "json",
+  });
+}
+
+/** Show commits in `branch` since its parent. Always returns JSON
+ *  (`logOutputJSON` shape) on stdout. */
+export async function logBranch(
+  repoPath: string,
+  branch?: string,
+): Promise<CommandResult> {
+  return invoke<CommandResult>("log_branch", {
+    repoPath,
+    branch: branch ?? null,
+  });
+}
+
+/**
+ * Add a branch to a stack. `parent` and `base` are mutually exclusive:
+ * pass `parent` to attach under an existing tracked branch, `base` to
+ * start a new stack rooted on a non-default base (e.g. `develop`).
+ * `base` wins when both are passed, mirroring the precedence in the
+ * VS Code wrapper and the MCP `ezstack_stack` tool.
+ */
+export async function stackBranch(
+  repoPath: string,
+  branch: string,
+  target: { parent?: string; base?: string },
+): Promise<CommandResult> {
+  return invoke<CommandResult>("stack_branch", {
+    repoPath,
+    branch,
+    parent: target.parent ?? null,
+    base: target.base ?? null,
+  });
+}
+
+/** Remove a branch from ezstack tracking. Children are reparented to
+ *  the untracked branch's parent; the git branch and worktree are
+ *  kept. Caller should confirm with the user first. */
+export async function unstackBranch(
+  repoPath: string,
+  branch: string,
+): Promise<CommandResult> {
+  return invoke<CommandResult>("unstack_branch", { repoPath, branch });
+}
+
+/**
+ * Reconcile the local PR cache from GitHub. `stack=true` refreshes
+ * every PR in the current stack; otherwise pass `branch` (or omit
+ * both for the current branch). `stack` and `branch` are mutually
+ * exclusive — `stack` wins when both are supplied.
+ */
+export async function prRefresh(
+  repoPath: string,
+  opts?: { branch?: string; stack?: boolean },
+): Promise<CommandResult> {
+  return invoke<CommandResult>("pr_refresh", {
+    repoPath,
+    branch: opts?.branch ?? null,
+    stack: opts?.stack ?? false,
+  });
+}
+
 // ─── Remote connection commands ──────────────────────────────────────────
 
 export async function connectRemote(
