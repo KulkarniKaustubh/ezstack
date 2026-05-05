@@ -1082,4 +1082,368 @@ export function registerCommands(
       },
     ),
   );
+
+  // ── Add to Stack ──
+  //
+  // Wraps `ezs stack`. The CLI accepts either an existing parent (attach
+  // under a tracked branch) or a base (start a new stack rooted on a
+  // non-default base like develop/staging). Both modes are surfaced as a
+  // top-level pick so the user doesn't have to know the flag mapping.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.stack",
+      async (node?: BranchNode) => {
+        let branchName: string | undefined;
+        if (node instanceof BranchNode) {
+          branchName = node.branch.name;
+        } else {
+          // Untracked branches first — those are the typical target — but
+          // fall back to the full local-branches list when the user has no
+          // tracked branches yet.
+          const [stacks, locals] = await Promise.all([
+            cli.listStacks(true).catch(() => []),
+            cli.getLocalBranches().catch(() => []),
+          ]);
+          const tracked = new Set(
+            stacks.flatMap((s) => [s.root, ...s.branches.map((b) => b.name)]),
+          );
+          const untracked = locals.filter((b) => !tracked.has(b));
+          const candidates = untracked.length > 0 ? untracked : locals;
+          if (candidates.length === 0) {
+            vscode.window.showInformationMessage(
+              "No local branches available to add.",
+            );
+            return;
+          }
+          branchName = await vscode.window.showQuickPick(candidates, {
+            placeHolder:
+              untracked.length > 0
+                ? "Select a branch to add to a stack"
+                : "Select a branch (all local branches are already tracked)",
+          });
+        }
+        if (!branchName) {
+          return;
+        }
+
+        const mode = await vscode.window.showQuickPick(
+          [
+            {
+              label: "Attach to existing parent",
+              description: "Add under a tracked branch",
+              value: "parent" as const,
+            },
+            {
+              label: "Start a new stack",
+              description: "Root on a non-default base (e.g. develop)",
+              value: "base" as const,
+            },
+          ],
+          { placeHolder: `How should "${branchName}" join a stack?` },
+        );
+        if (!mode) {
+          return;
+        }
+
+        if (mode.value === "parent") {
+          const stacks = await cli.listStacks(true).catch(() => []);
+          const candidates = [
+            ...new Set(
+              stacks.flatMap((s) => [s.root, ...s.branches.map((b) => b.name)]),
+            ),
+          ].filter((n) => n !== branchName);
+          if (candidates.length === 0) {
+            vscode.window.showInformationMessage(
+              "No tracked branches to attach to. Try 'Start a new stack' instead.",
+            );
+            return;
+          }
+          const parent = await vscode.window.showQuickPick(candidates, {
+            placeHolder: `Select parent for "${branchName}"`,
+          });
+          if (!parent) {
+            return;
+          }
+          await runWithFeedback(
+            `Adding "${branchName}" to stack...`,
+            `Added "${branchName}" under "${parent}".`,
+            () => cli.stackBranch(branchName!, { parent }),
+          );
+          return;
+        }
+
+        // mode.value === "base"
+        const locals = await cli.getLocalBranches().catch(() => []);
+        const baseCandidates = locals.filter((b) => b !== branchName);
+        const base = await vscode.window.showQuickPick(baseCandidates, {
+          placeHolder: `Select base branch for the new stack`,
+        });
+        if (!base) {
+          return;
+        }
+        await runWithFeedback(
+          `Starting new stack on "${base}"...`,
+          `Started new stack with "${branchName}" rooted on "${base}".`,
+          () => cli.stackBranch(branchName!, { base }),
+        );
+      },
+    ),
+  );
+
+  // ── Remove from Stack (untrack, keep branch + worktree) ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.unstack",
+      async (node?: BranchNode) => {
+        let branchName: string | undefined;
+        if (node instanceof BranchNode) {
+          branchName = node.branch.name;
+        } else {
+          const stacks = await cli.listStacks(true).catch(() => []);
+          const branches = stacks.flatMap((s) => s.branches.map((b) => b.name));
+          if (branches.length === 0) {
+            vscode.window.showInformationMessage(
+              "No tracked branches to untrack.",
+            );
+            return;
+          }
+          branchName = await vscode.window.showQuickPick(branches, {
+            placeHolder: "Select branch to remove from ezstack tracking",
+          });
+        }
+        if (!branchName) {
+          return;
+        }
+        const confirm = await vscode.window.showWarningMessage(
+          `Remove "${branchName}" from ezstack tracking? The git branch and its worktree are kept; any children are reparented to the untracked branch's parent.`,
+          { modal: true },
+          "Untrack",
+        );
+        if (confirm !== "Untrack") {
+          return;
+        }
+        await runWithFeedback(
+          `Untracking "${branchName}"...`,
+          `Untracked "${branchName}".`,
+          () => cli.unstackBranch(branchName!),
+        );
+      },
+    ),
+  );
+
+  // ── Commit (auto-syncs children) ──
+  //
+  // Distinct from VS Code's built-in SCM commit: this is the wrapper that
+  // also rebases/merges child branches onto the new commit. We always pass
+  // -a so the message reflects everything in the working tree — the SCM
+  // panel is the right tool for picking specific files; this command is
+  // for "commit everything and propagate down the stack".
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ezstack.commit", async () => {
+      const message = await vscode.window.showInputBox({
+        prompt: "Commit message",
+        placeHolder: "Add feature X",
+        validateInput: (v) => (v.trim() ? null : "Commit message is required"),
+      });
+      if (!message) {
+        return;
+      }
+      await runWithFeedback(
+        "Committing & syncing children...",
+        "Committed and synced children.",
+        () => cli.commit(message, { all: true }),
+      );
+    }),
+  );
+
+  // ── Amend last commit (auto-syncs children) ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand("ezstack.amend", async () => {
+      const mode = await vscode.window.showQuickPick(
+        [
+          {
+            label: "Keep existing message",
+            description: "git commit --amend --no-edit",
+            value: "keep" as const,
+          },
+          {
+            label: "Edit message",
+            description: "Provide a replacement message",
+            value: "edit" as const,
+          },
+        ],
+        { placeHolder: "Amend last commit" },
+      );
+      if (!mode) {
+        return;
+      }
+      let newMessage: string | undefined;
+      if (mode.value === "edit") {
+        newMessage = await vscode.window.showInputBox({
+          prompt: "New commit message",
+          validateInput: (v) =>
+            v.trim() ? null : "Commit message cannot be empty",
+        });
+        if (!newMessage) {
+          return;
+        }
+      }
+      const confirm = await vscode.window.showWarningMessage(
+        "Amend the last commit and rewrite history? Children will be re-synced. Pushed branches will need a force-push afterwards (use 'Push with Options...' → --force).",
+        { modal: true },
+        "Amend",
+      );
+      if (confirm !== "Amend") {
+        return;
+      }
+      await runWithFeedback(
+        "Amending & syncing children...",
+        "Amended and synced children.",
+        () => cli.amend({ message: newMessage, all: true }),
+      );
+    }),
+  );
+
+  // ── Diff against parent ──
+  //
+  // VS Code's built-in diff is working-tree-vs-HEAD; this surfaces the
+  // stack-aware diff (branch HEAD vs parent branch HEAD), which is what
+  // a reviewer would actually see in the PR.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.diff",
+      async (node?: BranchNode) => {
+        const branch = node instanceof BranchNode ? node.branch.name : undefined;
+        try {
+          const stat = await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Window,
+              title: branch
+                ? `Diffing "${branch}" vs parent...`
+                : "Diffing current branch vs parent...",
+            },
+            () => cli.diffStat(branch),
+          );
+          const label = branch ? `ezstack diff (${branch})` : "ezstack diff";
+          outputChannel.clear();
+          outputChannel.appendLine(label);
+          outputChannel.appendLine("─".repeat(label.length));
+          outputChannel.appendLine(stat.trim() || "(no changes vs parent)");
+          outputChannel.show(true);
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const action = await vscode.window.showErrorMessage(
+            `ezs diff failed: ${msg}`,
+            "Show Output",
+          );
+          if (action === "Show Output") {
+            outputChannel.show();
+          }
+        }
+      },
+    ),
+  );
+
+  // ── Log (commits since parent) ──
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.log",
+      async (node?: BranchNode) => {
+        const branch = node instanceof BranchNode ? node.branch.name : undefined;
+        try {
+          const result = await vscode.window.withProgress(
+            {
+              location: vscode.ProgressLocation.Window,
+              title: branch
+                ? `Loading commits for "${branch}"...`
+                : "Loading commits since parent...",
+            },
+            () => cli.log(branch),
+          );
+          const label = `ezstack log: ${result.branch} (since ${result.parent})`;
+          outputChannel.clear();
+          outputChannel.appendLine(label);
+          outputChannel.appendLine("─".repeat(Math.min(label.length, 80)));
+          if (result.count === 0) {
+            outputChannel.appendLine("(no commits since parent)");
+          } else {
+            for (const c of result.commits) {
+              const shortHash = c.hash.slice(0, 7);
+              const firstLine = c.message.split("\n")[0];
+              const date = c.date.split("T")[0];
+              outputChannel.appendLine(
+                `${shortHash}  ${date}  ${c.author}`,
+              );
+              outputChannel.appendLine(`        ${firstLine}`);
+            }
+            outputChannel.appendLine("");
+            outputChannel.appendLine(
+              `${result.count} commit${result.count === 1 ? "" : "s"} since ${result.parent}`,
+            );
+          }
+          outputChannel.show(true);
+        } catch (e: unknown) {
+          const msg = e instanceof Error ? e.message : String(e);
+          const action = await vscode.window.showErrorMessage(
+            `ezs log failed: ${msg}`,
+            "Show Output",
+          );
+          if (action === "Show Output") {
+            outputChannel.show();
+          }
+        }
+      },
+    ),
+  );
+
+  // ── PR Refresh (reconcile cache from GitHub) ──
+  //
+  // The CLI exposes three scopes (branch / current / stack); we collapse
+  // current and branch when invoked from a node, and prompt for stack-vs-
+  // current when called from the palette without context.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.prRefresh",
+      async (node?: BranchNode | StackNode) => {
+        if (node instanceof BranchNode) {
+          await runWithFeedback(
+            `Refreshing PR for "${node.branch.name}"...`,
+            `Refreshed PR for "${node.branch.name}".`,
+            () => cli.prRefresh({ branch: node.branch.name }),
+          );
+          return;
+        }
+        if (node instanceof StackNode) {
+          await runWithFeedback(
+            "Refreshing PRs in stack...",
+            "Refreshed PRs in stack.",
+            () => cli.prRefresh({ stack: true }),
+          );
+          return;
+        }
+        const scope = await vscode.window.showQuickPick(
+          [
+            { label: "Current branch", value: "current" as const },
+            { label: "Whole stack", value: "stack" as const },
+          ],
+          {
+            placeHolder:
+              "Refresh which PRs? Reconciles the local cache from GitHub.",
+          },
+        );
+        if (!scope) {
+          return;
+        }
+        await runWithFeedback(
+          scope.value === "stack"
+            ? "Refreshing PRs in stack..."
+            : "Refreshing current PR...",
+          scope.value === "stack"
+            ? "Refreshed PRs in stack."
+            : "Refreshed current PR.",
+          () => cli.prRefresh({ stack: scope.value === "stack" }),
+        );
+      },
+    ),
+  );
 }

@@ -1430,6 +1430,7 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 | `ezstack_pr_draft` | &mdash; | Toggle a PR between draft and ready-for-review. `branch`. |
 | `ezstack_pr_draft_all` | &mdash; | Create draft PRs for every branch in the current stack that doesn't already have one. Branches with an existing PR are left alone (use `ezstack_pr_draft` to toggle an existing PR's draft state). |
 | `ezstack_pr_stack` | &mdash; | Update every PR description in the stack with navigation links. `branch`. |
+| `ezstack_pr_refresh` | &mdash; | Reconcile the local PR cache from GitHub (use after PRs are merged/closed/re-targeted via the GitHub UI). `branch` or `stack` (mutually exclusive); omit both for the current branch. |
 
 **Configuration**
 

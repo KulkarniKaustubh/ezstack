@@ -4,6 +4,8 @@ import * as os from "os";
 import * as path from "path";
 import * as vscode from "vscode";
 import {
+  DiffOutputJSON,
+  LogOutputJSON,
   StackJSON,
   StatusStackJSON,
   WorktreeGitStatus,
@@ -613,5 +615,133 @@ export class EzsCli {
       args.push("--preset", opts.preset);
     }
     return this.runInTerminal(args);
+  }
+
+  // ── Stack membership ──
+
+  /**
+   * Add a branch to a stack. `parent` attaches under an existing branch;
+   * `base` starts a new stack rooted on a non-default base branch
+   * (e.g. develop, staging). Mutually exclusive — caller passes one.
+   */
+  async stackBranch(
+    branch: string,
+    target: { parent?: string; base?: string },
+  ): Promise<void> {
+    const args = ["stack", "-b", branch];
+    if (target.base) {
+      args.push("-B", target.base);
+    } else if (target.parent) {
+      args.push("-p", target.parent);
+    }
+    await this.execYes(args);
+  }
+
+  /** Remove a branch from ezstack tracking (keeps git branch + worktree). */
+  async unstackBranch(branch: string): Promise<void> {
+    await this.execYes(["unstack", "-b", branch]);
+  }
+
+  // ── Commit / amend (stack-aware) ──
+
+  /**
+   * Commit and auto-sync child branches. `--no-push` is passed unconditionally
+   * — the VS Code surface has no place to answer the CLI's interactive push
+   * prompt, and committing-then-not-pushing is the safer default. Users who
+   * want to push afterwards can use the existing Push Branch / Push Stack
+   * actions on the same branch.
+   */
+  async commit(
+    message: string,
+    opts?: { all?: boolean; merge?: boolean; rebase?: boolean },
+  ): Promise<void> {
+    const args = ["commit", "-m", message, "--no-push"];
+    if (opts?.all) {
+      args.push("-a");
+    }
+    if (opts?.merge) {
+      args.push("--merge");
+    } else if (opts?.rebase) {
+      args.push("--rebase");
+    }
+    await this.execYes(args);
+  }
+
+  /**
+   * Amend the last commit and auto-sync child branches. When `message` is
+   * omitted, the existing commit message is preserved (--no-edit). Like
+   * commit, push is suppressed — amend rewrites history, so the intended
+   * follow-up is Push with Options... → --force.
+   */
+  async amend(
+    opts?: { message?: string; all?: boolean; merge?: boolean; rebase?: boolean },
+  ): Promise<void> {
+    const args = ["amend", "--no-push"];
+    if (opts?.message) {
+      args.push("-m", opts.message);
+    } else {
+      args.push("--no-edit");
+    }
+    if (opts?.all) {
+      args.push("-a");
+    }
+    if (opts?.merge) {
+      args.push("--merge");
+    } else if (opts?.rebase) {
+      args.push("--rebase");
+    }
+    await this.execYes(args);
+  }
+
+  // ── Inspection (diff / log) ──
+
+  /** Diff a branch against its parent. JSON file-level numstat. */
+  async diffJson(branch?: string): Promise<DiffOutputJSON> {
+    const args = ["diff", "--json"];
+    if (branch) {
+      args.push("--branch", branch);
+    }
+    const out = await this.exec(args);
+    return EzsCli.parseJSON(out, "diff --json");
+  }
+
+  /** Diff a branch against its parent. Plain `git diff --stat` output. */
+  async diffStat(branch?: string): Promise<string> {
+    const args = ["diff", "--stat"];
+    if (branch) {
+      args.push("--branch", branch);
+    }
+    return this.exec(args);
+  }
+
+  /** Commits in `branch` since its parent. JSON. */
+  async log(branch?: string): Promise<LogOutputJSON> {
+    const args = ["log", "--json"];
+    if (branch) {
+      args.push("--branch", branch);
+    }
+    const out = await this.exec(args);
+    return EzsCli.parseJSON(out, "log --json");
+  }
+
+  // ── PR refresh ──
+
+  /**
+   * Reconcile the local PR cache against GitHub. Scope:
+   *  - stack=true     → refresh every PR in the current stack (-s)
+   *  - branch present → refresh that one
+   *  - neither        → current branch
+   *
+   * Stack and branch are mutually exclusive on the CLI side; the helper
+   * preserves that by giving stack priority over branch.
+   */
+  async prRefresh(opts?: { branch?: string; stack?: boolean }): Promise<void> {
+    const args = ["pr", "refresh"];
+    if (opts?.stack) {
+      args.push("-s");
+    } else if (opts?.branch) {
+      args.push("--branch", opts.branch);
+    }
+    await this.execYes(args);
   }
 }
