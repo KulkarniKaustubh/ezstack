@@ -706,15 +706,19 @@ func newFromRemoteRef(g *git.Git, cwd, ref, worktreeOverride string, cdFlag, noC
 		}
 	}
 	if _, regErr := mgr.RegisterExistingBranch(remoteBranch, worktreePath, baseBranch); regErr == nil {
-		// Only mark the branch as remote-contributor when we actually detected a fork
-		// (or a fork with push forbidden). detectForkRemote returns "" for same-repo PRs
-		// and for "no PR yet" — in those cases the branch is your own and should be
-		// pushed to origin like any other. Previously MarkBranchRemote was called
-		// unconditionally, which poisoned same-repo branches into the fork-detection
-		// path on every push.
-		if forkRemote := detectForkRemote(g, gh, pr); forkRemote != "" {
-			mgr.MarkBranchRemote(remoteBranch, prURL, forkRemote)
-		} else if pr != nil {
+		// IsRemote drives the (remote) tag in render paths; a non-empty
+		// Remote field short-circuits ResolveBranchRemote so subsequent
+		// pushes don't re-run fork detection on every call. "origin" is the
+		// safe sentinel when no fork is involved.
+		forkRemote := detectForkRemote(g, gh, pr)
+		pushRemote := forkRemote
+		if pushRemote == "" {
+			pushRemote = "origin"
+		}
+		if err := mgr.MarkBranchRemote(remoteBranch, prURL, pushRemote); err != nil {
+			ui.Warn(fmt.Sprintf("Failed to persist remote metadata for '%s': %v", remoteBranch, err))
+		}
+		if forkRemote == "" && pr != nil {
 			savePRToCache(mgr.GetRepoDir(), remoteBranch, pr)
 		}
 	}
@@ -773,9 +777,11 @@ func showDiffStatsAgainstBase(g *git.Git, branch, baseBranch string) {
 		return
 	}
 
-	// Diff against the LOCAL base and LOCAL branch so stats reflect the
-	// user's working state rather than possibly-stale origin refs.
-	baseRef := resolveLocalRef(g, baseBranch)
+	// Diff against origin/<base> when it exists: a stale local base would
+	// otherwise pull every upstream commit landed since the last local
+	// update into the count. Branch stays on the local ref so the stats
+	// reflect the user's working state. Mirrors fetchDiffStats.
+	baseRef := upstreamRef(g, baseBranch)
 	branchRef := resolveLocalRef(g, branch)
 
 	added, removed, err := g.GetDiffStat(baseRef, branchRef)
