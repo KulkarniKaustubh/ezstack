@@ -198,7 +198,15 @@ export default function App() {
   const branchActions = selectedBranch_ && selectedRepoPath
     ? {
         onSync: () => setDialog({ type: "sync", branch: selectedBranch_.name }),
-        onPush: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath), "Push"),
+        // Without { branch } pushBranch falls back to git HEAD instead of
+        // the right-pane's selected branch. The sibling actions above and
+        // below (onSync, onCreatePR, onUpdatePR, ...) all forward
+        // selectedBranch_.name; push must too or the button label lies.
+        onPush: () =>
+          runAndRefresh(
+            () => ezs.pushBranch(selectedRepoPath, false, false, { branch: selectedBranch_.name }),
+            "Push",
+          ),
         onPushStack: () => runAndRefresh(() => ezs.pushBranch(selectedRepoPath, true), "Push stack"),
         onCreatePR: () => setDialog({ type: "pr-create", branch: selectedBranch_.name }),
         onUpdatePR: () => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, selectedBranch_.name), "Update PR"),
@@ -223,7 +231,16 @@ export default function App() {
   const stackNodeActions: StackNodeActions | undefined = selectedRepoPath
     ? {
         onSync: (branchName) => setDialog({ type: "sync", branch: branchName }),
-        onPush: (branchName) => runAndRefresh(() => ezs.pushBranch(selectedRepoPath), `Push ${branchName}`),
+        // The toast says `Push ${branchName}` but without { branch }
+        // pushBranch silently runs against git HEAD — i.e. the user
+        // right-clicks branch B, sees "Push B" succeed, and branch A
+        // (whatever git HEAD points at) gets pushed instead. Same shape
+        // as the nvim viewer `p` keymap fix in ezstack.nvim#4.
+        onPush: (branchName) =>
+          runAndRefresh(
+            () => ezs.pushBranch(selectedRepoPath, false, false, { branch: branchName }),
+            `Push ${branchName}`,
+          ),
         onCreatePR: (branchName) => setDialog({ type: "pr-create", branch: branchName }),
         onUpdatePR: (branchName) => runAndRefresh(() => ezs.prUpdate(selectedRepoPath, branchName), `Update PR ${branchName}`),
         onOpenAgent: (branchName) => {
