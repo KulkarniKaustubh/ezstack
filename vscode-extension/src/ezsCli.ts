@@ -1,4 +1,4 @@
-import { execFile, execFileSync } from "child_process";
+import { execFile } from "child_process";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -22,25 +22,44 @@ const COMMON_PATHS = [
   "/opt/homebrew/bin/ezs",
 ].filter(Boolean);
 
-function findEzsBinary(): string {
-  // Try `which ezs` first (works if it's on PATH)
-  try {
-    const result = execFileSync("which", ["ezs"], { timeout: 3000 }).toString().trim();
-    if (result && fs.existsSync(result)) {
-      return result;
-    }
-  } catch {
-    // not on PATH
-  }
-
-  // Check common install locations
+/**
+ * Synchronous best-effort lookup using fs.existsSync over a fixed list of
+ * conventional install locations. A handful of stat calls is cheap (sub-ms
+ * even on slow disks), so it's safe to run during activation. Returns null
+ * when no common path matches; the async resolver below picks up the slack
+ * for users with custom installs.
+ */
+function findEzsBinarySync(): string | null {
   for (const p of COMMON_PATHS) {
     if (p && fs.existsSync(p)) {
       return p;
     }
   }
+  return null;
+}
 
-  return "ezs"; // fallback — will fail with a clear error
+/**
+ * Async fallback: shell out to `which` only if the sync lookup missed. This
+ * was previously execFileSync inside the cliPath getter, which could hang
+ * activation up to 3 seconds when the user's shell or filesystem was slow
+ * (a real complaint on macOS GUI launches where PATH isn't inherited and
+ * `which` ends up sourcing the user's profile).
+ */
+function findEzsBinaryAsync(): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile("which", ["ezs"], { timeout: 3000 }, (err, stdout) => {
+      if (err) {
+        resolve(null);
+        return;
+      }
+      const result = stdout.toString().trim();
+      if (result && fs.existsSync(result)) {
+        resolve(result);
+        return;
+      }
+      resolve(null);
+    });
+  });
 }
 
 export class EzsCli {
@@ -51,6 +70,20 @@ export class EzsCli {
     private workspaceRoot: string,
   ) {
     this.outputChannel = vscode.window.createOutputChannel("ezstack");
+    // Resolve synchronously against COMMON_PATHS first — fast and covers
+    // the vast majority of installs (`make install`, homebrew, go install).
+    this.resolvedPath = findEzsBinarySync() ?? undefined;
+    // For users with ezs at a non-standard location, fire an async `which`
+    // lookup that updates resolvedPath when it returns. Not awaited so
+    // activation isn't gated on it. The literal "ezs" fallback below works
+    // in the meantime as long as ezs is on the spawned process's PATH.
+    if (!this.resolvedPath) {
+      void findEzsBinaryAsync().then((p) => {
+        if (p) {
+          this.resolvedPath = p;
+        }
+      });
+    }
   }
 
   getWorkspaceRoot(): string {
@@ -71,11 +104,11 @@ export class EzsCli {
       return configured;
     }
 
-    // Auto-resolve once
-    if (!this.resolvedPath) {
-      this.resolvedPath = findEzsBinary();
-    }
-    return this.resolvedPath;
+    // Resolution happens in the constructor (sync COMMON_PATHS check, plus
+    // an async `which` lookup that may still be in flight on first use).
+    // The literal "ezs" fallback relies on PATH and produces a clear error
+    // if the binary isn't installed.
+    return this.resolvedPath ?? "ezs";
   }
 
   /** Quote a string for safe shell use. */
