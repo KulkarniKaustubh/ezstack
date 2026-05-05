@@ -18,7 +18,7 @@ var topLevelCommands = []string{
 	"reparent", "stack", "status", "sync", "unstack", "up", "upgrade",
 }
 
-var prSubcommands = []string{"create", "draft", "merge", "stack", "update"}
+var prSubcommands = []string{"create", "draft", "merge", "refresh", "stack", "unlink", "update"}
 
 var configSubcommands = []string{"set", "show", "export", "import"}
 
@@ -81,11 +81,13 @@ var commandFlags = map[string][]string{
 // `ezs pr create --<TAB>` surfaces create's flags rather than just the
 // top-level `--help`/`-h` from `pr` itself. Same drift-gate test applies.
 var prSubcommandFlags = map[string][]string{
-	"create": {"--stack", "-s", "--draft-all", "--title", "-t", "--body", "-b", "--draft", "-d", "--branch", "--auto", "--ai", "--force", "-f", "--recreate", "--help", "-h"},
-	"update": {"--branch", "--help", "-h"},
-	"merge":  {"--method", "-m", "--branch", "--no-delete-branch", "--help", "-h"},
-	"draft":  {"--branch", "--help", "-h"},
-	"stack":  {"--branch", "--help", "-h"},
+	"create":  {"--stack", "-s", "--draft-all", "--title", "-t", "--body", "-b", "--draft", "-d", "--branch", "--auto", "--ai", "--force", "-f", "--recreate", "--help", "-h"},
+	"update":  {"--branch", "--help", "-h"},
+	"merge":   {"--method", "-m", "--branch", "--no-delete-branch", "--help", "-h"},
+	"draft":   {"--branch", "--help", "-h"},
+	"stack":   {"--branch", "--help", "-h"},
+	"refresh": {"--branch", "--stack", "-s", "--help", "-h"},
+	"unlink":  {"--branch", "--all", "--yes", "-y", "--help", "-h"},
 }
 
 // agentSubcommandFlags lists the flags `ezs agent prompt` accepts. Without
