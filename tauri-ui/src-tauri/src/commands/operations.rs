@@ -72,6 +72,7 @@ pub fn push_branch(
     force: bool,
     verify: Option<bool>,
     all_remotes: Option<bool>,
+    branch: Option<String>,
 ) -> Result<CommandResult, String> {
     let conn = locked_conn(&state)?;
     let mut args: Vec<&str> = vec!["-y", "push"];
@@ -86,6 +87,15 @@ pub fn push_branch(
     }
     if all_remotes.unwrap_or(false) {
         args.push("--all-remotes");
+    }
+    // Without -b the CLI pushes whatever git HEAD points at — wrong when
+    // the caller (right-pane "Push" button or per-row right-click) targets
+    // a specific branch in the UI rather than HEAD. Forward the explicit
+    // branch through so what runs matches what the UI promises.
+    let branch_value = branch.unwrap_or_default();
+    if !branch_value.is_empty() {
+        args.push("-b");
+        args.push(&branch_value);
     }
     run_ezs_auto(conn.as_ref(), &repo_path, &args)
 }

@@ -77,7 +77,7 @@ export async function pushBranch(
   repoPath: string,
   stack: boolean = false,
   force: boolean = false,
-  opts?: { verify?: boolean; allRemotes?: boolean },
+  opts?: { verify?: boolean; allRemotes?: boolean; branch?: string },
 ): Promise<CommandResult> {
   return invoke<CommandResult>("push_branch", {
     repoPath,
@@ -85,6 +85,7 @@ export async function pushBranch(
     force,
     verify: opts?.verify ?? false,
     allRemotes: opts?.allRemotes ?? false,
+    branch: opts?.branch ?? null,
   });
 }
 
