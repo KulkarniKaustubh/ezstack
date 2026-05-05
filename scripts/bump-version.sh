@@ -146,7 +146,10 @@ fi
 # 12. Docs HTML files — rewrite any `vX.Y.Z` or `ezstack[-_]X.Y.Z` token to the new
 #     version. Using a regex (instead of matching OLD_VERSION literally) means stale
 #     refs from prior skipped bumps get caught automatically on the next run.
-for doc in docs/index.html docs/vscode.html docs/agent.html docs/nvim.html docs/desktop.html docs/documentation.html; do
+#     IMPORTANT: every published HTML page that carries a footer version belongs
+#     in this list — adding a new page without listing it here lets the footer
+#     drift silently across releases (cf. docs/mcp.html stuck at v4.7.5).
+for doc in docs/index.html docs/vscode.html docs/agent.html docs/nvim.html docs/desktop.html docs/mcp.html docs/documentation.html; do
     FILE="$REPO_ROOT/$doc"
     if [ -f "$FILE" ]; then
         sed -i.bak \
