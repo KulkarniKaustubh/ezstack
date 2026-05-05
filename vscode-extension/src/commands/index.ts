@@ -1264,6 +1264,71 @@ export function registerCommands(
     ),
   );
 
+  // ── Commit / amend pre-flight ──
+  //
+  // Both commands pass `-a` to the CLI so the resulting commit reflects
+  // everything in the working tree (the SCM panel is the right tool for
+  // selective staging; this wrapper exists for "commit everything and
+  // propagate down the stack"). To avoid surprising the user, we make
+  // `-a` visible up front: counts go in the prompt, and a mix of staged
+  // and unstaged changes — the strongest signal the user wanted a
+  // selective commit — triggers an explicit warning.
+  type CommitPreflight =
+    | { kind: "ok"; summary: string; counts: { staged: number; modified: number; untracked: number } }
+    | { kind: "no-changes" }
+    | { kind: "no-workspace" };
+
+  const commitPreflight = async (): Promise<CommitPreflight> => {
+    const root = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+    if (!root) {
+      return { kind: "no-workspace" };
+    }
+    const st = await cli.getWorktreeGitStatus(root).catch(() => null);
+    if (!st) {
+      // git status failed; fall back to "no-workspace" semantics so the
+      // caller proceeds with the existing flow rather than blocking.
+      return { kind: "no-workspace" };
+    }
+    if (st.staged === 0 && st.modified === 0) {
+      return { kind: "no-changes" };
+    }
+    const parts: string[] = [];
+    if (st.staged > 0) {
+      parts.push(`${st.staged} staged`);
+    }
+    if (st.modified > 0) {
+      parts.push(`${st.modified} modified`);
+    }
+    // Untracked files aren't picked up by `git commit -a`; surface them
+    // separately so the user knows they'll be left behind.
+    if (st.untracked > 0) {
+      parts.push(`${st.untracked} untracked (will NOT be committed)`);
+    }
+    return {
+      kind: "ok",
+      summary: parts.join(", "),
+      counts: { staged: st.staged, modified: st.modified, untracked: st.untracked },
+    };
+  };
+
+  /** Warn when the user has BOTH staged and unstaged changes — a strong
+   *  signal they intended a selective commit via the SCM panel rather
+   *  than `-a`. Returns true if the user wants to proceed. */
+  const confirmMixedStagingIfAny = async (
+    counts: { staged: number; modified: number },
+    actionLabel: "Commit All" | "Amend All",
+  ): Promise<boolean> => {
+    if (counts.staged === 0 || counts.modified === 0) {
+      return true;
+    }
+    const proceed = await vscode.window.showWarningMessage(
+      `You have ${counts.staged} staged and ${counts.modified} unstaged change${counts.modified === 1 ? "" : "s"}. This command commits BOTH (git commit -a). For a selective commit, use the SCM panel instead.`,
+      { modal: true },
+      actionLabel,
+    );
+    return proceed === actionLabel;
+  };
+
   // ── Commit (auto-syncs children) ──
   //
   // Distinct from VS Code's built-in SCM commit: this is the wrapper that
@@ -1273,8 +1338,21 @@ export function registerCommands(
   // for "commit everything and propagate down the stack".
   context.subscriptions.push(
     vscode.commands.registerCommand("ezstack.commit", async () => {
+      const pre = await commitPreflight();
+      if (pre.kind === "no-changes") {
+        vscode.window.showInformationMessage("No changes to commit.");
+        return;
+      }
+      if (pre.kind === "ok") {
+        if (!(await confirmMixedStagingIfAny(pre.counts, "Commit All"))) {
+          return;
+        }
+      }
       const message = await vscode.window.showInputBox({
-        prompt: "Commit message",
+        prompt:
+          pre.kind === "ok"
+            ? `Commit message — will commit ${pre.summary} (git commit -a) & sync children`
+            : "Commit message — will commit all working-tree changes (git commit -a) & sync children",
         placeHolder: "Add feature X",
         validateInput: (v) => (v.trim() ? null : "Commit message is required"),
       });
@@ -1292,6 +1370,10 @@ export function registerCommands(
   // ── Amend last commit (auto-syncs children) ──
   context.subscriptions.push(
     vscode.commands.registerCommand("ezstack.amend", async () => {
+      const pre = await commitPreflight();
+      // Amend doesn't require there to be changes — "amend the message"
+      // is a valid use case — so we don't block on `no-changes` here.
+
       const mode = await vscode.window.showQuickPick(
         [
           {
@@ -1321,8 +1403,17 @@ export function registerCommands(
           return;
         }
       }
+      if (pre.kind === "ok") {
+        if (!(await confirmMixedStagingIfAny(pre.counts, "Amend All"))) {
+          return;
+        }
+      }
+      const foldDescription =
+        pre.kind === "ok"
+          ? `Folding ${pre.summary} into the last commit (git commit -a --amend).`
+          : "Folding all working-tree changes into the last commit (git commit -a --amend).";
       const confirm = await vscode.window.showWarningMessage(
-        "Amend the last commit and rewrite history? Children will be re-synced. Pushed branches will need a force-push afterwards (use 'Push with Options...' → --force).",
+        `${foldDescription} Children will be re-synced. Pushed branches will need a force-push afterwards (use 'Push with Options...' → --force).`,
         { modal: true },
         "Amend",
       );
