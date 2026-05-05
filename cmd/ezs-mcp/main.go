@@ -307,6 +307,41 @@ func stringFlag(args *[]string, req mcp.CallToolRequest, key, flag string) {
 	}
 }
 
+// buildGotoArgs / buildNewArgs / buildDeleteArgs / buildReparentArgs are
+// named (vs anonymous) so the "--"-before-positionals contract is unit-
+// testable. Every closure that appends a user-supplied positional value
+// MUST insert "--" first; otherwise a malicious branch / feature / parent
+// name beginning with "--" would be re-parsed as a CLI flag by the spawned
+// ezs process. See TestPositionalSeparator.
+func buildGotoArgs(req mcp.CallToolRequest) []string {
+	var args []string
+	stringFlag(&args, req, "search", "--search")
+	args = append(args, "--", req.GetString("branch", ""))
+	return args
+}
+
+func buildNewArgs(req mcp.CallToolRequest) []string {
+	var args []string
+	stringFlag(&args, req, "parent", "--parent")
+	tristateBoolFlag(&args, req, "init_submodules", "--init-submodules", "--no-init-submodules")
+	boolFlag(&args, req, "from_remote", "--from-remote")
+	args = append(args, "--", req.GetString("name", ""))
+	return args
+}
+
+func buildDeleteArgs(req mcp.CallToolRequest) []string {
+	var args []string
+	boolFlag(&args, req, "cascade", "--cascade")
+	boolFlag(&args, req, "force", "--force")
+	boolFlag(&args, req, "stack", "--stack")
+	args = append(args, "--", req.GetString("branch", ""))
+	return args
+}
+
+func buildReparentArgs(req mcp.CallToolRequest) []string {
+	return []string{"--", req.GetString("branch", ""), req.GetString("new_parent", "")}
+}
+
 // tristateBoolFlag appends flagTrue or flagFalse depending on the boolean
 // value when key is present in the request arguments. When key is absent,
 // nothing is appended — letting the underlying command use its config
@@ -528,14 +563,7 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithString("search", mcp.Description("Optional: fuzzy-match a branch name by substring. Overrides branch when set. Must match exactly one branch.")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
-		toolHandler(commands.Goto, func(req mcp.CallToolRequest) []string {
-			var args []string
-			// --search must come before the positional branch arg so pflag
-			// associates the value with the flag, not as a second positional.
-			stringFlag(&args, req, "search", "--search")
-			args = append(args, req.GetString("branch", ""))
-			return args
-		}),
+		toolHandler(commands.Goto, buildGotoArgs),
 	)
 
 	s.AddTool(
@@ -546,6 +574,11 @@ func registerTools(s *server.MCPServer) {
 		),
 		toolHandler(commands.Up, func(req mcp.CallToolRequest) []string {
 			if s := req.GetString("steps", ""); s != "" {
+				// commands.Up uses parseNavigateArgs (not pflag) which
+				// already rejects any dash-prefixed token as "unknown flag",
+				// so injection via steps="-1" is blocked at the CLI side
+				// without needing a "--" separator (which parseNavigateArgs
+				// would itself reject).
 				return []string{s}
 			}
 			return nil
@@ -560,6 +593,8 @@ func registerTools(s *server.MCPServer) {
 		),
 		toolHandler(commands.Down, func(req mcp.CallToolRequest) []string {
 			if s := req.GetString("steps", ""); s != "" {
+				// See ezstack_up: parseNavigateArgs rejects dash-prefixed
+				// tokens directly, so no "--" separator is needed here.
 				return []string{s}
 			}
 			return nil
@@ -578,13 +613,7 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithBoolean("from_remote", mcp.Description("Create a stack rooted on a remote branch (mirrors `ezs new -r`). Use with name=\"origin/<branch>\" or any remote ref to register the branch locally as a stack root.")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
-		toolHandler(commands.New, func(req mcp.CallToolRequest) []string {
-			args := []string{req.GetString("name", "")}
-			stringFlag(&args, req, "parent", "--parent")
-			tristateBoolFlag(&args, req, "init_submodules", "--init-submodules", "--no-init-submodules")
-			boolFlag(&args, req, "from_remote", "--from-remote")
-			return args
-		}),
+		toolHandler(commands.New, buildNewArgs),
 	)
 
 	s.AddTool(
@@ -599,13 +628,7 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithBoolean("stack", mcp.Description("Treat the branch argument as a stack hash and delete every branch in that stack.")),
 			mcp.WithDestructiveHintAnnotation(true),
 		),
-		yesModeHandler(commands.Delete, func(req mcp.CallToolRequest) []string {
-			args := []string{req.GetString("branch", "")}
-			boolFlag(&args, req, "cascade", "--cascade")
-			boolFlag(&args, req, "force", "--force")
-			boolFlag(&args, req, "stack", "--stack")
-			return args
-		}),
+		yesModeHandler(commands.Delete, buildDeleteArgs),
 	)
 
 	s.AddTool(
@@ -621,12 +644,7 @@ func registerTools(s *server.MCPServer) {
 			),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
-		toolHandler(commands.Reparent, func(req mcp.CallToolRequest) []string {
-			return []string{
-				req.GetString("branch", ""),
-				req.GetString("new_parent", ""),
-			}
-		}),
+		toolHandler(commands.Reparent, buildReparentArgs),
 	)
 
 	// ---- Commit & amend ----
@@ -825,6 +843,10 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.Config, func(req mcp.CallToolRequest) []string {
+			// commands.Config dispatches on args[0] without invoking pflag,
+			// so a key/value starting with "-" is taken as a literal token —
+			// no "--" separator is needed (and one would fail the strict
+			// 3-arg check). See cmd/ezs/commands/config.go:60.
 			return []string{
 				"set",
 				req.GetString("key", ""),
@@ -843,6 +865,8 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.Config, func(req mcp.CallToolRequest) []string {
+			// See ezstack_config_set above: Config uses positional dispatch,
+			// no pflag, so "--" is unnecessary and would fail the arg-count check.
 			return []string{"export", req.GetString("file", "")}
 		}),
 	)
@@ -857,6 +881,8 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithDestructiveHintAnnotation(true),
 		),
 		yesModeHandler(commands.Config, func(req mcp.CallToolRequest) []string {
+			// See ezstack_config_set above: Config uses positional dispatch,
+			// no pflag, so "--" is unnecessary and would fail the arg-count check.
 			return []string{"import", req.GetString("file", "")}
 		}),
 	)

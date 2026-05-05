@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/spf13/viper"
 )
@@ -351,6 +352,37 @@ func ConfigDir() (string, error) {
 	return filepath.Join(home, ".ezstack"), nil
 }
 
+// configPermsMigrated guards a one-time per-process pass that narrows the
+// permissions of any pre-existing config files left behind by older ezstack
+// versions (which created the directory at 0755 and files at 0644). The
+// directory and the two known sensitive files (config.json — may contain
+// github_token; stacks.json — may leak private repo structure) are chmod'd
+// down to 0700 / 0600 so a sibling local user can't read them.
+//
+// We don't walk the directory: only known-sensitive files are touched, and
+// silently. Errors are non-fatal — a non-Unix host (Windows) ignores chmod
+// and a missing file is fine.
+var configPermsMigrated sync.Once
+
+func ensureSecureConfigDir(configDir string) error {
+	if err := os.MkdirAll(configDir, 0700); err != nil {
+		return err
+	}
+	// MkdirAll is a no-op on existing dirs and won't tighten their mode, so
+	// chmod unconditionally — covers the upgrade-from-0755 case.
+	_ = os.Chmod(configDir, 0700)
+
+	configPermsMigrated.Do(func() {
+		for _, name := range []string{"config.json", "stacks.json", "cache.json"} {
+			p := filepath.Join(configDir, name)
+			if fi, err := os.Stat(p); err == nil && fi.Mode().Perm()&0077 != 0 {
+				_ = os.Chmod(p, 0600)
+			}
+		}
+	})
+	return nil
+}
+
 // legacyConfig represents the old config format for backward compatibility
 type legacyConfig struct {
 	WorktreeBaseDir   string `json:"worktree_base_dir"`
@@ -632,7 +664,7 @@ func migrateV1ToV2(data []byte) ([]byte, error) {
 				} else {
 					newCacheData, err := json.MarshalIndent(cacheFile, "", "  ")
 					if err == nil {
-						if wErr := atomicWriteFile(cachePath, newCacheData, 0644); wErr != nil {
+						if wErr := atomicWriteFile(cachePath, newCacheData, 0600); wErr != nil {
 							fmt.Fprintf(os.Stderr, "Warning: failed to update cache.json: %v\n", wErr)
 						}
 					}
@@ -901,7 +933,7 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := ensureSecureConfigDir(configDir); err != nil {
 		return err
 	}
 
@@ -930,7 +962,7 @@ func (c *Config) Save() error {
 		return err
 	}
 
-	if err := atomicWriteFile(configPath, data, 0644); err != nil {
+	if err := atomicWriteFile(configPath, data, 0600); err != nil {
 		return err
 	}
 
@@ -982,7 +1014,7 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 		return nil, err
 	}
 
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := ensureSecureConfigDir(configDir); err != nil {
 		return nil, err
 	}
 
@@ -998,7 +1030,7 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 			if migErr == nil {
 				var check stackConfigFile
 				if json.Unmarshal(migratedData, &check) == nil && len(check.Repos) > 0 {
-					if err := atomicWriteFile(stackPath, migratedData, 0644); err != nil {
+					if err := atomicWriteFile(stackPath, migratedData, 0600); err != nil {
 						fmt.Fprintf(os.Stderr, "Warning: failed to persist bootstrap migration: %v\n", err)
 					}
 					data = migratedData
@@ -1051,7 +1083,7 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 					goto migrated
 				}
 			}
-			if err := atomicWriteFile(stackPath, data, 0644); err != nil {
+			if err := atomicWriteFile(stackPath, data, 0600); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to persist migration: %v\n", err)
 			}
 			lock.release()
@@ -1069,7 +1101,7 @@ func LoadStackConfig(repoDir string) (*StackConfig, error) {
 			// missing parent dir). Fall back to an unlocked write so a
 			// genuinely busted lock backend doesn't block all use of ezs.
 			// Only this branch races; the timeout branch above does not.
-			if err := atomicWriteFile(stackPath, data, 0644); err != nil {
+			if err := atomicWriteFile(stackPath, data, 0600); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to persist migration: %v\n", err)
 			}
 		}
@@ -1395,7 +1427,7 @@ func (sc *StackConfig) Save(repoDir string) error {
 		return err
 	}
 
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := ensureSecureConfigDir(configDir); err != nil {
 		return err
 	}
 
@@ -1457,7 +1489,7 @@ func (sc *StackConfig) Save(repoDir string) error {
 		return err
 	}
 
-	if err := atomicWriteFile(stackPath, newData, 0644); err != nil {
+	if err := atomicWriteFile(stackPath, newData, 0600); err != nil {
 		return err
 	}
 
@@ -1559,7 +1591,7 @@ func MutateBranchCache(repoDir, branchName string, fn func(current *BranchCache)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(configDir, 0755); err != nil {
+	if err := ensureSecureConfigDir(configDir); err != nil {
 		return err
 	}
 	stackPath := filepath.Join(configDir, "stacks.json")
@@ -1620,7 +1652,7 @@ func MutateBranchCache(repoDir, branchName string, fn func(current *BranchCache)
 		return err
 	}
 
-	return atomicWriteFile(stackPath, newData, 0644)
+	return atomicWriteFile(stackPath, newData, 0600)
 }
 
 // Save writes the cache data back to the combined stacks.json file under
@@ -1686,7 +1718,7 @@ func (cc *CacheConfig) Save(repoDir string) error {
 		return err
 	}
 
-	if err := atomicWriteFile(stackPath, newData, 0644); err != nil {
+	if err := atomicWriteFile(stackPath, newData, 0600); err != nil {
 		return err
 	}
 

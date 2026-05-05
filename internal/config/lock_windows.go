@@ -29,7 +29,7 @@ const lockBytesHigh = 0xFFFFFFFF
 // this in a poll/timeout loop so callers get a consistent wait/timeout
 // experience across platforms.
 func tryAcquireFileLockOnce(path string) (*fileLock, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +59,7 @@ type SyncLock struct {
 
 func AcquireSyncLock(stacksJSONPath string) (*SyncLock, error) {
 	lockPath := stacksJSONPath + ".sync.lock"
-	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0644)
+	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
 		return nil, err
 	}

@@ -130,6 +130,100 @@ func TestTristateBoolFlag(t *testing.T) {
 	})
 }
 
+// TestPositionalSeparator pins the security-critical contract that every
+// buildArgs closure for a tool taking a user-supplied positional value
+// inserts "--" before that value, so the spawned `ezs` process can't be
+// tricked into treating a malicious branch / feature / parent name like
+// "--force-with-lease" as a flag.
+//
+// Regression guard for the MCP injection vector closed in this change. If
+// you change one of these closures, update the assertion — don't drop it.
+func TestPositionalSeparator(t *testing.T) {
+	cases := []struct {
+		name       string
+		args       map[string]any
+		build      func(mcp.CallToolRequest) []string
+		positional []string // expected positional values, in order, after "--"
+	}{
+		{
+			name:       "goto branch",
+			args:       map[string]any{"branch": "--force-with-lease"},
+			build:      buildGotoArgs,
+			positional: []string{"--force-with-lease"},
+		},
+		{
+			name:       "goto with --search and dash branch",
+			args:       map[string]any{"search": "feat", "branch": "--evil"},
+			build:      buildGotoArgs,
+			positional: []string{"--evil"},
+		},
+		{
+			name:       "new with dash-prefixed name",
+			args:       map[string]any{"name": "-rmalicious"},
+			build:      buildNewArgs,
+			positional: []string{"-rmalicious"},
+		},
+		{
+			name:       "new with parent flag and dash name",
+			args:       map[string]any{"parent": "main", "name": "--force"},
+			build:      buildNewArgs,
+			positional: []string{"--force"},
+		},
+		{
+			name:       "delete with dash-prefixed branch",
+			args:       map[string]any{"branch": "--cascade"},
+			build:      buildDeleteArgs,
+			positional: []string{"--cascade"},
+		},
+		{
+			name:       "delete with --force flag and dash branch",
+			args:       map[string]any{"force": true, "branch": "--evil"},
+			build:      buildDeleteArgs,
+			positional: []string{"--evil"},
+		},
+		{
+			name:       "reparent with dash branch and dash parent",
+			args:       map[string]any{"branch": "--evil", "new_parent": "--also-evil"},
+			build:      buildReparentArgs,
+			positional: []string{"--evil", "--also-evil"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.build(fakeRequest(tc.args))
+			// Find the first "--" in the produced args.
+			sepIdx := -1
+			for i, a := range got {
+				if a == "--" {
+					sepIdx = i
+					break
+				}
+			}
+			if sepIdx < 0 {
+				t.Fatalf("buildArgs missing required %q separator: got %v", "--", got)
+			}
+			tail := got[sepIdx+1:]
+			if len(tail) != len(tc.positional) {
+				t.Fatalf("after %q got %v positionals, want %v", "--", tail, tc.positional)
+			}
+			for i, want := range tc.positional {
+				if tail[i] != want {
+					t.Errorf("positional[%d] = %q, want %q (full args=%v)", i, tail[i], want, got)
+				}
+			}
+			// Sanity: the user-supplied positional must not appear before the
+			// separator (otherwise pflag would still see it as a flag).
+			for i := 0; i < sepIdx; i++ {
+				for _, p := range tc.positional {
+					if got[i] == p {
+						t.Errorf("user-supplied %q leaked before %q at index %d (args=%v)", p, "--", i, got)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestCaptureCommand_StdoutStderrSplit(t *testing.T) {
 	stdout, stderr, err := captureCommand(func(args []string) error {
 		fmt.Fprint(os.Stdout, "out:"+strings.Join(args, ","))
