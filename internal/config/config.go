@@ -1197,11 +1197,18 @@ func jsonEqual(a, b any) bool {
 }
 
 // MergeConflictHook is invoked once per (kind, key) where the three-way
-// merge encountered a same-target concurrent edit (mine != orig AND
-// theirs != orig AND theirs != mine). Kind is "stack" or "branch". The
-// merge resolves last-writer-wins (mine), but the hook gives the caller a
-// chance to log or surface the fact that a peer's update is being
-// overwritten.
+// merge encountered a same-target concurrent edit — i.e. both `mine` and
+// `theirs` diverged from `orig` for the same key, in different ways. Kind
+// is "stack" or "branch". The merge resolves last-writer-wins for the
+// modify-vs-modify and add-vs-add cases (mine wins); for delete-vs-modify
+// the deleting side wins by policy. The hook lets the caller surface the
+// lost peer-update either way.
+//
+// Concrete cases that fire the hook:
+//   - both added the same key with different values (add-vs-add)
+//   - we modified, they modified differently (modify-vs-modify)
+//   - we modified, they deleted (modify-vs-delete; mine wins)
+//   - we deleted, they modified (delete-vs-modify; deletion wins)
 //
 // Default writes a one-line warning to stderr. Tests override it to
 // capture the call. Set to a no-op func to silence (callers that want
@@ -1218,9 +1225,10 @@ var MergeConflictHook func(kind, key string) = func(kind, key string) {
 // threeWayMergeMap is the generic three-way merge used by both branch-cache
 // and stack maps. Identical semantics to mergeRepoData (mine wins on
 // us-modified, theirs fills in on we-didn't-touch, deletions and additions
-// from either side survive). Same-target concurrent edits fire
+// from either side survive). Every same-target concurrent edit fires
 // MergeConflictHook with the supplied `kind` ("branch" or "stack") so the
-// caller can log the lost peer-update.
+// caller can log the lost peer-update — see the hook docstring for the
+// exact set of cases that qualify.
 //
 // Pre-2026 this lived as two near-identical clones (mergeBranches +
 // mergeStacks). The only differences were the type names, var names, and
@@ -1243,17 +1251,27 @@ func threeWayMergeMap[K comparable, V any](orig, mine, theirs map[K]V, kind stri
 	for k, mineV := range mine {
 		seen[k] = true
 		origV, hadOrig := orig[k]
+		theirV, hasTheirs := theirs[k]
+
+		// We didn't touch it: let theirs decide (modify or delete).
 		if hadOrig && jsonEqual(origV, mineV) {
-			if theirV, hasTheirs := theirs[k]; hasTheirs {
+			if hasTheirs {
 				merged[k] = theirV
 			}
 			continue
 		}
-		if hadOrig {
-			if theirV, hasTheirs := theirs[k]; hasTheirs &&
-				!jsonEqual(theirV, origV) && !jsonEqual(theirV, mineV) {
-				notify(k)
-			}
+		// We touched it (added or modified). Detect same-target peer edits
+		// before taking mine.
+		switch {
+		case !hadOrig && hasTheirs && !jsonEqual(theirV, mineV):
+			// add-vs-add with different values
+			notify(k)
+		case hadOrig && !hasTheirs:
+			// modify-vs-delete (mine wins)
+			notify(k)
+		case hadOrig && hasTheirs && !jsonEqual(theirV, origV) && !jsonEqual(theirV, mineV):
+			// modify-vs-modify
+			notify(k)
 		}
 		merged[k] = mineV
 	}
@@ -1261,9 +1279,17 @@ func threeWayMergeMap[K comparable, V any](orig, mine, theirs map[K]V, kind stri
 		if seen[k] {
 			continue
 		}
-		if _, wasOrig := orig[k]; wasOrig {
-			continue // we deleted it
+		origV, wasOrig := orig[k]
+		if wasOrig {
+			// We deleted. If theirs differs from orig, they modified
+			// concurrently — delete-vs-modify; deletion wins by policy
+			// but we surface the lost peer-update.
+			if !jsonEqual(theirV, origV) {
+				notify(k)
+			}
+			continue
 		}
+		// They added a fresh key we never saw — keep theirs.
 		merged[k] = theirV
 	}
 	return merged

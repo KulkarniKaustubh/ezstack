@@ -1253,12 +1253,18 @@ func spawnAgentProcess(spec agentSpawnSpec) error {
 	runErr := cmd.Run()
 
 	// Persist the session ID after the spawn even if the agent exited
-	// non-zero — claude records the session as soon as it starts, so the
-	// user should still be able to resume it next time. The persist call is
-	// best-effort; failures are surfaced as warnings, not fatal.
+	// non-zero — claude records the session as soon as it starts, so a
+	// future ezs invocation can resume it via the persisted UUID. The
+	// persist call is best-effort: a write failure (full disk, lock
+	// timeout, permissions) doesn't abort the agent run, but it does
+	// mean the next `ezs agent` will start a fresh session — the UUID
+	// is not stored anywhere ezs can recover from later. We surface the
+	// raw UUID in the warning so the user can manually resume with
+	// `<agent> --resume <uuid>` if they want to continue this session.
 	if spec.session != nil && spec.session.persist != nil && spec.session.injection != nil && spec.session.injection.SessionID != "" {
-		if err := spec.session.persist(spec.session.injection.SessionID); err != nil {
-			ui.Warn(fmt.Sprintf("Failed to persist agent session ID: %v", err))
+		sessID := spec.session.injection.SessionID
+		if err := spec.session.persist(sessID); err != nil {
+			ui.Warn(formatPersistFailureWarning(sessID, fields[0], err))
 		}
 	}
 
@@ -1277,6 +1283,20 @@ func spawnAgentProcess(spec agentSpawnSpec) error {
 // Claude itself uses --session-id/--resume; this var is purely informational
 // for user scripts.
 const agentSessionIDEnv = "EZS_AGENT_SESSION_ID"
+
+// formatPersistFailureWarning renders the warning surfaced when the
+// best-effort persist of an agent session UUID fails. The message
+// includes the raw UUID and a manual-resume hint so the user has a
+// recovery path even though ezs itself has no way to remember the
+// session for next time. Extracted for testability.
+func formatPersistFailureWarning(sessionID, agentBinary string, err error) string {
+	return fmt.Sprintf(
+		"Failed to persist agent session ID %s: %v\n"+
+			"  Next `ezs agent` run will start a fresh session. "+
+			"To resume this one manually: %s --resume %s",
+		sessionID, err, agentBinary, sessionID,
+	)
+}
 
 // agentProcessEnv returns the env slice for the spawned agent. When noPush
 // is true, EZS_AGENT_NO_PUSH=1 is appended (and any pre-existing copy is

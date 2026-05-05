@@ -600,6 +600,90 @@ func TestMergeRepoData_ThreeWayMerge(t *testing.T) {
 			t.Errorf("hook calls = %v, want exactly [\"branch:feat\"]", got)
 		}
 	})
+
+	t.Run("both added same key with different values fires hook (add-vs-add)", func(t *testing.T) {
+		// Two processes each minted a fresh stack with the same hash but
+		// different roots — e.g. concurrent `ezs new` runs that happened to
+		// collide. Pre-fix this silently dropped theirs without surfacing.
+		var got []string
+		prev := MergeConflictHook
+		MergeConflictHook = func(kind, key string) { got = append(got, kind+":"+key) }
+		defer func() { MergeConflictHook = prev }()
+
+		orig := &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+		mine := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "develop")}, Branches: map[string]*BranchCache{}}
+		theirs := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "release")}, Branches: map[string]*BranchCache{}}
+
+		merged := mergeRepoData(orig, mine, theirs)
+		if merged.Stacks["x"].Root != "develop" {
+			t.Errorf("last-writer-wins broke: got root=%q, want %q", merged.Stacks["x"].Root, "develop")
+		}
+		if len(got) != 1 || got[0] != "stack:x" {
+			t.Errorf("hook calls = %v, want exactly [\"stack:x\"]", got)
+		}
+	})
+
+	t.Run("both added same key with same value does NOT fire hook", func(t *testing.T) {
+		// Two processes both minted stack "x" with the same value. No
+		// information is lost — silent.
+		var got []string
+		prev := MergeConflictHook
+		MergeConflictHook = func(kind, key string) { got = append(got, kind+":"+key) }
+		defer func() { MergeConflictHook = prev }()
+
+		orig := &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+		mine := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "main")}, Branches: map[string]*BranchCache{}}
+		theirs := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "main")}, Branches: map[string]*BranchCache{}}
+
+		_ = mergeRepoData(orig, mine, theirs)
+		if len(got) != 0 {
+			t.Errorf("hook fired on identical add-vs-add: %v", got)
+		}
+	})
+
+	t.Run("we modified, they deleted fires hook (modify-vs-delete; mine wins)", func(t *testing.T) {
+		// We changed root to "develop"; concurrently a peer ran `ezs delete`
+		// for the same stack. Modification wins, but the lost deletion is
+		// surfaced.
+		var got []string
+		prev := MergeConflictHook
+		MergeConflictHook = func(kind, key string) { got = append(got, kind+":"+key) }
+		defer func() { MergeConflictHook = prev }()
+
+		orig := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "main")}, Branches: map[string]*BranchCache{}}
+		mine := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "develop")}, Branches: map[string]*BranchCache{}}
+		theirs := &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+
+		merged := mergeRepoData(orig, mine, theirs)
+		if got, ok := merged.Stacks["x"]; !ok || got.Root != "develop" {
+			t.Errorf("our modification was lost on modify-vs-delete: %+v", merged.Stacks)
+		}
+		if len(got) != 1 || got[0] != "stack:x" {
+			t.Errorf("hook calls = %v, want exactly [\"stack:x\"]", got)
+		}
+	})
+
+	t.Run("we deleted, they modified fires hook (delete-vs-modify; deletion wins)", func(t *testing.T) {
+		// We removed stack "x"; concurrently a peer changed its root.
+		// Deletion wins by policy, but the lost peer modification is
+		// surfaced.
+		var got []string
+		prev := MergeConflictHook
+		MergeConflictHook = func(kind, key string) { got = append(got, kind+":"+key) }
+		defer func() { MergeConflictHook = prev }()
+
+		orig := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "main")}, Branches: map[string]*BranchCache{}}
+		mine := &repoData{Stacks: map[string]*Stack{}, Branches: map[string]*BranchCache{}}
+		theirs := &repoData{Stacks: map[string]*Stack{"x": mkStack("x", "develop")}, Branches: map[string]*BranchCache{}}
+
+		merged := mergeRepoData(orig, mine, theirs)
+		if _, ok := merged.Stacks["x"]; ok {
+			t.Errorf("deletion was reverted by peer modification: %+v", merged.Stacks)
+		}
+		if len(got) != 1 || got[0] != "stack:x" {
+			t.Errorf("hook calls = %v, want exactly [\"stack:x\"]", got)
+		}
+	})
 }
 
 func TestStackConfig_LoadSave(t *testing.T) {
