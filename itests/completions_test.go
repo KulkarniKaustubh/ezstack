@@ -96,7 +96,7 @@ func TestCompletions_PRSubcommands(t *testing.T) {
 	defer env.Cleanup()
 
 	got := runCompletions(t, env, "pr", "")
-	for _, want := range []string{"create", "draft", "merge", "stack", "update"} {
+	for _, want := range []string{"create", "draft", "merge", "refresh", "stack", "unlink", "update"} {
 		if !itestContains(got, want) {
 			t.Errorf("pr subcommand %q missing in %v", want, got)
 		}
@@ -496,6 +496,156 @@ func TestCompletions_FlagTableMatchesHelpOutput(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCompletions_SubcommandTableMatchesHelpOutput is the bidirectional drift
+// gate for *subcommand* completion — the sibling of FlagTableMatchesHelpOutput
+// for the layer above flags. For each parent command that has a SUBCOMMANDS
+// section in its --help, we exercise both directions:
+//
+//  1. help ⊆ completion: every subcommand documented in `<cmd> --help`
+//     SUBCOMMANDS must appear in `--completions <cmd> ""`. Catches the
+//     "command grew a subcommand, completion table didn't" failure mode that
+//     left `pr refresh` and `pr unlink` invisible to tab completion despite
+//     being implemented and documented.
+//  2. completion ⊆ help: every subcommand the completion offers must appear
+//     in --help (no phantom subcommands users tab to that the dispatcher
+//     then rejects).
+//
+// This complements FlagTableMatchesHelpOutput, which only checks the OPTIONS
+// section. Without this gate, dispatcher / help / completion can diverge at
+// the subcommand layer without CI noticing.
+func TestCompletions_SubcommandTableMatchesHelpOutput(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	// Each entry's parent command must (a) have a SUBCOMMANDS section in its
+	// --help and (b) emit subcommand candidates from --completions when the
+	// cursor sits in the slot immediately after the parent. The `agent`
+	// command intentionally uses a MODES section rather than SUBCOMMANDS
+	// (the default mode is unnamed; "feature/feat" and "ls/list" are documented
+	// as aliases inline), so it is covered separately by
+	// TestCompletions_AgentSubcommands rather than this gate.
+	parents := []struct {
+		cmd        string
+		extras     map[string]bool // completion candidates allowed despite being absent from help
+		exemptHelp map[string]bool // help subcommands allowed despite being absent from completion
+	}{
+		{cmd: "pr"},
+		{cmd: "config"},
+	}
+
+	bin := buildEzs(t)
+	for _, p := range parents {
+		t.Run(p.cmd, func(t *testing.T) {
+			compCmd := exec.Command(bin, "--completions", p.cmd, "")
+			compCmd.Dir = env.RepoDir
+			compCmd.Env = append(compCmd.Environ(), "EZSTACK_HOME="+env.ConfigDir)
+			compOut, err := compCmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("ezs --completions %s '' failed: %v\n%s", p.cmd, err, compOut)
+			}
+			compSubs := splitCompletionLines(compOut)
+
+			helpCmd := exec.Command(bin, p.cmd, "--help")
+			helpCmd.Dir = env.RepoDir
+			helpCmd.Env = append(helpCmd.Environ(), "EZSTACK_HOME="+env.ConfigDir)
+			helpOut, err := helpCmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("ezs %s --help failed: %v\n%s", p.cmd, err, helpOut)
+			}
+			helpSubs := parseHelpSubcommands(string(helpOut))
+			if len(helpSubs) == 0 {
+				t.Fatalf("expected SUBCOMMANDS section in `ezs %s --help` but parsed none", p.cmd)
+			}
+
+			compSet := map[string]bool{}
+			for _, s := range compSubs {
+				compSet[s] = true
+			}
+			helpSet := map[string]bool{}
+			for _, s := range helpSubs {
+				helpSet[s] = true
+			}
+
+			for _, s := range helpSubs {
+				if p.exemptHelp[s] {
+					continue
+				}
+				if !compSet[s] {
+					t.Errorf("subcommand %q in `ezs %s --help` SUBCOMMANDS is missing from completion; %s subcommand list needs updating",
+						s, p.cmd, p.cmd)
+				}
+			}
+			for _, s := range compSubs {
+				if helpSet[s] || p.extras[s] {
+					continue
+				}
+				t.Errorf("phantom subcommand %q: completion offers it but `ezs %s --help` doesn't list it — does the dispatcher actually accept it?",
+					s, p.cmd)
+			}
+		})
+	}
+}
+
+// parseHelpSubcommands pulls the first token of each line in an ezs
+// `--help` SUBCOMMANDS section. The section follows this convention:
+//
+//	SUBCOMMANDS
+//	    create    Create a new pull request
+//	    draft     Toggle PR between draft and ready
+//	    refresh   Reconcile cached PR state from GitHub
+//
+// We strip ANSI, locate the SUBCOMMANDS heading, and read entries until
+// the next column-zero heading. The first whitespace-delimited token of
+// each indented line is the subcommand name.
+func parseHelpSubcommands(help string) []string {
+	help = stripANSI(help)
+	lines := strings.Split(help, "\n")
+	inSubs := false
+	var out []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "SUBCOMMANDS") {
+			inSubs = true
+			continue
+		}
+		if !inSubs {
+			continue
+		}
+		if line != "" && line[0] != ' ' && line[0] != '\t' {
+			break
+		}
+		if trimmed == "" {
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) == 0 {
+			continue
+		}
+		tok := fields[0]
+		// Skip lines that aren't subcommand rows — e.g., wrapped description
+		// lines or notes that start with punctuation. Subcommand names are
+		// lowercase letters / digits / dashes.
+		if !isSubcommandToken(tok) {
+			continue
+		}
+		out = append(out, tok)
+	}
+	return out
+}
+
+func isSubcommandToken(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-'
+		if !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // splitCompletionLines splits the stdout of `ezs --completions ...` into
