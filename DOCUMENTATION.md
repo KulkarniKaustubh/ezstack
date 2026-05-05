@@ -1424,12 +1424,13 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 
 | Tool | Annotation | Description |
 |---|---|---|
-| `ezstack_pr_create` | &mdash; | Create a pull request. `branch`, `title`, `draft`. |
+| `ezstack_pr_create` | &mdash; | Create a pull request. `branch`, `title`, `draft`, `auto` (delegate title/body drafting to the configured `agent_command`; combine with `stack=true` to draft for every branch in the stack). |
 | `ezstack_pr_update` | destructive | Push the latest commits and refresh the PR base branch / stack description. `branch`. |
 | `ezstack_pr_merge` | destructive | Merge the pull request for a branch. `branch`, `method`. |
 | `ezstack_pr_draft` | &mdash; | Toggle a PR between draft and ready-for-review. `branch`. |
 | `ezstack_pr_draft_all` | &mdash; | Create draft PRs for every branch in the current stack that doesn't already have one. Branches with an existing PR are left alone (use `ezstack_pr_draft` to toggle an existing PR's draft state). |
 | `ezstack_pr_stack` | &mdash; | Update every PR description in the stack with navigation links. `branch`. |
+| `ezstack_pr_refresh` | &mdash; | Reconcile the local PR cache from GitHub (use after PRs are merged/closed/re-targeted via the GitHub UI). `branch` or `stack` (mutually exclusive); omit both for the current branch. |
 
 **Configuration**
 

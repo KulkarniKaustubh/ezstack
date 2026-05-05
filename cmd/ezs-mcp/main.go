@@ -778,6 +778,31 @@ func registerTools(s *server.MCPServer) {
 		}),
 	)
 
+	s.AddTool(
+		mcp.NewTool("ezstack_pr_refresh",
+			mcp.WithDescription("Reconcile the local PR cache from GitHub. Use after PRs have been merged, closed, or re-targeted via the GitHub UI to bring `ezstack_list` / `ezstack_status` back in sync. stack=true refreshes every PR in the current stack; otherwise pass branch (or omit both for the current branch). stack and branch are mutually exclusive."),
+			mcp.WithString("branch", mcp.Description("Branch whose PR to refresh (defaults to current). Mutually exclusive with stack.")),
+			mcp.WithBoolean("stack", mcp.Description("Refresh every PR in the current stack. Mutually exclusive with branch.")),
+			// Read-mostly: rewrites the local PR cache from upstream truth.
+			// Not destructive in the user-visible sense — no remote state
+			// changes — so we leave the destructive annotation off.
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		toolHandler(commands.PR, func(req mcp.CallToolRequest) []string {
+			args := []string{"refresh"}
+			// stack wins over branch; the CLI rejects them together with
+			// "--stack and --branch are mutually exclusive". Mirroring the
+			// CLI's precedence here avoids surfacing that error to the
+			// MCP client when an agent supplies both.
+			if req.GetBool("stack", false) {
+				args = append(args, "--stack")
+			} else {
+				stringFlag(&args, req, "branch", "--branch")
+			}
+			return args
+		}),
+	)
+
 	// ---- Stack membership ----
 
 	s.AddTool(

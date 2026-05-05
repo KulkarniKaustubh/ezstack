@@ -281,6 +281,46 @@
         "title": "Open Agent with Options...",
         "category": "ezstack",
         "icon": "$(hubot)"
+      },
+      {
+        "command": "ezstack.stack",
+        "title": "Add Branch to Stack...",
+        "category": "ezstack",
+        "icon": "$(git-branch)"
+      },
+      {
+        "command": "ezstack.unstack",
+        "title": "Remove Branch from Stack (Untrack)",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.commit",
+        "title": "Commit & Sync Children",
+        "category": "ezstack",
+        "icon": "$(git-commit)"
+      },
+      {
+        "command": "ezstack.amend",
+        "title": "Amend Last Commit & Sync Children",
+        "category": "ezstack"
+      },
+      {
+        "command": "ezstack.diff",
+        "title": "Diff Against Parent",
+        "category": "ezstack",
+        "icon": "$(diff)"
+      },
+      {
+        "command": "ezstack.log",
+        "title": "Log (Commits Since Parent)",
+        "category": "ezstack",
+        "icon": "$(history)"
+      },
+      {
+        "command": "ezstack.prRefresh",
+        "title": "Refresh PR State from GitHub",
+        "category": "ezstack",
+        "icon": "$(cloud-download)"
       }
     ],
     "keybindings": [
@@ -454,6 +494,21 @@
           "group": "1_actions@3"
         },
         {
+          "command": "ezstack.commit",
+          "when": "view == ezstackStacks && viewItem == rootRepo",
+          "group": "1_actions@4"
+        },
+        {
+          "command": "ezstack.amend",
+          "when": "view == ezstackStacks && viewItem == rootRepo",
+          "group": "1_actions@5"
+        },
+        {
+          "command": "ezstack.stack",
+          "when": "view == ezstackStacks && viewItem == rootRepo",
+          "group": "1_actions@6"
+        },
+        {
           "command": "ezstack.syncBranch",
           "when": "view == ezstackStacks && viewItem =~ /^branch/",
           "group": "1_actions@0"
@@ -484,14 +539,34 @@
           "group": "1_actions@4"
         },
         {
+          "command": "ezstack.diff",
+          "when": "view == ezstackStacks && viewItem =~ /^branch/",
+          "group": "1_actions@5"
+        },
+        {
+          "command": "ezstack.log",
+          "when": "view == ezstackStacks && viewItem =~ /^branch/",
+          "group": "1_actions@6"
+        },
+        {
+          "command": "ezstack.prRefresh",
+          "when": "view == ezstackStacks && viewItem == branchWithPR",
+          "group": "1_actions@7"
+        },
+        {
           "command": "ezstack.reparent",
           "when": "view == ezstackStacks && viewItem =~ /^branch/",
           "group": "2_modify@1"
         },
         {
-          "command": "ezstack.delete",
+          "command": "ezstack.unstack",
           "when": "view == ezstackStacks && viewItem =~ /^branch/",
           "group": "2_modify@2"
+        },
+        {
+          "command": "ezstack.delete",
+          "when": "view == ezstackStacks && viewItem =~ /^branch/",
+          "group": "2_modify@3"
         },
         {
           "command": "ezstack.renameStack",
@@ -507,6 +582,11 @@
           "command": "ezstack.newBranch",
           "when": "view == ezstackStacks && viewItem == stack",
           "group": "1_stack@3"
+        },
+        {
+          "command": "ezstack.prRefresh",
+          "when": "view == ezstackStacks && viewItem == stack",
+          "group": "1_stack@4"
         },
         {
           "command": "ezstack.openAgent",

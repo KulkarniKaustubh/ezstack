@@ -2010,7 +2010,7 @@ Options:
       <tr>
       <td><code>ezstack_pr_create</code></td>
       <td>—</td>
-      <td>Create a pull request. <code>branch</code>, <code>title</code>, <code>draft</code>.</td>
+      <td>Create a pull request. <code>branch</code>, <code>title</code>, <code>draft</code>, <code>auto</code> (delegate title/body drafting to the configured <code>agent_command</code>; combine with <code>stack=true</code> to draft for every branch in the stack).</td>
       </tr>
       <tr>
       <td><code>ezstack_pr_update</code></td>
@@ -2036,6 +2036,11 @@ Options:
       <td><code>ezstack_pr_stack</code></td>
       <td>—</td>
       <td>Update every PR description in the stack with navigation links. <code>branch</code>.</td>
+      </tr>
+      <tr>
+      <td><code>ezstack_pr_refresh</code></td>
+      <td>—</td>
+      <td>Reconcile the local PR cache from GitHub (use after PRs are merged/closed/re-targeted via the GitHub UI). <code>branch</code> or <code>stack</code> (mutually exclusive); omit both for the current branch.</td>
       </tr>
       </tbody>
       </table>

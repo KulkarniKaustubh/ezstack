@@ -40,12 +40,23 @@ pub fn run() {
             operations::goto_search,
             operations::config_export,
             operations::config_import,
+            // CLI parity additions — orphan bindings that mirror CLI
+            // features the React UI doesn't render yet. Keep them
+            // wired so the next UI change set can pick them up
+            // without touching Rust again.
+            operations::commit,
+            operations::amend,
+            operations::diff_branch,
+            operations::log_branch,
+            operations::stack_branch,
+            operations::unstack_branch,
             // PR operations
             pr::pr_create,
             pr::pr_update,
             pr::pr_merge,
             pr::pr_toggle_draft,
             pr::pr_update_stack,
+            pr::pr_refresh,
             // Config
             config::get_ezstack_repos,
             config::get_config,

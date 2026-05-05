@@ -115,6 +115,38 @@ export interface HostFingerprint {
   fingerprint: string;
 }
 
+// Mirrors the CLI's `diffOutputJSON` (cmd/ezs/commands/diff.go) — the
+// JSON shape returned by `ezs diff --json`. The Rust diff_branch handler
+// passes this through verbatim as a string in CommandResult.stdout, so
+// the frontend parses on demand.
+export interface DiffFile {
+  path: string;
+  additions: number;
+  deletions: number;
+}
+
+export interface DiffOutput {
+  files: DiffFile[];
+  total_files: number;
+  total_additions: number;
+  total_deletions: number;
+}
+
+// Mirrors the CLI's `logOutputJSON` (cmd/ezs/commands/log.go).
+export interface CommitEntry {
+  hash: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
+export interface LogOutput {
+  branch: string;
+  parent: string;
+  commits: CommitEntry[];
+  count: number;
+}
+
 export interface TreeNode {
   branch: StatusBranch;
   children: TreeNode[];

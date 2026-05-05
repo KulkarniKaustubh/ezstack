@@ -141,6 +141,7 @@ A few other flags worth knowing about:
 - `ezs sync --stats` / `--squash` — print a commits-per-branch summary, or squash each child before rebasing onto its parent.
 - `ezs sync --continue` — resume after resolving conflicts. Honors the same scope flags as `sync` itself (`-s`, `-a`, `-c`, `-b <name>`, positional `<hash-prefix>`), re-syncs the entire descendant subtree from the resolved branch, and exits non-zero when any branch is still in conflict. Sync also fast-forwards each local branch to `origin/<branch>` before rebasing so collaborator commits get picked up automatically (strict ff-only — divergent locals are skipped with a `diverged` note).
 - `ezs pr --draft-all` — create draft PRs across every branch in the current stack.
+- `ezs pr create --auto` (alias `--ai`) — let the configured `agent_command` (e.g. claude) draft the PR title and body from the diff and the repo's PR template. Combine with `--stack` to draft for every branch at once. Explicit `-t`/`-b` still win over the AI output.
 - `ezs goto --search <query>` — fuzzy-match a branch by substring across all stacks.
 - `ezs delete --cascade` — delete a branch and every descendant in one shot (deepest-first; aborts on a dirty descendant unless `--force`).
 - `ezs config export <file>` / `ezs config import <file>` — back up the global ezstack config (token redacted, file written `0600`) and restore it on another machine.

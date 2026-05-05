@@ -173,6 +173,7 @@
           <p>Create, update, merge, and toggle draft for the current branch's PR. <code>:Ezs pr stack</code> updates the navigation table in every PR description in the stack.</p>
           <div class="step-code">
             <pre><code><span class="c-dim">:Ezs pr create</span> "Part 1: scaffold"
+<span class="c-dim">:Ezs pr create --auto</span>            <span class="c-comment"># draft title and body via agent_command</span>
 <span class="c-dim">:Ezs pr update</span>                   <span class="c-comment"># push + refresh PR</span>
 <span class="c-dim">:Ezs pr draft</span>                    <span class="c-comment"># toggle draft / ready</span>
 <span class="c-dim">:Ezs pr merge</span>                    <span class="c-comment"># prompts for method</span>

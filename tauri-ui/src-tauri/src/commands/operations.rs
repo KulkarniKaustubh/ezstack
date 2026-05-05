@@ -384,6 +384,189 @@ pub fn doctor(
     run_ezs_auto(conn.as_ref(), &repo_path, &["doctor"])
 }
 
+/// Sync strategy override for commit / amend. Mirrors the CLI's
+/// `--merge` / `--rebase` flags; `Default` leaves it to the configured
+/// `sync_strategy`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum SyncStrategy {
+    #[default]
+    Default,
+    Merge,
+    Rebase,
+}
+
+impl SyncStrategy {
+    fn flag(self) -> Option<&'static str> {
+        match self {
+            SyncStrategy::Default => None,
+            SyncStrategy::Merge => Some("--merge"),
+            SyncStrategy::Rebase => Some("--rebase"),
+        }
+    }
+}
+
+/// Commit and auto-sync child branches.
+///
+/// `--no-push` is passed unconditionally so the desktop app surface
+/// never blocks on the CLI's interactive push prompt — push is its own
+/// explicit user action via `push_branch`. `all=true` maps to `git
+/// commit -a`; the message is required (no editor launch).
+#[tauri::command]
+pub fn commit(
+    state: State<'_, ConnectionState>,
+    repo_path: String,
+    message: String,
+    all: Option<bool>,
+    strategy: Option<SyncStrategy>,
+) -> Result<CommandResult, String> {
+    let conn = locked_conn(&state)?;
+    let mut args: Vec<&str> = vec!["-y", "commit", "-m", &message, "--no-push"];
+    if all.unwrap_or(false) {
+        args.push("-a");
+    }
+    if let Some(flag) = strategy.unwrap_or_default().flag() {
+        args.push(flag);
+    }
+    run_ezs_auto(conn.as_ref(), &repo_path, &args)
+}
+
+/// Amend the last commit and auto-sync children.
+///
+/// When `message` is `None` the existing message is preserved via
+/// `--no-edit` (no editor launch — the desktop surface has no place
+/// to host one). Like `commit`, push is suppressed; amend rewrites
+/// history, so the intended follow-up is `push_branch(force=true)`.
+#[tauri::command]
+pub fn amend(
+    state: State<'_, ConnectionState>,
+    repo_path: String,
+    message: Option<String>,
+    all: Option<bool>,
+    strategy: Option<SyncStrategy>,
+) -> Result<CommandResult, String> {
+    let conn = locked_conn(&state)?;
+    let mut args: Vec<String> =
+        vec!["-y".into(), "amend".into(), "--no-push".into()];
+    match message.as_ref().filter(|m| !m.is_empty()) {
+        Some(m) => {
+            args.push("-m".into());
+            args.push(m.clone());
+        }
+        None => args.push("--no-edit".into()),
+    }
+    if all.unwrap_or(false) {
+        args.push("-a".into());
+    }
+    if let Some(flag) = strategy.unwrap_or_default().flag() {
+        args.push(flag.into());
+    }
+    let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    run_ezs_auto(conn.as_ref(), &repo_path, &arg_refs)
+}
+
+/// Output mode for `diff_branch`. `Stat` returns `git diff --stat` text,
+/// `Json` returns the file-level numstat as the CLI's `diffOutputJSON`
+/// (the frontend can `JSON.parse` it).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum DiffMode {
+    #[default]
+    Json,
+    Stat,
+}
+
+/// Diff a branch against its parent in the stack.
+///
+/// Returns the raw `CommandResult` so the frontend can choose to parse
+/// JSON (when `mode` is `Json`) or render the stat text directly. When
+/// `branch` is `None` the CLI defaults to the current branch.
+#[tauri::command]
+pub fn diff_branch(
+    state: State<'_, ConnectionState>,
+    repo_path: String,
+    branch: Option<String>,
+    mode: Option<DiffMode>,
+) -> Result<CommandResult, String> {
+    let conn = locked_conn(&state)?;
+    let mut args: Vec<&str> = vec!["diff"];
+    args.push(match mode.unwrap_or_default() {
+        DiffMode::Json => "--json",
+        DiffMode::Stat => "--stat",
+    });
+    if let Some(ref b) = branch {
+        args.push("--branch");
+        args.push(b);
+    }
+    run_ezs_auto(conn.as_ref(), &repo_path, &args)
+}
+
+/// Show commits in `branch` since its parent. Always returns JSON
+/// (the CLI's `logOutputJSON`) so the frontend can render structured
+/// commit lists.
+#[tauri::command]
+pub fn log_branch(
+    state: State<'_, ConnectionState>,
+    repo_path: String,
+    branch: Option<String>,
+) -> Result<CommandResult, String> {
+    let conn = locked_conn(&state)?;
+    let mut args: Vec<&str> = vec!["log", "--json"];
+    if let Some(ref b) = branch {
+        args.push("--branch");
+        args.push(b);
+    }
+    run_ezs_auto(conn.as_ref(), &repo_path, &args)
+}
+
+/// Add a branch to a stack.
+///
+/// `parent` and `base` are mutually exclusive (the CLI rejects them
+/// together). Pass `parent` to attach under an existing tracked branch
+/// or `base` to start a new stack rooted on a non-default base
+/// (e.g. `develop`, `staging`). Both being `None` triggers the CLI's
+/// interactive picker, which — like the rest of this layer — is not a
+/// supported configuration over Tauri; callers should resolve the
+/// target branch in the frontend before invoking.
+#[tauri::command]
+pub fn stack_branch(
+    state: State<'_, ConnectionState>,
+    repo_path: String,
+    branch: String,
+    parent: Option<String>,
+    base: Option<String>,
+) -> Result<CommandResult, String> {
+    let conn = locked_conn(&state)?;
+    let mut args: Vec<&str> = vec!["-y", "stack", "-b", &branch];
+    // base wins over parent, matching the precedence in the VS Code
+    // wrapper and the MCP tool. The CLI surfaces the conflict as a
+    // hard error; resolving it client-side prevents that from
+    // bubbling up to Tauri callers that pass both.
+    if let Some(ref b) = base {
+        args.push("-B");
+        args.push(b);
+    } else if let Some(ref p) = parent {
+        args.push("-p");
+        args.push(p);
+    }
+    run_ezs_auto(conn.as_ref(), &repo_path, &args)
+}
+
+/// Remove a branch from ezstack tracking. The git branch and worktree
+/// are kept; any children are reparented to the untracked branch's
+/// parent. Caller should confirm with the user first — this is a
+/// metadata mutation, not a destructive git op, but it does change
+/// the shape of the stack.
+#[tauri::command]
+pub fn unstack_branch(
+    state: State<'_, ConnectionState>,
+    repo_path: String,
+    branch: String,
+) -> Result<CommandResult, String> {
+    let conn = locked_conn(&state)?;
+    run_ezs_auto(conn.as_ref(), &repo_path, &["-y", "unstack", "-b", &branch])
+}
+
 /// Run `ezs pr --draft-all` to create draft PRs for every branch in the
 /// current stack without one. Confirmation is handled by the caller.
 #[tauri::command]
