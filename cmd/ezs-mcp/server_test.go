@@ -92,6 +92,8 @@ func TestListTools_Registered(t *testing.T) {
 		"ezstack_pr_update",
 		"ezstack_pr_draft",
 		"ezstack_goto",
+		"ezstack_up",
+		"ezstack_down",
 		"ezstack_new",
 		"ezstack_delete",
 		"ezstack_reparent",
@@ -172,6 +174,8 @@ func TestListTools_Registered(t *testing.T) {
 		"ezstack_pr_update":     true,
 		"ezstack_pr_draft":      false,
 		"ezstack_goto":          false,
+		"ezstack_up":            false,
+		"ezstack_down":          false,
 		"ezstack_new":           false,
 		"ezstack_delete":        true,
 		"ezstack_reparent":      false,
@@ -302,12 +306,20 @@ func TestListTools_OptionalParamsExposed(t *testing.T) {
 	}{
 		{"ezstack_goto", "search"},
 		{"ezstack_delete", "cascade"},
+		{"ezstack_delete", "force"},
+		{"ezstack_delete", "stack"},
 		{"ezstack_sync", "stats"},
 		{"ezstack_sync", "squash"},
 		{"ezstack_sync", "branch"},
 		{"ezstack_sync", "no_delete_local"},
 		{"ezstack_sync", "no_autostash"},
 		{"ezstack_sync", "rebase"},
+		{"ezstack_push", "verify"},
+		{"ezstack_push", "all_remotes"},
+		{"ezstack_new", "from_remote"},
+		{"ezstack_pr_create", "force"},
+		{"ezstack_up", "steps"},
+		{"ezstack_down", "steps"},
 	}
 	for _, c := range checks {
 		tl, ok := byName[c.tool]

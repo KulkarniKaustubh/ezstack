@@ -431,6 +431,8 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithString("branch", mcp.Description("Push a specific branch by name (useful when not on a stack branch)")),
 			mcp.WithBoolean("stack", mcp.Description("Push all branches in the current stack")),
 			mcp.WithBoolean("force", mcp.Description("Force push")),
+			mcp.WithBoolean("verify", mcp.Description("Require ~/.ezstack/hooks/pre-push to exist and pass before pushing (promotes pre-push from optional to mandatory).")),
+			mcp.WithBoolean("all_remotes", mcp.Description("Push to origin and the configured fork remote in one go.")),
 			mcp.WithDestructiveHintAnnotation(true),
 		),
 		toolHandler(commands.Push, func(req mcp.CallToolRequest) []string {
@@ -438,6 +440,8 @@ func registerTools(s *server.MCPServer) {
 			stringFlag(&args, req, "branch", "--branch")
 			boolFlag(&args, req, "stack", "--stack")
 			boolFlag(&args, req, "force", "--force")
+			boolFlag(&args, req, "verify", "--verify")
+			boolFlag(&args, req, "all_remotes", "--all-remotes")
 			return args
 		}),
 	)
@@ -453,6 +457,7 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithBoolean("draft", mcp.Description("Create as draft PR")),
 			mcp.WithBoolean("stack", mcp.Description("Create PRs for every branch in the current stack")),
 			mcp.WithBoolean("auto", mcp.Description("Use the configured AI agent to draft PR title/body from diff + template")),
+			mcp.WithBoolean("force", mcp.Description("Recreate the PR even if one already exists for the branch (alias of --recreate). Skips the confirmation prompt that would otherwise hang the MCP transport on stdin; the warning is still emitted to stderr.")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.PR, func(req mcp.CallToolRequest) []string {
@@ -463,6 +468,7 @@ func registerTools(s *server.MCPServer) {
 			boolFlag(&args, req, "draft", "--draft")
 			boolFlag(&args, req, "stack", "--stack")
 			boolFlag(&args, req, "auto", "--auto")
+			boolFlag(&args, req, "force", "--force")
 			return args
 		}),
 	)
@@ -533,20 +539,50 @@ func registerTools(s *server.MCPServer) {
 	)
 
 	s.AddTool(
+		mcp.NewTool("ezstack_up",
+			mcp.WithDescription("Navigate to the parent branch in the current stack. Stops at the top of the stack (does not switch to main/root). Like goto, this checks out the target branch in its worktree and emits a `cd <path>` hint to stderr — the MCP server's working directory does not move, so subsequent calls should pass branch=... or rely on the new HEAD."),
+			mcp.WithString("steps", mcp.Description("Number of levels to navigate up (positive integer, default 1). Passed verbatim to the CLI as a positional arg.")),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		toolHandler(commands.Up, func(req mcp.CallToolRequest) []string {
+			if s := req.GetString("steps", ""); s != "" {
+				return []string{s}
+			}
+			return nil
+		}),
+	)
+
+	s.AddTool(
+		mcp.NewTool("ezstack_down",
+			mcp.WithDescription("Navigate to a child branch in the current stack. When the current branch has multiple children the CLI requests a selection via elicitation — clients without elicitation support will see a decline error. Like goto, this checks out the target branch in its worktree and emits a `cd <path>` hint to stderr; the MCP server's working directory does not move."),
+			mcp.WithString("steps", mcp.Description("Number of levels to navigate down (positive integer, default 1). Passed verbatim to the CLI as a positional arg.")),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		toolHandler(commands.Down, func(req mcp.CallToolRequest) []string {
+			if s := req.GetString("steps", ""); s != "" {
+				return []string{s}
+			}
+			return nil
+		}),
+	)
+
+	s.AddTool(
 		mcp.NewTool("ezstack_new",
-			mcp.WithDescription("Create a new branch in the stack. Without an explicit parent, the new branch stacks on the MCP server's current branch, which may not match the agent's expectation — pass parent explicitly when in doubt."),
+			mcp.WithDescription("Create a new branch in the stack. Without an explicit parent, the new branch stacks on the MCP server's current branch, which may not match the agent's expectation — pass parent explicitly when in doubt. Set from_remote=true with name=\"origin/<branch>\" (or any remote ref) to mirror an existing remote branch as a stack root."),
 			mcp.WithString("name",
-				mcp.Description("Branch name to create"),
+				mcp.Description("Branch name to create. With from_remote=true, pass the remote ref (e.g. \"origin/feature-x\") to mirror it locally."),
 				mcp.Required(),
 			),
 			mcp.WithString("parent", mcp.Description("Parent branch (defaults to current branch)")),
 			mcp.WithBoolean("init_submodules", mcp.Description("Whether to mirror the main worktree's initialized submodules into the new worktree. Omit to use the configured default (true unless overridden).")),
+			mcp.WithBoolean("from_remote", mcp.Description("Create a stack rooted on a remote branch (mirrors `ezs new -r`). Use with name=\"origin/<branch>\" or any remote ref to register the branch locally as a stack root.")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
 		toolHandler(commands.New, func(req mcp.CallToolRequest) []string {
 			args := []string{req.GetString("name", "")}
 			stringFlag(&args, req, "parent", "--parent")
 			tristateBoolFlag(&args, req, "init_submodules", "--init-submodules", "--no-init-submodules")
+			boolFlag(&args, req, "from_remote", "--from-remote")
 			return args
 		}),
 	)
@@ -559,11 +595,15 @@ func registerTools(s *server.MCPServer) {
 				mcp.Required(),
 			),
 			mcp.WithBoolean("cascade", mcp.Description("Also delete all descendant branches in the stack subtree")),
+			mcp.WithBoolean("force", mcp.Description("Force delete even when the branch has children (without --cascade, children are reparented to the deleted branch's parent). Required when the branch has uncommitted changes during a cascade.")),
+			mcp.WithBoolean("stack", mcp.Description("Treat the branch argument as a stack hash and delete every branch in that stack.")),
 			mcp.WithDestructiveHintAnnotation(true),
 		),
 		yesModeHandler(commands.Delete, func(req mcp.CallToolRequest) []string {
 			args := []string{req.GetString("branch", "")}
 			boolFlag(&args, req, "cascade", "--cascade")
+			boolFlag(&args, req, "force", "--force")
+			boolFlag(&args, req, "stack", "--stack")
 			return args
 		}),
 	)
@@ -773,7 +813,7 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_config_set",
-			mcp.WithDescription("Set an ezstack configuration value. Valid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, sync_strategy, agent_command."),
+			mcp.WithDescription("Set an ezstack configuration value. Valid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, init_submodules, sync_strategy, agent_command."),
 			mcp.WithString("key",
 				mcp.Description("Config key to set"),
 				mcp.Required(),
