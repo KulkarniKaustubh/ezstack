@@ -1424,7 +1424,7 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 
 | Tool | Annotation | Description |
 |---|---|---|
-| `ezstack_pr_create` | &mdash; | Create a pull request. `branch`, `title`, `draft`. |
+| `ezstack_pr_create` | &mdash; | Create a pull request. `branch`, `title`, `draft`, `auto` (delegate title/body drafting to the configured `agent_command`; combine with `stack=true` to draft for every branch in the stack). |
 | `ezstack_pr_update` | destructive | Push the latest commits and refresh the PR base branch / stack description. `branch`. |
 | `ezstack_pr_merge` | destructive | Merge the pull request for a branch. `branch`, `method`. |
 | `ezstack_pr_draft` | &mdash; | Toggle a PR between draft and ready-for-review. `branch`. |

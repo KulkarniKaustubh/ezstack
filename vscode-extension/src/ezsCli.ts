@@ -391,8 +391,20 @@ export class EzsCli {
     await this.execYes(["reparent", branch, newParent]);
   }
 
-  async prCreate(title: string, opts?: { draft?: boolean; body?: string; branch?: string }): Promise<void> {
-    const args = ["pr", "create", "-t", title];
+  /**
+   * Create a PR. Pass `auto: true` to delegate title/body drafting to the
+   * configured `agent_command` (`ezs pr create --auto`); `title` may then
+   * be omitted. When `auto` is unset, `title` is required and the CLI
+   * uses it verbatim. Explicit `title`/`body` win over AI output.
+   */
+  async prCreate(title: string | undefined, opts?: { draft?: boolean; body?: string; branch?: string; auto?: boolean }): Promise<void> {
+    if (title === undefined && !opts?.auto) {
+      throw new Error("prCreate: title is required unless auto is set");
+    }
+    const args = ["pr", "create"];
+    if (title !== undefined) {
+      args.push("-t", title);
+    }
     if (opts?.draft) {
       args.push("-d");
     }
@@ -401,6 +413,9 @@ export class EzsCli {
     }
     if (opts?.branch) {
       args.push("--branch", opts.branch);
+    }
+    if (opts?.auto) {
+      args.push("--auto");
     }
     await this.execYes(args);
   }

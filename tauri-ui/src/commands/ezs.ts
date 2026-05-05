@@ -118,14 +118,28 @@ export async function renameStack(
   return invoke<CommandResult>("rename_stack", { repoPath, stackHash, name });
 }
 
+/**
+ * Create a PR. Set `auto=true` to have the configured `agent_command`
+ * draft the title and body from the diff and the repo's PR template;
+ * `title`/`body` (when supplied) still win over the AI output. When
+ * `auto=false` (the default), `title` is required.
+ */
 export async function prCreate(
   repoPath: string,
-  title: string,
+  title: string | undefined,
   body?: string,
   draft: boolean = false,
   branch?: string,
+  auto: boolean = false,
 ): Promise<CommandResult> {
-  return invoke<CommandResult>("pr_create", { repoPath, title, body, draft, branch });
+  return invoke<CommandResult>("pr_create", {
+    repoPath,
+    title: title ?? null,
+    body,
+    draft,
+    branch,
+    auto,
+  });
 }
 
 export async function prUpdate(

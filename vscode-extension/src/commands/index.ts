@@ -237,12 +237,22 @@ export function registerCommands(
           branchName = pick.label;
         }
 
-        const title = await vscode.window.showInputBox({
-          prompt: `PR title for "${branchName}"`,
-          placeHolder: "Add feature X",
-          value: branchName,
-        });
-        if (!title) {
+        const modePick = await vscode.window.showQuickPick(
+          [
+            {
+              label: "Write title and body manually",
+              detail: "Enter the title, then edit the body in a markdown buffer",
+              value: "manual" as const,
+            },
+            {
+              label: "$(sparkle) Draft with AI",
+              detail: "Hands the diff and PR template to your configured agent_command (e.g. claude)",
+              value: "auto" as const,
+            },
+          ],
+          { placeHolder: "How would you like to draft this PR?" },
+        );
+        if (!modePick) {
           return;
         }
 
@@ -254,6 +264,29 @@ export function registerCommands(
           { placeHolder: "PR type" },
         );
         if (!draftPick) {
+          return;
+        }
+
+        if (modePick.value === "auto") {
+          await runWithFeedback(
+            "Drafting PR with AI...",
+            `PR created for "${branchName}".`,
+            () =>
+              cli.prCreate(undefined, {
+                auto: true,
+                draft: draftPick.value,
+                branch: branchName,
+              }),
+          );
+          return;
+        }
+
+        const title = await vscode.window.showInputBox({
+          prompt: `PR title for "${branchName}"`,
+          placeHolder: "Add feature X",
+          value: branchName,
+        });
+        if (!title) {
           return;
         }
 
