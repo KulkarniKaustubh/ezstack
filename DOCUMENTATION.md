@@ -134,7 +134,82 @@ ezs config set github_token ghp_...                # optional; otherwise falls b
 ezs config set agent_command "claude --dangerously-skip-permissions"
 ```
 
-### 4. Create your first stacked branch
+### 4. Create a worktree from an existing branch
+
+Most people install `ezs` while standing inside an active repo with a feature
+branch (or two) already in flight. The fastest way to start using ezstack is
+to point it at one of those existing branches — ezs will mint a stack root
+out of it and every command (`commit`, `sync`, `push`, `pr`, …) starts working
+immediately. Three flavors below; pick whichever matches what's already in
+your repo.
+
+**a) You have a local branch that already has a worktree.** Use
+`ezs new --from-worktree`. ezs lists every worktree on the repo and registers
+the one you pick as the root of a new stack — no rewriting history, no fresh
+checkout.
+
+```bash
+ezs new --from-worktree
+#   What this actually does (see cmd/ezs/commands/new.go: useFromWorktree):
+#     - `git worktree list --porcelain` to enumerate every worktree.
+#     - Picker labelled `<branch> (<path>)`; you select one.
+#     - Confirms before mutating anything (Y/N).
+#     - mgr.RegisterExistingBranch(branch, path, base):
+#         writes the branch into ~/.ezstack/stacks.json with parent=<configured
+#         base branch> and creates a fresh stack hash.
+#     - If a PR for the branch already exists on GitHub, ezstack hydrates the
+#       cached PR number, URL, state, and review status the first time.
+#     - Prompts for an optional stack name (Enter to skip).
+#     - cd's your shell into the worktree (when cd_after_new=true and the
+#       shell wrapper from step 2 is installed).
+
+ezs ls       # the new stack now shows up at the root level
+```
+
+**b) You have a local branch but NO worktree yet.** First materialize a
+worktree for it (one git command), then adopt it with the same flow:
+
+```bash
+git worktree add <worktree_base_dir>/<branch> <branch>
+ezs new --from-worktree     # then pick the just-created worktree
+```
+
+(The `<worktree_base_dir>` is whatever you set in step 3's wizard. Run
+`ezs config show` if you've forgotten.)
+
+**c) You want to track a teammate's branch (or a remote PR).** `ezs new
+origin/<branch>` is a one-shot fetch + worktree + register:
+
+```bash
+ezs new origin/feature-branch
+#   What this actually does (see cmd/ezs/commands/new.go: newFromRemoteRef):
+#     - `git fetch` so we're working off the latest remote refs.
+#     - Verifies the remote branch exists; errors out if not.
+#     - `git worktree add <base>/<dirified-branch-name> <branch>` tracking origin.
+#     - Mirrors initialized submodules from the main worktree (configurable).
+#     - Looks up the PR via `gh pr view --json` and registers the branch as
+#       a stack root with base = PR.base (or main/master fallback).
+#     - For fork PRs: detects "Allow edits from maintainers" and your push
+#       access; adds a fork remote when both are true, marks the branch
+#       read-only otherwise so `ezs push` won't try to publish commits you
+#       can't land.
+
+# Or with PR-number ergonomics:
+ezs new -r 42 my-local-name   # PR #42 → local branch "my-local-name"
+ezs new -r                    # interactive PR picker
+```
+
+The branch shows up in `ezs ls` with a `(remote)` tag, and every ezs command
+works on it (sync, push, commit, etc.).
+
+**Already have a stack and want to graft an existing untracked worktree onto
+it as a child branch?** That's [`ezs stack`](#ezs-stack) — interactive, or
+`ezs stack -b <branch> -p <parent>` scripted.
+
+Once you have at least one stack root in `ezs ls`, you can move on to step 5
+and start stacking branches on top of it.
+
+### 5. Create your first stacked branch
 
 `ezs new <name>` creates a branch whose parent defaults to **your current
 branch**, not `main`. So if you want a fresh stack rooted on `main`, make sure
@@ -177,7 +252,7 @@ ezs new feature-2 --parent feature-1
 ezs commit -am "Wire up feature"
 ```
 
-### 5. Push the stack and open PRs
+### 6. Push the stack and open PRs
 
 ```bash
 ezs push --stack
@@ -218,7 +293,7 @@ ezs pr stack
 #     branch in the stack, with the active branch marked
 ```
 
-### 6. Inspect the stack any time
+### 7. Inspect the stack any time
 
 ```bash
 ezs status        # current branch + its position in the stack + PR / CI status
@@ -231,87 +306,6 @@ That's the whole flow. For day-two operations (merged parents, reviewing
 remote PRs, stacking on top of someone else's work) jump to
 [Workflows](#workflows), or [Commands](#commands) for the full reference of
 every flag on every subcommand.
-
-### 7. Common scenarios — "I want to…"
-
-A scannable index for the questions that come up most often once you're past
-the canonical happy path above. Each row points at the workflow (or command
-reference) that walks through it end-to-end — no command shown here is
-invented; if you can't find what you need below, the [Commands](#commands)
-section is the full surface.
-
-**Setting up & adopting work**
-
-- **I want ezstack to start tracking an existing branch that already has a
-  worktree.** → [Adopting an Existing Worktree as a Stack Root](#adopting-an-existing-worktree-as-a-stack-root). Run `ezs new --from-worktree`, pick the worktree from the picker.
-- **I have an untracked worktree I want to graft onto an existing stack.** →
-  [`ezs stack`](#ezs-stack) — interactive picker, or `ezs stack -b <branch> -p <parent>` scripted.
-- **I want to start a new stack on a non-default base (e.g. `develop`,
-  `staging`).** → `ezs stack -b <branch> -B develop`. See [`ezs stack`](#ezs-stack).
-- **I'm on a fresh laptop or a CI runner.** → [Bootstrapping a Fresh Machine](#bootstrapping-a-fresh-machine).
-
-**Working with remote branches & teammates' PRs**
-
-- **I want to check out a teammate's branch / PR to review or run it.** →
-  [Reviewing a Remote PR](#reviewing-a-remote-pr). One command:
-  `ezs new origin/<branch>` (or `ezs new -r <pr-number>`).
-- **I want to build a branch on top of a teammate's in-flight PR.** →
-  [Stacking on a Remote PR](#stacking-on-a-remote-pr). Run `ezs stack` and
-  pick "Start a new stack from a remote PR".
-
-**Restructuring an existing branch**
-
-- **I have one big WIP branch and want to break it into a stack of small
-  PRs.** → [Splitting a Single Large Worktree Into a Stack — Manually](#splitting-a-single-large-worktree-into-a-stack--manually), or have the agent plan it via [Splitting a Single Large Worktree Into a Stack — With `ezs agent feature`](#splitting-a-single-large-worktree-into-a-stack--with-ezs-agent-feature).
-- **I want to move a branch under a different parent.** → [`ezs reparent`](#ezs-reparent).
-- **I want to stop tracking a branch in ezstack but keep the git branch /
-  worktree.** → [`ezs unstack`](#ezs-unstack).
-- **I want to delete a branch and its descendants in one shot.** →
-  [`ezs delete --cascade`](#ezs-delete).
-
-**PR creation & maintenance**
-
-- **I want the AI to write the title and body for one PR.** →
-  [AI-Drafted PR Title & Body for a Single Branch](#ai-drafted-pr-title--body-for-a-single-branch---auto). One command: `ezs pr create --auto`.
-- **I want to open a PR for every branch in my current stack.** →
-  [AI-Drafted PRs Across the Whole Stack](#ai-drafted-prs-across-the-whole-stack). `ezs pr create --stack --auto` (with AI), or `ezs pr --draft-all` (branch-name titles, no AI).
-- **My PR cache and GitHub disagree, and I want to start over for a
-  branch.** → [Resetting a Stale PR Association](#resetting-a-stale-pr-association--unlink-then-create-or-refresh). `ezs pr unlink` then `ezs pr create`.
-- **My PR cache is stale because the PR was merged / closed / re-targeted via
-  the GitHub UI.** → `ezs pr refresh` re-discovers and re-syncs the cache
-  without making a new PR.
-- **I want to update an open PR's base branch and stack-navigation links
-  after re-parenting.** → [`ezs pr update`](#ezs-pr-update), or
-  `ezs pr stack` to update only the stack-description block.
-
-**Commits, sync, and push**
-
-- **I made a fix on a branch in the middle of my stack — I don't want
-  descendants left behind on the old SHA.** → [Committing into the middle of an existing stack](#committing-into-the-middle-of-an-existing-stack). `ezs commit -am "..."` auto-rebases descendants and force-pushes them.
-- **A parent branch was merged on GitHub and the rest of my stack needs to
-  re-root.** → [After a Parent is Merged](#after-a-parent-is-merged).
-  `ezs sync --all` does the surgery.
-- **My `ezs sync` hit a rebase conflict.** → [Recovering from a Sync Conflict](#recovering-from-a-sync-conflict). Resolve it, `git rebase --continue`, then `ezs sync --continue` to finish the cascade.
-- **I want each branch in my stack to land as a single commit.** →
-  [Squash-Merging Children Into Their Parent Before PR](#squash-merging-children-into-their-parent-before-pr). `ezs sync --stack --squash`.
-- **I want pushes to be gated by tests / lints / a custom check.** →
-  [Pre-Push Validation as a Hard Requirement](#pre-push-validation-as-a-hard-requirement---verify). Drop a hook at `~/.ezstack/hooks/pre-push` and run `ezs push --verify`.
-
-**Day-two ergonomics**
-
-- **I want a live dashboard of CI / review status across my stack.** →
-  [Live CI Dashboard With `ezs status --watch`](#live-ci-dashboard-with-ezs-status---watch).
-- **I want every new worktree to come pre-populated with the same dotfiles
-  / IDE settings.** → [Worktree Templates: Pre-Seeded New Branches](#worktree-templates-pre-seeded-new-branches). `ezs new <name> --template <tpl>`.
-- **I want to back up my ezstack config to another machine.** →
-  [`ezs config export`](#ezs-config-export-file) and
-  [`ezs config import`](#ezs-config-import-file) — token redaction is automatic.
-- **I want to drive ezstack from Claude Code, VS Code, Neovim, or a desktop
-  app instead of the CLI.** → [Editor & Desktop Integrations](#editor--desktop-integrations). All four read and write the same on-disk state.
-
-If a scenario isn't covered above, the [Workflows](#workflows) section has
-the full annotated walkthrough, and [Commands](#commands) has every flag on
-every subcommand.
 
 ---
 
@@ -2309,3 +2303,85 @@ seconds and the title-bar pill reflects the result.
   added latency on refreshes.
 
 Full feature tour: <https://kulkarnikaustubh.github.io/ezstack/desktop.html>.
+
+---
+
+## FAQ — "I want to…"
+
+A scannable index for the questions that come up most often. Each row points
+at the workflow (or command reference) that walks through it end-to-end — no
+command shown here is invented; if you can't find what you need below, the
+[Commands](#commands) section is the full surface.
+
+**Setting up & adopting work**
+
+- **I want ezstack to start tracking an existing branch that already has a
+  worktree.** → [Adopting an Existing Worktree as a Stack Root](#adopting-an-existing-worktree-as-a-stack-root). Run `ezs new --from-worktree`, pick the worktree from the picker.
+- **I have an untracked worktree I want to graft onto an existing stack.** →
+  [`ezs stack`](#ezs-stack) — interactive picker, or `ezs stack -b <branch> -p <parent>` scripted.
+- **I want to start a new stack on a non-default base (e.g. `develop`,
+  `staging`).** → `ezs stack -b <branch> -B develop`. See [`ezs stack`](#ezs-stack).
+- **I'm on a fresh laptop or a CI runner.** → [Bootstrapping a Fresh Machine](#bootstrapping-a-fresh-machine).
+
+**Working with remote branches & teammates' PRs**
+
+- **I want to check out a teammate's branch / PR to review or run it.** →
+  [Reviewing a Remote PR](#reviewing-a-remote-pr). One command:
+  `ezs new origin/<branch>` (or `ezs new -r <pr-number>`).
+- **I want to build a branch on top of a teammate's in-flight PR.** →
+  [Stacking on a Remote PR](#stacking-on-a-remote-pr). Run `ezs stack` and
+  pick "Start a new stack from a remote PR".
+
+**Restructuring an existing branch**
+
+- **I have one big WIP branch and want to break it into a stack of small
+  PRs.** → [Splitting a Single Large Worktree Into a Stack — Manually](#splitting-a-single-large-worktree-into-a-stack--manually), or have the agent plan it via [Splitting a Single Large Worktree Into a Stack — With `ezs agent feature`](#splitting-a-single-large-worktree-into-a-stack--with-ezs-agent-feature).
+- **I want to move a branch under a different parent.** → [`ezs reparent`](#ezs-reparent).
+- **I want to stop tracking a branch in ezstack but keep the git branch /
+  worktree.** → [`ezs unstack`](#ezs-unstack).
+- **I want to delete a branch and its descendants in one shot.** →
+  [`ezs delete --cascade`](#ezs-delete).
+
+**PR creation & maintenance**
+
+- **I want the AI to write the title and body for one PR.** →
+  [AI-Drafted PR Title & Body for a Single Branch](#ai-drafted-pr-title--body-for-a-single-branch---auto). One command: `ezs pr create --auto`.
+- **I want to open a PR for every branch in my current stack.** →
+  [AI-Drafted PRs Across the Whole Stack](#ai-drafted-prs-across-the-whole-stack). `ezs pr create --stack --auto` (with AI), or `ezs pr --draft-all` (branch-name titles, no AI).
+- **My PR cache and GitHub disagree, and I want to start over for a
+  branch.** → [Resetting a Stale PR Association](#resetting-a-stale-pr-association--unlink-then-create-or-refresh). `ezs pr unlink` then `ezs pr create`.
+- **My PR cache is stale because the PR was merged / closed / re-targeted via
+  the GitHub UI.** → `ezs pr refresh` re-discovers and re-syncs the cache
+  without making a new PR.
+- **I want to update an open PR's base branch and stack-navigation links
+  after re-parenting.** → [`ezs pr update`](#ezs-pr-update), or
+  `ezs pr stack` to update only the stack-description block.
+
+**Commits, sync, and push**
+
+- **I made a fix on a branch in the middle of my stack — I don't want
+  descendants left behind on the old SHA.** → [Committing into the middle of an existing stack](#committing-into-the-middle-of-an-existing-stack). `ezs commit -am "..."` auto-rebases descendants and force-pushes them.
+- **A parent branch was merged on GitHub and the rest of my stack needs to
+  re-root.** → [After a Parent is Merged](#after-a-parent-is-merged).
+  `ezs sync --all` does the surgery.
+- **My `ezs sync` hit a rebase conflict.** → [Recovering from a Sync Conflict](#recovering-from-a-sync-conflict). Resolve it, `git rebase --continue`, then `ezs sync --continue` to finish the cascade.
+- **I want each branch in my stack to land as a single commit.** →
+  [Squash-Merging Children Into Their Parent Before PR](#squash-merging-children-into-their-parent-before-pr). `ezs sync --stack --squash`.
+- **I want pushes to be gated by tests / lints / a custom check.** →
+  [Pre-Push Validation as a Hard Requirement](#pre-push-validation-as-a-hard-requirement---verify). Drop a hook at `~/.ezstack/hooks/pre-push` and run `ezs push --verify`.
+
+**Day-two ergonomics**
+
+- **I want a live dashboard of CI / review status across my stack.** →
+  [Live CI Dashboard With `ezs status --watch`](#live-ci-dashboard-with-ezs-status---watch).
+- **I want every new worktree to come pre-populated with the same dotfiles
+  / IDE settings.** → [Worktree Templates: Pre-Seeded New Branches](#worktree-templates-pre-seeded-new-branches). `ezs new <name> --template <tpl>`.
+- **I want to back up my ezstack config to another machine.** →
+  [`ezs config export`](#ezs-config-export-file) and
+  [`ezs config import`](#ezs-config-import-file) — token redaction is automatic.
+- **I want to drive ezstack from Claude Code, VS Code, Neovim, or a desktop
+  app instead of the CLI.** → [Editor & Desktop Integrations](#editor--desktop-integrations). All four read and write the same on-disk state.
+
+If a scenario isn't covered above, the [Workflows](#workflows) section has
+the full annotated walkthrough, and [Commands](#commands) has every flag on
+every subcommand.

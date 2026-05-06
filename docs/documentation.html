@@ -596,10 +596,10 @@
         <li><a href="#1-install-the-binary" class="toc-h3">1. Install the binary</a></li>
         <li><a href="#2-wire-up-shell-integration" class="toc-h3">2. Wire up shell integration</a></li>
         <li><a href="#3-configure-the-repo" class="toc-h3">3. Configure the repo</a></li>
-        <li><a href="#4-create-your-first-stacked-branch" class="toc-h3">4. Create your first stacked branch</a></li>
-        <li><a href="#5-push-the-stack-and-open-prs" class="toc-h3">5. Push the stack and open PRs</a></li>
-        <li><a href="#6-inspect-the-stack-any-time" class="toc-h3">6. Inspect the stack any time</a></li>
-        <li><a href="#7-common-scenarios--i-want-to" class="toc-h3">7. Common scenarios — &#34;I want to…&#34;</a></li>
+        <li><a href="#4-create-a-worktree-from-an-existing-branch" class="toc-h3">4. Create a worktree from an existing branch</a></li>
+        <li><a href="#5-create-your-first-stacked-branch" class="toc-h3">5. Create your first stacked branch</a></li>
+        <li><a href="#6-push-the-stack-and-open-prs" class="toc-h3">6. Push the stack and open PRs</a></li>
+        <li><a href="#7-inspect-the-stack-any-time" class="toc-h3">7. Inspect the stack any time</a></li>
         <li><a href="#installation">Installation</a></li>
         <li><a href="#configuration">Configuration</a></li>
         <li><a href="#workflows">Workflows</a></li>
@@ -660,6 +660,7 @@
         <li><a href="#vs-code-extension" class="toc-h3">VS Code Extension</a></li>
         <li><a href="#neovim-plugin" class="toc-h3">Neovim Plugin</a></li>
         <li><a href="#desktop-app" class="toc-h3">Desktop App</a></li>
+        <li><a href="#faq--i-want-to">FAQ — &#34;I want to…&#34;</a></li>
         <!-- END_TOC -->
       </ul>
     </aside>
@@ -800,7 +801,66 @@
 <span class="c-comment"># shell collapses them to a single argument. Common case is agent_command:</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">&#34;claude --dangerously-skip-permissions&#34;</span>
 </code></pre>
-      <h3 id="4-create-your-first-stacked-branch">4. Create your first stacked branch</h3>
+      <h3 id="4-create-a-worktree-from-an-existing-branch">4. Create a worktree from an existing branch</h3>
+      <p>Most people install <code>ezs</code> while standing inside an active repo with a feature
+      branch (or two) already in flight. The fastest way to start using ezstack is
+      to point it at one of those existing branches — ezs will mint a stack root
+      out of it and every command (<code>commit</code>, <code>sync</code>, <code>push</code>, <code>pr</code>, …) starts working
+      immediately. Three flavors below; pick whichever matches what's already in
+      your repo.</p>
+      <p><strong>a) You have a local branch that already has a worktree.</strong> Use
+      <code>ezs new --from-worktree</code>. ezs lists every worktree on the repo and registers
+      the one you pick as the root of a new stack — no rewriting history, no fresh
+      checkout.</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">--from-worktree</span>
+<span class="c-comment">#   What this actually does (see cmd/ezs/commands/new.go: useFromWorktree):</span>
+<span class="c-comment">#     - `git worktree list --porcelain` to enumerate every worktree.</span>
+<span class="c-comment">#     - Picker labelled `&lt;branch&gt; (&lt;path&gt;)`; you select one.</span>
+<span class="c-comment">#     - Confirms before mutating anything (Y/N).</span>
+<span class="c-comment">#     - mgr.RegisterExistingBranch(branch, path, base):</span>
+<span class="c-comment">#         writes the branch into ~/.ezstack/stacks.json with parent=&lt;configured</span>
+<span class="c-comment">#         base branch&gt; and creates a fresh stack hash.</span>
+<span class="c-comment">#     - If a PR for the branch already exists on GitHub, ezstack hydrates the</span>
+<span class="c-comment">#       cached PR number, URL, state, and review status the first time.</span>
+<span class="c-comment">#     - Prompts for an optional stack name (Enter to skip).</span>
+<span class="c-comment">#     - cd&#39;s your shell into the worktree (when cd_after_new=true and the</span>
+<span class="c-comment">#       shell wrapper from step 2 is installed).</span>
+
+<span class="c-cmd">ezs</span> <span class="c-flag">ls</span>       <span class="c-comment"># the new stack now shows up at the root level</span>
+</code></pre>
+      <p><strong>b) You have a local branch but NO worktree yet.</strong> First materialize a
+      worktree for it (one git command), then adopt it with the same flow:</p>
+      <pre><code><span class="c-cmd">git</span> <span class="c-flag">worktree</span> <span class="c-str">add</span> <span class="c-str">&lt;worktree_base_dir&gt;/&lt;branch&gt;</span> <span class="c-str">&lt;branch&gt;</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">--from-worktree</span>     <span class="c-comment"># then pick the just-created worktree</span>
+</code></pre>
+      <p>(The <code>&lt;worktree_base_dir&gt;</code> is whatever you set in step 3's wizard. Run
+      <code>ezs config show</code> if you've forgotten.)</p>
+      <p><strong>c) You want to track a teammate's branch (or a remote PR).</strong> <code>ezs new origin/&lt;branch&gt;</code> is a one-shot fetch + worktree + register:</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">origin/feature-branch</span>
+<span class="c-comment">#   What this actually does (see cmd/ezs/commands/new.go: newFromRemoteRef):</span>
+<span class="c-comment">#     - `git fetch` so we&#39;re working off the latest remote refs.</span>
+<span class="c-comment">#     - Verifies the remote branch exists; errors out if not.</span>
+<span class="c-comment">#     - `git worktree add &lt;base&gt;/&lt;dirified-branch-name&gt; &lt;branch&gt;` tracking origin.</span>
+<span class="c-comment">#     - Mirrors initialized submodules from the main worktree (configurable).</span>
+<span class="c-comment">#     - Looks up the PR via `gh pr view --json` and registers the branch as</span>
+<span class="c-comment">#       a stack root with base = PR.base (or main/master fallback).</span>
+<span class="c-comment">#     - For fork PRs: detects &#34;Allow edits from maintainers&#34; and your push</span>
+<span class="c-comment">#       access; adds a fork remote when both are true, marks the branch</span>
+<span class="c-comment">#       read-only otherwise so `ezs push` won&#39;t try to publish commits you</span>
+<span class="c-comment">#       can&#39;t land.</span>
+
+<span class="c-comment"># Or with PR-number ergonomics:</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span> <span class="c-str">42</span> <span class="c-str">my-local-name</span>   <span class="c-comment"># PR #42 → local branch &#34;my-local-name&#34;</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-flag">-r</span>                    <span class="c-comment"># interactive PR picker</span>
+</code></pre>
+      <p>The branch shows up in <code>ezs ls</code> with a <code>(remote)</code> tag, and every ezs command
+      works on it (sync, push, commit, etc.).</p>
+      <p><strong>Already have a stack and want to graft an existing untracked worktree onto
+      it as a child branch?</strong> That's <a href="#ezs-stack"><code>ezs stack</code></a> — interactive, or
+      <code>ezs stack -b &lt;branch&gt; -p &lt;parent&gt;</code> scripted.</p>
+      <p>Once you have at least one stack root in <code>ezs ls</code>, you can move on to step 5
+      and start stacking branches on top of it.</p>
+      <h3 id="5-create-your-first-stacked-branch">5. Create your first stacked branch</h3>
       <p><code>ezs new &lt;name&gt;</code> creates a branch whose parent defaults to <strong>your current
       branch</strong>, not <code>main</code>. So if you want a fresh stack rooted on <code>main</code>, make sure
       you're on <code>main</code> first (or pass <code>--parent main</code> explicitly).</p>
@@ -833,7 +893,7 @@
 <span class="c-comment"># ... edit files in the feature-2 worktree ...</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">commit</span> <span class="c-flag">-am</span> <span class="c-str">&#34;Wire up feature&#34;</span>
 </code></pre>
-      <h3 id="5-push-the-stack-and-open-prs">5. Push the stack and open PRs</h3>
+      <h3 id="6-push-the-stack-and-open-prs">6. Push the stack and open PRs</h3>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">push</span> <span class="c-flag">--stack</span>
 <span class="c-comment">#   What this actually does (see cmd/ezs/commands/push.go):</span>
 <span class="c-comment">#     - walks every branch in the current stack, root → leaf, skipping any</span>
@@ -865,7 +925,7 @@
 <span class="c-comment">#   - rewrites each PR body so it contains a managed block listing every</span>
 <span class="c-comment">#     branch in the stack, with the active branch marked</span>
 </code></pre>
-      <h3 id="6-inspect-the-stack-any-time">6. Inspect the stack any time</h3>
+      <h3 id="7-inspect-the-stack-any-time">7. Inspect the stack any time</h3>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">status</span>        <span class="c-comment"># current branch + its position in the stack + PR / CI status</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">ls</span>            <span class="c-comment"># alias for `ezs list` — every stack in the repo, tree-formatted</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">diff</span>          <span class="c-comment"># diff of the current branch against its parent (numstat / diffstat)</span>
@@ -875,84 +935,6 @@
       remote PRs, stacking on top of someone else's work) jump to
       <a href="#workflows">Workflows</a>, or <a href="#commands">Commands</a> for the full reference of
       every flag on every subcommand.</p>
-      <h3 id="7-common-scenarios--i-want-to">7. Common scenarios — &quot;I want to…&quot;</h3>
-      <p>A scannable index for the questions that come up most often once you're past
-      the canonical happy path above. Each row points at the workflow (or command
-      reference) that walks through it end-to-end — no command shown here is
-      invented; if you can't find what you need below, the <a href="#commands">Commands</a>
-      section is the full surface.</p>
-      <p><strong>Setting up &amp; adopting work</strong></p>
-      <ul>
-      <li><strong>I want ezstack to start tracking an existing branch that already has a
-      worktree.</strong> → <a href="#adopting-an-existing-worktree-as-a-stack-root">Adopting an Existing Worktree as a Stack Root</a>. Run <code>ezs new --from-worktree</code>, pick the worktree from the picker.</li>
-      <li><strong>I have an untracked worktree I want to graft onto an existing stack.</strong> →
-      <a href="#ezs-stack"><code>ezs stack</code></a> — interactive picker, or <code>ezs stack -b &lt;branch&gt; -p &lt;parent&gt;</code> scripted.</li>
-      <li><strong>I want to start a new stack on a non-default base (e.g. <code>develop</code>,
-      <code>staging</code>).</strong> → <code>ezs stack -b &lt;branch&gt; -B develop</code>. See <a href="#ezs-stack"><code>ezs stack</code></a>.</li>
-      <li><strong>I'm on a fresh laptop or a CI runner.</strong> → <a href="#bootstrapping-a-fresh-machine">Bootstrapping a Fresh Machine</a>.</li>
-      </ul>
-      <p><strong>Working with remote branches &amp; teammates' PRs</strong></p>
-      <ul>
-      <li><strong>I want to check out a teammate's branch / PR to review or run it.</strong> →
-      <a href="#reviewing-a-remote-pr">Reviewing a Remote PR</a>. One command:
-      <code>ezs new origin/&lt;branch&gt;</code> (or <code>ezs new -r &lt;pr-number&gt;</code>).</li>
-      <li><strong>I want to build a branch on top of a teammate's in-flight PR.</strong> →
-      <a href="#stacking-on-a-remote-pr">Stacking on a Remote PR</a>. Run <code>ezs stack</code> and
-      pick &quot;Start a new stack from a remote PR&quot;.</li>
-      </ul>
-      <p><strong>Restructuring an existing branch</strong></p>
-      <ul>
-      <li><strong>I have one big WIP branch and want to break it into a stack of small
-      PRs.</strong> → <a href="#splitting-a-single-large-worktree-into-a-stack--manually">Splitting a Single Large Worktree Into a Stack — Manually</a>, or have the agent plan it via <a href="#splitting-a-single-large-worktree-into-a-stack--with-ezs-agent-feature">Splitting a Single Large Worktree Into a Stack — With <code>ezs agent feature</code></a>.</li>
-      <li><strong>I want to move a branch under a different parent.</strong> → <a href="#ezs-reparent"><code>ezs reparent</code></a>.</li>
-      <li><strong>I want to stop tracking a branch in ezstack but keep the git branch /
-      worktree.</strong> → <a href="#ezs-unstack"><code>ezs unstack</code></a>.</li>
-      <li><strong>I want to delete a branch and its descendants in one shot.</strong> →
-      <a href="#ezs-delete"><code>ezs delete --cascade</code></a>.</li>
-      </ul>
-      <p><strong>PR creation &amp; maintenance</strong></p>
-      <ul>
-      <li><strong>I want the AI to write the title and body for one PR.</strong> →
-      <a href="#ai-drafted-pr-title--body-for-a-single-branch---auto">AI-Drafted PR Title &amp; Body for a Single Branch</a>. One command: <code>ezs pr create --auto</code>.</li>
-      <li><strong>I want to open a PR for every branch in my current stack.</strong> →
-      <a href="#ai-drafted-prs-across-the-whole-stack">AI-Drafted PRs Across the Whole Stack</a>. <code>ezs pr create --stack --auto</code> (with AI), or <code>ezs pr --draft-all</code> (branch-name titles, no AI).</li>
-      <li><strong>My PR cache and GitHub disagree, and I want to start over for a
-      branch.</strong> → <a href="#resetting-a-stale-pr-association--unlink-then-create-or-refresh">Resetting a Stale PR Association</a>. <code>ezs pr unlink</code> then <code>ezs pr create</code>.</li>
-      <li><strong>My PR cache is stale because the PR was merged / closed / re-targeted via
-      the GitHub UI.</strong> → <code>ezs pr refresh</code> re-discovers and re-syncs the cache
-      without making a new PR.</li>
-      <li><strong>I want to update an open PR's base branch and stack-navigation links
-      after re-parenting.</strong> → <a href="#ezs-pr-update"><code>ezs pr update</code></a>, or
-      <code>ezs pr stack</code> to update only the stack-description block.</li>
-      </ul>
-      <p><strong>Commits, sync, and push</strong></p>
-      <ul>
-      <li><strong>I made a fix on a branch in the middle of my stack — I don't want
-      descendants left behind on the old SHA.</strong> → <a href="#committing-into-the-middle-of-an-existing-stack">Committing into the middle of an existing stack</a>. <code>ezs commit -am &quot;...&quot;</code> auto-rebases descendants and force-pushes them.</li>
-      <li><strong>A parent branch was merged on GitHub and the rest of my stack needs to
-      re-root.</strong> → <a href="#after-a-parent-is-merged">After a Parent is Merged</a>.
-      <code>ezs sync --all</code> does the surgery.</li>
-      <li><strong>My <code>ezs sync</code> hit a rebase conflict.</strong> → <a href="#recovering-from-a-sync-conflict">Recovering from a Sync Conflict</a>. Resolve it, <code>git rebase --continue</code>, then <code>ezs sync --continue</code> to finish the cascade.</li>
-      <li><strong>I want each branch in my stack to land as a single commit.</strong> →
-      <a href="#squash-merging-children-into-their-parent-before-pr">Squash-Merging Children Into Their Parent Before PR</a>. <code>ezs sync --stack --squash</code>.</li>
-      <li><strong>I want pushes to be gated by tests / lints / a custom check.</strong> →
-      <a href="#pre-push-validation-as-a-hard-requirement---verify">Pre-Push Validation as a Hard Requirement</a>. Drop a hook at <code>~/.ezstack/hooks/pre-push</code> and run <code>ezs push --verify</code>.</li>
-      </ul>
-      <p><strong>Day-two ergonomics</strong></p>
-      <ul>
-      <li><strong>I want a live dashboard of CI / review status across my stack.</strong> →
-      <a href="#live-ci-dashboard-with-ezs-status---watch">Live CI Dashboard With <code>ezs status --watch</code></a>.</li>
-      <li><strong>I want every new worktree to come pre-populated with the same dotfiles
-      / IDE settings.</strong> → <a href="#worktree-templates-pre-seeded-new-branches">Worktree Templates: Pre-Seeded New Branches</a>. <code>ezs new &lt;name&gt; --template &lt;tpl&gt;</code>.</li>
-      <li><strong>I want to back up my ezstack config to another machine.</strong> →
-      <a href="#ezs-config-export-file"><code>ezs config export</code></a> and
-      <a href="#ezs-config-import-file"><code>ezs config import</code></a> — token redaction is automatic.</li>
-      <li><strong>I want to drive ezstack from Claude Code, VS Code, Neovim, or a desktop
-      app instead of the CLI.</strong> → <a href="#editor--desktop-integrations">Editor &amp; Desktop Integrations</a>. All four read and write the same on-disk state.</li>
-      </ul>
-      <p>If a scenario isn't covered above, the <a href="#workflows">Workflows</a> section has
-      the full annotated walkthrough, and <a href="#commands">Commands</a> has every flag on
-      every subcommand.</p>
       </section>
 
       <section class="docs-section" id="installation" data-heading="Installation">
@@ -2899,6 +2881,86 @@ Options:
       added latency on refreshes.</li>
       </ul>
       <p>Full feature tour: <a href="https://kulkarnikaustubh.github.io/ezstack/desktop.html">https://kulkarnikaustubh.github.io/ezstack/desktop.html</a>.</p>
+      </section>
+
+      <section class="docs-section" id="faq--i-want-to" data-heading="FAQ — &#34;I want to…&#34;">
+      <h2 id="faq--i-want-to">FAQ — &quot;I want to…&quot;</h2>
+      <p>A scannable index for the questions that come up most often. Each row points
+      at the workflow (or command reference) that walks through it end-to-end — no
+      command shown here is invented; if you can't find what you need below, the
+      <a href="#commands">Commands</a> section is the full surface.</p>
+      <p><strong>Setting up &amp; adopting work</strong></p>
+      <ul>
+      <li><strong>I want ezstack to start tracking an existing branch that already has a
+      worktree.</strong> → <a href="#adopting-an-existing-worktree-as-a-stack-root">Adopting an Existing Worktree as a Stack Root</a>. Run <code>ezs new --from-worktree</code>, pick the worktree from the picker.</li>
+      <li><strong>I have an untracked worktree I want to graft onto an existing stack.</strong> →
+      <a href="#ezs-stack"><code>ezs stack</code></a> — interactive picker, or <code>ezs stack -b &lt;branch&gt; -p &lt;parent&gt;</code> scripted.</li>
+      <li><strong>I want to start a new stack on a non-default base (e.g. <code>develop</code>,
+      <code>staging</code>).</strong> → <code>ezs stack -b &lt;branch&gt; -B develop</code>. See <a href="#ezs-stack"><code>ezs stack</code></a>.</li>
+      <li><strong>I'm on a fresh laptop or a CI runner.</strong> → <a href="#bootstrapping-a-fresh-machine">Bootstrapping a Fresh Machine</a>.</li>
+      </ul>
+      <p><strong>Working with remote branches &amp; teammates' PRs</strong></p>
+      <ul>
+      <li><strong>I want to check out a teammate's branch / PR to review or run it.</strong> →
+      <a href="#reviewing-a-remote-pr">Reviewing a Remote PR</a>. One command:
+      <code>ezs new origin/&lt;branch&gt;</code> (or <code>ezs new -r &lt;pr-number&gt;</code>).</li>
+      <li><strong>I want to build a branch on top of a teammate's in-flight PR.</strong> →
+      <a href="#stacking-on-a-remote-pr">Stacking on a Remote PR</a>. Run <code>ezs stack</code> and
+      pick &quot;Start a new stack from a remote PR&quot;.</li>
+      </ul>
+      <p><strong>Restructuring an existing branch</strong></p>
+      <ul>
+      <li><strong>I have one big WIP branch and want to break it into a stack of small
+      PRs.</strong> → <a href="#splitting-a-single-large-worktree-into-a-stack--manually">Splitting a Single Large Worktree Into a Stack — Manually</a>, or have the agent plan it via <a href="#splitting-a-single-large-worktree-into-a-stack--with-ezs-agent-feature">Splitting a Single Large Worktree Into a Stack — With <code>ezs agent feature</code></a>.</li>
+      <li><strong>I want to move a branch under a different parent.</strong> → <a href="#ezs-reparent"><code>ezs reparent</code></a>.</li>
+      <li><strong>I want to stop tracking a branch in ezstack but keep the git branch /
+      worktree.</strong> → <a href="#ezs-unstack"><code>ezs unstack</code></a>.</li>
+      <li><strong>I want to delete a branch and its descendants in one shot.</strong> →
+      <a href="#ezs-delete"><code>ezs delete --cascade</code></a>.</li>
+      </ul>
+      <p><strong>PR creation &amp; maintenance</strong></p>
+      <ul>
+      <li><strong>I want the AI to write the title and body for one PR.</strong> →
+      <a href="#ai-drafted-pr-title--body-for-a-single-branch---auto">AI-Drafted PR Title &amp; Body for a Single Branch</a>. One command: <code>ezs pr create --auto</code>.</li>
+      <li><strong>I want to open a PR for every branch in my current stack.</strong> →
+      <a href="#ai-drafted-prs-across-the-whole-stack">AI-Drafted PRs Across the Whole Stack</a>. <code>ezs pr create --stack --auto</code> (with AI), or <code>ezs pr --draft-all</code> (branch-name titles, no AI).</li>
+      <li><strong>My PR cache and GitHub disagree, and I want to start over for a
+      branch.</strong> → <a href="#resetting-a-stale-pr-association--unlink-then-create-or-refresh">Resetting a Stale PR Association</a>. <code>ezs pr unlink</code> then <code>ezs pr create</code>.</li>
+      <li><strong>My PR cache is stale because the PR was merged / closed / re-targeted via
+      the GitHub UI.</strong> → <code>ezs pr refresh</code> re-discovers and re-syncs the cache
+      without making a new PR.</li>
+      <li><strong>I want to update an open PR's base branch and stack-navigation links
+      after re-parenting.</strong> → <a href="#ezs-pr-update"><code>ezs pr update</code></a>, or
+      <code>ezs pr stack</code> to update only the stack-description block.</li>
+      </ul>
+      <p><strong>Commits, sync, and push</strong></p>
+      <ul>
+      <li><strong>I made a fix on a branch in the middle of my stack — I don't want
+      descendants left behind on the old SHA.</strong> → <a href="#committing-into-the-middle-of-an-existing-stack">Committing into the middle of an existing stack</a>. <code>ezs commit -am &quot;...&quot;</code> auto-rebases descendants and force-pushes them.</li>
+      <li><strong>A parent branch was merged on GitHub and the rest of my stack needs to
+      re-root.</strong> → <a href="#after-a-parent-is-merged">After a Parent is Merged</a>.
+      <code>ezs sync --all</code> does the surgery.</li>
+      <li><strong>My <code>ezs sync</code> hit a rebase conflict.</strong> → <a href="#recovering-from-a-sync-conflict">Recovering from a Sync Conflict</a>. Resolve it, <code>git rebase --continue</code>, then <code>ezs sync --continue</code> to finish the cascade.</li>
+      <li><strong>I want each branch in my stack to land as a single commit.</strong> →
+      <a href="#squash-merging-children-into-their-parent-before-pr">Squash-Merging Children Into Their Parent Before PR</a>. <code>ezs sync --stack --squash</code>.</li>
+      <li><strong>I want pushes to be gated by tests / lints / a custom check.</strong> →
+      <a href="#pre-push-validation-as-a-hard-requirement---verify">Pre-Push Validation as a Hard Requirement</a>. Drop a hook at <code>~/.ezstack/hooks/pre-push</code> and run <code>ezs push --verify</code>.</li>
+      </ul>
+      <p><strong>Day-two ergonomics</strong></p>
+      <ul>
+      <li><strong>I want a live dashboard of CI / review status across my stack.</strong> →
+      <a href="#live-ci-dashboard-with-ezs-status---watch">Live CI Dashboard With <code>ezs status --watch</code></a>.</li>
+      <li><strong>I want every new worktree to come pre-populated with the same dotfiles
+      / IDE settings.</strong> → <a href="#worktree-templates-pre-seeded-new-branches">Worktree Templates: Pre-Seeded New Branches</a>. <code>ezs new &lt;name&gt; --template &lt;tpl&gt;</code>.</li>
+      <li><strong>I want to back up my ezstack config to another machine.</strong> →
+      <a href="#ezs-config-export-file"><code>ezs config export</code></a> and
+      <a href="#ezs-config-import-file"><code>ezs config import</code></a> — token redaction is automatic.</li>
+      <li><strong>I want to drive ezstack from Claude Code, VS Code, Neovim, or a desktop
+      app instead of the CLI.</strong> → <a href="#editor--desktop-integrations">Editor &amp; Desktop Integrations</a>. All four read and write the same on-disk state.</li>
+      </ul>
+      <p>If a scenario isn't covered above, the <a href="#workflows">Workflows</a> section has
+      the full annotated walkthrough, and <a href="#commands">Commands</a> has every flag on
+      every subcommand.</p>
       </section>
       <!-- END_CONTENT -->
 
