@@ -259,7 +259,7 @@ your editor or a native GUI:
 
 ```bash
 # Install from a pre-built VSIX (download from the Releases page)
-code --install-extension ezstack-4.7.6.vsix
+code --install-extension ezstack-4.8.0.vsix
 ```
 
 Then open the **ezstack** panel in the activity bar. Auto-refreshes on
