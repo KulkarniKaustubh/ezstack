@@ -746,38 +746,21 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 		}
 	}
 
-	// Print root branch name with optional PR info and diff stats
-	rootLine := fmt.Sprintf("  %s%s%s", Gray, stack.Root, Reset)
-	if stack.RootIsRemote {
-		rootLine += " " + Gray + "(remote)" + Reset
+	// Pre-walk the tree to gather every row's visible name-section width so
+	// the PR / diff / status columns can be padded to a single column shared
+	// across the root and all branches. Without this pass each row rendered
+	// its own "name + 2 spaces + PR" segment, leaving PR numbers, line diffs,
+	// and CI icons jagged across the tree.
+	type branchRow struct {
+		branch       *config.Branch
+		prefix       string
+		connector    string
+		name         string
+		visibleWidth int // pointer + prefix + connector + name + remoteTag
 	}
-	if stack.RootPRNumber > 0 {
-		prText := fmt.Sprintf("[PR #%d", stack.RootPRNumber)
-		if stack.RootBase != "" {
-			prText += " \u2192 " + stack.RootBase // → arrow
-		}
-		prText += "]"
-		if stack.RootPRUrl != "" {
-			rootLine += "  " + Yellow + Hyperlink(stack.RootPRUrl, prText) + Reset
-		} else {
-			rootLine += "  " + Yellow + prText + Reset
-		}
-	} else if stack.RootBase != "" {
-		// No PR but we know the base branch (e.g. inferred main/master)
-		rootLine += "  " + Gray + "[\u2192 " + stack.RootBase + "]" + Reset
-	}
-	if statusMap != nil {
-		if rootStatus, ok := statusMap[stack.Root]; ok && rootStatus != nil {
-			if rootStatus.Additions > 0 || rootStatus.Deletions > 0 {
-				rootLine += fmt.Sprintf(" %s+%d%s %s-%d%s", Green, rootStatus.Additions, Reset, Red, rootStatus.Deletions, Reset)
-			}
-		}
-	}
-	fmt.Fprintf(os.Stderr, "%s\n", rootLine)
-
-	// Recursive tree walker
-	var walkTree func(nodes []*config.Branch, prefix string)
-	walkTree = func(nodes []*config.Branch, prefix string) {
+	var rows []branchRow
+	var collectRows func(nodes []*config.Branch, prefix string)
+	collectRows = func(nodes []*config.Branch, prefix string) {
 		for i, branch := range nodes {
 			isLast := i == len(nodes)-1
 			connector := "├── "
@@ -786,69 +769,140 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 				connector = "└── "
 				childPrefix = "    "
 			}
-
-			// Check if branch should be struck through (merged or closed)
-			shouldStrike := branch.IsMerged || branch.PRState == "MERGED" || branch.PRState == "CLOSED"
-			if !shouldStrike && statusMap != nil {
-				if status, ok := statusMap[branch.Name]; ok && status != nil {
-					shouldStrike = status.PRState == "MERGED" || status.PRState == "CLOSED"
-				}
-			}
-
-			// Pointer for current branch
-			pointer := " "
-			color := ""
-			if branch.Name == currentBranch {
-				pointer = ">"
-				color = Green
-			}
-
-			// Branch name
 			name := truncateBranchName(branch.Name, MaxBranchNameWidth)
-
-			// PR info
-			prFormatted := getPRFormatted(branch, statusMap, 0)
-
-			// Diff stats
-			diffInfo := getDiffStats(branch, statusMap)
-
-			// Status info
-			statusInfo := ""
-			if showStatus && statusMap != nil {
-				statusInfo = getStatusIcons(branch, statusMap)
-			}
-
-			remoteTag := ""
+			remoteWidth := 0
 			if branch.IsRemote {
-				remoteTag = " " + Gray + "(remote)" + Reset
+				remoteWidth = runewidth.StringWidth(" (remote)")
 			}
-
-			if shouldStrike {
-				prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
-				diffWithStrike := ""
-				if diffInfo != "" {
-					diffWithStrike = strings.ReplaceAll(diffInfo, Reset, Reset+Strikethrough)
-				}
-				statusWithStrike := ""
-				if statusInfo != "" {
-					statusWithStrike = strings.ReplaceAll(statusInfo, Reset, Reset+Strikethrough)
-				}
-				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s  %s%s%s%s\n",
-					pointer, color, prefix, connector, Strikethrough+Bold, name, Reset+Strikethrough,
-					remoteTag, prWithStrike, diffWithStrike, statusWithStrike, Reset)
-			} else {
-				fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s  %s%s%s%s\n",
-					pointer, color, prefix, connector, Bold, name, Reset,
-					remoteTag, prFormatted, diffInfo, statusInfo, Reset)
-			}
-
+			width := 1 + // pointer (" " or ">")
+				runewidth.StringWidth(prefix) +
+				runewidth.StringWidth(connector) +
+				runewidth.StringWidth(name) +
+				remoteWidth
+			rows = append(rows, branchRow{branch, prefix, connector, name, width})
 			if children, ok := childrenMap[branch.Name]; ok {
-				walkTree(children, prefix+childPrefix)
+				collectRows(children, prefix+childPrefix)
 			}
 		}
 	}
+	collectRows(roots, "  ")
 
-	walkTree(roots, "  ")
+	// Root visible width: "  " + Root + optional " (remote)". The root has no
+	// pointer / connector, but it still shares the metadata column.
+	rootRemoteWidth := 0
+	if stack.RootIsRemote {
+		rootRemoteWidth = runewidth.StringWidth(" (remote)")
+	}
+	rootVisibleWidth := runewidth.StringWidth("  ") +
+		runewidth.StringWidth(stack.Root) +
+		rootRemoteWidth
+
+	maxWidth := rootVisibleWidth
+	for _, r := range rows {
+		if r.visibleWidth > maxWidth {
+			maxWidth = r.visibleWidth
+		}
+	}
+
+	// padTo returns the spaces needed to align a row's metadata column at
+	// (maxWidth + 2). Floor at 2 so metadata never butts up against the name.
+	padTo := func(w int) string {
+		n := maxWidth - w + 2
+		if n < 2 {
+			n = 2
+		}
+		return strings.Repeat(" ", n)
+	}
+
+	// Print root branch name with optional PR info and diff stats
+	rootLine := fmt.Sprintf("  %s%s%s", Gray, stack.Root, Reset)
+	if stack.RootIsRemote {
+		rootLine += " " + Gray + "(remote)" + Reset
+	}
+	rootMeta := ""
+	if stack.RootPRNumber > 0 {
+		prText := fmt.Sprintf("[PR #%d", stack.RootPRNumber)
+		if stack.RootBase != "" {
+			prText += " \u2192 " + stack.RootBase // → arrow
+		}
+		prText += "]"
+		if stack.RootPRUrl != "" {
+			rootMeta = Yellow + Hyperlink(stack.RootPRUrl, prText) + Reset
+		} else {
+			rootMeta = Yellow + prText + Reset
+		}
+	} else if stack.RootBase != "" {
+		// No PR but we know the base branch (e.g. inferred main/master)
+		rootMeta = Gray + "[\u2192 " + stack.RootBase + "]" + Reset
+	}
+	if rootMeta != "" {
+		rootLine += padTo(rootVisibleWidth) + rootMeta
+	}
+	if statusMap != nil {
+		if rootStatus, ok := statusMap[stack.Root]; ok && rootStatus != nil {
+			if rootStatus.Additions > 0 || rootStatus.Deletions > 0 {
+				if rootMeta == "" {
+					rootLine += padTo(rootVisibleWidth)
+				}
+				rootLine += fmt.Sprintf(" %s+%d%s %s-%d%s", Green, rootStatus.Additions, Reset, Red, rootStatus.Deletions, Reset)
+			}
+		}
+	}
+	fmt.Fprintf(os.Stderr, "%s\n", rootLine)
+
+	// Render each branch row using the shared metadata column.
+	for _, r := range rows {
+		branch := r.branch
+
+		// Check if branch should be struck through (merged or closed)
+		shouldStrike := branch.IsMerged || branch.PRState == "MERGED" || branch.PRState == "CLOSED"
+		if !shouldStrike && statusMap != nil {
+			if status, ok := statusMap[branch.Name]; ok && status != nil {
+				shouldStrike = status.PRState == "MERGED" || status.PRState == "CLOSED"
+			}
+		}
+
+		// Pointer for current branch
+		pointer := " "
+		color := ""
+		if branch.Name == currentBranch {
+			pointer = ">"
+			color = Green
+		}
+
+		prFormatted := getPRFormatted(branch, statusMap, 0)
+		diffInfo := getDiffStats(branch, statusMap)
+		statusInfo := ""
+		if showStatus && statusMap != nil {
+			statusInfo = getStatusIcons(branch, statusMap)
+		}
+
+		remoteTag := ""
+		if branch.IsRemote {
+			remoteTag = " " + Gray + "(remote)" + Reset
+		}
+
+		pad := padTo(r.visibleWidth)
+
+		if shouldStrike {
+			prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
+			diffWithStrike := ""
+			if diffInfo != "" {
+				diffWithStrike = strings.ReplaceAll(diffInfo, Reset, Reset+Strikethrough)
+			}
+			statusWithStrike := ""
+			if statusInfo != "" {
+				statusWithStrike = strings.ReplaceAll(statusInfo, Reset, Reset+Strikethrough)
+			}
+			fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
+				pointer, color, r.prefix, r.connector, Strikethrough+Bold, r.name, Reset+Strikethrough,
+				remoteTag, pad, prWithStrike, diffWithStrike, statusWithStrike, Reset)
+		} else {
+			fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
+				pointer, color, r.prefix, r.connector, Bold, r.name, Reset,
+				remoteTag, pad, prFormatted, diffInfo, statusInfo, Reset)
+		}
+	}
 	fmt.Fprintln(os.Stderr)
 }
 

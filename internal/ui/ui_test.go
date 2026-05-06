@@ -145,6 +145,99 @@ func TestFormatStackString_PerBranchRemoteTag(t *testing.T) {
 	}
 }
 
+// PrintStack renders the PR / line-diff / status column at varying offsets
+// when each branch is allowed to print "name + 2 spaces + PR" independently —
+// short branch names produced metadata earlier on the line than long ones, so
+// the column zig-zagged across the tree. Lock the new alignment contract:
+// the metadata column for every branch row sits at the same visual offset.
+func TestPrintStack_AlignsMetadataColumn(t *testing.T) {
+	stack := &config.Stack{
+		Hash: "abc1234",
+		Root: "main",
+		Branches: []*config.Branch{
+			{Name: "feat-a", Parent: "main", PRNumber: 101},
+			{Name: "feat-a-much-longer-branch-name", Parent: "main", PRNumber: 102},
+			{Name: "short", Parent: "feat-a-much-longer-branch-name", PRNumber: 103},
+		},
+	}
+
+	out := captureStderr(t, func() {
+		PrintStack(stack, "", false, nil)
+	})
+
+	// stripANSI removes CSI/OSC escape sequences so column counts reflect what
+	// the user actually sees, not the wire bytes (color codes, hyperlinks).
+	prCols := []int{}
+	for _, line := range strings.Split(out, "\n") {
+		clean := stripANSI(line)
+		idx := strings.Index(clean, "[PR #")
+		if idx == -1 {
+			continue
+		}
+		prCols = append(prCols, idx)
+	}
+	if len(prCols) < 2 {
+		t.Fatalf("expected at least 2 [PR #] markers, got %d in:\n%s", len(prCols), out)
+	}
+	first := prCols[0]
+	for i, c := range prCols {
+		if c != first {
+			t.Errorf("PR column %d=%d differs from first=%d (jagged alignment), full output:\n%s", i, c, first, out)
+		}
+	}
+}
+
+// stripANSI strips CSI ("ESC[...letter") and OSC 8 ("ESC]8;;...ESC\\") sequences
+// so column-position assertions are meaningful regardless of color or hyperlink
+// markup.
+func stripANSI(s string) string {
+	var out strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == 0x1b && i+1 < len(s) {
+			next := s[i+1]
+			if next == '[' {
+				// CSI: skip until a final byte in 0x40..0x7E
+				j := i + 2
+				for j < len(s) {
+					b := s[j]
+					if b >= 0x40 && b <= 0x7e {
+						j++
+						break
+					}
+					j++
+				}
+				i = j
+				continue
+			}
+			if next == ']' {
+				// OSC: skip until BEL (0x07) or ST (ESC \\)
+				j := i + 2
+				for j < len(s) {
+					if s[j] == 0x07 {
+						j++
+						break
+					}
+					if s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\' {
+						j += 2
+						break
+					}
+					j++
+				}
+				i = j
+				continue
+			}
+			if next == '\\' {
+				i += 2
+				continue
+			}
+		}
+		out.WriteByte(s[i])
+		i++
+	}
+	return out.String()
+}
+
 func TestSuggestCommand(t *testing.T) {
 	cands := []string{"status", "stack", "sync", "new", "push", "pull"}
 
