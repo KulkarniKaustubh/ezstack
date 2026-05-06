@@ -618,6 +618,13 @@ type SyncCallbacks struct {
 	AfterRebase  AfterRebaseCallback
 	Autostash    bool // Stash uncommitted changes before rebase, pop after
 	UseMerge     bool // Use git merge instead of git rebase
+	// IncludeRemoteWorktrees, when false, skips branches with IsRemote=true
+	// during bulk sync (-a / -s / interactive auto-sync). Pickup branches
+	// (`ezs new origin/<branch>` / `-r`) belong to another contributor — a
+	// rebase onto our parent would rewrite their history, and a force-push
+	// could clobber their work. Default behavior is to leave them alone;
+	// the flag is the user's explicit opt-in to include them.
+	IncludeRemoteWorktrees bool
 }
 
 // getParentRef returns the git ref for a parent branch.
@@ -640,23 +647,27 @@ func (m *Manager) getParentRef(parentName string) string {
 // - Branches whose parents have been merged to main
 // - Branches whose parent is main but are behind origin/main
 func (m *Manager) DetectSyncNeeded(gh *github.Client) ([]SyncInfo, error) {
-	return m.detectSyncNeededInternal(gh, true, nil)
+	return m.detectSyncNeededInternal(gh, true, nil, false)
 }
 
 // DetectSyncNeededAllStacks checks for branches that need syncing across ALL stacks:
 // - Branches whose parents have been merged to main
 // - Branches whose parent is main but are behind origin/main
 func (m *Manager) DetectSyncNeededAllStacks(gh *github.Client) ([]SyncInfo, error) {
-	return m.detectSyncNeededInternal(gh, false, nil)
+	return m.detectSyncNeededInternal(gh, false, nil, false)
 }
 
-// DetectSyncNeededForStacks checks for branches that need syncing in specific stacks
-func (m *Manager) DetectSyncNeededForStacks(gh *github.Client, stacks []*config.Stack) ([]SyncInfo, error) {
-	return m.detectSyncNeededInternal(gh, false, stacks)
+// DetectSyncNeededForStacks checks for branches that need syncing in specific stacks.
+// Remote-branch worktrees (IsRemote=true, e.g., `ezs new origin/<branch>` pickups)
+// are excluded by default — they belong to another contributor and rebasing them
+// would rewrite their history. Pass includeRemote=true to opt in.
+func (m *Manager) DetectSyncNeededForStacks(gh *github.Client, stacks []*config.Stack, includeRemote bool) ([]SyncInfo, error) {
+	return m.detectSyncNeededInternal(gh, false, stacks, includeRemote)
 }
 
-// detectSyncNeededInternal is the internal implementation that can work on current stack, all stacks, or specific stacks
-func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly bool, specificStacks []*config.Stack) ([]SyncInfo, error) {
+// detectSyncNeededInternal is the internal implementation that can work on current stack, all stacks, or specific stacks.
+// includeRemote=false skips branches with IsRemote=true (the default for bulk sync).
+func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly bool, specificStacks []*config.Stack, includeRemote bool) ([]SyncInfo, error) {
 	if err := m.Fetch(); err != nil {
 		return nil, err
 	}
@@ -725,6 +736,12 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 	for _, stack := range stacksToCheck {
 		for _, branch := range stack.Branches {
 			if branch.IsMerged {
+				continue
+			}
+			// Pickup branches (`ezs new origin/<branch>` / `-r`) belong to
+			// another contributor — opt in with --include-remote-worktrees
+			// to surface them in dry-run / detection output.
+			if branch.IsRemote && !includeRemote {
 				continue
 			}
 
@@ -1004,6 +1021,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 	}
 
 	allStacks := !currentStackOnly
+	includeRemote := callbacks != nil && callbacks.IncludeRemoteWorktrees
 
 	// Sync branches in selected stacks
 	for _, stack := range stacksToSync {
@@ -1011,6 +1029,12 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 		for _, branch := range stack.Branches {
 			// Skip already-merged branches (they don't need syncing)
 			if branch.IsMerged {
+				continue
+			}
+			// Skip pickup branches by default. Rebasing them would rewrite
+			// another contributor's history; force-pushing afterwards would
+			// clobber their work. Opt in with --include-remote-worktrees.
+			if branch.IsRemote && !includeRemote {
 				continue
 			}
 

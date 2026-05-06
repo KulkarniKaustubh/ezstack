@@ -158,6 +158,14 @@ export function StackNode({ branch, isSelected, onClick, actions }: StackNodePro
             {branch.is_current && (
               <span className="text-[9px] uppercase tracking-wider text-info font-semibold">current</span>
             )}
+            {branch.is_remote && (
+              <span
+                title="Pickup branch — belongs to another contributor. Excluded from bulk sync (ezs sync -a) by default."
+                className="text-[9px] uppercase tracking-wider text-muted-foreground font-semibold"
+              >
+                remote
+              </span>
+            )}
           </div>
           {branch.pr_number && (
             <span className="text-xs text-muted-foreground font-mono">#{branch.pr_number}</span>

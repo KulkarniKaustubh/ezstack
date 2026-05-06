@@ -7,6 +7,12 @@ pub struct Branch {
     pub parent: String,
     pub is_merged: bool,
     pub is_current: bool,
+    /// True for pickup branches registered via `ezs new origin/<branch>`.
+    /// Drives the `(remote)` tag in the Tauri tree so users can tell at a
+    /// glance which branches belong to another contributor — bulk sync
+    /// excludes these by default, so the visual cue is load-bearing.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_remote: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_number: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -17,6 +23,10 @@ pub struct Branch {
     pub additions: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletions: Option<i32>,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -51,6 +61,10 @@ pub struct Stack {
     pub root_pr_number: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_pr_url: Option<String>,
+    /// True when the stack root was registered by `ezs new -r` (the root is
+    /// another contributor's branch). Drives the `(remote)` tag on the root.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub root_is_remote: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_additions: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -70,6 +84,8 @@ pub struct StatusStack {
     pub root_pr_number: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_pr_url: Option<String>,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub root_is_remote: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_additions: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

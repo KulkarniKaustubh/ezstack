@@ -105,7 +105,16 @@ export function StackColumn({ stack, selectedBranch, onSelectBranch, onRename, o
         <div className="min-w-0 flex-1">
           <div className="text-sm font-semibold truncate">{displayName}</div>
           <div className="text-[10px] text-muted-foreground font-mono">
-            {stack.root} &middot; {stack.branches.length} branch{stack.branches.length !== 1 ? "es" : ""}
+            {stack.root}
+            {stack.root_is_remote && (
+              <span
+                title="Stack rooted on a pickup branch (ezs new -r) — belongs to another contributor."
+                className="ml-1 text-muted-foreground/70"
+              >
+                (remote)
+              </span>
+            )}
+            {" "}&middot; {stack.branches.length} branch{stack.branches.length !== 1 ? "es" : ""}
           </div>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
@@ -132,6 +141,14 @@ export function StackColumn({ stack, selectedBranch, onSelectBranch, onRename, o
             <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-muted-foreground">
               <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
               <span className="font-mono">{stack.root}</span>
+              {stack.root_is_remote && (
+                <span
+                  title="Pickup root — registered via ezs new -r."
+                  className="font-mono text-muted-foreground/70"
+                >
+                  (remote)
+                </span>
+              )}
             </div>
             {tree.map((node, i) => (
               <TreeNodeView

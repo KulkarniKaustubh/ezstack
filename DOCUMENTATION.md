@@ -1745,9 +1745,14 @@ Options:
     --dry-run              Preview what would be synced without making changes
     --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
     --json                 Output dry-run results as JSON (requires --dry-run)
+    --include-remote-worktrees   Include pickup branches (`ezs new origin/<branch>` / `-r`) in
+                                 bulk sync. Excluded by default to avoid rewriting another
+                                 contributor's history.
 ```
 
 **`--stats`.** Prints a post-sync summary listing, for each branch in the synced set, the number of commits ahead of its parent after the sync completes. The summary is registered so it runs after the `post-sync` hook fires (via LIFO-ordered defers), so the numbers you see reflect the final state on disk.
+
+**`--include-remote-worktrees`.** Pickup branches — created by `ezs new origin/<branch>` or `ezs new -r` — belong to another contributor. Bulk sync (`ezs sync -a` / `-s` / interactive auto-sync) skips them by default: rebasing rewrites their history, and a follow-up force-push would clobber the contributor's work. Pass `--include-remote-worktrees` to opt in (e.g., to fast-forward your local copy of the remote branch when you do own the underlying repo). Per-branch sync (`-b <name>` / `-c`) is unaffected — those forms are explicit about which branch to touch.
 
 **`--squash`.** Before rebasing each child onto its parent, collapses the child's commits into a single commit. Only branches with ≥2 commits since their parent are affected; branches that are already a single commit are left alone. Because `--squash` rewrites history, any already-pushed branch will need `git push --force-with-lease` afterward — ezstack prints a warning reminding you of this up front.
 
