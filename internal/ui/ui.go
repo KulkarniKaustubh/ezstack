@@ -746,17 +746,21 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 		}
 	}
 
-	// Pre-walk the tree to gather every row's visible name-section width so
-	// the PR / diff / status columns can be padded to a single column shared
-	// across the root and all branches. Without this pass each row rendered
-	// its own "name + 2 spaces + PR" segment, leaving PR numbers, line diffs,
-	// and CI icons jagged across the tree.
+	// Pre-walk the tree to gather, for every row, the visible width of three
+	// independent columns — name section, PR text, line-diff text — so the
+	// render loop can pad each column to its shared max. Aligning only the
+	// start of the metadata block (the original tree-style fix) still left
+	// diff and status jagged when PR labels differed in length (`[PR #1]` vs
+	// `[PR #1 MERGED]` vs `[no PR]`); padding per-column lines up every cell,
+	// mirroring the flat-list approach used before the tree refactor.
 	type branchRow struct {
-		branch       *config.Branch
-		prefix       string
-		connector    string
-		name         string
-		visibleWidth int // pointer + prefix + connector + name + remoteTag
+		branch    *config.Branch
+		prefix    string
+		connector string
+		name      string
+		nameWidth int // pointer + prefix + connector + name + remoteTag
+		prWidth   int // visible width of getPRText(...)
+		diffWidth int // visible width of getDiffText(...)
 	}
 	var rows []branchRow
 	var collectRows func(nodes []*config.Branch, prefix string)
@@ -774,12 +778,14 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 			if branch.IsRemote {
 				remoteWidth = runewidth.StringWidth(" (remote)")
 			}
-			width := 1 + // pointer (" " or ">")
+			nameWidth := 1 + // pointer (" " or ">")
 				runewidth.StringWidth(prefix) +
 				runewidth.StringWidth(connector) +
 				runewidth.StringWidth(name) +
 				remoteWidth
-			rows = append(rows, branchRow{branch, prefix, connector, name, width})
+			prWidth := runewidth.StringWidth(getPRText(branch, statusMap))
+			diffWidth := runewidth.StringWidth(getDiffText(branch, statusMap))
+			rows = append(rows, branchRow{branch, prefix, connector, name, nameWidth, prWidth, diffWidth})
 			if children, ok := childrenMap[branch.Name]; ok {
 				collectRows(children, prefix+childPrefix)
 			}
@@ -787,74 +793,91 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 	}
 	collectRows(roots, "  ")
 
-	// Root visible width: "  " + Root + optional " (remote)". The root has no
-	// pointer / connector, but it still shares the metadata column.
+	// Root contributes to every shared column. It has no pointer/connector
+	// but shares the gutter so its PR / diff cells line up with branch rows.
 	rootRemoteWidth := 0
 	if stack.RootIsRemote {
 		rootRemoteWidth = runewidth.StringWidth(" (remote)")
 	}
-	rootVisibleWidth := runewidth.StringWidth("  ") +
+	rootNameWidth := runewidth.StringWidth("  ") +
 		runewidth.StringWidth(stack.Root) +
 		rootRemoteWidth
+	rootPRText := getRootPRText(stack)
+	rootDiffText := getRootDiffText(stack, statusMap)
+	rootPRWidth := runewidth.StringWidth(rootPRText)
+	rootDiffWidth := runewidth.StringWidth(rootDiffText)
 
-	maxWidth := rootVisibleWidth
+	maxNameWidth := rootNameWidth
+	maxPRWidth := rootPRWidth
+	maxDiffWidth := rootDiffWidth
 	for _, r := range rows {
-		if r.visibleWidth > maxWidth {
-			maxWidth = r.visibleWidth
+		if r.nameWidth > maxNameWidth {
+			maxNameWidth = r.nameWidth
+		}
+		if r.prWidth > maxPRWidth {
+			maxPRWidth = r.prWidth
+		}
+		if r.diffWidth > maxDiffWidth {
+			maxDiffWidth = r.diffWidth
 		}
 	}
 
-	// padTo returns the spaces needed to align a row's metadata column at
-	// (maxWidth + 2). Floor at 2 so metadata never butts up against the name.
-	padTo := func(w int) string {
-		n := maxWidth - w + 2
+	// padNameGap returns the spaces between a row's name section and the PR
+	// column. Floor at 2 so the PR cell never butts up against the name on
+	// the widest row.
+	padNameGap := func(w int) string {
+		n := maxNameWidth - w + 2
 		if n < 2 {
 			n = 2
 		}
 		return strings.Repeat(" ", n)
 	}
+	// padToWidth returns trailing spaces to fill a cell of textWidth out to
+	// width. Caller places it *outside* any color or hyperlink wrapper —
+	// matches getPRFormatted's d5db3d4 contract that keeps OSC 8 link targets
+	// from picking up padding spaces.
+	padToWidth := func(textWidth, width int) string {
+		if width > textWidth {
+			return strings.Repeat(" ", width-textWidth)
+		}
+		return ""
+	}
 
-	// Print root branch name with optional PR info and diff stats
+	// Render the root row. Root has no pointer/connector, but it shares the
+	// PR and diff columns with branch rows so the metadata lines up.
 	rootLine := fmt.Sprintf("  %s%s%s", Gray, stack.Root, Reset)
 	if stack.RootIsRemote {
 		rootLine += " " + Gray + "(remote)" + Reset
 	}
-	rootMeta := ""
-	if stack.RootPRNumber > 0 {
-		prText := fmt.Sprintf("[PR #%d", stack.RootPRNumber)
-		if stack.RootBase != "" {
-			prText += " \u2192 " + stack.RootBase // → arrow
-		}
-		prText += "]"
-		if stack.RootPRUrl != "" {
-			rootMeta = Yellow + Hyperlink(stack.RootPRUrl, prText) + Reset
-		} else {
-			rootMeta = Yellow + prText + Reset
-		}
-	} else if stack.RootBase != "" {
-		// No PR but we know the base branch (e.g. inferred main/master)
-		rootMeta = Gray + "[\u2192 " + stack.RootBase + "]" + Reset
-	}
-	if rootMeta != "" {
-		rootLine += padTo(rootVisibleWidth) + rootMeta
-	}
-	if statusMap != nil {
-		if rootStatus, ok := statusMap[stack.Root]; ok && rootStatus != nil {
-			if rootStatus.Additions > 0 || rootStatus.Deletions > 0 {
-				if rootMeta == "" {
-					rootLine += padTo(rootVisibleWidth)
-				}
-				rootLine += fmt.Sprintf(" %s+%d%s %s-%d%s", Green, rootStatus.Additions, Reset, Red, rootStatus.Deletions, Reset)
+	if maxPRWidth > 0 || maxDiffWidth > 0 {
+		rootLine += padNameGap(rootNameWidth)
+		if rootPRText != "" {
+			prColor := Yellow
+			if stack.RootPRNumber == 0 {
+				// Inferred-base label `[→ base]` is gray, like the root name.
+				prColor = Gray
+			}
+			if stack.RootPRUrl != "" {
+				rootLine += prColor + Hyperlink(stack.RootPRUrl, rootPRText) + Reset
+			} else {
+				rootLine += prColor + rootPRText + Reset
 			}
 		}
+		rootLine += padToWidth(rootPRWidth, maxPRWidth)
+		if rootDiffText != "" {
+			rs := statusMap[stack.Root]
+			rootLine += fmt.Sprintf(" %s+%d%s %s-%d%s",
+				Green, rs.Additions, Reset, Red, rs.Deletions, Reset)
+		}
+		rootLine += padToWidth(rootDiffWidth, maxDiffWidth)
 	}
-	fmt.Fprintf(os.Stderr, "%s\n", rootLine)
+	// Strip trailing pad spaces so a root with no PR/diff prints cleanly.
+	fmt.Fprintf(os.Stderr, "%s\n", strings.TrimRight(rootLine, " "))
 
-	// Render each branch row using the shared metadata column.
+	// Render each branch row using the shared columns.
 	for _, r := range rows {
 		branch := r.branch
 
-		// Check if branch should be struck through (merged or closed)
 		shouldStrike := branch.IsMerged || branch.PRState == "MERGED" || branch.PRState == "CLOSED"
 		if !shouldStrike && statusMap != nil {
 			if status, ok := statusMap[branch.Name]; ok && status != nil {
@@ -862,7 +885,6 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 			}
 		}
 
-		// Pointer for current branch
 		pointer := " "
 		color := ""
 		if branch.Name == currentBranch {
@@ -870,8 +892,8 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 			color = Green
 		}
 
-		prFormatted := getPRFormatted(branch, statusMap, 0)
-		diffInfo := getDiffStats(branch, statusMap)
+		prFormatted := getPRFormatted(branch, statusMap, maxPRWidth)
+		diffFormatted := getDiffFormatted(branch, statusMap, maxDiffWidth)
 		statusInfo := ""
 		if showStatus && statusMap != nil {
 			statusInfo = getStatusIcons(branch, statusMap)
@@ -882,25 +904,22 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 			remoteTag = " " + Gray + "(remote)" + Reset
 		}
 
-		pad := padTo(r.visibleWidth)
+		gap := padNameGap(r.nameWidth)
 
 		if shouldStrike {
 			prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
-			diffWithStrike := ""
-			if diffInfo != "" {
-				diffWithStrike = strings.ReplaceAll(diffInfo, Reset, Reset+Strikethrough)
-			}
+			diffWithStrike := strings.ReplaceAll(diffFormatted, Reset, Reset+Strikethrough)
 			statusWithStrike := ""
 			if statusInfo != "" {
 				statusWithStrike = strings.ReplaceAll(statusInfo, Reset, Reset+Strikethrough)
 			}
 			fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
 				pointer, color, r.prefix, r.connector, Strikethrough+Bold, r.name, Reset+Strikethrough,
-				remoteTag, pad, prWithStrike, diffWithStrike, statusWithStrike, Reset)
+				remoteTag, gap, prWithStrike, diffWithStrike, statusWithStrike, Reset)
 		} else {
 			fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
 				pointer, color, r.prefix, r.connector, Bold, r.name, Reset,
-				remoteTag, pad, prFormatted, diffInfo, statusInfo, Reset)
+				remoteTag, gap, prFormatted, diffFormatted, statusInfo, Reset)
 		}
 	}
 	fmt.Fprintln(os.Stderr)
@@ -1039,6 +1058,77 @@ func getDiffStats(branch *config.Branch, statusMap map[string]*BranchStatus) str
 		return ""
 	}
 	return fmt.Sprintf(" %s+%d%s %s-%d%s", Green, status.Additions, Reset, Red, status.Deletions, Reset)
+}
+
+// getDiffText returns the diff stats text WITHOUT color codes — the
+// width-only counterpart to getDiffStats, used by the pre-walk that sizes the
+// diff column. Both functions share the same gating (nil statusMap, missing
+// entry, zero deltas, merged/closed branch); keep them in lockstep.
+func getDiffText(branch *config.Branch, statusMap map[string]*BranchStatus) string {
+	if statusMap == nil {
+		return ""
+	}
+	status, ok := statusMap[branch.Name]
+	if !ok || status == nil {
+		return ""
+	}
+	if status.Additions == 0 && status.Deletions == 0 {
+		return ""
+	}
+	if branch.IsMerged || branch.PRState == "MERGED" || branch.PRState == "CLOSED" {
+		return ""
+	}
+	return fmt.Sprintf(" +%d -%d", status.Additions, status.Deletions)
+}
+
+// getDiffFormatted returns the colored diff cell padded to paddedWidth.
+// Padding is placed outside the SGR Reset (matching getPRFormatted's d5db3d4
+// hyperlink contract) so no color leaks into the trailing spaces.
+func getDiffFormatted(branch *config.Branch, statusMap map[string]*BranchStatus, paddedWidth int) string {
+	text := getDiffText(branch, statusMap)
+	pad := ""
+	if n := paddedWidth - runewidth.StringWidth(text); n > 0 {
+		pad = strings.Repeat(" ", n)
+	}
+	if text == "" {
+		return pad
+	}
+	return getDiffStats(branch, statusMap) + pad
+}
+
+// getRootPRText returns the root row's PR-cell text without color or hyperlink
+// markup. The root has three possible labels — `[PR #N]`, `[PR #N → base]`,
+// or the inferred-base `[→ base]` — and each contributes to the maxPRWidth
+// pre-walk so the PR column lines up with branch rows.
+func getRootPRText(stack *config.Stack) string {
+	if stack.RootPRNumber > 0 {
+		s := fmt.Sprintf("[PR #%d", stack.RootPRNumber)
+		if stack.RootBase != "" {
+			s += " → " + stack.RootBase
+		}
+		return s + "]"
+	}
+	if stack.RootBase != "" {
+		return "[→ " + stack.RootBase + "]"
+	}
+	return ""
+}
+
+// getRootDiffText returns the root row's diff-cell text without color codes.
+// Root only shows diff when statusMap reports nonzero additions/deletions —
+// it has no merged/closed gating because the trunk is never merged into itself.
+func getRootDiffText(stack *config.Stack, statusMap map[string]*BranchStatus) string {
+	if statusMap == nil {
+		return ""
+	}
+	status, ok := statusMap[stack.Root]
+	if !ok || status == nil {
+		return ""
+	}
+	if status.Additions == 0 && status.Deletions == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" +%d -%d", status.Additions, status.Deletions)
 }
 
 // getStatusText returns CI/review status text WITHOUT color codes (for width calculation)

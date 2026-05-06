@@ -145,46 +145,81 @@ func TestFormatStackString_PerBranchRemoteTag(t *testing.T) {
 	}
 }
 
-// PrintStack renders the PR / line-diff / status column at varying offsets
-// when each branch is allowed to print "name + 2 spaces + PR" independently —
-// short branch names produced metadata earlier on the line than long ones, so
-// the column zig-zagged across the tree. Lock the new alignment contract:
-// the metadata column for every branch row sits at the same visual offset.
+// TestPrintStack_AlignsMetadataColumn locks the per-column alignment contract
+// for `ezs ls` and `ezs status` output: across every row that carries a PR /
+// diff cell, those cells start at the same visual column. The mix of PR
+// labels exercises the cases where alignment used to break — `[PR #N]`,
+// `[PR #N MERGED]` (longer), and `[no PR]` (shorter) — plus a short and a
+// long branch name so the name section also varies.
 func TestPrintStack_AlignsMetadataColumn(t *testing.T) {
 	stack := &config.Stack{
 		Hash: "abc1234",
 		Root: "main",
 		Branches: []*config.Branch{
 			{Name: "feat-a", Parent: "main", PRNumber: 101},
-			{Name: "feat-a-much-longer-branch-name", Parent: "main", PRNumber: 102},
-			{Name: "short", Parent: "feat-a-much-longer-branch-name", PRNumber: 103},
+			{Name: "feat-a-much-longer-branch-name", Parent: "main", PRNumber: 102, PRState: "MERGED"},
+			{Name: "short", Parent: "feat-a-much-longer-branch-name"},
+			{Name: "feat-c", Parent: "feat-a-much-longer-branch-name", PRNumber: 104},
 		},
+	}
+	statusMap := map[string]*BranchStatus{
+		// Open PR with diff — both PR and diff cells render.
+		"feat-a": {Additions: 5, Deletions: 2},
+		// Merged PR — diff is suppressed by getDiffText's merged/closed gate,
+		// but the wide `[PR #102 MERGED]` label drives maxPRWidth and so sets
+		// the diff column for every other row.
+		"feat-a-much-longer-branch-name": {Additions: 1234, Deletions: 999, PRState: "MERGED"},
+		// Second open-PR row with diff stats — needed to assert diff-column
+		// alignment requires at least two diff-bearing rows.
+		"feat-c": {Additions: 42, Deletions: 7},
 	}
 
 	out := captureStderr(t, func() {
-		PrintStack(stack, "", false, nil)
+		PrintStack(stack, "", true, statusMap)
 	})
 
-	// stripANSI removes CSI/OSC escape sequences so column counts reflect what
-	// the user actually sees, not the wire bytes (color codes, hyperlinks).
-	prCols := []int{}
+	var prCols, diffCols []int
 	for _, line := range strings.Split(out, "\n") {
 		clean := stripANSI(line)
-		idx := strings.Index(clean, "[PR #")
-		if idx == -1 {
+		pr := indexOfAny(clean, "[PR #", "[no PR]")
+		if pr == -1 {
 			continue
 		}
-		prCols = append(prCols, idx)
-	}
-	if len(prCols) < 2 {
-		t.Fatalf("expected at least 2 [PR #] markers, got %d in:\n%s", len(prCols), out)
-	}
-	first := prCols[0]
-	for i, c := range prCols {
-		if c != first {
-			t.Errorf("PR column %d=%d differs from first=%d (jagged alignment), full output:\n%s", i, c, first, out)
+		prCols = append(prCols, pr)
+		// Diff cells start with " +N" right after the (padded) PR cell. Only
+		// rows that actually have diff stats contribute to diff alignment.
+		if d := strings.Index(clean[pr:], " +"); d != -1 {
+			diffCols = append(diffCols, pr+d)
 		}
 	}
+	if len(prCols) < 2 {
+		t.Fatalf("expected at least 2 metadata rows, got %d in:\n%s", len(prCols), out)
+	}
+	for i, c := range prCols {
+		if c != prCols[0] {
+			t.Errorf("PR column row %d = %d, want %d (jagged), output:\n%s", i, c, prCols[0], out)
+		}
+	}
+	if len(diffCols) < 2 {
+		t.Fatalf("expected at least 2 rows with diff stats to verify diff alignment, got %d in:\n%s", len(diffCols), out)
+	}
+	for i, c := range diffCols {
+		if c != diffCols[0] {
+			t.Errorf("diff column row %d = %d, want %d (PR cell not padded), output:\n%s", i, c, diffCols[0], out)
+		}
+	}
+}
+
+// indexOfAny returns the lowest index in s where any of the given substrings
+// occurs, or -1 if none match.
+func indexOfAny(s string, needles ...string) int {
+	best := -1
+	for _, n := range needles {
+		if i := strings.Index(s, n); i != -1 && (best == -1 || i < best) {
+			best = i
+		}
+	}
+	return best
 }
 
 // stripANSI strips CSI ("ESC[...letter") and OSC 8 ("ESC]8;;...ESC\\") sequences
