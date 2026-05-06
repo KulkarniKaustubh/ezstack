@@ -1,5 +1,6 @@
 import { ScrollArea } from "../ui/scroll-area";
 import { StackNode } from "./StackNode";
+import { RemoteTag } from "./RemoteTag";
 import { GitBranch } from "lucide-react";
 import type { StatusStack } from "../../types/ezstack";
 import { buildTree, type TreeNode } from "../../types/ezstack";
@@ -80,14 +81,7 @@ export function StackGraph({ stack, selectedBranch, onSelectBranch }: StackGraph
         <span className="text-xs text-muted-foreground font-mono">({stack.hash.slice(0, 7)})</span>
         <div className="text-xs text-muted-foreground ml-auto">
           base: <span className="font-mono text-foreground">{stack.root}</span>
-          {stack.root_is_remote && (
-            <span
-              title="Stack rooted on a pickup branch (ezs new -r)."
-              className="ml-1 font-mono text-muted-foreground/70"
-            >
-              (remote)
-            </span>
-          )}
+          {stack.root_is_remote && <RemoteTag kind="stack" className="ml-1 font-mono" />}
         </div>
       </div>
 
@@ -103,9 +97,9 @@ export function StackGraph({ stack, selectedBranch, onSelectBranch }: StackGraph
             <div className="flex items-center gap-2 px-3 py-1.5 text-xs text-muted-foreground">
               <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground/50" />
               <span className="font-mono">{stack.root}</span>
-              <span className="text-muted-foreground/50">
-                {stack.root_is_remote ? "(remote base)" : "(base)"}
-              </span>
+              {/* Header above already carries the (remote) tag; here we
+                  just label this row as the base of the tree. */}
+              <span className="text-muted-foreground/50">(base)</span>
             </div>
             {tree.map((node, i) => (
               <TreeNodeView

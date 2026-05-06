@@ -650,13 +650,6 @@ func (m *Manager) DetectSyncNeeded(gh *github.Client) ([]SyncInfo, error) {
 	return m.detectSyncNeededInternal(gh, true, nil, false)
 }
 
-// DetectSyncNeededAllStacks checks for branches that need syncing across ALL stacks:
-// - Branches whose parents have been merged to main
-// - Branches whose parent is main but are behind origin/main
-func (m *Manager) DetectSyncNeededAllStacks(gh *github.Client) ([]SyncInfo, error) {
-	return m.detectSyncNeededInternal(gh, false, nil, false)
-}
-
 // DetectSyncNeededForStacks checks for branches that need syncing in specific stacks.
 // Remote-branch worktrees (IsRemote=true, e.g., `ezs new origin/<branch>` pickups)
 // are excluded by default — they belong to another contributor and rebasing them

@@ -181,7 +181,11 @@ describe("StackNode", () => {
     };
     const node = new StackNode(stack);
     expect(node.description).toBe("root: alice/feature (remote)");
-    expect(node.contextValue).toBe("stackRemote");
+    // contextValue must stay "stack" so the menu entries gated on
+    // `viewItem == stack` in package.json still show on pickup-rooted
+    // stacks. The (remote) cue belongs in description + tooltip, not as
+    // a capability gate.
+    expect(node.contextValue).toBe("stack");
   });
 
   it("does not append (remote) for a user-owned stack root", () => {

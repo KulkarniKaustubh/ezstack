@@ -33,7 +33,12 @@ export class StackNode extends vscode.TreeItem {
       ? `root: ${stack.root} (remote)`
       : `root: ${stack.root}`;
     this.iconPath = new vscode.ThemeIcon("layers");
-    this.contextValue = stack.root_is_remote ? "stackRemote" : "stack";
+    // contextValue stays "stack" regardless of root_is_remote so the menu
+    // entries gated on `viewItem == stack` (renameStack, sync, newBranch,
+    // prRefresh, prUnlink, openAgent, openAgentFeature, editAgentPrompt)
+    // still appear on pickup-rooted stacks. The (remote) cue lives in
+    // description + tooltip; it's a label, not a capability gate.
+    this.contextValue = "stack";
   }
 }
 
