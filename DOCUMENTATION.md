@@ -589,7 +589,7 @@ When the configured agent CLI is `claude`, `ezs agent` automatically:
    falling back to `@latest` for untagged dev builds.
 2. **Registers `ezs-mcp` with Claude Code at user scope** (equivalent to
    running `claude mcp add ezstack --scope user -- ezs-mcp` yourself), so
-   the full 25-tool ezstack surface is available to the agent from the
+   the full 28-tool ezstack surface is available to the agent from the
    first message.
 3. **Swaps the shipped prompt for a short MCP stub** that tells the agent
    to prefer MCP tools over shelling out to `ezs`. The large
@@ -1352,7 +1352,7 @@ Located in `cmd/ezs-mcp/`. A standalone Model Context Protocol server that
 exposes the full stack workflow as MCP tools. Point any MCP-compatible agent
 (Claude Code, Zed, etc.) at it and the agent can drive `ezs` directly &mdash;
 inspect, mutate, navigate, and manage pull requests without leaving the agent
-loop. 25 tools, one binary.
+loop. 28 tools, one binary.
 
 **Install**
 

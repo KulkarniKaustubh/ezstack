@@ -207,14 +207,14 @@
         <div class="workflow-step" data-animate>
           <div class="workflow-step-number workflow-step-number-blue">2</div>
           <h3>Context is injected automatically</h3>
-          <p>The agent receives your stack structure as JSON, the current branch and parent names, worktree path, and &mdash; when launched with <code>claude</code> &mdash; the full 25-tool ezstack MCP surface (auto-installed on first launch; see <a href="#mcp-auto">MCP Integration</a>). With <code>--no-mcp</code> or a non-claude CLI, the prompt embeds the full ezstack documentation as a fallback instead.</p>
+          <p>The agent receives your stack structure as JSON, the current branch and parent names, worktree path, and &mdash; when launched with <code>claude</code> &mdash; the full 28-tool ezstack MCP surface (auto-installed on first launch; see <a href="#mcp-auto">MCP Integration</a>). With <code>--no-mcp</code> or a non-claude CLI, the prompt embeds the full ezstack documentation as a fallback instead.</p>
           <div class="step-code">
             <pre><code><span class="c-comment"># What the agent sees (injected as the first message):</span>
 <span class="c-dim">Stack:       auth-feature [a1b2c]</span>
 <span class="c-dim">Branch:      auth-middleware</span>
 <span class="c-dim">Parent:      auth-service</span>
 <span class="c-dim">Worktree:    ~/worktrees/auth-middleware</span>
-<span class="c-dim">MCP:         ezstack (25 tools via ezs-mcp)</span>
+<span class="c-dim">MCP:         ezstack (28 tools via ezs-mcp)</span>
 <span class="c-dim">             → ezstack_status, ezstack_commit, ezstack_pr_create, …</span></code></pre>
           </div>
         </div>

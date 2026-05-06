@@ -75,6 +75,16 @@ if [ -f "$FILE" ]; then
     changed+=("vscode-extension/README.md")
 fi
 
+# 5b. Top-level README — same .vsix install snippet as the extension README.
+#     Without this step the repo-root README drifts (e.g. v4.7.6 release shipped
+#     with `ezstack-4.0.0.vsix` in the install command). The drift-gate test in
+#     cmd/docsgen catches any future occurrence.
+FILE="$REPO_ROOT/README.md"
+if [ -f "$FILE" ]; then
+    sed -i.bak "s/ezstack-$SV\.vsix/ezstack-$NEW_VERSION.vsix/g" "$FILE"
+    changed+=("README.md")
+fi
+
 # 6. Tauri desktop frontend package.json
 FILE="$REPO_ROOT/tauri-ui/package.json"
 if [ -f "$FILE" ]; then

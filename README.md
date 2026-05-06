@@ -170,7 +170,7 @@ Agent prompts are composed from three layers: a shipped prompt (updated with rel
 
 ## MCP Server (Claude Code & other MCP clients)
 
-ezstack ships a standalone MCP server, `ezs-mcp`, that exposes the full stack workflow as Model Context Protocol tools. Point any MCP-compatible agent at it (Claude Code, Zed, etc.) and the agent can drive `ezs` directly: inspect (`status`, `list`, `diff`, `log`, `doctor`, `config_show`), mutate (`commit`, `amend`, `sync`, `push`, `new`, `delete`, `reparent`, `stack`, `unstack`, `config_set`, `config_import`), navigate (`goto`), manage PRs (`pr_create`, `pr_update`, `pr_merge`, `pr_draft`, `pr_draft_all`, `pr_stack`), and back up config (`config_export`). 25 tools, one binary.
+ezstack ships a standalone MCP server, `ezs-mcp`, that exposes the full stack workflow as Model Context Protocol tools. Point any MCP-compatible agent at it (Claude Code, Zed, etc.) and the agent can drive `ezs` directly: inspect (`status`, `list`, `diff`, `log`, `doctor`, `config_show`), mutate (`commit`, `amend`, `sync`, `push`, `new`, `delete`, `reparent`, `stack`, `unstack`, `config_set`, `config_import`), navigate (`goto`, `up`, `down`), manage PRs (`pr_create`, `pr_update`, `pr_merge`, `pr_draft`, `pr_draft_all`, `pr_stack`, `pr_refresh`), and back up config (`config_export`). 28 tools, one binary.
 
 Install:
 
@@ -253,13 +253,13 @@ your editor or a native GUI:
 | **VS Code Extension** (`vscode-extension/`) | Sidebar stack tree, per-branch file browser, PR & CI status, command palette, agent integration | [vscode.html](https://kulkarnikaustubh.github.io/ezstack/vscode.html) · [README](vscode-extension/README.md) |
 | **Neovim Plugin** ([`ezstack.nvim`](https://github.com/KulkarniKaustubh/ezstack.nvim)) | Native Lua plugin with `:Ezs` command suite, styled stack viewer, Telescope pickers, statusline component, fugitive auto-refresh | [nvim.html](https://kulkarnikaustubh.github.io/ezstack/nvim.html) · [README](https://github.com/KulkarniKaustubh/ezstack.nvim#readme) |
 | **Desktop App** (`tauri-ui/`) | Tauri v2 + React 19 desktop GUI. Three-panel layout, visual stack graph with drag-to-reparent, branch reflog history, sidebar repo filter, toast notifications, remote SSH mode | [desktop.html](https://kulkarnikaustubh.github.io/ezstack/desktop.html) · [README](tauri-ui/README.md) |
-| **MCP Server** (`cmd/ezs-mcp/`) | Model Context Protocol server for Claude Code and other MCP-compatible agents. Exposes 25 stack operations as tools with destructive annotations and required-arg schemas | [mcp.html](https://kulkarnikaustubh.github.io/ezstack/mcp.html) |
+| **MCP Server** (`cmd/ezs-mcp/`) | Model Context Protocol server for Claude Code and other MCP-compatible agents. Exposes 28 stack operations as tools with destructive annotations and required-arg schemas | [mcp.html](https://kulkarnikaustubh.github.io/ezstack/mcp.html) |
 
 ### VS Code
 
 ```bash
 # Install from a pre-built VSIX (download from the Releases page)
-code --install-extension ezstack-4.0.0.vsix
+code --install-extension ezstack-4.7.6.vsix
 ```
 
 Then open the **ezstack** panel in the activity bar. Auto-refreshes on
