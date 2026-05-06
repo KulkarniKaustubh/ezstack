@@ -1860,3 +1860,69 @@ pre code {
     justify-content: center;
   }
 }
+
+/* ── Shareable Heading Anchors ───────────────────────── */
+
+h2.has-heading-anchor,
+h3.has-heading-anchor,
+h4.has-heading-anchor {
+  scroll-margin-top: 100px;
+}
+
+.heading-anchor {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 0.4rem;
+  padding: 0.15rem;
+  border-radius: 4px;
+  color: var(--text-dim);
+  opacity: 0;
+  transform: translateY(-1px);
+  transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+  vertical-align: middle;
+  text-decoration: none;
+  line-height: 1;
+}
+.heading-anchor:hover,
+.heading-anchor:focus-visible {
+  color: var(--accent);
+  background: var(--surface);
+  text-decoration: none;
+  outline: none;
+}
+.has-heading-anchor:hover .heading-anchor,
+.has-heading-anchor:focus-within .heading-anchor,
+.heading-anchor:focus-visible {
+  opacity: 1;
+}
+
+.heading-anchor-toast {
+  position: fixed;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%) translateY(8px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 0.8rem;
+  padding: 0.45rem 0.85rem;
+  border-radius: 999px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+  z-index: 1000;
+}
+.heading-anchor-toast.visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+@media (max-width: 768px) {
+  /* Touch devices have no hover, so always reveal the anchor at low contrast. */
+  .heading-anchor {
+    opacity: 0.35;
+  }
+}
