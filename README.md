@@ -148,7 +148,15 @@ A few other flags worth knowing about:
 - `ezs agent --no-push` / `--preset <name>` / `--save-prompt <file>` — block downstream `ezs push` while the agent runs, overlay a saved persona from `~/.ezstack/agent-presets/<name>.md`, or dump the composed prompt to disk (pairs with `--dry-run`).
 - `ezs upgrade` (alias `ezs update`) — self-update `ezs` and `ezs-mcp` to the latest published GitHub release. Homebrew and `go install` users get routed back to their package manager. The `ezs-mcp` companion is upgraded in lock-step: sibling first, then resolved via `PATH` so an `ezs-mcp` planted at `~/go/bin/` while `ezs` lives elsewhere is still picked up. Pass `--check` for a no-download version probe, or `--no-mcp` to skip the MCP binary.
 
-ezstack also runs optional user hooks from `~/.ezstack/hooks/` around `commit`, `push`, and `sync`. See [DOCUMENTATION.md](DOCUMENTATION.md#hooks) for the full contract.
+ezstack also runs optional user hooks from `~/.ezstack/hooks/` around `commit`, `push`, and `sync` — fired in addition to `.git/hooks/`, with extra context (`EZS_BRANCH`, `EZS_STACK_HASH`, `EZS_STACK_NAME`, `EZS_AGENT_NO_PUSH`) and events (`pre-sync`/`post-sync`) that don't exist in plain git. Useful for things like keeping submodule pointers in sync after a stack rebase:
+
+```bash
+# ~/.ezstack/hooks/post-sync — only updates submodules already inited
+inited=$(git submodule status --recursive | awk '$0 !~ /^-/ {print $2}')
+[ -n "$inited" ] && git submodule update --init --recursive -- $inited
+```
+
+See [DOCUMENTATION.md → Hook recipes](DOCUMENTATION.md#hook-recipes) for more (agent-aware test skipping, per-stack policy, sync-lifecycle stash/restore, post-push browser open) and the full contract.
 
 ## AI Agent
 

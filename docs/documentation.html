@@ -650,6 +650,7 @@
         <li><a href="#environment" class="toc-h3">Environment</a></li>
         <li><a href="#requiring-a-hook" class="toc-h3">Requiring a hook</a></li>
         <li><a href="#dry-run-contract" class="toc-h3">Dry-run contract</a></li>
+        <li><a href="#hook-recipes" class="toc-h3">Hook recipes</a></li>
         <li><a href="#discoverability">Discoverability</a></li>
         <li><a href="#ezs---info" class="toc-h3">ezs --info</a></li>
         <li><a href="#ezs-command---examples" class="toc-h3">ezs &lt;command&gt; --examples</a></li>
@@ -2380,6 +2381,142 @@ Options:
       <li><code>ezs sync --continue</code> runs <code>post-sync</code> (to signal &quot;sync is done&quot;) but never re-runs <code>pre-sync</code>; the original invocation already fired it.</li>
       <li><code>ezs commit</code> / <code>ezs push</code> have no dry-run mode of their own, so their hook behaviour is unconditional.</li>
       </ul>
+      <h3 id="hook-recipes">Hook recipes</h3>
+      <p>Real-world examples that lean on the <code>EZS_*</code> env or events with no
+      git-hook equivalent. Each recipe is a complete file you can drop into
+      <code>~/.ezstack/hooks/&lt;name&gt;</code> and <code>chmod +x</code>.</p>
+      <h4 id="hook-recipe-submodule-sync">Sync submodule pointers after a rebase</h4>
+      <p><code>ezs new</code> mirrors initialized submodules into a freshly created
+      worktree, but <code>ezs sync</code> does not run <code>git submodule update</code> after
+      rebasing — so a rebase that bumps a submodule SHA leaves the working copy
+      stale. A <code>post-sync</code> hook keeps them aligned, and skips uninitialized
+      submodules so it works in monorepos where developers only init the subset
+      they care about.</p>
+      <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
+<span class="c-comment"># ~/.ezstack/hooks/post-sync</span>
+<span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
+<span class="c-cmd">cd</span> <span class="c-str">&#34;$EZS_REPO_ROOT&#34;</span>
+
+<span class="c-comment"># `git submodule status` prefixes uninitialized entries with `-`; skip those</span>
+<span class="c-comment"># and only update what the user has already opted into.</span>
+inited=$(git <span class="c-str">submodule</span> <span class="c-str">status</span> <span class="c-flag">--recursive</span> <span class="c-str">\</span>
+  <span class="c-str">|</span> awk <span class="c-str">&#39;$0 !~ /^-/ {print $2}&#39;</span><span class="c-str">)</span>
+
+<span class="c-cmd">[</span> <span class="c-flag">-z</span> <span class="c-str">&#34;$inited&#34;</span> <span class="c-str">]</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">exit</span> <span class="c-str">0</span>
+
+<span class="c-comment"># shellcheck disable=SC2086</span>
+<span class="c-cmd">git</span> <span class="c-flag">submodule</span> <span class="c-str">update</span> <span class="c-flag">--init</span> <span class="c-flag">--recursive</span> <span class="c-flag">--</span> <span class="c-str">$inited</span>
+</code></pre>
+      <p>The hook fires once at the end of the cascade (not per branch), and
+      <code>post-sync</code> is warning-only — a flaky submodule remote will print a
+      warning but won't fail the sync. Pair with a <code>pre-sync</code> that refuses to
+      start when submodules have uncommitted changes:</p>
+      <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
+<span class="c-comment"># ~/.ezstack/hooks/pre-sync</span>
+<span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
+<span class="c-cmd">cd</span> <span class="c-str">&#34;$EZS_REPO_ROOT&#34;</span>
+
+<span class="c-cmd">if</span> <span class="c-str">!</span> <span class="c-str">git</span> <span class="c-str">submodule</span> <span class="c-str">foreach</span> <span class="c-flag">--quiet</span> <span class="c-str">&#39;git diff --quiet || exit 1&#39;</span><span class="c-str">;</span> <span class="c-str">then</span>
+  <span class="c-cmd">echo</span> <span class="c-str">&#34;Refusing to sync: submodule has uncommitted changes.&#34;</span> <span class="c-str">&gt;&amp;2</span>
+  <span class="c-cmd">exit</span> <span class="c-str">1</span>
+<span class="c-cmd">fi</span>
+</code></pre>
+      <h4 id="hook-recipe-agent-skip">Skip slow checks when an agent is driving</h4>
+      <p><code>ezs agent --no-push</code> exposes <code>EZS_AGENT_NO_PUSH=1</code> to the spawned agent
+      and any nested <code>ezs</code> calls. Use it to keep the full test suite gating
+      human pushes while letting the agent iterate fast:</p>
+      <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
+<span class="c-comment"># ~/.ezstack/hooks/pre-push</span>
+<span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
+<span class="c-cmd">cd</span> <span class="c-str">&#34;$EZS_REPO_ROOT&#34;</span>
+
+<span class="c-cmd">if</span> <span class="c-str">[</span> <span class="c-str">&#34;${EZS_AGENT_NO_PUSH:-}&#34;</span> <span class="c-str">=</span> <span class="c-str">&#34;1&#34;</span> <span class="c-str">];</span> <span class="c-str">then</span>
+  <span class="c-cmd">echo</span> <span class="c-str">&#34;Agent push detected; skipping full check suite.&#34;</span>
+  <span class="c-cmd">exit</span> <span class="c-str">0</span>
+<span class="c-cmd">fi</span>
+
+<span class="c-cmd">go</span> <span class="c-flag">test</span> <span class="c-str">./...</span>
+golangci-lint <span class="c-flag">run</span>
+</code></pre>
+      <p>Combine with <code>ezs push --verify</code> on shared dev hosts and CI to make the
+      hook mandatory: a missing or non-executable
+      <code>~/.ezstack/hooks/pre-push</code> is then a hard error, not a no-op.</p>
+      <h4 id="hook-recipe-per-stack">Per-stack policy</h4>
+      <p><code>EZS_STACK_NAME</code> lets a single hook file route to different rules per
+      stack. Use it to gate release stacks more strictly than wip stacks, or to
+      enable submodule sync only where it matters:</p>
+      <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
+<span class="c-comment"># ~/.ezstack/hooks/pre-push</span>
+<span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
+<span class="c-cmd">cd</span> <span class="c-str">&#34;$EZS_REPO_ROOT&#34;</span>
+
+<span class="c-cmd">case</span> <span class="c-str">&#34;$EZS_STACK_NAME&#34;</span> <span class="c-str">in</span>
+  release-*)
+    <span class="c-cmd">go</span> <span class="c-flag">test</span> <span class="c-str">./...</span>
+    golangci-lint <span class="c-flag">run</span>
+    gitleaks <span class="c-flag">protect</span> <span class="c-flag">--staged</span>
+    ;;
+  wip-*|spike-*)
+    <span class="c-cmd">go</span> <span class="c-flag">vet</span> <span class="c-str">./...</span>
+    ;;
+  <span class="c-str">&#34;&#34;</span>)
+    <span class="c-comment"># Branch isn&#39;t part of a named stack — minimal gate.</span>
+    <span class="c-cmd">go</span> <span class="c-flag">vet</span> <span class="c-str">./...</span>
+    ;;
+  *)
+    <span class="c-cmd">go</span> <span class="c-flag">test</span> <span class="c-str">./...</span>
+    ;;
+<span class="c-cmd">esac</span>
+</code></pre>
+      <p>The hook fires per branch on stack-wide pushes (<code>ezs push --stack</code>), so
+      <code>EZS_BRANCH</code> and <code>EZS_STACK_HASH</code> are also available if you want
+      per-branch policy inside a stack.</p>
+      <h4 id="hook-recipe-stash">Snapshot dirty state across a sync</h4>
+      <p><code>pre-sync</code> aborts the sync; <code>post-sync</code> warns only. Combined, they
+      bracket the cascade and let you stash uncommitted work safely without ezs's
+      autostash:</p>
+      <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
+<span class="c-comment"># ~/.ezstack/hooks/pre-sync</span>
+<span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
+<span class="c-cmd">cd</span> <span class="c-str">&#34;$EZS_REPO_ROOT&#34;</span>
+
+<span class="c-cmd">if</span> <span class="c-str">!</span> <span class="c-str">git</span> <span class="c-str">diff</span> <span class="c-flag">--quiet</span> <span class="c-str">||</span> <span class="c-str">!</span> <span class="c-str">git</span> <span class="c-str">diff</span> <span class="c-flag">--cached</span> <span class="c-flag">--quiet</span><span class="c-str">;</span> <span class="c-str">then</span>
+  stash_msg=<span class="c-str">&#34;ezs-sync-snapshot $(date -u +%FT%TZ) $EZS_BRANCH&#34;</span>
+  <span class="c-cmd">git</span> <span class="c-flag">stash</span> <span class="c-str">push</span> <span class="c-flag">-u</span> <span class="c-flag">-m</span> <span class="c-str">&#34;$stash_msg&#34;</span>
+  <span class="c-cmd">echo</span> <span class="c-str">&#34;$stash_msg&#34;</span> <span class="c-str">&gt;</span> <span class="c-str">&#34;$EZS_REPO_ROOT/.git/ezs-sync-stash&#34;</span>
+<span class="c-cmd">fi</span>
+</code></pre>
+      <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
+<span class="c-comment"># ~/.ezstack/hooks/post-sync</span>
+<span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
+<span class="c-cmd">cd</span> <span class="c-str">&#34;$EZS_REPO_ROOT&#34;</span>
+
+marker=<span class="c-str">&#34;$EZS_REPO_ROOT/.git/ezs-sync-stash&#34;</span>
+<span class="c-cmd">[</span> <span class="c-flag">-f</span> <span class="c-str">&#34;$marker&#34;</span> <span class="c-str">]</span> <span class="c-str">||</span> <span class="c-str">exit</span> <span class="c-str">0</span>
+
+stash_msg=$(cat <span class="c-str">&#34;$marker&#34;</span><span class="c-str">)</span>
+<span class="c-cmd">rm</span> <span class="c-flag">-f</span> <span class="c-str">&#34;$marker&#34;</span>
+
+<span class="c-comment"># Find the stash by message; pop it if found.</span>
+ref=$(git <span class="c-str">stash</span> <span class="c-str">list</span> <span class="c-str">|</span> awk <span class="c-flag">-F:</span> <span class="c-flag">-v</span> msg=<span class="c-str">&#34;$stash_msg&#34;</span> <span class="c-str">&#39;$0 ~ msg {print $1; exit}&#39;</span><span class="c-str">)</span>
+<span class="c-cmd">[</span> <span class="c-flag">-n</span> <span class="c-str">&#34;$ref&#34;</span> <span class="c-str">]</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">git</span> <span class="c-str">stash</span> <span class="c-str">pop</span> <span class="c-str">&#34;$ref&#34;</span>
+</code></pre>
+      <p>Why a hook and not ezs's built-in autostash: the hook persists across
+      <code>ezs sync --continue</code>, includes the stack name in the stash message, and
+      keeps the marker on a per-worktree basis (<code>.git/</code> is worktree-local).</p>
+      <h4 id="hook-recipe-open-pr">Open the PR in your browser after push</h4>
+      <p>A <code>post-push</code> one-liner that turns &quot;I just pushed&quot; into &quot;the PR is on
+      screen&quot;:</p>
+      <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
+<span class="c-comment"># ~/.ezstack/hooks/post-push</span>
+<span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
+<span class="c-cmd">cd</span> <span class="c-str">&#34;$EZS_REPO_ROOT&#34;</span>
+
+<span class="c-comment"># `gh pr view --web` no-ops cleanly when the branch has no PR yet.</span>
+<span class="c-cmd">gh</span> <span class="c-flag">pr</span> <span class="c-str">view</span> <span class="c-flag">--web</span> <span class="c-str">&#34;$EZS_BRANCH&#34;</span> <span class="c-str">2&gt;/dev/null</span> <span class="c-str">||</span> <span class="c-str">true</span>
+</code></pre>
+      <p><code>post-push</code> is warning-only, so a missing <code>gh</code> (or no PR for the branch)
+      won't fail the command.</p>
       </section>
 
       <section class="docs-section" id="discoverability" data-heading="Discoverability">
