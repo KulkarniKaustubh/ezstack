@@ -1926,3 +1926,49 @@ h4.has-heading-anchor {
     opacity: 0.35;
   }
 }
+
+/* ── Back to Top button ──────────────────────────────── */
+
+.back-to-top {
+  position: fixed;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(8px);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease, color 0.15s, border-color 0.15s, background 0.15s;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  z-index: 90;
+}
+.back-to-top.visible {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+.back-to-top:hover,
+.back-to-top:focus-visible {
+  color: var(--text);
+  background: var(--surface-hover);
+  border-color: var(--border-light);
+  outline: none;
+}
+
+/* On documentation.html the mobile sidebar toggle (a circular FAB) also
+   lives bottom-right. On small screens, push the back-to-top higher so
+   neither is hidden. */
+@media (max-width: 768px) {
+  .back-to-top {
+    bottom: 5rem;
+    right: 1.25rem;
+  }
+}
