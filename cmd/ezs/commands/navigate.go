@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -94,9 +95,17 @@ func parseNavigateArgs(direction string, args []string) (int, error) {
 }
 
 // navigate handles the shared logic for up/down navigation.
-// Navigation follows the original tree structure (BaseBranch) so that
-// merged branches are still traversable. Up stops at the top of the
-// stack (does NOT go to main/root).
+//
+// Navigation follows the *effective* tree (skipping merged ancestors), not
+// the literal BaseBranch tree. A merged branch has had both its worktree
+// and its local git branch deleted by MarkBranchMerged, so trying to
+// `cd` or `git checkout` it always fails — landing on one would leave the
+// user with an error mid-traversal. Walking via Branch.Parent (the nearest
+// non-merged ancestor, computed in walkTree) and Manager.GetChildren
+// (effective-parent children, excluding merged) keeps navigation in sync
+// with how `goto` and `sync` already treat merged branches: as gone.
+//
+// Up stops at the top of the stack (does NOT go to main/root).
 func navigate(direction string, steps int) error {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -117,11 +126,8 @@ func navigate(direction string, steps int) error {
 	targetBranch := branch
 	for i := 0; i < steps; i++ {
 		if direction == "up" {
-			// Navigate toward the tree parent (BaseBranch), not the effective parent.
-			// BaseBranch is the original parent in the tree hierarchy.
-			treePar := mgr.GetBranch(targetBranch.BaseBranch)
-			if treePar == nil {
-				// BaseBranch is not in the stack (it's the root) — stop here
+			effPar := effectiveParentForNavigation(mgr, targetBranch)
+			if effPar == nil {
 				if i == 0 {
 					ui.Info("Already at the top of the stack")
 				} else {
@@ -129,17 +135,9 @@ func navigate(direction string, steps int) error {
 				}
 				break
 			}
-			targetBranch = treePar
+			targetBranch = effPar
 		} else {
-			// Navigate toward tree children (branches whose BaseBranch == current).
-			// Skip merged branches whose worktrees are deleted.
-			allChildren := mgr.GetTreeChildren(targetBranch.Name)
-			var children []*config.Branch
-			for _, c := range allChildren {
-				if !c.IsMerged {
-					children = append(children, c)
-				}
-			}
+			children := effectiveChildrenForNavigation(mgr, targetBranch.Name)
 			if len(children) == 0 {
 				if i == 0 {
 					ui.Info("No child branches. Already at stack leaf")
@@ -151,7 +149,6 @@ func navigate(direction string, steps int) error {
 			if len(children) == 1 {
 				targetBranch = children[0]
 			} else {
-				// Multiple children — ask user to choose
 				var options []string
 				for _, c := range children {
 					options = append(options, c.Name)
@@ -169,6 +166,41 @@ func navigate(direction string, steps int) error {
 		return nil // No movement
 	}
 
-	// Navigate to the target
+	// Defensive guard: if for any reason we land on a merged branch
+	// (shouldn't happen with the effective-tree walk above, but the cost
+	// of being wrong is a confusing `git checkout` failure), surface a
+	// clear error matching `goto`'s behavior.
+	if targetBranch.IsMerged {
+		return fmt.Errorf("branch '%s' has been merged and its worktree was deleted", targetBranch.Name)
+	}
+
 	return NavigateToBranch(g, targetBranch.Name, targetBranch.WorktreePath)
+}
+
+// effectiveParentForNavigation returns the branch `up` should land on, or nil
+// if currentBranch sits at the top of its stack. It walks via Branch.Parent
+// (the nearest non-merged ancestor populated by walkTree) so merged ancestors
+// are seamlessly skipped — landing on one would attempt a `git checkout` of a
+// branch MarkBranchMerged already deleted. Pure function (no I/O), exported
+// within the package so navigate_test.go can pin its behavior with a real
+// stack.Manager fixture.
+func effectiveParentForNavigation(mgr *stack.Manager, currentBranch *config.Branch) *config.Branch {
+	return mgr.GetBranch(currentBranch.Parent)
+}
+
+// effectiveChildrenForNavigation returns the non-merged candidates `down`
+// should choose between, sorted alphabetically for determinism. Walks via
+// Manager.GetChildren (effective parent) so a merged intermediate is bridged
+// out: A → B(merged) → C surfaces C as a direct candidate of A. The IsMerged
+// filter is still required because a merged direct child of A keeps
+// Parent=A until walkTree re-points its descendants past it.
+func effectiveChildrenForNavigation(mgr *stack.Manager, branchName string) []*config.Branch {
+	var out []*config.Branch
+	for _, c := range mgr.GetChildren(branchName) {
+		if !c.IsMerged {
+			out = append(out, c)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
