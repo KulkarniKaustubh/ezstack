@@ -697,7 +697,7 @@
       (<code>gh</code>) for any PR-related commands.</p>
       <p>Verify the install:</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">--version</span>
-<span class="c-comment"># → ezstack version 4.7.6</span>
+<span class="c-comment"># → ezstack version 4.8.0</span>
 </code></pre>
       <h3 id="2-wire-up-shell-integration">2. Wire up shell integration</h3>
       <p>A handful of ezstack commands need to change your shell's working directory:
@@ -889,7 +889,7 @@
       <p>For binary installs, ezstack can update itself in place:</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span>            <span class="c-comment"># download the latest release tarball, verify checksum, swap binaries</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span> <span class="c-flag">--check</span>    <span class="c-comment"># see whether an upgrade is available without downloading</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span> <span class="c-flag">--version</span> <span class="c-str">v4.8.0</span>   <span class="c-comment"># pin to a specific release tag</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">upgrade</span> <span class="c-flag">--version</span> <span class="c-str">v4.6.0</span>   <span class="c-comment"># pin to a specific release tag</span>
 </code></pre>
       <p><code>ezs upgrade</code> detects how the binary was installed and routes to the right channel: a manual binary install gets an in-place atomic swap, a <code>go install</code> install is re-installed by re-running <code>go install …@&lt;tag&gt;</code> so the toolchain stays the source of truth for the install location, and a Homebrew install is left alone with a hint to run <code>brew upgrade ezstack</code> (so brew's receipt of the install stays in sync). The companion <code>ezs-mcp</code> binary is upgraded alongside <code>ezs</code> in lock-step — first by checking next to <code>ezs</code>, and then by falling back to <code>PATH</code> so a <code>go install</code>-only <code>ezs-mcp</code> (e.g. at <code>~/go/bin/ezs-mcp</code> while <code>ezs</code> lives in <code>~/.local/bin/</code>) is still picked up. A Homebrew-managed <code>ezs-mcp</code> resolved through <code>PATH</code> is left alone with the same brew hint. Pass <code>--no-mcp</code> to skip it entirely.</p>
       <p><code>ezs-mcp</code> exposes the same flow under <code>--upgrade</code>, <code>--upgrade-check</code>, <code>--upgrade-tag</code>, and <code>--upgrade-force</code> for the rare case where it is installed without <code>ezs</code>.</p>
@@ -1622,7 +1622,7 @@ Options:
 
 <span class="c-cmd">Options</span>
   <span class="c-flag">--check</span>            <span class="c-dim">Print current vs latest version and exit (no download)</span>
-  <span class="c-flag">--version</span> <span class="c-str">&lt;tag&gt;</span>    <span class="c-dim">Pin to a specific release tag (e.g. v4.8.0)</span>
+  <span class="c-flag">--version</span> <span class="c-str">&lt;tag&gt;</span>    <span class="c-dim">Pin to a specific release tag (e.g. v4.6.3)</span>
   <span class="c-flag">--force</span>            <span class="c-dim">Reinstall even when already at the target version</span>
   <span class="c-flag">--no-mcp</span>           <span class="c-dim">Skip the companion ezs-mcp binary</span>
   <span class="c-flag">-y,</span> <span class="c-flag">--yes</span>          <span class="c-dim">Skip the replace-binaries confirmation</span>
