@@ -1576,8 +1576,17 @@ export function registerCommands(
   // Removes the local pr_url/pr_state/is_merged cache entry. The PR on
   // GitHub is untouched. After unlinking, `ezs pr create` opens a fresh PR
   // for the branch, while `ezs pr refresh` would re-discover an existing
-  // one. Scope mirrors prRefresh: branch-from-node, --all-from-stack-node,
-  // or palette-prompt for current/stack.
+  // one.
+  //
+  // Scope handling:
+  //  - branch right-click → `--branch <name>`
+  //  - stack right-click  → iterate that stack's branches and call
+  //    `--branch` per-branch. We can't use `--all` here: the CLI's `--all`
+  //    is implemented via `GetCurrentStack()` (the stack containing the
+  //    checked-out branch in the workspace cwd), but the user may have
+  //    right-clicked a different stack in the tree.
+  //  - palette → ask current-vs-stack, then `--all` (palette "Whole
+  //    stack" genuinely means current stack, so `--all` is correct).
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "ezstack.prUnlink",
@@ -1599,8 +1608,19 @@ export function registerCommands(
           return;
         }
         if (node instanceof StackNode) {
+          const targets = node.stack.branches.filter(
+            (b) => b.pr_number || b.pr_url,
+          );
+          if (targets.length === 0) {
+            vscode.window.showInformationMessage(
+              "No branches in this stack have a cached PR.",
+            );
+            return;
+          }
           const confirm = await vscode.window.showWarningMessage(
-            "Unlink every cached PR in this stack? PRs on GitHub are not affected.",
+            `Unlink ${targets.length} cached PR${
+              targets.length === 1 ? "" : "s"
+            } in this stack? PRs on GitHub are not affected.`,
             { modal: true },
             "Unlink All",
           );
@@ -1610,7 +1630,11 @@ export function registerCommands(
           await runWithFeedback(
             "Unlinking PRs in stack...",
             "Unlinked PRs in stack.",
-            () => cli.prUnlink({ all: true }),
+            async () => {
+              for (const b of targets) {
+                await cli.prUnlink({ branch: b.name });
+              }
+            },
           );
           return;
         }
