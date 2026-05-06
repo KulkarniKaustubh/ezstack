@@ -156,7 +156,7 @@
     <div class="container">
       <div class="workflow-header" data-animate>
         <span class="mode-label mode-label-feature">Tool Catalog</span>
-        <h2>Twenty-five tools, full stack coverage</h2>
+        <h2>Twenty-eight tools, full stack coverage</h2>
         <p>Every ezstack operation an agent needs &mdash; inspect, commit, sync, push, PR, configure &mdash; exposed with strict input schemas. Read-only tools default to JSON; destructive tools carry the MCP destructive annotation; tools that would normally launch an editor or an <code>fzf</code> picker have those paths closed off at the schema level so they can't hang the MCP transport.</p>
       </div>
 
@@ -200,11 +200,6 @@
               <td><code>ezstack_config_show</code></td>
               <td><span class="mode-label mode-label-work">read-only</span></td>
               <td>Full ezstack configuration for the active repo.</td>
-            </tr>
-            <tr>
-              <td><code>ezstack_doctor</code></td>
-              <td><span class="mode-label mode-label-work">read-only</span></td>
-              <td>Run ezstack diagnostics and report environment / config / git state.</td>
             </tr>
           </tbody>
         </table>
@@ -250,6 +245,16 @@
               <td><code>ezstack_unstack</code></td>
               <td>&mdash;</td>
               <td>Remove a branch from ezstack tracking (leaves the git branch and worktree intact). <code>branch</code> (required).</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_up</code></td>
+              <td>&mdash;</td>
+              <td>Navigate to the parent branch in the current stack. Optional <code>steps</code> (positive integer, default 1). Stops at the top of the stack; emits a <code>cd &lt;path&gt;</code> hint to stderr.</td>
+            </tr>
+            <tr>
+              <td><code>ezstack_down</code></td>
+              <td>&mdash;</td>
+              <td>Navigate to a child branch in the current stack. Optional <code>steps</code>. When multiple children exist, the CLI requests a selection via elicitation — clients without elicitation support get a decline error.</td>
             </tr>
           </tbody>
         </table>
@@ -330,11 +335,6 @@
               <td><code>ezstack_pr_stack</code></td>
               <td>&mdash;</td>
               <td>Update every PR description in the stack with navigation links. <code>branch</code>.</td>
-            </tr>
-            <tr>
-              <td><code>ezstack_pr_draft_all</code></td>
-              <td>&mdash;</td>
-              <td>Open draft PRs for every branch in the current stack that does not yet have one.</td>
             </tr>
             <tr>
               <td><code>ezstack_pr_refresh</code></td>

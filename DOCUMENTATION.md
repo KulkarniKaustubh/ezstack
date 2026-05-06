@@ -2103,9 +2103,11 @@ code --install-extension ezstack-4.8.0.vsix
 (`Cmd+Shift+P`):
 
 - **Branch ops**: `New Branch`, `Sync`, `Sync Branch`, `Push Branch`,
-  `Push Stack`, `Delete Branch`, `Reparent Branch`
+  `Push Stack`, `Delete Branch`, `Delete Branch and Descendants (Cascade)`,
+  `Reparent Branch`
 - **PR ops**: `Create PR`, `Update PR`, `Merge PR`, `Toggle PR Draft`,
-  `Update Stack Info in PRs`
+  `Update Stack Info in PRs`, `Refresh PR State from GitHub`,
+  `Unlink PR (Clear Cached Association)`
 - **Agent**: `Open Agent`, `Build Feature with Agent`, `Edit Agent Prompt`
 - **File navigation**: `Cmd+Alt+Up` / `Cmd+Alt+Down` jump to the same file in
   the parent / child PR; right-click to compare against the previous PR
