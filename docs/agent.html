@@ -555,17 +555,26 @@
       dropdowns.forEach(function (d) { d.classList.remove('open'); });
     });
 
-    // Smooth scroll
+    // Smooth scroll. Update the URL hash so the location is shareable.
     document.addEventListener('click', function (e) {
       var target = e.target.closest('a[href^="#"]');
       if (!target) return;
       var id = target.getAttribute('href');
       if (id === '#') return;
-      var el = document.querySelector(id);
-      if (el) {
-        e.preventDefault();
-        el.scrollIntoView({ behavior: 'smooth' });
-      }
+      if (target.classList.contains('heading-anchor')) return;
+      var el;
+      try { el = document.querySelector(id); } catch (_) { return; }
+      if (!el) return;
+      e.preventDefault();
+      if (window.location.hash !== id) history.pushState(null, '', id);
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+    window.addEventListener('popstate', function () {
+      var hash = window.location.hash;
+      if (!hash || hash === '#') return;
+      var el;
+      try { el = document.querySelector(hash); } catch (_) { return; }
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
 
     // Scroll animations

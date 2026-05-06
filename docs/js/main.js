@@ -54,17 +54,42 @@
     dropdowns.forEach(function (d) { d.classList.remove('open'); });
   });
 
-  // Smooth scroll for internal links
+  // Smooth scroll for internal links. We preventDefault so the page doesn't
+  // jump, but we still want the URL hash to update so the location is
+  // shareable (e.g. clicking a sidebar entry yields a URL the user can copy).
+  // history.pushState writes the hash without firing scroll-on-hashchange,
+  // and a "popstate" listener below handles back/forward navigation.
   document.addEventListener('click', function (e) {
     var target = e.target.closest('a[href^="#"]');
     if (!target) return;
     var id = target.getAttribute('href');
     if (id === '#') return;
-    var el = document.querySelector(id);
-    if (el) {
-      e.preventDefault();
-      el.scrollIntoView({ behavior: 'smooth' });
+    // Skip elements that already manage their own URL (e.g. heading anchors,
+    // tab buttons, dropdown toggles).
+    if (target.classList.contains('heading-anchor')) return;
+
+    var el;
+    try {
+      el = document.querySelector(id);
+    } catch (_) {
+      return; // malformed selector — fall through to default browser behavior
     }
+    if (!el) return;
+
+    e.preventDefault();
+    if (window.location.hash !== id) {
+      history.pushState(null, '', id);
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  // Back/forward should jump to the heading the URL now points at.
+  window.addEventListener('popstate', function () {
+    var hash = window.location.hash;
+    if (!hash || hash === '#') return;
+    var el;
+    try { el = document.querySelector(hash); } catch (_) { return; }
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
   // ── Scroll Animations ──────────────────
