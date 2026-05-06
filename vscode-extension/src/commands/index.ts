@@ -1525,6 +1525,13 @@ export function registerCommands(
   // The CLI exposes three scopes (branch / current / stack); we collapse
   // current and branch when invoked from a node, and prompt for stack-vs-
   // current when called from the palette without context.
+  //
+  // Stack right-click iterates the clicked stack's branches per-branch
+  // rather than passing `-s`: the CLI's `-s` resolves "the stack" via
+  // `GetCurrentStack()` (the stack containing the checked-out branch in
+  // the workspace cwd), but the user may have right-clicked a different
+  // stack in the tree. The palette "Whole stack" option genuinely means
+  // current stack, so `-s` stays correct there.
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "ezstack.prRefresh",
@@ -1538,10 +1545,23 @@ export function registerCommands(
           return;
         }
         if (node instanceof StackNode) {
+          const targets = node.stack.branches.filter(
+            (b) => b.pr_number || b.pr_url,
+          );
+          if (targets.length === 0) {
+            vscode.window.showInformationMessage(
+              "No branches in this stack have a cached PR.",
+            );
+            return;
+          }
           await runWithFeedback(
             "Refreshing PRs in stack...",
             "Refreshed PRs in stack.",
-            () => cli.prRefresh({ stack: true }),
+            async () => {
+              for (const b of targets) {
+                await cli.prRefresh({ branch: b.name });
+              }
+            },
           );
           return;
         }
