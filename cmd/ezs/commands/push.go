@@ -78,6 +78,7 @@ func Push(args []string) error {
 	}()
 
 	g := git.New(cwd)
+	warnUnpushedSubmodules(g)
 
 	// Look up the branch's configured remote (if any), running fork detection lazily
 	// for branches tagged is_remote that don't yet have a fork remote recorded.
@@ -159,6 +160,29 @@ func pushTargets(allRemotes bool, primary string) []string {
 		return []string{primary}
 	}
 	return out
+}
+
+// warnUnpushedSubmodules prints a warning for each initialized submodule
+// that has local commits not on its origin. The parent's push will publish
+// commits whose recorded submodule SHA may not be fetchable by anyone
+// else, breaking teammates. This is a warning, not a block — the user may
+// be intentionally pushing the parent first and will push the submodule
+// next, or they may have already pushed the submodule and the local
+// remote-tracking ref is stale. We can't tell the difference without a
+// network fetch, and we don't want to slow down every push.
+func warnUnpushedSubmodules(g *git.Git) {
+	if !g.HasSubmodules() {
+		return
+	}
+	statuses, err := g.SubmoduleStatuses()
+	if err != nil || len(statuses) == 0 {
+		return
+	}
+	for _, s := range statuses {
+		if s.HasUnpushed {
+			ui.Warn(fmt.Sprintf("Submodule '%s' has commits not on origin. Push the submodule first, otherwise teammates won't be able to fetch the SHA the parent records.", s.Path))
+		}
+	}
 }
 
 func pushSpecificBranch(g *git.Git, branch string, force bool, remote string) error {

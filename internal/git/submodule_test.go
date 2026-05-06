@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -288,5 +289,316 @@ func TestMirrorSubmodules_RejectsEmptyPaths(t *testing.T) {
 	}
 	if err := MirrorSubmodules("/tmp", ""); err == nil {
 		t.Errorf("expected error on empty dest path")
+	}
+}
+
+func TestHasSubmodules(t *testing.T) {
+	enableFileProtocol(t)
+
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+	g := New(dir)
+	if g.HasSubmodules() {
+		t.Errorf("HasSubmodules() = true, want false on bare repo")
+	}
+
+	src, srcCleanup := setupSubmoduleRepo(t, "x")
+	defer srcCleanup()
+	addSubmodule(t, dir, src, "vendor/x")
+	if !g.HasSubmodules() {
+		t.Errorf("HasSubmodules() = false after adding submodule, want true")
+	}
+}
+
+func TestUpdateSubmodulesRecursive_NoOpWhenEmpty(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+	g := New(dir)
+
+	// No .gitmodules — short-circuit, no error.
+	if err := g.UpdateSubmodulesRecursive(); err != nil {
+		t.Errorf("UpdateSubmodulesRecursive on bare repo: %v", err)
+	}
+}
+
+func TestUpdateSubmodulesRecursive_AdvancesPointer(t *testing.T) {
+	enableFileProtocol(t)
+
+	parent, parentCleanup := setupTestRepo(t)
+	defer parentCleanup()
+
+	src, srcCleanup := setupSubmoduleRepo(t, "advance")
+	defer srcCleanup()
+
+	addSubmodule(t, parent, src, "vendor/x")
+
+	subWorkingPath := filepath.Join(parent, "vendor/x")
+
+	// Capture the pointer SHA the parent currently records.
+	beforeSHA, err := SubmodulePointerSHA(subWorkingPath)
+	if err != nil {
+		t.Fatalf("SubmodulePointerSHA before: %v", err)
+	}
+
+	// Add a new commit in the *source* repo (i.e. the submodule's upstream).
+	mustRun := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(src, "extra.txt"), []byte("hi\n"), 0644); err != nil {
+		t.Fatalf("write extra: %v", err)
+	}
+	mustRun(src, "add", "extra.txt")
+	mustRun(src, "commit", "-m", "extra")
+	newSrcSHA := strings.TrimSpace(mustOutput(t, src, "rev-parse", "HEAD"))
+
+	// Bump the parent's recorded SHA: fetch + checkout the new SHA inside
+	// the submodule, then commit the gitlink change in the parent.
+	mustRun(filepath.Join(parent, "vendor/x"), "fetch", "origin")
+	mustRun(filepath.Join(parent, "vendor/x"), "checkout", newSrcSHA)
+	mustRun(parent, "add", "vendor/x")
+	mustRun(parent, "commit", "-m", "bump submodule")
+
+	// Move the submodule working tree back to the old SHA to simulate the
+	// "stale after rebase/checkout" state.
+	mustRun(filepath.Join(parent, "vendor/x"), "checkout", beforeSHA)
+
+	g := New(parent)
+	if err := g.UpdateSubmodulesRecursive(); err != nil {
+		t.Fatalf("UpdateSubmodulesRecursive: %v", err)
+	}
+
+	afterSHA, err := SubmodulePointerSHA(subWorkingPath)
+	if err != nil {
+		t.Fatalf("SubmodulePointerSHA after: %v", err)
+	}
+	if afterSHA != newSrcSHA {
+		t.Errorf("submodule SHA after update = %s, want %s (parent's recorded SHA)", afterSHA, newSrcSHA)
+	}
+}
+
+func TestUpdateSubmodulesRecursive_DoesNotInitNewSubmodules(t *testing.T) {
+	// If the user opted out of cloning a submodule (deinit), we must not
+	// silently re-clone it during a post-rebase refresh.
+	enableFileProtocol(t)
+
+	parent, cleanup := setupTestRepo(t)
+	defer cleanup()
+	src, srcCleanup := setupSubmoduleRepo(t, "optout")
+	defer srcCleanup()
+
+	addSubmodule(t, parent, src, "vendor/x")
+	deinitSubmodule(t, parent, "vendor/x")
+
+	g := New(parent)
+	if err := g.UpdateSubmodulesRecursive(); err != nil {
+		t.Fatalf("UpdateSubmodulesRecursive: %v", err)
+	}
+
+	// vendor/x should still be empty (no SUB_README.md).
+	subContent := filepath.Join(parent, "vendor/x", "SUB_README.md")
+	if _, err := os.Stat(subContent); err == nil {
+		t.Errorf("expected deinitialized submodule to remain empty, but %s exists", subContent)
+	}
+}
+
+func TestSubmoduleStatuses_CleanInitialized(t *testing.T) {
+	enableFileProtocol(t)
+
+	parent, cleanup := setupTestRepo(t)
+	defer cleanup()
+	src, srcCleanup := setupSubmoduleRepo(t, "clean")
+	defer srcCleanup()
+
+	addSubmodule(t, parent, src, "vendor/x")
+
+	g := New(parent)
+	statuses, err := g.SubmoduleStatuses()
+	if err != nil {
+		t.Fatalf("SubmoduleStatuses: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("got %d statuses, want 1: %+v", len(statuses), statuses)
+	}
+	s := statuses[0]
+	if s.Path != "vendor/x" {
+		t.Errorf("Path = %q, want vendor/x", s.Path)
+	}
+	if s.MergeConflict || s.Dirty || s.HasUnpushed {
+		t.Errorf("expected clean status, got %+v", s)
+	}
+	// A freshly-added submodule defaults to detached HEAD (git submodule
+	// add followed by `git submodule update` leaves it on a SHA, not a
+	// branch). That's normal — HasIssues should still report false.
+	if s.HasIssues() {
+		t.Errorf("HasIssues() = true on a freshly added submodule, want false")
+	}
+}
+
+func TestSubmoduleStatuses_DirtyWorkingTree(t *testing.T) {
+	enableFileProtocol(t)
+
+	parent, cleanup := setupTestRepo(t)
+	defer cleanup()
+	src, srcCleanup := setupSubmoduleRepo(t, "dirty")
+	defer srcCleanup()
+
+	addSubmodule(t, parent, src, "vendor/x")
+
+	// Dirty up the submodule.
+	if err := os.WriteFile(filepath.Join(parent, "vendor/x", "SUB_README.md"), []byte("changed\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	g := New(parent)
+	statuses, err := g.SubmoduleStatuses()
+	if err != nil {
+		t.Fatalf("SubmoduleStatuses: %v", err)
+	}
+	if len(statuses) != 1 || !statuses[0].Dirty {
+		t.Errorf("expected dirty, got %+v", statuses)
+	}
+	if !statuses[0].HasIssues() {
+		t.Errorf("HasIssues() = false on dirty submodule")
+	}
+}
+
+func TestSubmoduleStatuses_NoSubmodules(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+	statuses, err := g.SubmoduleStatuses()
+	if err != nil {
+		t.Fatalf("SubmoduleStatuses: %v", err)
+	}
+	if len(statuses) != 0 {
+		t.Errorf("got %d statuses on bare repo, want 0", len(statuses))
+	}
+}
+
+func TestHasUnpushedCommits_NoOriginRef(t *testing.T) {
+	// In a fresh repo with no remotes, HasUnpushedCommits should report
+	// false (inconclusive → don't flag) rather than erroring.
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+	hasUnpushed, err := g.HasUnpushedCommits()
+	if err != nil {
+		t.Fatalf("HasUnpushedCommits: %v", err)
+	}
+	if hasUnpushed {
+		t.Errorf("HasUnpushedCommits = true on repo with no remote, want false")
+	}
+}
+
+func TestIsDetachedHead(t *testing.T) {
+	dir, cleanup := setupTestRepo(t)
+	defer cleanup()
+
+	g := New(dir)
+	detached, err := g.IsDetachedHead()
+	if err != nil {
+		t.Fatalf("IsDetachedHead: %v", err)
+	}
+	if detached {
+		t.Errorf("IsDetachedHead = true on branch, want false")
+	}
+
+	// Detach HEAD and re-check.
+	mustOutput(t, dir, "checkout", "--detach", "HEAD")
+	detached, err = g.IsDetachedHead()
+	if err != nil {
+		t.Fatalf("IsDetachedHead after detach: %v", err)
+	}
+	if !detached {
+		t.Errorf("IsDetachedHead = false on detached HEAD, want true")
+	}
+}
+
+// mustOutput runs git in dir and returns combined output, failing the
+// test on error. Used by tests that need the SHA / branch the command
+// produced rather than just success/failure.
+func mustOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+	}
+	return string(out)
+}
+
+// TestRebase_RefreshesSubmodules verifies that a successful rebase
+// auto-advances submodule working trees. This catches regressions in the
+// wiring between RebaseNonInteractive and refreshSubmodulesBestEffort.
+func TestRebase_RefreshesSubmodules(t *testing.T) {
+	enableFileProtocol(t)
+
+	parent, parentCleanup := setupTestRepo(t)
+	defer parentCleanup()
+
+	src, srcCleanup := setupSubmoduleRepo(t, "rebase")
+	defer srcCleanup()
+
+	addSubmodule(t, parent, src, "vendor/x")
+
+	mustRun := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
+	}
+
+	// Capture the SHA the parent records right after `submodule add`.
+	startSubSHA := strings.TrimSpace(mustOutput(t, filepath.Join(parent, "vendor/x"), "rev-parse", "HEAD"))
+
+	// Branch off main, advance the submodule on the source, and bump the
+	// parent's pointer on the branch.
+	mustRun(parent, "checkout", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(src, "extra.txt"), []byte("x\n"), 0644); err != nil {
+		t.Fatalf("write extra: %v", err)
+	}
+	mustRun(src, "add", "extra.txt")
+	mustRun(src, "commit", "-m", "extra")
+	newSubSHA := strings.TrimSpace(mustOutput(t, src, "rev-parse", "HEAD"))
+	mustRun(filepath.Join(parent, "vendor/x"), "fetch", "origin")
+	mustRun(filepath.Join(parent, "vendor/x"), "checkout", newSubSHA)
+	mustRun(parent, "add", "vendor/x")
+	mustRun(parent, "commit", "-m", "bump submodule on feature")
+
+	// Switch back to main, add an unrelated commit, then rebase feature
+	// onto the new main tip.
+	mustRun(parent, "checkout", "main")
+	if err := os.WriteFile(filepath.Join(parent, "main_extra.txt"), []byte("m\n"), 0644); err != nil {
+		t.Fatalf("write main_extra: %v", err)
+	}
+	mustRun(parent, "add", "main_extra.txt")
+	mustRun(parent, "commit", "-m", "main extra")
+	mustRun(parent, "checkout", "feature")
+
+	// Force the submodule working tree back to the old SHA so we can
+	// observe whether RebaseNonInteractive's tail refreshes it.
+	mustRun(filepath.Join(parent, "vendor/x"), "checkout", startSubSHA)
+
+	g := New(parent)
+	result := g.RebaseNonInteractive("main")
+	if !result.Success {
+		t.Fatalf("rebase did not succeed: %+v", result)
+	}
+
+	// After the rebase, the submodule working tree should match the SHA
+	// the parent's HEAD now records (newSubSHA).
+	finalSubSHA := strings.TrimSpace(mustOutput(t, filepath.Join(parent, "vendor/x"), "rev-parse", "HEAD"))
+	if finalSubSHA != newSubSHA {
+		t.Errorf("after rebase, submodule SHA = %s, want %s — auto-refresh did not run", finalSubSHA, newSubSHA)
 	}
 }

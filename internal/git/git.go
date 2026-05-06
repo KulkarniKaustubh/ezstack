@@ -100,10 +100,15 @@ func (g *Git) CreateBranchOnly(branchName, baseBranch string) error {
 	return err
 }
 
-// CheckoutBranch switches to an existing branch
+// CheckoutBranch switches to an existing branch. Refreshes submodules
+// after a successful switch so the working tree matches the new HEAD's
+// recorded submodule SHAs.
 func (g *Git) CheckoutBranch(branchName string) error {
-	_, err := g.run("checkout", branchName)
-	return err
+	if _, err := g.run("checkout", branchName); err != nil {
+		return err
+	}
+	g.refreshSubmodulesBestEffort()
+	return nil
 }
 
 // CreateWorktree creates a new worktree
@@ -586,6 +591,7 @@ func (g *Git) RebaseNonInteractive(target string) RebaseResult {
 		}
 		return RebaseResult{Error: fmt.Errorf("rebase failed: %s", stderrStr)}
 	}
+	g.refreshSubmodulesBestEffort()
 	return RebaseResult{Success: true}
 }
 
@@ -615,12 +621,17 @@ func (g *Git) RebaseOntoNonInteractive(newBase, oldBase string) RebaseResult {
 		}
 		return RebaseResult{Error: fmt.Errorf("rebase failed: %s", stderrStr)}
 	}
+	g.refreshSubmodulesBestEffort()
 	return RebaseResult{Success: true}
 }
 
 // Rebase rebases current branch onto target
 func (g *Git) Rebase(target string) error {
-	return g.RunInteractive("rebase", target)
+	if err := g.RunInteractive("rebase", target); err != nil {
+		return err
+	}
+	g.refreshSubmodulesBestEffort()
+	return nil
 }
 
 // RebaseOnto interactively rebases commits in `oldBase..HEAD` onto newBase.
@@ -629,7 +640,11 @@ func (g *Git) Rebase(target string) error {
 // when the parent has been rewritten. When oldBase equals newBase this is
 // equivalent to plain `git rebase newBase`.
 func (g *Git) RebaseOnto(newBase, oldBase string) error {
-	return g.RunInteractive("rebase", "--onto", newBase, oldBase)
+	if err := g.RunInteractive("rebase", "--onto", newBase, oldBase); err != nil {
+		return err
+	}
+	g.refreshSubmodulesBestEffort()
+	return nil
 }
 
 // MergeNonInteractive merges target into the current branch without interactive mode
@@ -654,7 +669,20 @@ func (g *Git) MergeNonInteractive(target string) RebaseResult {
 		}
 		return RebaseResult{Error: fmt.Errorf("merge failed: %s", combined)}
 	}
+	g.refreshSubmodulesBestEffort()
 	return RebaseResult{Success: true}
+}
+
+// refreshSubmodulesBestEffort runs UpdateSubmodulesRecursive and swallows
+// any error after warning. Used at the tail of successful rebase/merge to
+// keep submodule working trees in sync with the new HEAD. We never want a
+// submodule update failure to mask a successful rebase — the user can fix
+// the submodule out-of-band, and SubmoduleStatuses / `ezs doctor` will
+// surface the problem on the next inspection.
+func (g *Git) refreshSubmodulesBestEffort() {
+	if err := g.UpdateSubmodulesRecursive(); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: submodule refresh failed: %v\n", err)
+	}
 }
 
 // Merge merges target into the current branch interactively

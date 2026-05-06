@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 	"github.com/spf13/pflag"
 )
@@ -98,12 +99,71 @@ ezstack configuration is valid.
 		}
 	}
 
+	checkSubmoduleHealth(&problems)
+
 	fmt.Fprintln(os.Stderr)
 	if problems == 0 {
 		ui.Success("No problems detected")
 		return nil
 	}
 	return fmt.Errorf("%d problem(s) detected", problems)
+}
+
+// checkSubmoduleHealth surfaces submodule states that the user is likely
+// to want to know about: dirty working trees, detached HEAD edits in
+// progress, and unpushed commits whose SHA the parent already records.
+// Runs in the current working directory's repo only — the active worktree
+// is what the user is editing.
+//
+// Increments *problems for hard issues (dirty / unpushed). Detached HEAD
+// is reported as a warning only because it's the default state right
+// after `git submodule update`; only flag it when also dirty or with
+// unpushed commits.
+func checkSubmoduleHealth(problems *int) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	g := git.New(cwd)
+	if !g.HasSubmodules() {
+		return
+	}
+	statuses, err := g.SubmoduleStatuses()
+	if err != nil {
+		ui.Warn(fmt.Sprintf("Could not inspect submodules: %v", err))
+		return
+	}
+	if len(statuses) == 0 {
+		return
+	}
+	clean := true
+	for _, s := range statuses {
+		if s.MergeConflict {
+			ui.Error(fmt.Sprintf("Submodule '%s' has unresolved merge conflicts", s.Path))
+			*problems++
+			clean = false
+			continue
+		}
+		if s.Dirty {
+			ui.Warn(fmt.Sprintf("Submodule '%s' has uncommitted changes", s.Path))
+			clean = false
+		}
+		if s.HasUnpushed {
+			ui.Warn(fmt.Sprintf("Submodule '%s' has local commits not on origin — push the submodule before pushing the parent", s.Path))
+			clean = false
+		}
+		if s.DetachedHead && (s.Dirty || s.HasUnpushed) {
+			ui.Warn(fmt.Sprintf("Submodule '%s' is on a detached HEAD with edits — commits made here can be orphaned. Run: git -C %s switch -c <branch>", s.Path, s.Path))
+			clean = false
+		}
+		if s.PointerChanged {
+			ui.Warn(fmt.Sprintf("Submodule '%s' pointer differs from parent — commit the submodule pointer change in the parent or run `git submodule update`", s.Path))
+			clean = false
+		}
+	}
+	if clean {
+		ui.Success(fmt.Sprintf("Submodules healthy (%d initialized)", len(statuses)))
+	}
 }
 
 // Info prints a diagnostic report (versions, config state) for bug reports.
