@@ -1525,6 +1525,13 @@ export function registerCommands(
   // The CLI exposes three scopes (branch / current / stack); we collapse
   // current and branch when invoked from a node, and prompt for stack-vs-
   // current when called from the palette without context.
+  //
+  // Stack right-click iterates the clicked stack's branches per-branch
+  // rather than passing `-s`: the CLI's `-s` resolves "the stack" via
+  // `GetCurrentStack()` (the stack containing the checked-out branch in
+  // the workspace cwd), but the user may have right-clicked a different
+  // stack in the tree. The palette "Whole stack" option genuinely means
+  // current stack, so `-s` stays correct there.
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "ezstack.prRefresh",
@@ -1538,10 +1545,23 @@ export function registerCommands(
           return;
         }
         if (node instanceof StackNode) {
+          const targets = node.stack.branches.filter(
+            (b) => b.pr_number || b.pr_url,
+          );
+          if (targets.length === 0) {
+            vscode.window.showInformationMessage(
+              "No branches in this stack have a cached PR.",
+            );
+            return;
+          }
           await runWithFeedback(
             "Refreshing PRs in stack...",
             "Refreshed PRs in stack.",
-            () => cli.prRefresh({ stack: true }),
+            async () => {
+              for (const b of targets) {
+                await cli.prRefresh({ branch: b.name });
+              }
+            },
           );
           return;
         }
@@ -1566,6 +1586,109 @@ export function registerCommands(
             ? "Refreshed PRs in stack."
             : "Refreshed current PR.",
           () => cli.prRefresh({ stack: scope.value === "stack" }),
+        );
+      },
+    ),
+  );
+
+  // ── PR Unlink (clear cached PR association) ──
+  //
+  // Removes the local pr_url/pr_state/is_merged cache entry. The PR on
+  // GitHub is untouched. After unlinking, `ezs pr create` opens a fresh PR
+  // for the branch, while `ezs pr refresh` would re-discover an existing
+  // one.
+  //
+  // Scope handling:
+  //  - branch right-click → `--branch <name>`
+  //  - stack right-click  → iterate that stack's branches and call
+  //    `--branch` per-branch. We can't use `--all` here: the CLI's `--all`
+  //    is implemented via `GetCurrentStack()` (the stack containing the
+  //    checked-out branch in the workspace cwd), but the user may have
+  //    right-clicked a different stack in the tree.
+  //  - palette → ask current-vs-stack, then `--all` (palette "Whole
+  //    stack" genuinely means current stack, so `--all` is correct).
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.prUnlink",
+      async (node?: BranchNode | StackNode) => {
+        if (node instanceof BranchNode) {
+          const confirm = await vscode.window.showWarningMessage(
+            `Unlink the cached PR for "${node.branch.name}"? The PR on GitHub is not affected.`,
+            { modal: true },
+            "Unlink",
+          );
+          if (confirm !== "Unlink") {
+            return;
+          }
+          await runWithFeedback(
+            `Unlinking PR for "${node.branch.name}"...`,
+            `Unlinked PR for "${node.branch.name}".`,
+            () => cli.prUnlink({ branch: node.branch.name }),
+          );
+          return;
+        }
+        if (node instanceof StackNode) {
+          const targets = node.stack.branches.filter(
+            (b) => b.pr_number || b.pr_url,
+          );
+          if (targets.length === 0) {
+            vscode.window.showInformationMessage(
+              "No branches in this stack have a cached PR.",
+            );
+            return;
+          }
+          const confirm = await vscode.window.showWarningMessage(
+            `Unlink ${targets.length} cached PR${
+              targets.length === 1 ? "" : "s"
+            } in this stack? PRs on GitHub are not affected.`,
+            { modal: true },
+            "Unlink All",
+          );
+          if (confirm !== "Unlink All") {
+            return;
+          }
+          await runWithFeedback(
+            "Unlinking PRs in stack...",
+            "Unlinked PRs in stack.",
+            async () => {
+              for (const b of targets) {
+                await cli.prUnlink({ branch: b.name });
+              }
+            },
+          );
+          return;
+        }
+        const scope = await vscode.window.showQuickPick(
+          [
+            { label: "Current branch", value: "current" as const },
+            { label: "Whole stack", value: "stack" as const },
+          ],
+          {
+            placeHolder:
+              "Unlink which cached PRs? GitHub PRs are not affected.",
+          },
+        );
+        if (!scope) {
+          return;
+        }
+        const confirm = await vscode.window.showWarningMessage(
+          scope.value === "stack"
+            ? "Unlink every cached PR in the current stack? PRs on GitHub are not affected."
+            : "Unlink the cached PR for the current branch? The PR on GitHub is not affected.",
+          { modal: true },
+          scope.value === "stack" ? "Unlink All" : "Unlink",
+        );
+        if (!confirm) {
+          return;
+        }
+        await runWithFeedback(
+          scope.value === "stack"
+            ? "Unlinking PRs in stack..."
+            : "Unlinking current PR...",
+          scope.value === "stack"
+            ? "Unlinked PRs in stack."
+            : "Unlinked current PR.",
+          () => cli.prUnlink({ all: scope.value === "stack" }),
         );
       },
     ),

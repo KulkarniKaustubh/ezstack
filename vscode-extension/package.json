@@ -321,6 +321,12 @@
         "title": "Refresh PR State from GitHub",
         "category": "ezstack",
         "icon": "$(cloud-download)"
+      },
+      {
+        "command": "ezstack.prUnlink",
+        "title": "Unlink PR (Clear Cached Association)",
+        "category": "ezstack",
+        "icon": "$(debug-disconnect)"
       }
     ],
     "keybindings": [
@@ -554,6 +560,11 @@
           "group": "1_actions@7"
         },
         {
+          "command": "ezstack.prUnlink",
+          "when": "view == ezstackStacks && viewItem == branchWithPR",
+          "group": "1_actions@8"
+        },
+        {
           "command": "ezstack.reparent",
           "when": "view == ezstackStacks && viewItem =~ /^branch/",
           "group": "2_modify@1"
@@ -587,6 +598,11 @@
           "command": "ezstack.prRefresh",
           "when": "view == ezstackStacks && viewItem == stack",
           "group": "1_stack@4"
+        },
+        {
+          "command": "ezstack.prUnlink",
+          "when": "view == ezstackStacks && viewItem == stack",
+          "group": "1_stack@5"
         },
         {
           "command": "ezstack.openAgent",
