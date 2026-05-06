@@ -759,4 +759,26 @@ export class EzsCli {
     }
     await this.execYes(args);
   }
+
+  // ── PR unlink ──
+
+  /**
+   * Clear the local cached PR association for one branch or every branch in
+   * the current stack. The PR on GitHub is untouched. Scope:
+   *  - all=true       → unlink every branch in the current stack (--all)
+   *  - branch present → unlink that one (--branch)
+   *  - neither        → unlink current branch
+   *
+   * The CLI prompts for confirmation by default; we always pass -y because
+   * the VS Code surface shows its own modal warning before invoking.
+   */
+  async prUnlink(opts?: { branch?: string; all?: boolean }): Promise<void> {
+    const args = ["pr", "unlink"];
+    if (opts?.all) {
+      args.push("--all");
+    } else if (opts?.branch) {
+      args.push("--branch", opts.branch);
+    }
+    await this.execYes(args);
+  }
 }

@@ -1570,4 +1570,83 @@ export function registerCommands(
       },
     ),
   );
+
+  // ── PR Unlink (clear cached PR association) ──
+  //
+  // Removes the local pr_url/pr_state/is_merged cache entry. The PR on
+  // GitHub is untouched. After unlinking, `ezs pr create` opens a fresh PR
+  // for the branch, while `ezs pr refresh` would re-discover an existing
+  // one. Scope mirrors prRefresh: branch-from-node, --all-from-stack-node,
+  // or palette-prompt for current/stack.
+  context.subscriptions.push(
+    vscode.commands.registerCommand(
+      "ezstack.prUnlink",
+      async (node?: BranchNode | StackNode) => {
+        if (node instanceof BranchNode) {
+          const confirm = await vscode.window.showWarningMessage(
+            `Unlink the cached PR for "${node.branch.name}"? The PR on GitHub is not affected.`,
+            { modal: true },
+            "Unlink",
+          );
+          if (confirm !== "Unlink") {
+            return;
+          }
+          await runWithFeedback(
+            `Unlinking PR for "${node.branch.name}"...`,
+            `Unlinked PR for "${node.branch.name}".`,
+            () => cli.prUnlink({ branch: node.branch.name }),
+          );
+          return;
+        }
+        if (node instanceof StackNode) {
+          const confirm = await vscode.window.showWarningMessage(
+            "Unlink every cached PR in this stack? PRs on GitHub are not affected.",
+            { modal: true },
+            "Unlink All",
+          );
+          if (confirm !== "Unlink All") {
+            return;
+          }
+          await runWithFeedback(
+            "Unlinking PRs in stack...",
+            "Unlinked PRs in stack.",
+            () => cli.prUnlink({ all: true }),
+          );
+          return;
+        }
+        const scope = await vscode.window.showQuickPick(
+          [
+            { label: "Current branch", value: "current" as const },
+            { label: "Whole stack", value: "stack" as const },
+          ],
+          {
+            placeHolder:
+              "Unlink which cached PRs? GitHub PRs are not affected.",
+          },
+        );
+        if (!scope) {
+          return;
+        }
+        const confirm = await vscode.window.showWarningMessage(
+          scope.value === "stack"
+            ? "Unlink every cached PR in the current stack? PRs on GitHub are not affected."
+            : "Unlink the cached PR for the current branch? The PR on GitHub is not affected.",
+          { modal: true },
+          scope.value === "stack" ? "Unlink All" : "Unlink",
+        );
+        if (!confirm) {
+          return;
+        }
+        await runWithFeedback(
+          scope.value === "stack"
+            ? "Unlinking PRs in stack..."
+            : "Unlinking current PR...",
+          scope.value === "stack"
+            ? "Unlinked PRs in stack."
+            : "Unlinked current PR.",
+          () => cli.prUnlink({ all: scope.value === "stack" }),
+        );
+      },
+    ),
+  );
 }
