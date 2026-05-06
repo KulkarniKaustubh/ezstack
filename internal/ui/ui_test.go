@@ -145,6 +145,134 @@ func TestFormatStackString_PerBranchRemoteTag(t *testing.T) {
 	}
 }
 
+// TestPrintStack_AlignsMetadataColumn locks the per-column alignment contract
+// for `ezs ls` and `ezs status` output: across every row that carries a PR /
+// diff cell, those cells start at the same visual column. The mix of PR
+// labels exercises the cases where alignment used to break — `[PR #N]`,
+// `[PR #N MERGED]` (longer), and `[no PR]` (shorter) — plus a short and a
+// long branch name so the name section also varies.
+func TestPrintStack_AlignsMetadataColumn(t *testing.T) {
+	stack := &config.Stack{
+		Hash: "abc1234",
+		Root: "main",
+		Branches: []*config.Branch{
+			{Name: "feat-a", Parent: "main", PRNumber: 101},
+			{Name: "feat-a-much-longer-branch-name", Parent: "main", PRNumber: 102, PRState: "MERGED"},
+			{Name: "short", Parent: "feat-a-much-longer-branch-name"},
+			{Name: "feat-c", Parent: "feat-a-much-longer-branch-name", PRNumber: 104},
+		},
+	}
+	statusMap := map[string]*BranchStatus{
+		// Open PR with diff — both PR and diff cells render.
+		"feat-a": {Additions: 5, Deletions: 2},
+		// Merged PR — diff is suppressed by getDiffText's merged/closed gate,
+		// but the wide `[PR #102 MERGED]` label drives maxPRWidth and so sets
+		// the diff column for every other row.
+		"feat-a-much-longer-branch-name": {Additions: 1234, Deletions: 999, PRState: "MERGED"},
+		// Second open-PR row with diff stats — needed to assert diff-column
+		// alignment requires at least two diff-bearing rows.
+		"feat-c": {Additions: 42, Deletions: 7},
+	}
+
+	out := captureStderr(t, func() {
+		PrintStack(stack, "", true, statusMap)
+	})
+
+	var prCols, diffCols []int
+	for _, line := range strings.Split(out, "\n") {
+		clean := stripANSI(line)
+		pr := indexOfAny(clean, "[PR #", "[no PR]")
+		if pr == -1 {
+			continue
+		}
+		prCols = append(prCols, pr)
+		// Diff cells start with " +N" right after the (padded) PR cell. Only
+		// rows that actually have diff stats contribute to diff alignment.
+		if d := strings.Index(clean[pr:], " +"); d != -1 {
+			diffCols = append(diffCols, pr+d)
+		}
+	}
+	if len(prCols) < 2 {
+		t.Fatalf("expected at least 2 metadata rows, got %d in:\n%s", len(prCols), out)
+	}
+	for i, c := range prCols {
+		if c != prCols[0] {
+			t.Errorf("PR column row %d = %d, want %d (jagged), output:\n%s", i, c, prCols[0], out)
+		}
+	}
+	if len(diffCols) < 2 {
+		t.Fatalf("expected at least 2 rows with diff stats to verify diff alignment, got %d in:\n%s", len(diffCols), out)
+	}
+	for i, c := range diffCols {
+		if c != diffCols[0] {
+			t.Errorf("diff column row %d = %d, want %d (PR cell not padded), output:\n%s", i, c, diffCols[0], out)
+		}
+	}
+}
+
+// indexOfAny returns the lowest index in s where any of the given substrings
+// occurs, or -1 if none match.
+func indexOfAny(s string, needles ...string) int {
+	best := -1
+	for _, n := range needles {
+		if i := strings.Index(s, n); i != -1 && (best == -1 || i < best) {
+			best = i
+		}
+	}
+	return best
+}
+
+// stripANSI strips CSI ("ESC[...letter") and OSC 8 ("ESC]8;;...ESC\\") sequences
+// so column-position assertions are meaningful regardless of color or hyperlink
+// markup.
+func stripANSI(s string) string {
+	var out strings.Builder
+	i := 0
+	for i < len(s) {
+		if s[i] == 0x1b && i+1 < len(s) {
+			next := s[i+1]
+			if next == '[' {
+				// CSI: skip until a final byte in 0x40..0x7E
+				j := i + 2
+				for j < len(s) {
+					b := s[j]
+					if b >= 0x40 && b <= 0x7e {
+						j++
+						break
+					}
+					j++
+				}
+				i = j
+				continue
+			}
+			if next == ']' {
+				// OSC: skip until BEL (0x07) or ST (ESC \\)
+				j := i + 2
+				for j < len(s) {
+					if s[j] == 0x07 {
+						j++
+						break
+					}
+					if s[j] == 0x1b && j+1 < len(s) && s[j+1] == '\\' {
+						j += 2
+						break
+					}
+					j++
+				}
+				i = j
+				continue
+			}
+			if next == '\\' {
+				i += 2
+				continue
+			}
+		}
+		out.WriteByte(s[i])
+		i++
+	}
+	return out.String()
+}
+
 func TestSuggestCommand(t *testing.T) {
 	cands := []string{"status", "stack", "sync", "new", "push", "pull"}
 
