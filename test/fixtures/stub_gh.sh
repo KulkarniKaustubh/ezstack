@@ -144,10 +144,30 @@ EOF
                 ;;
 
             list)
+                # Honor --head <branch>: ezstack falls back to `gh pr list
+                # --head <branch>` when `gh pr view <branch>` fails (fork
+                # PRs). Without this filter, every branch in a multi-PR
+                # state ended up matching the first PR on disk, masking
+                # real "no PR for this branch" cases as "live PR exists."
+                FILTER_HEAD=""
+                i=0
+                while [ $i -lt ${#ARGS[@]} ]; do
+                    if [ "${ARGS[$i]}" = "--head" ]; then
+                        i=$((i + 1))
+                        FILTER_HEAD="${ARGS[$i]}"
+                    fi
+                    i=$((i + 1))
+                done
+
                 echo "["
                 first=true
                 for pr_file in "$STATE_DIR/prs"/*.json; do
                     if [ -f "$pr_file" ]; then
+                        if [ -n "$FILTER_HEAD" ]; then
+                            if ! grep -q "\"headRefName\": \"${FILTER_HEAD}\"" "$pr_file"; then
+                                continue
+                            fi
+                        fi
                         if [ "$first" = true ]; then
                             first=false
                         else

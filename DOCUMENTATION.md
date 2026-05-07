@@ -1181,7 +1181,9 @@ Filter the list with mutually-exclusive scope flags:
 - `-s` / `--stack` — show only sessions bound to the user's current stack (both stack-scoped and branch-scoped sessions in that stack). Errors when the cwd isn't on a stack branch.
 - `--feature` — show only sessions created via `ezs agent feature`. The `mode` field on each session row distinguishes work-mode (`"work"`) from feature-mode (`"feature"`); legacy entries written before mode tracking surface as `"work"`.
 
-`agent ls` is intentionally scoped to the current repo only. Sessions from other ezstack-tracked repos in `~/.ezstack/stacks.json` are not surfaced — there's no cross-repo listing flag, by design, because surfacing unrelated sessions creates more confusion than it resolves. Only ezstack-minted sessions (display name prefixed with `_ezstack-`) are listed — freestanding `claude` sessions you started by hand are not.
+`agent ls` is intentionally scoped to the current repo only. Sessions from other ezstack-tracked repos in `~/.ezstack/stacks.json` are not surfaced — there's no cross-repo listing flag, by design, because surfacing unrelated sessions creates more confusion than it resolves. Only ezstack-bound sessions are listed — freestanding `claude` sessions you started by hand are not.
+
+**Display names follow `/rename`.** The `display_name` column is read live from the agent's session journal, so renaming a session inside Claude (`/rename my-name`) is reflected in `agent ls` on the next run. Fresh sessions and non-claude agents fall back to the deterministic `_ezstack-<identifier>` label. The rename also survives subsequent `ezs agent` resumes — ezs picks up the latest name from the journal and re-asserts it via `claude --name`, so your rename doesn't get clobbered the next time you launch.
 
 **`--preset <name>`.** Looks up `~/.ezstack/agent-presets/<name>.md` and appends it to the end of the fully composed prompt under a `## Preset: <name>` header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.
 

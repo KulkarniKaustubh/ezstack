@@ -279,6 +279,93 @@ func TestResolveFeatureSession_ExistingStackForceFreshMints(t *testing.T) {
 	}
 }
 
+// ── sticky-rename: resume path honors /rename done inside Claude ──────────
+//
+// When a user runs `/rename foo` inside Claude, the latest agent-name event
+// in the session journal is "foo". On the next `ezs agent`, the resume args
+// must pass `--name foo` (not the deterministic `_ezstack-<id>` label) so
+// the rename survives the relaunch instead of being clobbered. Fresh
+// launches and --no-resume keep the deterministic label.
+
+func TestResolveWorkSession_ResumePrefersLiveRename(t *testing.T) {
+	root := withClaudeProjectsDir(t)
+	storedID := "stack-uuid"
+	writeJSONL(t, root, "-Users-test-repo", storedID, []string{
+		nameEvent(storedID, "_ezstack-launch-label"),
+		nameEvent(storedID, "renamed-by-user"),
+	})
+	stack := &config.Stack{Hash: "abc1234", Name: "my-stack", AgentSessionID: storedID}
+
+	plan := resolveWorkSession("/repo", "claude", stack, "", false, false)
+	if plan == nil || plan.injection == nil {
+		t.Fatal("expected non-nil plan")
+	}
+	if plan.injection.Fresh {
+		t.Error("resuming with stored ID must not be Fresh")
+	}
+	if !containsString(plan.injection.Args, "renamed-by-user") {
+		t.Errorf("expected resume to carry user's rename; got args=%v", plan.injection.Args)
+	}
+	if containsString(plan.injection.Args, "_ezstack-my-stack") {
+		t.Errorf("rename should override deterministic label; got args=%v", plan.injection.Args)
+	}
+}
+
+func TestResolveWorkSession_ResumeNoLiveNameKeepsFallback(t *testing.T) {
+	// Resume against a stored ID whose journal has no agent-name event
+	// (e.g. corrupted/truncated file): we must fall back to the
+	// deterministic label rather than emit `--name ""`.
+	root := withClaudeProjectsDir(t)
+	storedID := "stack-uuid-no-name"
+	writeJSONL(t, root, "-Users-test-repo", storedID, []string{
+		`{"type":"user","message":"hi"}`,
+	})
+	stack := &config.Stack{Hash: "abc1234", Name: "my-stack", AgentSessionID: storedID}
+
+	plan := resolveWorkSession("/repo", "claude", stack, "", false, false)
+	if !containsString(plan.injection.Args, "_ezstack-my-stack") {
+		t.Errorf("expected fallback label '_ezstack-my-stack' in args; got %v", plan.injection.Args)
+	}
+}
+
+func TestResolveWorkSession_ForceFreshIgnoresLiveRename(t *testing.T) {
+	// --no-resume mints a new UUID — any rename on the *previous* session
+	// belongs to that prior conversation and must not leak into the fresh
+	// one.
+	root := withClaudeProjectsDir(t)
+	storedID := "stack-uuid"
+	writeJSONL(t, root, "-Users-test-repo", storedID, []string{
+		nameEvent(storedID, "old-rename"),
+	})
+	withStubSessionID(t, "minted-fresh-uuid")
+	stack := &config.Stack{Hash: "abc1234", Name: "my-stack", AgentSessionID: storedID}
+
+	plan := resolveWorkSession("/repo", "claude", stack, "", false, true)
+	if !plan.injection.Fresh {
+		t.Error("forceFresh must mint fresh")
+	}
+	if !containsString(plan.injection.Args, "_ezstack-my-stack") {
+		t.Errorf("forceFresh must use deterministic label; got args=%v", plan.injection.Args)
+	}
+	if containsString(plan.injection.Args, "old-rename") {
+		t.Errorf("forceFresh must not surface prior rename; got args=%v", plan.injection.Args)
+	}
+}
+
+func TestResolveFeatureSession_ResumePrefersLiveRename(t *testing.T) {
+	root := withClaudeProjectsDir(t)
+	storedID := "stored-feature-id"
+	writeJSONL(t, root, "-Users-test-repo", storedID, []string{
+		nameEvent(storedID, "feature-renamed"),
+	})
+	stack := &config.Stack{Hash: "abc1234", Name: "my-feature", AgentSessionID: storedID}
+
+	plan := resolveFeatureSession("/repo", "claude", stack, false)
+	if !containsString(plan.injection.Args, "feature-renamed") {
+		t.Errorf("expected feature resume to carry user's rename; got %v", plan.injection.Args)
+	}
+}
+
 // ── splitAgentExtras ───────────────────────────────────────────────────────────
 
 func TestSplitAgentExtras(t *testing.T) {
