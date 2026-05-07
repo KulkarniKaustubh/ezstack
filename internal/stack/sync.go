@@ -731,7 +731,7 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 			remoteBehind := remoteBehindFor(branch)
 
 			if branch.Parent == stack.Root {
-				behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
+				behindBy, err := m.git.GetCommitsBehind(branch.Name, m.RootRebaseTarget(stack))
 				if (err == nil && behindBy > 0) || remoteBehind > 0 {
 					results = append(results, SyncInfo{
 						Branch:       branch.Name,
@@ -747,7 +747,7 @@ func (m *Manager) detectSyncNeededInternal(gh *github.Client, currentStackOnly b
 			isMerged := false
 			parentRef := m.getParentRef(branch.Parent)
 
-			merged, err := m.git.IsBranchMerged(parentRef, "origin/"+stack.Root)
+			merged, err := m.git.IsBranchMerged(parentRef, m.RootRebaseTarget(stack))
 			if err == nil && merged {
 				isMerged = true
 			}
@@ -824,7 +824,7 @@ func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client
 	}
 
 	if branch.Parent == stack.Root {
-		behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
+		behindBy, err := m.git.GetCommitsBehind(branch.Name, m.RootRebaseTarget(stack))
 		if (err == nil && behindBy > 0) || remoteBehind > 0 {
 			info := &SyncInfo{
 				Branch:       branch.Name,
@@ -841,7 +841,7 @@ func (m *Manager) DetectSyncNeededForBranch(branchName string, gh *github.Client
 	isMerged := false
 	parentRef := m.getParentRef(branch.Parent)
 
-	merged, err := m.git.IsBranchMerged(parentRef, "origin/"+stack.Root)
+	merged, err := m.git.IsBranchMerged(parentRef, m.RootRebaseTarget(stack))
 	if err == nil && merged {
 		isMerged = true
 	}
@@ -1118,14 +1118,14 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			}
 
 			if branch.Parent == stack.Root {
-				behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
+				behindBy, err := m.git.GetCommitsBehind(branch.Name, m.RootRebaseTarget(stack))
 				if err != nil || behindBy == 0 {
 					popStash()
 					continue
 				}
 
 				result.BehindBy = behindBy
-				result.SyncedParent = "origin/" + stack.Root
+				result.SyncedParent = m.RootRebaseTarget(stack)
 
 				if callbacks != nil && callbacks.BeforeRebase != nil {
 					syncInfo := SyncInfo{
@@ -1140,7 +1140,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 					}
 				}
 
-				syncResult := branchDoSync("origin/" + stack.Root)
+				syncResult := branchDoSync(m.RootRebaseTarget(stack))
 				if syncResult.HasConflict {
 					result.HasConflict = true
 					result.Error = fmt.Errorf("%s", conflictMsg())
@@ -1180,7 +1180,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 			isMerged := false
 			parentRef := m.getParentRef(branch.Parent)
 
-			merged, err := m.git.IsBranchMerged(parentRef, "origin/"+stack.Root)
+			merged, err := m.git.IsBranchMerged(parentRef, m.RootRebaseTarget(stack))
 			if err == nil && merged {
 				isMerged = true
 			}
@@ -1247,7 +1247,7 @@ func (m *Manager) syncStackInternal(gh *github.Client, callbacks *SyncCallbacks,
 
 				rebaseTarget := m.getParentRef(newParent)
 				if newParent == stack.Root {
-					rebaseTarget = "origin/" + stack.Root
+					rebaseTarget = m.RootRebaseTarget(stack)
 				}
 
 				syncResult := branchDoSyncOnto(rebaseTarget, mergeBase)
@@ -1537,20 +1537,20 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 	}
 
 	if branch.Parent == stack.Root {
-		behindBy, err := m.git.GetCommitsBehind(branch.Name, "origin/"+stack.Root)
+		behindBy, err := m.git.GetCommitsBehind(branch.Name, m.RootRebaseTarget(stack))
 		if err != nil || behindBy == 0 {
 			result.Success = true
 			return result, nil
 		}
 
 		result.BehindBy = behindBy
-		result.SyncedParent = "origin/" + stack.Root
+		result.SyncedParent = m.RootRebaseTarget(stack)
 
 		syncResult := doSyncOp(func(sg *git.Git) git.RebaseResult {
 			if merge {
-				return sg.MergeNonInteractive("origin/" + stack.Root)
+				return sg.MergeNonInteractive(m.RootRebaseTarget(stack))
 			}
-			return sg.RebaseNonInteractive("origin/" + stack.Root)
+			return sg.RebaseNonInteractive(m.RootRebaseTarget(stack))
 		})
 		if syncResult.HasConflict {
 			result.HasConflict = true
@@ -1572,7 +1572,7 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 	isMerged := false
 	parentRef := m.getParentRef(branch.Parent)
 
-	merged, err := m.git.IsBranchMerged(parentRef, "origin/"+stack.Root)
+	merged, err := m.git.IsBranchMerged(parentRef, m.RootRebaseTarget(stack))
 	if err == nil && merged {
 		isMerged = true
 	}
@@ -1620,9 +1620,9 @@ func (m *Manager) SyncBranch(branchName string, gh *github.Client, useMerge ...b
 		// so descendants see this branch's pre-rewrite SHA when they look it up.
 		syncResult := doSyncOp(func(sg *git.Git) git.RebaseResult {
 			if merge {
-				return sg.MergeNonInteractive("origin/" + stack.Root)
+				return sg.MergeNonInteractive(m.RootRebaseTarget(stack))
 			}
-			return sg.RebaseOntoNonInteractive("origin/"+stack.Root, mergeBase)
+			return sg.RebaseOntoNonInteractive(m.RootRebaseTarget(stack), mergeBase)
 		})
 		if syncResult.HasConflict {
 			result.HasConflict = true

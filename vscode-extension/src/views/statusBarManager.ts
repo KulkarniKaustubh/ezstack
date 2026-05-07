@@ -33,8 +33,17 @@ export class StatusBarManager {
       const desc = shortBranchName(branchName);
       const posLabel = `[${position + 1}/${stackSize}]`;
       const prefix = ticket ? `${ticket} ${posLabel}` : posLabel;
-      this.item.text = `$(layers) ${prefix} ${desc}`;
-      this.item.tooltip = `${branchName} | ${stack.name || `Stack ${stack.hash.slice(0, 7)}`}\nClick to navigate branches`;
+      // Public-fork stacking: append a small suffix so the user knows the
+      // active stack contributes cross-repo to upstream.
+      const forkSuffix = stack.is_fork_mode && stack.upstream_repo
+        ? ` (fork→${stack.upstream_repo})`
+        : "";
+      this.item.text = `$(layers) ${prefix} ${desc}${forkSuffix}`;
+      const stackLabel = stack.name || `Stack ${stack.hash.slice(0, 7)}`;
+      const forkLine = stack.is_fork_mode && stack.upstream_repo
+        ? `\nFork mode → ${stack.upstream_repo}`
+        : "";
+      this.item.tooltip = `${branchName} | ${stackLabel}${forkLine}\nClick to navigate branches`;
       this.item.show();
     } catch {
       this.item.hide();

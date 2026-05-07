@@ -8,6 +8,8 @@ pub struct Branch {
     pub is_merged: bool,
     pub is_current: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_remote: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_number: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pr_url: Option<String>,
@@ -17,6 +19,18 @@ pub struct Branch {
     pub additions: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletions: Option<i32>,
+    /// Public-fork stacking. "" / null = origin (classic), "fork" = same-
+    /// repo within contributor's fork (intermediate), "upstream" = cross-
+    /// repo PR in upstream parent (bottom).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_target_repo: Option<String>,
+    /// "owner/repo" of the repo hosting this branch's PR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pr_target_repo_label: Option<String>,
+    /// PR # of the closed fork-side PR when this PR was promoted via
+    /// close-and-reopen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_pr_number: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,6 +51,10 @@ pub struct StatusBranch {
     // them here too made serde emit two values for the same JSON key —
     // ambiguous on serialize and last-write-wins on deserialize — exactly
     // the bug the Go side fixed in statusBranchJSON. Read via `b.branch.additions`.
+    /// Public-fork stacking: parent merged in upstream while this branch's
+    /// PR is still fork-side. Run `ezs pr promote` to advance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_promote_pending: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,10 +70,22 @@ pub struct Stack {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_pr_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_is_remote: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_additions: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_deletions: Option<i32>,
     pub branches: Vec<Branch>,
+    /// Public-fork stacking — true when this stack roots on the upstream
+    /// default branch and fork mode is enabled for the repo.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_fork_mode: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_remote: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_default_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,10 +101,20 @@ pub struct StatusStack {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_pr_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_is_remote: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_additions: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub root_deletions: Option<i32>,
     pub branches: Vec<StatusBranch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_fork_mode: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_repo: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_remote: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub upstream_default_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

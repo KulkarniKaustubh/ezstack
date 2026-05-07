@@ -1552,6 +1552,8 @@ Subcommands:
     create    Create a new pull request
     draft     Toggle PR between draft and ready
     merge     Merge a pull request
+    promote   Close-and-reopen a fork-side PR as a cross-repo upstream PR
+              (public-fork stacking — see "Fork mode" below)
     refresh   Reconcile cached PR state from GitHub
     stack     Update all PR descriptions with stack info
     unlink    Clear cached PR association for a branch
@@ -1603,6 +1605,24 @@ Options:
     --no-delete-branch         Don't delete the remote branch after merge
 ```
 
+#### `ezs pr promote`
+
+Promotes fork-mode-stack child branches whose parent merged in upstream from fork-side PRs to cross-repo PRs in upstream. GitHub's API forbids changing a PR's base repository or head ref — the only path is close-and-reopen.
+
+```
+Options:
+    --branch <name>    Promote a specific branch (defaults to all promotable
+                       branches in the current stack)
+    --all              Scan every stack for promotable branches
+    --yes              Skip per-branch confirmation prompts
+```
+
+**What's lost** (no API to restore): PR #/URL, inline review comments, approvals, CI history, files-viewed checkboxes, merge-queue position. **Preserved** (copied via `gh pr edit`): title, body, labels, assignees, reviewers (re-requested), milestone. The new PR's body is suffixed with `Replaces <fork>/<repo>#<old>`, and a "Replaced by …" comment is left on the closed fork-side PR.
+
+`pr refresh` automatically prompts to run this when it detects a merged-upstream parent with a fork-side child; `pr promote` is the explicit form for scripted use or when the user declines the refresh prompt.
+
+**Idempotency.** Before creating the new PR, `pr promote` queries upstream for an existing open PR with the same `<fork-owner>:<branch>` head — if one exists (e.g. from an interrupted previous run), it adopts that PR rather than creating a duplicate. Persistence (writing the new PR # to the cache) happens before the close-old-PR step, so a failure mid-flow leaves both PRs alive in a recoverable state.
+
 #### `ezs pr refresh`
 
 Queries GitHub for the current state of one or more PRs and updates the local cache. Use after PRs have been merged, closed, or re-targeted via the GitHub UI to bring `ezs ls` and other commands back in sync without pushing or recreating anything.
@@ -1612,6 +1632,8 @@ Options:
     --branch <name>    Refresh a specific branch (instead of current)
     -s, --stack        Refresh every PR in the current stack (parallelized)
 ```
+
+**Fork-mode aware.** Each branch's PR is fetched from whichever repo hosts it (origin for classic and fork-side intermediates; upstream for cross-repo bottoms). When `pr refresh` detects a freshly-merged upstream PR with a fork-side child whose chain to upstream is now broken, it prints a "promote needed" summary and prompts to run `runPromote` on each candidate.
 
 #### `ezs pr stack`
 
@@ -1813,6 +1835,88 @@ Options
 Exit codes: `0` success, `1` general I/O / extraction failure, `2` usage error, `8` GitHub API or download failure, `10` user declined the confirm prompt.
 
 `ezs-mcp` exposes the same flow under `--upgrade`, `--upgrade-check`, `--upgrade-tag`, and `--upgrade-force` for installations that ship the MCP binary without the CLI.
+
+---
+
+### `ezs upstream`
+
+Manage public-fork stacking configuration for the current repo. Public-fork stacking routes the bottom PR of a stack cross-repo to the upstream parent and keeps intermediates inside the contributor's fork — see [Public-fork stacking](#public-fork-stacking-fork-mode) below for the full architecture.
+
+```
+ezs upstream <subcommand> [args]
+
+Subcommands:
+    show              Print fork-mode and upstream config for the current repo
+    set <owner>/<repo>  Manually set upstream (auto-adds git remote if missing)
+                          --remote <name>          local remote name (default: upstream)
+                          --default-branch <name>  upstream's default branch
+    unset             Clear upstream and disable fork mode
+    init              Run interactive auto-detection (gh repo view origin → parent)
+    auto              Reset ForkMode to "auto" (will detect on next pr create)
+    disable           Disable fork mode without clearing cached upstream
+```
+
+Detection runs against `gh repo view <origin-owner>/<origin-repo> --json isFork,parent,defaultBranchRef`. When origin is a fork, ezstack adds an `upstream` git remote (preserving SSH vs HTTPS scheme to match origin), fetches it, and persists the cached upstream metadata in the repo's `RepoConfig`. When origin is not a fork, ezstack locks `ForkMode = "disabled"` so it never re-queries.
+
+The configuration is per-repo (lives in `~/.ezstack/config.json` under the per-repo entry) and survives across reboots. `ForkMode = "auto"` (the default for new repos) means detection runs lazily on the next `ezs pr create` and prompts the user; `"enabled"` means it's already detected and active; `"disabled"` means the user opted out (or origin isn't a fork).
+
+---
+
+### Public-fork stacking (fork mode)
+
+When contributing to an upstream repo on GitHub from a personal fork, ezstack detects the fork-of relationship on first `ezs pr create` and routes a stacked series the only way GitHub's API permits:
+
+| Layer of stack | PR head | PR base | PR repo (host) |
+|---|---|---|---|
+| **Bottom** (parent = main) | `<you>:b1` | `upstream:main` | upstream parent (cross-repo) |
+| **Intermediate** (parent = local branch) | `<you>:b2` | `<you>:b1` | your fork (same-repo) |
+| Further up | `<you>:b3` | `<you>:b2` | your fork |
+| ... | | | |
+
+Why this shape? GitHub's REST `POST /repos/{owner}/{repo}/pulls` requires the base branch to exist in the same repo as the PR. So a PR rooted at `upstream:main` must be created in upstream — but its head can come from any fork (`<you>:b1`). For intermediates, the base branch (`b1`) lives in your fork, so the PR has to live in your fork too.
+
+#### Promotion (close-and-reopen)
+
+When the bottom PR merges into upstream, the next branch up has a fork-side PR whose chain to upstream is broken. To advance the stack, that PR must become a cross-repo upstream PR. **GitHub does not allow changing a PR's base repository** — `PATCH /repos/{owner}/{repo}/pulls/{pull_number}` body docs verbatim: "You cannot update the base branch on a pull request to point to another repository." `head` is immutable. The only path is **close-and-reopen**:
+
+```
+ezs pr promote                # interactive (per-branch confirmation)
+ezs pr promote --yes          # batch
+ezs pr promote --branch feat-b
+ezs pr promote --all          # scan every stack
+```
+
+`ezs pr refresh` automatically detects the merged-upstream-parent / fork-side-child pattern and prompts to run promote at the end of the refresh.
+
+**Lost on promotion** (no API to restore): PR #/URL, inline review comments, approvals, CI history, files-viewed checkboxes, merge-queue position, auto-merge flag. **Preserved (copied via `gh pr edit`):** title, body, labels, assignees, reviewers (re-requested but state reset), milestone. The new PR's body is suffixed with `Replaces <fork>/<repo>#<old>`, and a `Replaced by <upstream>/<repo>#<new>` comment is left on the closed fork-side PR.
+
+#### Sync
+
+For fork-mode stacks, `ezs sync` rebases against `<upstream-remote>/<upstream-default-branch>` instead of `origin/<root>` (your fork's main is typically a stale snapshot). Each `ezs sync` invocation auto-fetches the configured upstream remote first.
+
+#### Doctor
+
+`ezs doctor` flags:
+- Fork mode is `enabled` but no upstream is configured (`run ezs upstream init`).
+- The cached upstream owner/repo doesn't match the URL of the configured git remote (drift).
+- You actually have push access to upstream (fork mode is unnecessary; `ezs upstream disable` is suggested).
+
+#### Limitations
+
+- **Same-organization forks** (origin owner == upstream owner) require GitHub's GraphQL `headRepositoryId` flow — added Jan 2023 — that the gh-CLI REST path doesn't expose. ezstack errors out cleanly with a workaround suggestion ("contribute from a personal fork, or run `ezs upstream disable`").
+- **GitHub Apps**: API tokens minted by GitHub Apps cannot open cross-repo PRs from forks they don't own. Use OAuth/PAT auth (the standard `gh auth login` path).
+- **CI on fork-side intermediates**: Many open-source projects disable Actions on forks, so intermediate PRs may not show CI status. The cross-repo bottom PR runs in upstream's Actions context and is unaffected.
+- **Cached fork-mode metadata is per-repo**. Re-running `ezs upstream init` after upstream's default branch is renamed will pick up the change; doctor catches drift in the meantime.
+
+#### Status JSON
+
+Every fork-mode-aware UI consumes the JSON envelope produced by `ezs status --json`. New fields:
+
+- Per-stack: `is_fork_mode`, `upstream_repo`, `upstream_remote`, `upstream_default_branch`.
+- Per-branch: `pr_target_repo` (`""` / `"fork"` / `"upstream"`), `pr_target_repo_label` (`"owner/repo"` of the PR's host), `previous_pr_number` (set after promotion).
+- Per-status-branch: `is_promote_pending` (bool — parent merged in upstream, this branch still fork-side).
+
+VSCode, Tauri desktop, and the nvim plugin render fork-mode chips off these fields.
 
 ---
 

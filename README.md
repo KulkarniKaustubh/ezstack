@@ -101,6 +101,65 @@ ezs new origin/feature-branch
 ezs delete feature-branch
 ```
 
+## Public-fork stacking (contributing to upstream from a fork)
+
+Open-source contributions usually start by forking the upstream repo on
+GitHub, cloning your fork, and opening a PR back to upstream. ezstack
+detects this on first `ezs pr create` and routes a stacked series the only
+way GitHub's API permits:
+
+- The **bottom** PR is cross-repo: `head=<you>:b1`, `base=upstream:main`,
+  hosted in the upstream repo (where reviewers expect it).
+- **Intermediate** PRs stay inside your fork: `head=<you>:b2`,
+  `base=<you>:b1`, hosted in your fork. Reviewers can still see and
+  comment on them via the stack-nav table that ezstack writes into each
+  PR description.
+
+When the bottom PR merges into upstream, the next branch up needs to
+**promote** from a fork-side PR to a cross-repo PR. GitHub does not allow
+changing a PR's base repository — the only path is close-and-reopen.
+`ezs pr refresh` offers to do this; `ezs pr promote` is the explicit form.
+
+```bash
+# One-time setup (or auto-prompted on first `pr create`)
+ezs upstream init                # detects origin's parent on GitHub,
+                                 # adds the `upstream` git remote, and
+                                 # enables fork mode
+ezs upstream show                # inspect current state
+ezs upstream set org/repo        # manual override
+ezs upstream disable             # never use fork mode for this repo
+
+# Stack two changes (no syntax change — fork-mode routing is automatic)
+ezs new b1; vim x; ezs commit -m "first"
+ezs new b2; vim y; ezs commit -m "second"
+ezs pr stack                     # b1 PR opens cross-repo to upstream;
+                                 # b2 PR opens within your fork
+
+# After b1 merges in upstream
+ezs pr refresh -s                # detects b1 merged → prompts to promote
+                                 # b2 to a cross-repo PR. Accept → done.
+# Or explicitly:
+ezs pr promote
+```
+
+**What's lost on promotion** (no API to restore): PR #/URL, inline review
+comments, approvals, CI history, files-viewed checkboxes, merge-queue
+position. **Preserved** (copied via `gh pr edit`): title, body, labels,
+assignees, reviewers (re-requested), milestone. The new PR's body is
+suffixed with `Replaces <fork>/<repo>#<old>`, and a "Replaced by …"
+comment is left on the closed fork-side PR.
+
+**Limitations:**
+- **Same-organization forks** require GitHub's GraphQL `headRepositoryId`
+  flow which ezstack does not yet implement. `ezs pr create` errors out
+  cleanly with a workaround suggestion.
+- **`ezs sync`** for fork-mode stacks rebases against `upstream/<default>`
+  rather than `origin/<default>` (the fork's main, which is typically
+  stale). The `upstream` remote is auto-fetched at the start of each sync.
+- **`ezs doctor`** validates that the cached upstream metadata still
+  matches the configured git remote and warns when you actually have
+  push access to upstream (in which case fork mode is unnecessary).
+
 ## Commands
 
 | Command | Aliases | Description |
@@ -128,6 +187,8 @@ ezs delete feature-branch
 | `unstack` | | Remove a branch from tracking |
 | `up` | | Navigate up the stack (toward parent) |
 | `upgrade` | `update` | Self-update `ezs` and `ezs-mcp` from the latest GitHub release |
+| `upstream` | | Manage public-fork stacking config (`show`/`set`/`unset`/`init`/`auto`/`disable`) — see "Public-fork stacking" above |
+| `pr promote` | | Close-and-reopen a fork-side PR as a cross-repo upstream PR after the bottom merges (see "Public-fork stacking") |
 
 **Global flags:** `-y, --yes` auto-confirm prompts · `-h, --help` · `-v, --version` · `--info` (diagnostic dump for bug reports)
 

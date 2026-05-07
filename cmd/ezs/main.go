@@ -49,10 +49,11 @@ var knownCommands = map[string]bool{
 	"push":    true,
 	"up":      true,
 	"down":    true,
-	"agent":   true,
-	"menu":    true,
-	"doctor":  true,
-	"upgrade": true, "update": true,
+	"agent":    true,
+	"menu":     true,
+	"doctor":   true,
+	"upgrade":  true, "update": true,
+	"upstream": true,
 }
 
 // commandNeedsRepoCheck returns true if the command needs the caller to be in
@@ -264,6 +265,8 @@ func main() {
 		err = commands.Doctor(args)
 	case "upgrade", "update":
 		err = commands.Upgrade(args)
+	case "upstream":
+		err = commands.Upstream(args)
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", cmd)
 		if suggestion := ui.SuggestCommand(cmd, knownCommandNames()); suggestion != "" {

@@ -71,6 +71,25 @@ func NewClient(remoteURL string) (*Client, error) {
 	}, nil
 }
 
+// NewClientForRepo builds a Client targeted at an arbitrary owner/repo.
+// Used by public-fork stacking flows: the bottom PR of a fork-mode stack
+// is created cross-repo against the upstream parent, so its Client must
+// point at upstream rather than at origin's URL.
+func NewClientForRepo(owner, repo string) *Client {
+	return &Client{owner: owner, repo: repo}
+}
+
+// Owner returns the GitHub owner this client targets.
+func (c *Client) Owner() string { return c.owner }
+
+// Repo returns the GitHub repo name this client targets.
+func (c *Client) Repo() string { return c.repo }
+
+// OwnerRepo returns (owner, repo) as a tuple. Convenience for callers like
+// upstream detection that want to feed the client's target into another
+// helper without re-parsing the remote URL.
+func (c *Client) OwnerRepo() (string, string) { return c.owner, c.repo }
+
 // CheckAuth verifies that the gh CLI is authenticated and returns an error if not.
 func CheckAuth() error {
 	cmd := exec.Command("gh", "auth", "status")
@@ -353,10 +372,164 @@ func (c *Client) UpdatePR(number int, body string) error {
 	return err
 }
 
-// UpdatePRBase updates a PR's base branch
+// UpdatePRBase updates a PR's base branch. Note: GitHub allows changing the
+// base ref only within the same repo; the base repository cannot be changed.
+// Promoting a fork-side PR to a cross-repo upstream PR requires close-and-
+// reopen — see Client.ClosePR / CreatePR.
 func (c *Client) UpdatePRBase(number int, base string) error {
 	_, err := c.runGH("pr", "edit", fmt.Sprintf("%d", number), "--base", base)
 	return err
+}
+
+// FindOpenPRByHead searches the receiver client's repo for an open PR
+// whose head matches headSpec ("owner:branch" for cross-repo, or just
+// "branch" for same-repo). Returns nil, nil when no such PR exists.
+//
+// Used by `pr promote` for idempotency: if a previous interrupted run
+// already opened the cross-repo PR, adopt it instead of creating a duplicate.
+func (c *Client) FindOpenPRByHead(headSpec string) (*PR, error) {
+	out, err := c.runGH("pr", "list",
+		"--head", headSpec,
+		"--state", "open",
+		"--limit", "1",
+		"--json", "number,url,title,body,state,baseRefName,headRefName,mergedAt,mergeable,isDraft,reviewDecision")
+	if err != nil {
+		return nil, err
+	}
+	var prs []PR
+	if err := json.Unmarshal([]byte(out), &prs); err != nil {
+		return nil, fmt.Errorf("parse pr list output: %w", err)
+	}
+	if len(prs) == 0 {
+		return nil, nil
+	}
+	prs[0].Merged = prs[0].MergedAt != ""
+	return &prs[0], nil
+}
+
+// CommentOnPR posts a comment on a PR via `gh pr comment`. Used during
+// promote-on-merge to leave a "Replaced by …" breadcrumb on the closed
+// fork-side PR.
+func (c *Client) CommentOnPR(number int, body string) error {
+	_, err := c.runGH("pr", "comment", fmt.Sprintf("%d", number), "--body", body)
+	return err
+}
+
+// ClosePR closes a PR without merging. Used in the close-and-reopen
+// promotion path for fork-mode stacks.
+func (c *Client) ClosePR(number int) error {
+	_, err := c.runGH("pr", "close", fmt.Sprintf("%d", number))
+	return err
+}
+
+// PRMetadata captures the subset of PR fields preservable across a
+// close-and-reopen promotion. Lost on promotion (no API to re-attach):
+// inline review comments, approvals, CI history, the PR # / URL itself.
+type PRMetadata struct {
+	Title         string
+	Body          string
+	IsDraft       bool
+	Milestone     string // milestone *title*; gh accepts this for `--milestone`
+	Labels        []string
+	Assignees     []string
+	Reviewers     []string // user logins
+	TeamReviewers []string // team slugs
+}
+
+// FetchPRMetadata reads the preservable subset of a PR's metadata. Best-
+// effort: a partial parse (e.g. milestone field absent on closed PR) is not
+// fatal — fields that don't deserialize stay empty.
+func (c *Client) FetchPRMetadata(number int) (*PRMetadata, error) {
+	out, err := c.runGH("pr", "view", fmt.Sprintf("%d", number),
+		"--json", "title,body,isDraft,labels,assignees,reviewRequests,milestone")
+	if err != nil {
+		return nil, err
+	}
+	var raw struct {
+		Title   string `json:"title"`
+		Body    string `json:"body"`
+		IsDraft bool   `json:"isDraft"`
+		Labels  []struct {
+			Name string `json:"name"`
+		} `json:"labels"`
+		Assignees []struct {
+			Login string `json:"login"`
+		} `json:"assignees"`
+		ReviewRequests []struct {
+			Login string `json:"login"`
+			Slug  string `json:"slug"`
+		} `json:"reviewRequests"`
+		Milestone struct {
+			Title string `json:"title"`
+		} `json:"milestone"`
+	}
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		return nil, fmt.Errorf("parse pr view metadata for #%d: %w", number, err)
+	}
+	md := &PRMetadata{
+		Title:     raw.Title,
+		Body:      raw.Body,
+		IsDraft:   raw.IsDraft,
+		Milestone: raw.Milestone.Title,
+	}
+	for _, l := range raw.Labels {
+		md.Labels = append(md.Labels, l.Name)
+	}
+	for _, a := range raw.Assignees {
+		md.Assignees = append(md.Assignees, a.Login)
+	}
+	for _, r := range raw.ReviewRequests {
+		if r.Login != "" {
+			md.Reviewers = append(md.Reviewers, r.Login)
+		}
+		if r.Slug != "" {
+			md.TeamReviewers = append(md.TeamReviewers, r.Slug)
+		}
+	}
+	return md, nil
+}
+
+// ApplyPRMetadata applies preserved metadata to a freshly-created PR.
+// Best-effort: each gh call is independent and a partial failure leaves the
+// PR alive with whatever applied. The first error is returned so the caller
+// can surface it; subsequent calls still run.
+func (c *Client) ApplyPRMetadata(number int, md *PRMetadata) error {
+	if md == nil {
+		return nil
+	}
+	var firstErr error
+	do := func(args ...string) {
+		if _, err := c.runGH(args...); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	numStr := fmt.Sprintf("%d", number)
+	if len(md.Labels) > 0 {
+		args := []string{"pr", "edit", numStr}
+		for _, l := range md.Labels {
+			args = append(args, "--add-label", l)
+		}
+		do(args...)
+	}
+	if len(md.Assignees) > 0 {
+		args := []string{"pr", "edit", numStr}
+		for _, a := range md.Assignees {
+			args = append(args, "--add-assignee", a)
+		}
+		do(args...)
+	}
+	if md.Milestone != "" {
+		do("pr", "edit", numStr, "--milestone", md.Milestone)
+	}
+	if len(md.Reviewers) > 0 {
+		do("pr", "edit", numStr, "--add-reviewer", strings.Join(md.Reviewers, ","))
+	}
+	for _, t := range md.TeamReviewers {
+		// gh accepts org/team-slug as a reviewer; team requests are added
+		// one at a time so a single bad slug doesn't abort the rest.
+		do("pr", "edit", numStr, "--add-reviewer", t)
+	}
+	return firstErr
 }
 
 // MergePR merges a pull request using the specified method (merge, squash, rebase)
@@ -466,9 +639,21 @@ func (c *Client) runGH(args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// UpdateStackDescription updates PR descriptions with stack info.
+// UpdateStackDescription updates PR descriptions with stack info, using
+// the receiver client for every PR. This is the classic single-repo
+// behavior — kept for callers that don't need fork-mode routing.
 func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch string) error {
-	// Count how many PRs are in the stack (including root PR if present)
+	return UpdateStackDescriptionRouted(stack, currentBranch, func(*config.Branch) *Client { return c })
+}
+
+// UpdateStackDescriptionRouted is the fork-mode-aware variant of
+// UpdateStackDescription. The caller supplies a per-branch client
+// resolver, so cross-repo bottom PRs (which live in upstream) get
+// addressed via an upstream-targeted client while fork-side intermediate
+// PRs stay on origin.
+//
+// Skips when the stack has fewer than 2 PRs (no nav table needed).
+func UpdateStackDescriptionRouted(stack *config.Stack, currentBranch string, clientFor func(*config.Branch) *Client) error {
 	prCount := 0
 	if stack.RootPRNumber > 0 {
 		prCount++
@@ -478,8 +663,6 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 			prCount++
 		}
 	}
-
-	// Only update descriptions when there are 2+ PRs in the stack
 	if prCount < 2 {
 		return nil
 	}
@@ -488,18 +671,17 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 		if branch.PRNumber == 0 {
 			continue
 		}
+		c := clientFor(branch)
+		if c == nil {
+			continue
+		}
 
-		// Fetch current PR body to update it
 		pr, err := c.GetPR(branch.PRNumber)
 		if err != nil {
 			continue
 		}
 
-		// Generate stack section with arrow pointing to THIS PR
-		// Uses PR numbers/URLs from the config cache (.ezstack.json)
 		stackSection := generateStackSection(stack, branch.Name)
-
-		// Update the body with the stack section
 		newBody := updateBodyWithStack(pr.Body, stackSection, branch.Name == currentBranch)
 		if newBody != pr.Body {
 			if err := c.UpdatePR(branch.PRNumber, newBody); err != nil {
@@ -511,9 +693,18 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 	return nil
 }
 
-// UpdateStackDescriptionCached updates PR descriptions using pre-fetched PR data to avoid extra API calls.
+// UpdateStackDescriptionCached updates PR descriptions using pre-fetched
+// PR data to avoid extra API calls. Uses the receiver client for every
+// edit — for fork-mode stacks, prefer UpdateStackDescriptionCachedRouted
+// so cross-repo PRs are addressed via an upstream-targeted client.
 func (c *Client) UpdateStackDescriptionCached(stack *config.Stack, currentBranch string, prMap map[int]*PR) error {
-	// Count how many PRs are in the stack (including root PR if present)
+	return UpdateStackDescriptionCachedRouted(stack, currentBranch, prMap, func(*config.Branch) *Client { return c })
+}
+
+// UpdateStackDescriptionCachedRouted is the fork-aware variant of
+// UpdateStackDescriptionCached. The clientFor resolver picks the right
+// repo-targeted client per branch.
+func UpdateStackDescriptionCachedRouted(stack *config.Stack, currentBranch string, prMap map[int]*PR, clientFor func(*config.Branch) *Client) error {
 	prCount := 0
 	if stack.RootPRNumber > 0 {
 		prCount++
@@ -523,8 +714,6 @@ func (c *Client) UpdateStackDescriptionCached(stack *config.Stack, currentBranch
 			prCount++
 		}
 	}
-
-	// Only update descriptions when there are 2+ PRs in the stack
 	if prCount < 2 {
 		return nil
 	}
@@ -533,10 +722,12 @@ func (c *Client) UpdateStackDescriptionCached(stack *config.Stack, currentBranch
 		if branch.PRNumber == 0 {
 			continue
 		}
-
-		// Use pre-fetched PR data instead of making another API call
 		pr := prMap[branch.PRNumber]
 		if pr == nil {
+			continue
+		}
+		c := clientFor(branch)
+		if c == nil {
 			continue
 		}
 

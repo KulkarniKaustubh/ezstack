@@ -228,15 +228,32 @@ func applyPRRefresh(cacheDir string, branch *config.Branch, pr *github.PR, fetch
 }
 
 // updateStackDescriptions updates PR descriptions for all PRs in the given stack.
+// gh is the origin-targeted client (used as the default for fork-side
+// intermediates and for non-fork-mode stacks).
 func updateStackDescriptions(gh *github.Client, s *config.Stack, activeBranch string) error {
 	ui.Info("Updating PR stack descriptions...")
 	return gh.UpdateStackDescription(s, activeBranch)
 }
 
+// updateStackDescriptionsRouted is the fork-mode-aware variant: cross-repo
+// (PRTargetRepo == "upstream") branches use a client targeted at upstream;
+// everything else uses the origin client. Use this from any caller that
+// has access to the upstream info (e.g. promote, fork-mode pr create flows).
+func updateStackDescriptionsRouted(originGH *github.Client, s *config.Stack, activeBranch string, up *upstreamInfo) error {
+	ui.Info("Updating PR stack descriptions...")
+	return github.UpdateStackDescriptionRouted(s, activeBranch, func(b *config.Branch) *github.Client {
+		return clientForBranch(b, originGH, up)
+	})
+}
+
 // updatePRMetadata updates base branches and stack descriptions for all PRs in the stack.
 // Called after pushes and stack mutations to keep PR metadata in sync.
 // All GitHub API calls are parallelized to avoid serial latency.
-func updatePRMetadata(gh *github.Client, s *config.Stack, currentBranch *config.Branch) {
+//
+// Fork-mode aware: per-branch client routing routes "upstream"-target
+// branches through an upstream-targeted client. up may be nil for legacy
+// (non-fork) callers.
+func updatePRMetadata(originGH *github.Client, s *config.Stack, currentBranch *config.Branch, up *upstreamInfo) {
 	// Collect branches with PRs
 	var prBranches []*config.Branch
 	for _, b := range s.Branches {
@@ -248,7 +265,11 @@ func updatePRMetadata(gh *github.Client, s *config.Stack, currentBranch *config.
 		return
 	}
 
-	// Fetch all PR data in parallel
+	resolveClient := func(b *config.Branch) *github.Client {
+		return clientForBranch(b, originGH, up)
+	}
+
+	// Fetch all PR data in parallel, per-branch client.
 	prMap := make(map[int]*github.PR) // PR number -> PR data
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -260,7 +281,8 @@ func updatePRMetadata(gh *github.Client, s *config.Stack, currentBranch *config.
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			pr, err := gh.GetPR(branch.PRNumber)
+			cl := resolveClient(branch)
+			pr, err := cl.GetPR(branch.PRNumber)
 			if err == nil {
 				mu.Lock()
 				prMap[branch.PRNumber] = pr
@@ -270,14 +292,17 @@ func updatePRMetadata(gh *github.Client, s *config.Stack, currentBranch *config.
 	}
 	wg.Wait()
 
-	// Update base branches where needed
+	// Update base branches where needed (per-branch client). Note: gh
+	// allows base-ref changes only within the same repo. Promoting a PR
+	// from fork to upstream requires close-and-reopen — see promote.go.
 	for _, b := range prBranches {
 		pr := prMap[b.PRNumber]
 		if pr == nil || pr.State == "CLOSED" || pr.Merged {
 			continue
 		}
 		if pr.Base != b.Parent {
-			if err := gh.UpdatePRBase(b.PRNumber, b.Parent); err != nil {
+			cl := resolveClient(b)
+			if err := cl.UpdatePRBase(b.PRNumber, b.Parent); err != nil {
 				ui.Warn(fmt.Sprintf("Failed to update base branch for PR #%d: %v", b.PRNumber, err))
 			}
 		}
@@ -288,7 +313,7 @@ func updatePRMetadata(gh *github.Client, s *config.Stack, currentBranch *config.
 	if currentBranch != nil {
 		activeName = currentBranch.Name
 	}
-	if err := gh.UpdateStackDescriptionCached(s, activeName, prMap); err != nil {
+	if err := github.UpdateStackDescriptionCachedRouted(s, activeName, prMap, resolveClient); err != nil {
 		ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
 	}
 }
@@ -509,6 +534,244 @@ func newGitHubClient(g *git.Git) (*github.Client, error) {
 		return nil, fmt.Errorf("failed to get remote: %w", err)
 	}
 	return github.NewClient(remoteURL)
+}
+
+// newGitHubClientForTarget builds a GitHub client targeted at an arbitrary
+// owner/repo. Used by public-fork stacking when the bottom PR of a stack
+// must be created cross-repo against the upstream parent (rather than
+// against origin's URL like newGitHubClient).
+func newGitHubClientForTarget(owner, repo string) *github.Client {
+	return github.NewClientForRepo(owner, repo)
+}
+
+// upstreamInfo carries the cached fork-mode metadata that fork-aware
+// commands need: the parent repo's owner/name, the local git remote
+// pointing at it, and its default branch. Enabled is true iff fork mode
+// is currently "enabled" for the repo.
+type upstreamInfo struct {
+	Owner         string
+	Repo          string
+	Remote        string // local git remote name (e.g. "upstream")
+	DefaultBranch string
+	Enabled       bool
+}
+
+// Label returns "owner/repo" — convenience for UI rendering.
+func (u *upstreamInfo) Label() string {
+	if u == nil || u.Owner == "" {
+		return ""
+	}
+	return u.Owner + "/" + u.Repo
+}
+
+// UpstreamFromConfig returns the cached upstream info without running
+// detection or any GitHub calls. Returns nil when fork mode is not
+// "enabled" or upstream isn't configured. Use this from inner code paths
+// that just need to know the current state without prompting (e.g. sync's
+// PR-metadata update).
+func UpstreamFromConfig(mgr *stack.Manager) *upstreamInfo {
+	if mgr == nil {
+		return nil
+	}
+	cfg := mgr.GetConfig()
+	repoPath := mgr.GetRepoDir()
+	if cfg.GetForkMode(repoPath) != config.ForkModeEnabled {
+		return nil
+	}
+	owner, repo, remote, defBr := cfg.GetUpstream(repoPath)
+	if owner == "" {
+		return nil
+	}
+	return &upstreamInfo{
+		Owner: owner, Repo: repo,
+		Remote: remote, DefaultBranch: defBr,
+		Enabled: true,
+	}
+}
+
+// EnsureUpstreamDetected runs lazy fork-mode detection. It is the single
+// entry point for fork-aware commands (`pr create`, `pr stack`, `sync`,
+// `pr promote`).
+//
+// Behavior by ForkMode:
+//   - "disabled" → returns (nil, nil); no detection, no prompts.
+//   - "enabled" with cached UpstreamOwner → returns the cached info.
+//   - "auto" with no cached upstream → calls gh repo view to detect.
+//     Network/auth failures: warn, return (nil, nil), do NOT persist (we
+//     reprompt next time). Origin is not a fork: persist
+//     ForkMode=disabled and return (nil, nil). Origin IS a fork: prompt
+//     the user; on accept, add the upstream git remote (if missing),
+//     fetch it, persist, and return enabled info; on decline, persist
+//     ForkMode=disabled and return (nil, nil).
+//
+// Never returns an error that should block the calling command — the
+// returned `error` is reserved for unexpected internal failures.
+func EnsureUpstreamDetected(g *git.Git, mgr *stack.Manager) (*upstreamInfo, error) {
+	cfg := mgr.GetConfig()
+	repoPath := mgr.GetRepoDir()
+	mode := cfg.GetForkMode(repoPath)
+
+	if mode == config.ForkModeDisabled {
+		return nil, nil
+	}
+
+	owner, repo, remote, defBr := cfg.GetUpstream(repoPath)
+	if owner != "" {
+		return &upstreamInfo{
+			Owner: owner, Repo: repo,
+			Remote: remote, DefaultBranch: defBr,
+			Enabled: mode == config.ForkModeEnabled,
+		}, nil
+	}
+
+	// auto-mode + nothing cached: detect.
+	if mode != config.ForkModeAuto {
+		return nil, nil
+	}
+
+	originURL, err := g.GetRemote("origin")
+	if err != nil {
+		// No origin yet — not fatal; pr create will surface its own error.
+		return nil, nil
+	}
+	originClient, err := github.NewClient(originURL)
+	if err != nil {
+		// Non-github.com remote — fork mode doesn't apply.
+		return nil, nil
+	}
+	oo, or := originClient.OwnerRepo()
+
+	up, err := github.DetectUpstream(oo, or)
+	if err != nil {
+		// Auth/network/parse failure — do NOT persist; reprompt next run.
+		ui.Warn(fmt.Sprintf("Could not detect upstream (%v) — proceeding without fork mode", err))
+		return nil, nil
+	}
+	if !up.IsFork {
+		// Lock disabled: not a fork, never re-query.
+		cfg.ClearUpstream(repoPath)
+		_ = cfg.Save()
+		return nil, nil
+	}
+
+	// Fork detected. Prompt once.
+	ui.Info(fmt.Sprintf("Detected origin (%s/%s) as a fork of %s/%s.", oo, or, up.Owner, up.Repo))
+	ui.Info("ezstack can route stacked PRs so the bottom PR targets upstream and intermediate PRs stay in your fork.")
+	if !ui.ConfirmTUI(fmt.Sprintf("Enable fork mode for this repo (PRs against %s go to %s/%s)?", up.DefaultBranch, up.Owner, up.Repo)) {
+		cfg.SetForkMode(repoPath, config.ForkModeDisabled)
+		_ = cfg.Save()
+		return nil, nil
+	}
+
+	remoteName := "upstream"
+	if existing, _, fErr := g.FindRemoteByOwner(up.Owner); fErr == nil && existing != "" {
+		remoteName = existing
+	} else {
+		url := up.ChooseParentURL(originURL)
+		if err := g.AddRemote(remoteName, url); err != nil {
+			ui.Warn(fmt.Sprintf("Could not add 'upstream' git remote: %v — fork mode left disabled", err))
+			cfg.SetForkMode(repoPath, config.ForkModeDisabled)
+			_ = cfg.Save()
+			return nil, nil
+		}
+		ui.Success(fmt.Sprintf("Added git remote '%s' → %s", remoteName, url))
+	}
+	if err := g.FetchRemote(remoteName); err != nil {
+		ui.Warn(fmt.Sprintf("Could not fetch from %s: %v (continuing — sync will use cached state)", remoteName, err))
+	}
+
+	cfg.SetUpstream(repoPath, up.Owner, up.Repo, remoteName, up.DefaultBranch)
+	if err := cfg.Save(); err != nil {
+		ui.Warn(fmt.Sprintf("Could not persist upstream config: %v", err))
+	}
+	return &upstreamInfo{
+		Owner: up.Owner, Repo: up.Repo,
+		Remote: remoteName, DefaultBranch: up.DefaultBranch,
+		Enabled: true,
+	}, nil
+}
+
+// prTarget describes where (which repo) and how (which head/base refs) a
+// branch's PR should be created. Resolved per-branch by resolvePRTarget.
+type prTarget struct {
+	TargetOwner string // owner of the repo where the PR will live
+	TargetRepo  string // repo name where the PR will live
+	HeadRef     string // value for `gh pr create --head` (may be "owner:branch")
+	BaseRef     string // value for `gh pr create --base`
+	IsCrossRepo bool   // true iff PR lives outside origin (cross-repo to upstream)
+}
+
+// resolvePRTarget decides whether a branch's PR should be created in the
+// fork (origin) or cross-repo against upstream. Returns the gh-create
+// arguments for either case.
+//
+//   - Fork mode disabled / upstream not detected → classic same-repo flow
+//     (target = origin, head = bare branch, base = parent).
+//   - Same-org fork (origin owner == upstream owner) → hard error: same-org
+//     forks need the GraphQL `headRepositoryId` flow which ezstack does
+//     not yet implement. Caller should surface a helpful message.
+//   - Branch's parent IS the stack's main → cross-repo PR in upstream.
+//   - Branch's parent is another local branch → fork-side PR (intermediate).
+func resolvePRTarget(g *git.Git, mgr *stack.Manager, b *config.Branch, up *upstreamInfo) (*prTarget, error) {
+	originURL, err := g.GetRemote("origin")
+	if err != nil {
+		return nil, err
+	}
+	originClient, err := github.NewClient(originURL)
+	if err != nil {
+		return nil, err
+	}
+	oo, or := originClient.OwnerRepo()
+
+	// Classic single-repo flow when fork mode is off or undetected.
+	if up == nil || !up.Enabled {
+		return &prTarget{
+			TargetOwner: oo, TargetRepo: or,
+			HeadRef: b.Name, BaseRef: b.Parent,
+			IsCrossRepo: false,
+		}, nil
+	}
+
+	// Same-org fork is a documented gap: GitHub requires GraphQL
+	// `headRepositoryId` (added Jan 2023) to open cross-fork PRs in the
+	// same org, and ezstack uses the gh-CLI REST path. Refuse cleanly.
+	if strings.EqualFold(oo, up.Owner) {
+		return nil, fmt.Errorf(
+			"ezstack: same-organization forks (origin=%s/%s, upstream=%s/%s) cannot use fork mode — "+
+				"cross-fork PRs in the same org need the GraphQL createPullRequest path which is not yet implemented.\n"+
+				"Workaround: contribute from a personal fork, or run `ezs upstream disable`",
+			oo, or, up.Owner, up.Repo)
+	}
+
+	// Bottom of stack: cross-repo PR in upstream.
+	// Match the parent both by IsMainBranch (handles user-configured main
+	// names) and by upstream's default branch name (so a stack rooted on
+	// "main" still works when upstream's default is "develop", etc.).
+	if mgr.IsMainBranch(b.Parent) || b.Parent == up.DefaultBranch {
+		return &prTarget{
+			TargetOwner: up.Owner, TargetRepo: up.Repo,
+			HeadRef: fmt.Sprintf("%s:%s", oo, b.Name),
+			BaseRef: up.DefaultBranch,
+			IsCrossRepo: true,
+		}, nil
+	}
+
+	// Intermediate stack branch: same-repo PR in the fork.
+	return &prTarget{
+		TargetOwner: oo, TargetRepo: or,
+		HeadRef: b.Name, BaseRef: b.Parent,
+		IsCrossRepo: false,
+	}, nil
+}
+
+// clientForBranch returns the right GitHub client for fetching/editing a
+// branch's PR. Branches whose PRTargetRepo is "upstream" use a client
+// targeted at upstream; everything else uses origin.
+func clientForBranch(b *config.Branch, originClient *github.Client, up *upstreamInfo) *github.Client {
+	if b != nil && b.PRTargetRepo == config.PRTargetRepoUpstream && up != nil && up.Owner != "" {
+		return newGitHubClientForTarget(up.Owner, up.Repo)
+	}
+	return originClient
 }
 
 // selectAndRegisterRemotePR fetches open PRs, shows a selection UI,

@@ -803,6 +803,83 @@ func registerTools(s *server.MCPServer) {
 		}),
 	)
 
+	// ---- Public-fork stacking ----
+	//
+	// `pr promote` advances a fork-mode stack by closing the fork-side PR
+	// for a branch and reopening it cross-repo against upstream — the only
+	// path GitHub allows for changing a PR's base repo. This is destructive
+	// (loses inline review comments, approvals, CI history) so it carries
+	// the destructive annotation.
+	s.AddTool(
+		mcp.NewTool("ezstack_pr_promote",
+			mcp.WithDescription("Promote fork-side PRs to cross-repo upstream PRs after the bottom PR merges. GitHub's API can't change a PR's base repo, so promotion closes the existing fork-side PR and creates a new cross-repo PR (loses inline review comments, approvals, and CI history; preserves title, body, labels, assignees, reviewers, milestone). Defaults to all promotable branches in the current stack; pass branch for a single one or all=true to scan every stack."),
+			mcp.WithString("branch", mcp.Description("Specific branch to promote")),
+			mcp.WithBoolean("all", mcp.Description("Scan every stack for promotable branches (mutually exclusive with branch)")),
+			mcp.WithDestructiveHintAnnotation(true),
+		),
+		yesModeHandler(commands.PR, func(req mcp.CallToolRequest) []string {
+			args := []string{"promote"}
+			stringFlag(&args, req, "branch", "--branch")
+			boolFlag(&args, req, "all", "--all")
+			return args
+		}),
+	)
+
+	// `upstream show` is read-only.
+	s.AddTool(
+		mcp.NewTool("ezstack_upstream_show",
+			mcp.WithDescription("Show fork-mode and upstream config for the current repo: ForkMode (auto/enabled/disabled), upstream owner/repo, the local git remote pointing at upstream, and upstream's default branch."),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		toolHandler(commands.Upstream, func(req mcp.CallToolRequest) []string {
+			return []string{"show"}
+		}),
+	)
+
+	// `upstream set` writes config.json and may add a git remote.
+	s.AddTool(
+		mcp.NewTool("ezstack_upstream_set",
+			mcp.WithDescription("Manually set the upstream parent for fork-mode stacking. Adds the upstream git remote if missing and enables fork mode. Use when origin's GitHub metadata isn't a fork-of relationship (e.g. a hard fork) or when you want to override auto-detection."),
+			mcp.WithString("repo",
+				mcp.Description("Upstream owner/repo (e.g. \"kubernetes/kubernetes\")"),
+				mcp.Required(),
+			),
+			mcp.WithString("remote", mcp.Description("Local git remote name to use (default: \"upstream\")")),
+			mcp.WithString("default_branch", mcp.Description("Upstream's default branch (auto-detected when omitted)")),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		toolHandler(commands.Upstream, func(req mcp.CallToolRequest) []string {
+			args := []string{"set", req.GetString("repo", "")}
+			stringFlag(&args, req, "remote", "--remote")
+			stringFlag(&args, req, "default_branch", "--default-branch")
+			return args
+		}),
+	)
+
+	// `upstream unset` clears upstream and disables fork mode.
+	s.AddTool(
+		mcp.NewTool("ezstack_upstream_unset",
+			mcp.WithDescription("Clear upstream config and disable fork mode for the current repo. Existing PRs stay where they are; only future `pr create` calls revert to classic single-repo behavior."),
+			mcp.WithDestructiveHintAnnotation(true),
+		),
+		toolHandler(commands.Upstream, func(req mcp.CallToolRequest) []string {
+			return []string{"unset"}
+		}),
+	)
+
+	// `upstream init` runs interactive auto-detection. Wrapped in
+	// yesModeHandler so MCP clients (which can't answer the ConfirmTUI
+	// prompt) implicitly accept the "enable fork mode?" question.
+	s.AddTool(
+		mcp.NewTool("ezstack_upstream_init",
+			mcp.WithDescription("Run upstream auto-detection. Calls `gh repo view` against origin's GitHub coordinates; if origin is a fork, adds the upstream git remote and enables fork mode. In MCP context (no tty for ConfirmTUI), the enablement prompt is auto-accepted."),
+			mcp.WithDestructiveHintAnnotation(false),
+		),
+		yesModeHandler(commands.Upstream, func(req mcp.CallToolRequest) []string {
+			return []string{"init"}
+		}),
+	)
+
 	// ---- Stack membership ----
 
 	s.AddTool(

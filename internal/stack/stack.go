@@ -623,6 +623,43 @@ func (m *Manager) IsMainBranch(name string) bool {
 	return name == "main" || name == "master" || name == baseBranch
 }
 
+// IsForkStack reports whether a stack should use public-fork PR routing.
+// Returns true only when fork mode is "enabled" for this repo and the
+// stack is rooted on the upstream's default branch. Stacks rooted on a
+// remote feature branch (RootIsRemote) are excluded — their PRs already
+// target a non-main branch and don't fit the fork/upstream split.
+func (m *Manager) IsForkStack(s *config.Stack) bool {
+	if s == nil || s.RootIsRemote {
+		return false
+	}
+	if m.config.GetForkMode(m.repoDir) != config.ForkModeEnabled {
+		return false
+	}
+	_, _, _, defBr := m.config.GetUpstream(m.repoDir)
+	if defBr == "" {
+		return false
+	}
+	return s.Root == defBr || m.IsMainBranch(s.Root)
+}
+
+// RootRebaseTarget returns the git ref to rebase a stack's root branch
+// onto. For fork-mode stacks this is "<upstreamRemote>/<defaultBranch>"
+// so we sync against upstream's main rather than the fork's stale mirror.
+// Otherwise: "origin/<stack.Root>" — classic behavior. Callers must
+// already have fetched the relevant remote.
+func (m *Manager) RootRebaseTarget(s *config.Stack) string {
+	if s == nil {
+		return "origin/main"
+	}
+	if m.IsForkStack(s) {
+		_, _, remote, defBr := m.config.GetUpstream(m.repoDir)
+		if remote != "" && defBr != "" {
+			return remote + "/" + defBr
+		}
+	}
+	return "origin/" + s.Root
+}
+
 // GetStackForBranch returns the stack containing the given branch, or nil.
 func (m *Manager) GetStackForBranch(branchName string) *config.Stack {
 	key := m.findStackForBranch(branchName)
@@ -1730,6 +1767,35 @@ func (m *Manager) MarkBranchRemote(branchName, prURL, remote string) error {
 	cache.SetBranchCache(branchName, bc)
 
 	// Update runtime branch objects
+	for _, stack := range m.stackConfig.Stacks {
+		if stack.HasBranch(branchName) {
+			stack.PopulateBranchesWithCache(cache)
+			break
+		}
+	}
+
+	return m.stackConfig.Save(m.repoDir)
+}
+
+// SetBranchPRTarget records the repo where a branch's PR lives ("",
+// "fork", or "upstream") and optionally the PR # that this PR replaced
+// during a close-and-reopen promotion. Used by public-fork stacking.
+//
+// previousPRNumber == 0 means "leave alone" (don't overwrite an existing
+// non-zero PreviousPRNumber); pass a positive number only when actually
+// recording a promotion.
+func (m *Manager) SetBranchPRTarget(branchName, target string, previousPRNumber int) error {
+	cache := m.stackConfig.Cache
+	bc := cache.GetBranchCache(branchName)
+	if bc == nil {
+		bc = &config.BranchCache{}
+	}
+	bc.PRTargetRepo = target
+	if previousPRNumber > 0 {
+		bc.PreviousPRNumber = previousPRNumber
+	}
+	cache.SetBranchCache(branchName, bc)
+
 	for _, stack := range m.stackConfig.Stacks {
 		if stack.HasBranch(branchName) {
 			stack.PopulateBranchesWithCache(cache)

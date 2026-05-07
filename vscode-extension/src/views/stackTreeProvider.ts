@@ -25,9 +25,21 @@ export class StackNode extends vscode.TreeItem {
       stack.name || `Stack ${stack.hash.slice(0, 7)}`,
       vscode.TreeItemCollapsibleState.Expanded,
     );
-    this.description = `root: ${stack.root}`;
+    const descParts = [`root: ${stack.root}`];
+    // Public-fork stacking: surface the upstream parent so the user can
+    // see at a glance that this stack contributes cross-repo.
+    if (stack.is_fork_mode && stack.upstream_repo) {
+      descParts.push(`fork → ${stack.upstream_repo}`);
+    }
+    this.description = descParts.join("  ·  ");
     this.iconPath = new vscode.ThemeIcon("layers");
-    this.contextValue = "stack";
+    this.contextValue = stack.is_fork_mode ? "stackFork" : "stack";
+    if (stack.is_fork_mode && stack.upstream_repo) {
+      const md = new vscode.MarkdownString();
+      md.appendMarkdown(`**Fork mode** — bottom PR cross-repo to **${stack.upstream_repo}**, intermediates in your fork.\n\n`);
+      md.appendMarkdown(`Run \`ezs pr promote\` after the bottom PR merges to advance the chain.`);
+      this.tooltip = md;
+    }
   }
 }
 
@@ -70,6 +82,17 @@ export class BranchNode extends vscode.TreeItem {
     }
     if (b.pr_state) {
       parts.push(`[${b.pr_state}]`);
+    }
+    // Public-fork stacking chip: render right after the PR # so reviewers
+    // see "PR #123 [↑org/repo]" for cross-repo and "[fork]" for fork-side
+    // intermediates. Promote-pending alert sits next to it for urgency.
+    if (b.pr_target_repo === "upstream") {
+      parts.push(`[↑${b.pr_target_repo_label || "upstream"}]`);
+    } else if (b.pr_target_repo === "fork") {
+      parts.push("[fork]");
+    }
+    if (b.is_promote_pending) {
+      parts.push("⇡ promote");
     }
     if (b.ci_summary) {
       parts.push(`CI: ${b.ci_summary}`);
@@ -150,6 +173,17 @@ export class BranchNode extends vscode.TreeItem {
         md.appendMarkdown(` (${b.pr_state})`);
       }
       md.appendMarkdown("\n\n");
+      if (b.pr_target_repo === "upstream" && b.pr_target_repo_label) {
+        md.appendMarkdown(`Cross-repo PR in **${b.pr_target_repo_label}**\n\n`);
+      } else if (b.pr_target_repo === "fork" && b.pr_target_repo_label) {
+        md.appendMarkdown(`Fork-side PR in **${b.pr_target_repo_label}**\n\n`);
+      }
+      if (b.previous_pr_number) {
+        md.appendMarkdown(`Replaces #${b.previous_pr_number}\n\n`);
+      }
+      if (b.is_promote_pending) {
+        md.appendMarkdown(`**Promotion pending** — run \`ezs pr promote\` to close-and-reopen this PR cross-repo against upstream.\n\n`);
+      }
     }
     if (b.ci_state && b.ci_state !== "none") {
       md.appendMarkdown(`CI: ${b.ci_state}`);

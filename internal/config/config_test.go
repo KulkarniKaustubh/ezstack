@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -1610,5 +1611,178 @@ func TestRemoveBranchFromTree_PreservesSiblingSubtree(t *testing.T) {
 	}
 	if _, ok := s.Tree["feat-A"]; ok {
 		t.Error("feat-A is still in the tree")
+	}
+}
+
+// --- Fork-mode (upstream stacking) tests ---
+
+func TestMigrateV5ToV6(t *testing.T) {
+	v5Data := []byte(`{
+		"version": 5,
+		"repos": {
+			"/test/repo": {
+				"stacks": {
+					"abc1234": {"root": "main", "tree": {"feature-a": {}}}
+				},
+				"branches": {"feature-a": {"worktree_path": "/wt/a"}}
+			}
+		}
+	}`)
+
+	migrated, err := migrateV5ToV6(v5Data)
+	if err != nil {
+		t.Fatalf("migrateV5ToV6() error = %v", err)
+	}
+
+	var result struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(migrated, &result); err != nil {
+		t.Fatalf("json.Unmarshal error = %v", err)
+	}
+	if result.Version != 6 {
+		t.Errorf("Version = %d, want 6", result.Version)
+	}
+}
+
+func TestConfig_ForkModeAccessors(t *testing.T) {
+	c := &Config{Repos: map[string]*RepoConfig{}}
+	repoPath := "/repo/x"
+
+	// Default: auto when nothing configured
+	if got := c.GetForkMode(repoPath); got != ForkModeAuto {
+		t.Errorf("GetForkMode default = %q, want %q", got, ForkModeAuto)
+	}
+
+	// SetForkMode persists value
+	c.SetForkMode(repoPath, ForkModeDisabled)
+	if got := c.GetForkMode(repoPath); got != ForkModeDisabled {
+		t.Errorf("GetForkMode after disable = %q, want %q", got, ForkModeDisabled)
+	}
+
+	// Empty value falls back to auto (treats "" as auto)
+	c.SetForkMode(repoPath, "")
+	if got := c.GetForkMode(repoPath); got != ForkModeAuto {
+		t.Errorf("GetForkMode after clear = %q, want %q", got, ForkModeAuto)
+	}
+}
+
+func TestConfig_UpstreamAccessors(t *testing.T) {
+	c := &Config{Repos: map[string]*RepoConfig{}}
+	repoPath := "/repo/x"
+
+	// Empty: GetUpstream returns four blanks
+	o, r, rem, db := c.GetUpstream(repoPath)
+	if o != "" || r != "" || rem != "" || db != "" {
+		t.Errorf("empty GetUpstream = (%q,%q,%q,%q), want all blank", o, r, rem, db)
+	}
+
+	// SetUpstream persists, defaults remote to "upstream", flips ForkMode
+	c.SetUpstream(repoPath, "upstreamOrg", "myrepo", "", "main")
+	o, r, rem, db = c.GetUpstream(repoPath)
+	if o != "upstreamOrg" || r != "myrepo" || rem != "upstream" || db != "main" {
+		t.Errorf("after Set = (%q,%q,%q,%q), want (upstreamOrg,myrepo,upstream,main)", o, r, rem, db)
+	}
+	if c.GetForkMode(repoPath) != ForkModeEnabled {
+		t.Errorf("ForkMode after SetUpstream = %q, want %q", c.GetForkMode(repoPath), ForkModeEnabled)
+	}
+	if c.Repos[repoPath].UpstreamDetectedAt == 0 {
+		t.Error("UpstreamDetectedAt was not stamped")
+	}
+
+	// Custom remote name preserved
+	c.SetUpstream(repoPath, "upstreamOrg", "myrepo", "ups", "main")
+	_, _, rem, _ = c.GetUpstream(repoPath)
+	if rem != "ups" {
+		t.Errorf("custom remote = %q, want %q", rem, "ups")
+	}
+
+	// ClearUpstream wipes fields and sets ForkMode = disabled
+	c.ClearUpstream(repoPath)
+	o, r, rem, db = c.GetUpstream(repoPath)
+	if o != "" || r != "" || rem != "" || db != "" {
+		t.Errorf("after Clear = (%q,%q,%q,%q), want all blank", o, r, rem, db)
+	}
+	if c.GetForkMode(repoPath) != ForkModeDisabled {
+		t.Errorf("ForkMode after Clear = %q, want %q", c.GetForkMode(repoPath), ForkModeDisabled)
+	}
+}
+
+func TestBranchCache_PRTargetRepoFields(t *testing.T) {
+	bc := &BranchCache{
+		PRTargetRepo:     PRTargetRepoUpstream,
+		PreviousPRNumber: 42,
+	}
+	data, err := json.Marshal(bc)
+	if err != nil {
+		t.Fatalf("Marshal error = %v", err)
+	}
+	if !strings.Contains(string(data), `"pr_target_repo":"upstream"`) {
+		t.Errorf("Marshal output missing pr_target_repo: %s", data)
+	}
+	if !strings.Contains(string(data), `"previous_pr_number":42`) {
+		t.Errorf("Marshal output missing previous_pr_number: %s", data)
+	}
+
+	// Empty fields are omitted
+	bc2 := &BranchCache{PRTargetRepo: PRTargetRepoOrigin, PreviousPRNumber: 0}
+	data2, _ := json.Marshal(bc2)
+	if strings.Contains(string(data2), "pr_target_repo") {
+		t.Errorf("empty PRTargetRepo should be omitted: %s", data2)
+	}
+	if strings.Contains(string(data2), "previous_pr_number") {
+		t.Errorf("zero PreviousPRNumber should be omitted: %s", data2)
+	}
+}
+
+func TestStack_PopulateBranchesWithCache_CopiesPRTargetFields(t *testing.T) {
+	s := &Stack{
+		Root: "main",
+		Tree: BranchTree{"feat-a": BranchTree{}},
+	}
+	cache := &CacheConfig{
+		Branches: map[string]*BranchCache{
+			"feat-a": {
+				PRUrl:            "https://github.com/up/repo/pull/100",
+				PRTargetRepo:     PRTargetRepoUpstream,
+				PreviousPRNumber: 99,
+			},
+		},
+	}
+	s.PopulateBranchesWithCache(cache)
+	if len(s.Branches) != 1 {
+		t.Fatalf("Branches len = %d, want 1", len(s.Branches))
+	}
+	b := s.Branches[0]
+	if b.PRTargetRepo != PRTargetRepoUpstream {
+		t.Errorf("PRTargetRepo = %q, want %q", b.PRTargetRepo, PRTargetRepoUpstream)
+	}
+	if b.PreviousPRNumber != 99 {
+		t.Errorf("PreviousPRNumber = %d, want 99", b.PreviousPRNumber)
+	}
+}
+
+func TestRepoConfig_ForkModeRoundTrip(t *testing.T) {
+	rc := &RepoConfig{
+		RepoPath:              "/r",
+		WorktreeBaseDir:       "/wt",
+		ForkMode:              ForkModeEnabled,
+		UpstreamOwner:         "kubernetes",
+		UpstreamRepo:          "kubernetes",
+		UpstreamRemote:        "upstream",
+		UpstreamDefaultBranch: "main",
+		UpstreamDetectedAt:    1700000000,
+	}
+	data, err := json.Marshal(rc)
+	if err != nil {
+		t.Fatalf("Marshal error = %v", err)
+	}
+	var got RepoConfig
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("Unmarshal error = %v", err)
+	}
+	if got.ForkMode != ForkModeEnabled || got.UpstreamOwner != "kubernetes" ||
+		got.UpstreamDefaultBranch != "main" || got.UpstreamDetectedAt != 1700000000 {
+		t.Errorf("round-trip = %+v, want fork-mode fields preserved", got)
 	}
 }

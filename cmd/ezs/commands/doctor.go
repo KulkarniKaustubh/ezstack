@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/github"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 	"github.com/spf13/pflag"
 )
@@ -95,6 +97,11 @@ ezstack configuration is valid.
 					problems++
 				}
 			}
+			// Public-fork stacking sanity. Reports per-repo fork mode status,
+			// flags drift between cached upstream and the actual git remote,
+			// and surfaces the "you have push to upstream" warning when a
+			// fork mode is enabled despite direct push access being available.
+			problems += checkForkModeForRepo(cfg, path)
 		}
 	}
 
@@ -104,6 +111,63 @@ ezstack configuration is valid.
 		return nil
 	}
 	return fmt.Errorf("%d problem(s) detected", problems)
+}
+
+// checkForkModeForRepo runs per-repo fork-mode and upstream-remote
+// validation. Returns the number of problems detected (> 0 contributes
+// to doctor's overall failure exit code). Reads cached config only —
+// never prompts or modifies state.
+func checkForkModeForRepo(cfg *config.Config, repoPath string) int {
+	problems := 0
+	mode := cfg.GetForkMode(repoPath)
+	switch mode {
+	case config.ForkModeAuto:
+		ui.Info(fmt.Sprintf("Repo '%s': fork mode = auto (detection on next pr create)", repoPath))
+		return 0
+	case config.ForkModeDisabled:
+		ui.Info(fmt.Sprintf("Repo '%s': fork mode = disabled", repoPath))
+		return 0
+	case config.ForkModeEnabled:
+		// fall through to the heavier checks below
+	default:
+		ui.Warn(fmt.Sprintf("Repo '%s': unknown fork mode %q", repoPath, mode))
+		return 1
+	}
+
+	owner, repo, remote, defBr := cfg.GetUpstream(repoPath)
+	if owner == "" {
+		ui.Warn(fmt.Sprintf("Repo '%s': fork mode is enabled but no upstream is configured — run `ezs upstream init`", repoPath))
+		return 1
+	}
+	ui.Success(fmt.Sprintf("Repo '%s': fork mode → %s/%s (remote=%s, default=%s)", repoPath, owner, repo, remote, defBr))
+
+	// Verify the upstream git remote is wired up and points where we expect.
+	g := git.New(repoPath)
+	url, gErr := g.GetRemote(remote)
+	if gErr != nil {
+		ui.Warn(fmt.Sprintf("Repo '%s': git remote '%s' is missing — run `ezs upstream init` to add it", repoPath, remote))
+		return problems + 1
+	}
+	expected := fmt.Sprintf("github.com/%s/%s", owner, repo)
+	expectedSSH := fmt.Sprintf("github.com:%s/%s", owner, repo)
+	urlLower := strings.ToLower(url)
+	expLower := strings.ToLower(expected)
+	expSSHLower := strings.ToLower(expectedSSH)
+	if !strings.Contains(urlLower, expLower) && !strings.Contains(urlLower, expSSHLower) {
+		ui.Warn(fmt.Sprintf("Repo '%s': git remote '%s' (%s) does not match cached upstream %s/%s — run `ezs upstream init` to refresh", repoPath, remote, url, owner, repo))
+		problems++
+	}
+
+	// Optional: surface "you have push to upstream" so the user knows fork
+	// mode is unnecessary. Only emit when fork mode is enabled (not auto/
+	// disabled) to avoid spurious warnings on every doctor run for non-fork
+	// repos. Network-bound — best effort only.
+	if username, err := github.GetCurrentUser(); err == nil && username != "" {
+		if github.CanPushToRepo(owner, repo, username) {
+			ui.Warn(fmt.Sprintf("Repo '%s': you have push access to upstream %s/%s — consider `ezs upstream disable` and contributing directly", repoPath, owner, repo))
+		}
+	}
+	return problems
 }
 
 // Info prints a diagnostic report (versions, config state) for bug reports.

@@ -10,6 +10,13 @@ export interface StackJSON {
   root_additions?: number;
   root_deletions?: number;
   branches: BranchJSON[];
+  /** Public-fork stacking — true when this stack roots on the upstream
+   *  default branch and fork mode is enabled for the repo. */
+  is_fork_mode?: boolean;
+  /** "owner/repo" of the upstream parent (only when is_fork_mode). */
+  upstream_repo?: string;
+  upstream_remote?: string;
+  upstream_default_branch?: string;
 }
 
 /** Mirrors the Go branchJSON struct */
@@ -18,12 +25,24 @@ export interface BranchJSON {
   parent: string;
   is_merged: boolean;
   is_current: boolean;
+  is_remote?: boolean;
   pr_number?: number;
   pr_url?: string;
   worktree_path?: string;
   /** Always emitted (no omitempty). */
   additions: number;
   deletions: number;
+  /** Public-fork stacking: where this branch's PR lives. "" = origin
+   *  (classic single-repo flow), "fork" = same-repo within the
+   *  contributor's fork (intermediate stack PR), "upstream" = cross-repo
+   *  PR in the upstream parent (bottom of the fork stack). */
+  pr_target_repo?: "" | "fork" | "upstream";
+  /** "owner/repo" of the repo that hosts this branch's PR — empty in the
+   *  classic flow. */
+  pr_target_repo_label?: string;
+  /** When this branch's PR was promoted from a fork-side PR to a cross-
+   *  repo PR via close-and-reopen, this is the closed fork-side PR #. */
+  previous_pr_number?: number;
 }
 
 /** Mirrors the Go statusStackJSON struct (ezs status --json) */
@@ -37,6 +56,10 @@ export interface StatusStackJSON {
   root_additions?: number;
   root_deletions?: number;
   branches: StatusBranchJSON[];
+  is_fork_mode?: boolean;
+  upstream_repo?: string;
+  upstream_remote?: string;
+  upstream_default_branch?: string;
 }
 
 /** Mirrors the Go statusBranchJSON struct — branchJSON + PR/CI fields */
@@ -47,6 +70,10 @@ export interface StatusBranchJSON extends BranchJSON {
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN" | "";
   /** "" appears for PRs without a review yet; gh also returns "COMMENTED". */
   review_state?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED" | "COMMENTED" | "";
+  /** Public-fork stacking: parent merged in upstream while this branch's
+   *  PR is still fork-side. Run `ezs pr promote` to close-and-reopen the
+   *  PR cross-repo against upstream. */
+  is_promote_pending?: boolean;
 }
 
 /** Per-file git status indicator. */

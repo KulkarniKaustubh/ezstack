@@ -125,6 +125,18 @@ func Sync(args []string) error {
 
 	gh, _ := newGitHubClient(g)
 
+	// Public-fork stacking: detect upstream lazily so PR-metadata updates,
+	// stack-description edits, and (when fork mode is enabled) the rebase
+	// target use the right repo/remote. Returns nil silently when fork
+	// mode is disabled or origin isn't a fork. Pre-sync upstream fetch is
+	// done conditionally below so the rebase pulls the latest upstream/main.
+	up, _ := EnsureUpstreamDetected(g, mgr)
+	if up != nil && up.Enabled && up.Remote != "" {
+		if err := g.FetchRemote(up.Remote); err != nil {
+			ui.Warn(fmt.Sprintf("Could not fetch %s: %v — sync will use cached state", up.Remote, err))
+		}
+	}
+
 	deleteLocal := !*noDeleteLocal
 
 	dryRun := *dryRunFlag
@@ -880,8 +892,9 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 
 	// Update PR base branches and stack descriptions (parallelized per stack)
 	if gh != nil {
+		up := UpstreamFromConfig(mgr)
 		for _, s := range stacks {
-			updatePRMetadata(gh, s, nil)
+			updatePRMetadata(gh, s, nil, up)
 		}
 	}
 
@@ -1480,8 +1493,9 @@ func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope co
 
 	// Update PR metadata for in-scope stacks.
 	if gh != nil {
+		up := UpstreamFromConfig(mgr)
 		for _, s := range scopedStacks {
-			updatePRMetadata(gh, s, nil)
+			updatePRMetadata(gh, s, nil, up)
 		}
 	}
 
