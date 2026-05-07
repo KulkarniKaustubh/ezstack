@@ -1911,6 +1911,149 @@ Hooks only fire when ezstack is about to mutate state. Preview commands never in
 - `ezs sync --continue` runs `post-sync` (to signal "sync is done") but never re-runs `pre-sync`; the original invocation already fired it.
 - `ezs commit` / `ezs push` have no dry-run mode of their own, so their hook behaviour is unconditional.
 
+### Hook recipes
+
+Real-world examples that lean on the `EZS_*` env or events with no git-hook equivalent. Each recipe is a complete file you can drop into `~/.ezstack/hooks/<name>` and `chmod +x`.
+
+#### Sync submodule pointers after a rebase
+
+`ezs new` mirrors initialized submodules into a freshly created worktree, but `ezs sync` does not run `git submodule update` after rebasing — so a rebase that bumps a submodule SHA leaves the working copy stale. A `post-sync` hook keeps them aligned, and skips uninitialized submodules so it works in monorepos where developers only init the subset they care about.
+
+```bash
+#!/usr/bin/env bash
+# ~/.ezstack/hooks/post-sync
+set -euo pipefail
+cd "$EZS_REPO_ROOT"
+
+# `git submodule status` prefixes uninitialized entries with `-`; skip those
+# and only update what the user has already opted into.
+inited=$(git submodule status --recursive \
+  | awk '$0 !~ /^-/ {print $2}')
+
+[ -z "$inited" ] && exit 0
+
+# shellcheck disable=SC2086
+git submodule update --init --recursive -- $inited
+```
+
+The hook fires once at the end of the cascade (not per branch), and `post-sync` is warning-only — a flaky submodule remote will print a warning but won't fail the sync. Pair with a `pre-sync` that refuses to start when submodules have uncommitted changes:
+
+```bash
+#!/usr/bin/env bash
+# ~/.ezstack/hooks/pre-sync
+set -euo pipefail
+cd "$EZS_REPO_ROOT"
+
+if ! git submodule foreach --quiet 'git diff --quiet || exit 1'; then
+  echo "Refusing to sync: submodule has uncommitted changes." >&2
+  exit 1
+fi
+```
+
+#### Skip slow checks when an agent is driving
+
+`ezs agent --no-push` exposes `EZS_AGENT_NO_PUSH=1` to the spawned agent and any nested `ezs` calls. Use it to keep the full test suite gating human pushes while letting the agent iterate fast:
+
+```bash
+#!/usr/bin/env bash
+# ~/.ezstack/hooks/pre-push
+set -euo pipefail
+cd "$EZS_REPO_ROOT"
+
+if [ "${EZS_AGENT_NO_PUSH:-}" = "1" ]; then
+  echo "Agent push detected; skipping full check suite."
+  exit 0
+fi
+
+go test ./...
+golangci-lint run
+```
+
+Combine with `ezs push --verify` on shared dev hosts and CI to make the hook mandatory: a missing or non-executable `~/.ezstack/hooks/pre-push` is then a hard error, not a no-op.
+
+#### Per-stack policy
+
+`EZS_STACK_NAME` lets a single hook file route to different rules per stack. Use it to gate release stacks more strictly than wip stacks, or to enable submodule sync only where it matters:
+
+```bash
+#!/usr/bin/env bash
+# ~/.ezstack/hooks/pre-push
+set -euo pipefail
+cd "$EZS_REPO_ROOT"
+
+case "$EZS_STACK_NAME" in
+  release-*)
+    go test ./...
+    golangci-lint run
+    gitleaks protect --staged
+    ;;
+  wip-*|spike-*)
+    go vet ./...
+    ;;
+  "")
+    # Branch isn't part of a named stack — minimal gate.
+    go vet ./...
+    ;;
+  *)
+    go test ./...
+    ;;
+esac
+```
+
+The hook fires per branch on stack-wide pushes (`ezs push --stack`), so `EZS_BRANCH` and `EZS_STACK_HASH` are also available if you want per-branch policy inside a stack.
+
+#### Snapshot dirty state across a sync
+
+`pre-sync` aborts the sync; `post-sync` warns only. Combined, they bracket the cascade and let you stash uncommitted work safely without ezs's autostash:
+
+```bash
+#!/usr/bin/env bash
+# ~/.ezstack/hooks/pre-sync
+set -euo pipefail
+cd "$EZS_REPO_ROOT"
+
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  stash_msg="ezs-sync-snapshot $(date -u +%FT%TZ) $EZS_BRANCH"
+  git stash push -u -m "$stash_msg"
+  echo "$stash_msg" > "$EZS_REPO_ROOT/.git/ezs-sync-stash"
+fi
+```
+
+```bash
+#!/usr/bin/env bash
+# ~/.ezstack/hooks/post-sync
+set -euo pipefail
+cd "$EZS_REPO_ROOT"
+
+marker="$EZS_REPO_ROOT/.git/ezs-sync-stash"
+[ -f "$marker" ] || exit 0
+
+stash_msg=$(cat "$marker")
+rm -f "$marker"
+
+# Find the stash by message; pop it if found.
+ref=$(git stash list | awk -F: -v msg="$stash_msg" '$0 ~ msg {print $1; exit}')
+[ -n "$ref" ] && git stash pop "$ref"
+```
+
+Why a hook and not ezs's built-in autostash: the hook persists across `ezs sync --continue`, includes the stack name in the stash message, and keeps the marker on a per-worktree basis (`.git/` is worktree-local).
+
+#### Open the PR in your browser after push
+
+A `post-push` one-liner that turns "I just pushed" into "the PR is on screen":
+
+```bash
+#!/usr/bin/env bash
+# ~/.ezstack/hooks/post-push
+set -euo pipefail
+cd "$EZS_REPO_ROOT"
+
+# `gh pr view --web` no-ops cleanly when the branch has no PR yet.
+gh pr view --web "$EZS_BRANCH" 2>/dev/null || true
+```
+
+`post-push` is warning-only, so a missing `gh` (or no PR for the branch) won't fail the command.
+
 ---
 
 ## Discoverability

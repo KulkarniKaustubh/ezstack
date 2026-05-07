@@ -822,15 +822,22 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 		}
 	}
 
-	// padNameGap returns the spaces between a row's name section and the PR
-	// column. Floor at 2 so the PR cell never butts up against the name on
-	// the widest row.
+	// padNameGap fills the space between a row's name section and the PR
+	// column with leader dots so the eye can connect a short branch name to
+	// its PR cell. Visual width still equals maxNameWidth - w + 2 (floored
+	// at 2) so PR-column alignment is preserved. Layout is one space, a run
+	// of gray middle-dots, then one space; gaps narrower than 4 cells fall
+	// back to plain spaces since there's no room for a dot with breathing
+	// room on either side.
 	padNameGap := func(w int) string {
 		n := maxNameWidth - w + 2
 		if n < 2 {
 			n = 2
 		}
-		return strings.Repeat(" ", n)
+		if n < 4 {
+			return strings.Repeat(" ", n)
+		}
+		return " " + Gray + strings.Repeat("·", n-2) + Reset + " "
 	}
 	// padToWidth returns trailing spaces to fill a cell of textWidth out to
 	// width. Caller places it *outside* any color or hyperlink wrapper —
@@ -850,7 +857,12 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 		rootLine += " " + Gray + "(remote)" + Reset
 	}
 	if maxPRWidth > 0 || maxDiffWidth > 0 {
-		rootLine += padNameGap(rootNameWidth)
+		// Skip the leader-dot gap when the root has no metadata of its own —
+		// dots leading to nothing read as orphaned. TrimRight handles the
+		// trailing pad spaces from padToWidth below.
+		if rootPRText != "" || rootDiffText != "" {
+			rootLine += padNameGap(rootNameWidth)
+		}
 		if rootPRText != "" {
 			prColor := Yellow
 			if stack.RootPRNumber == 0 {
@@ -907,6 +919,7 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 		gap := padNameGap(r.nameWidth)
 
 		if shouldStrike {
+			gapWithStrike := strings.ReplaceAll(gap, Reset, Reset+Strikethrough)
 			prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
 			diffWithStrike := strings.ReplaceAll(diffFormatted, Reset, Reset+Strikethrough)
 			statusWithStrike := ""
@@ -915,7 +928,7 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 			}
 			fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
 				pointer, color, r.prefix, r.connector, Strikethrough+Bold, r.name, Reset+Strikethrough,
-				remoteTag, gap, prWithStrike, diffWithStrike, statusWithStrike, Reset)
+				remoteTag, gapWithStrike, prWithStrike, diffWithStrike, statusWithStrike, Reset)
 		} else {
 			fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
 				pointer, color, r.prefix, r.connector, Bold, r.name, Reset,
