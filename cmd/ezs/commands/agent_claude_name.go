@@ -2,10 +2,10 @@ package commands
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // Claude Code persists per-session display names as `agent-name` events
@@ -34,13 +34,21 @@ var claudeProjectsDir = func() string {
 	return filepath.Join(home, ".claude", "projects")
 }()
 
-// claudeAgentNameMaxLines bounds how far we'll scan into a session journal
-// looking for `agent-name` events. The events are written at session start
-// and on every `/rename`, so they cluster near the top. A few thousand lines
-// is generous: it covers the launch event reliably and any rename done in a
-// long-running session, while keeping the cost of an `agent ls` invocation
-// linear in the number of tracked sessions, not in transcript length.
-const claudeAgentNameMaxLines = 5000
+// claudeAgentNameMaxBytes bounds how much of a session journal we'll read
+// looking for `agent-name` events. The launch event is written at the top
+// of the file, but `/rename` events are appended whenever the user renames
+// — including deep into long-running sessions. A line-count cap would
+// silently lose a late rename and re-assert the launch label on resume,
+// defeating the whole point of this lookup; a byte cap keeps the worst-
+// case cost of `agent ls` bounded while still catching the most recent
+// rename in any realistic session journal.
+//
+// 256 MiB is well past any session size we've seen in the wild — heavy
+// sessions land in the low-MB range — and reading that much off a local
+// SSD is sub-second. If a journal grows past this we degrade gracefully
+// to "use whatever we found in the first 256 MiB", which is identical to
+// today's line-cap behavior in failure mode.
+const claudeAgentNameMaxBytes = 256 * 1024 * 1024
 
 // agentNameEvent matches the JSON shape Claude writes for `claude --name X`
 // and `/rename Y`. We deliberately only decode the fields we need so future
@@ -98,9 +106,10 @@ func claudeAgentName(sessionID string) string {
 // look like `agent-name` events. Returns the agentName from the last event
 // matching sessionID, or "" if none found within the scan budget.
 //
-// We use a cheap substring filter before decoding because the vast majority
-// of lines in a session journal are tool calls / messages with no `type`
-// match — full json.Unmarshal on every line is wasteful at 5k lines.
+// We use a cheap substring filter on the raw bytes before decoding because
+// the vast majority of lines in a session journal are tool calls / messages
+// with no `type` match — full json.Unmarshal on every line is wasteful.
+// Operating on the scanner's []byte avoids one allocation per line.
 func scanLastAgentName(path, sessionID string) string {
 	f, err := os.Open(path)
 	if err != nil {
@@ -115,15 +124,18 @@ func scanLastAgentName(path, sessionID string) string {
 	const maxLine = 4 * 1024 * 1024
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLine)
 
+	needle := []byte(`"agent-name"`)
 	last := ""
-	count := 0
+	bytesSeen := 0
 	for scanner.Scan() {
-		count++
-		if count > claudeAgentNameMaxLines {
+		line := scanner.Bytes()
+		// +1 for the newline the scanner stripped; keeps the budget
+		// honest against the on-disk size of what we've consumed.
+		bytesSeen += len(line) + 1
+		if bytesSeen > claudeAgentNameMaxBytes {
 			break
 		}
-		line := scanner.Bytes()
-		if !strings.Contains(string(line), `"agent-name"`) {
+		if !bytes.Contains(line, needle) {
 			continue
 		}
 		var ev agentNameEvent

@@ -120,6 +120,34 @@ func TestClaudeAgentName_FindsAcrossProjects(t *testing.T) {
 	}
 }
 
+// TestClaudeAgentName_PicksUpLateRename pins the failure mode where a long
+// session does a `/rename` after a large amount of intervening journal
+// activity. The scan must walk past the early launch event and surface the
+// most recent rename, not whichever agent-name event happens to appear in
+// the first chunk of the file. Without a budget that scales with file
+// size, ezstack would silently re-assert the launch label on the next
+// resume — defeating the entire feature for any non-trivial session.
+func TestClaudeAgentName_PicksUpLateRename(t *testing.T) {
+	root := withClaudeProjectsDir(t)
+	sid := "long-uuid"
+	lines := []string{
+		nameEvent(sid, "_ezstack-launch-label"),
+	}
+	// Pad with enough filler events to exceed any reasonable
+	// line-count cap. Each filler line is intentionally short so the
+	// budget pressure is on line *count*, not bytes.
+	filler := `{"type":"user","message":"x"}`
+	for i := 0; i < 20000; i++ {
+		lines = append(lines, filler)
+	}
+	lines = append(lines, nameEvent(sid, "renamed-late"))
+	writeJSONL(t, root, "-Users-test-repo", sid, lines)
+
+	if got := claudeAgentName(sid); got != "renamed-late" {
+		t.Errorf("expected late rename to win, got %q", got)
+	}
+}
+
 func TestClaudeAgentName_NoAgentNameEventReturnsEmpty(t *testing.T) {
 	root := withClaudeProjectsDir(t)
 	sid := "abc"

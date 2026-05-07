@@ -164,7 +164,9 @@ EOF
                 for pr_file in "$STATE_DIR/prs"/*.json; do
                     if [ -f "$pr_file" ]; then
                         if [ -n "$FILTER_HEAD" ]; then
-                            if ! grep -q "\"headRefName\": \"${FILTER_HEAD}\"" "$pr_file"; then
+                            # -F: branch names containing regex metachars
+                            # (`.`, `+`, etc.) must not be re-interpreted.
+                            if ! grep -qF "\"headRefName\": \"${FILTER_HEAD}\"" "$pr_file"; then
                                 continue
                             fi
                         fi
