@@ -110,15 +110,15 @@ ezstack configuration is valid.
 }
 
 // checkSubmoduleHealth surfaces submodule states that the user is likely
-// to want to know about: dirty working trees, detached HEAD edits in
-// progress, and unpushed commits whose SHA the parent already records.
-// Runs in the current working directory's repo only — the active worktree
-// is what the user is editing.
+// to want to know about: merge conflicts, dirty working trees, unpushed
+// commits, detached-HEAD edits in progress, and uncommitted gitlink
+// changes. Runs in the current working directory's repo only — the active
+// worktree is what the user is editing.
 //
-// Increments *problems for hard issues (dirty / unpushed). Detached HEAD
-// is reported as a warning only because it's the default state right
-// after `git submodule update`; only flag it when also dirty or with
-// unpushed commits.
+// Increments *problems only for hard errors (merge conflicts). Other
+// states are warnings: dirty/unpushed/detached are common in mid-flow
+// work; flagging them as failures would make `ezs doctor` impossible to
+// satisfy in a normal workflow.
 func checkSubmoduleHealth(problems *int) {
 	cwd, err := os.Getwd()
 	if err != nil {
@@ -138,26 +138,46 @@ func checkSubmoduleHealth(problems *int) {
 	}
 	clean := true
 	for _, s := range statuses {
+		// Print one warning line per actionable issue. Order matters:
+		// merge conflicts first (hard error), then unpushed (push gate),
+		// then dirty/detached/pointer (state surface). Detached HEAD is
+		// only flagged when paired with edits — bare detached HEAD is
+		// the default after `git submodule update` and not actionable.
 		if s.MergeConflict {
-			ui.Error(fmt.Sprintf("Submodule '%s' has unresolved merge conflicts", s.Path))
+			ui.Error(fmt.Sprintf(
+				"Submodule '%s' has unresolved merge conflicts.\n    Resolve in %s, then `git add %s` in the parent.",
+				s.Path, s.Path, s.Path,
+			))
 			*problems++
 			clean = false
 			continue
 		}
-		if s.Dirty {
-			ui.Warn(fmt.Sprintf("Submodule '%s' has uncommitted changes", s.Path))
+		if s.HasUnpushed {
+			ui.Warn(fmt.Sprintf(
+				"Submodule '%s' has %s not on origin.\n    To push: cd %s && git push",
+				s.Path, pluralizeCommits(s.UnpushedCount), s.Path,
+			))
 			clean = false
 		}
-		if s.HasUnpushed {
-			ui.Warn(fmt.Sprintf("Submodule '%s' has local commits not on origin — push the submodule before pushing the parent", s.Path))
+		if s.Dirty {
+			ui.Warn(fmt.Sprintf(
+				"Submodule '%s' has uncommitted changes.\n    Inspect: cd %s && git status",
+				s.Path, s.Path,
+			))
 			clean = false
 		}
 		if s.DetachedHead && (s.Dirty || s.HasUnpushed) {
-			ui.Warn(fmt.Sprintf("Submodule '%s' is on a detached HEAD with edits — commits made here can be orphaned. Run: git -C %s switch -c <branch>", s.Path, s.Path))
+			ui.Warn(fmt.Sprintf(
+				"Submodule '%s' is on a detached HEAD with edits — commits here can be orphaned.\n    Move to a branch: cd %s && git switch -c <branch>",
+				s.Path, s.Path,
+			))
 			clean = false
 		}
 		if s.PointerChanged {
-			ui.Warn(fmt.Sprintf("Submodule '%s' pointer differs from parent — commit the submodule pointer change in the parent or run `git submodule update`", s.Path))
+			ui.Warn(fmt.Sprintf(
+				"Submodule '%s' pointer differs from parent's index — commit the gitlink change in the parent (`git add %s && git commit`) or revert (`git submodule update`).",
+				s.Path, s.Path,
+			))
 			clean = false
 		}
 	}

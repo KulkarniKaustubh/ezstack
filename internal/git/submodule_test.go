@@ -335,10 +335,7 @@ func TestUpdateSubmodulesRecursive_AdvancesPointer(t *testing.T) {
 	subWorkingPath := filepath.Join(parent, "vendor/x")
 
 	// Capture the pointer SHA the parent currently records.
-	beforeSHA, err := SubmodulePointerSHA(subWorkingPath)
-	if err != nil {
-		t.Fatalf("SubmodulePointerSHA before: %v", err)
-	}
+	beforeSHA := strings.TrimSpace(mustOutput(t, subWorkingPath, "rev-parse", "HEAD"))
 
 	// Add a new commit in the *source* repo (i.e. the submodule's upstream).
 	mustRun := func(dir string, args ...string) {
@@ -372,10 +369,7 @@ func TestUpdateSubmodulesRecursive_AdvancesPointer(t *testing.T) {
 		t.Fatalf("UpdateSubmodulesRecursive: %v", err)
 	}
 
-	afterSHA, err := SubmodulePointerSHA(subWorkingPath)
-	if err != nil {
-		t.Fatalf("SubmodulePointerSHA after: %v", err)
-	}
+	afterSHA := strings.TrimSpace(mustOutput(t, subWorkingPath, "rev-parse", "HEAD"))
 	if afterSHA != newSrcSHA {
 		t.Errorf("submodule SHA after update = %s, want %s (parent's recorded SHA)", afterSHA, newSrcSHA)
 	}
@@ -481,19 +475,112 @@ func TestSubmoduleStatuses_NoSubmodules(t *testing.T) {
 	}
 }
 
-func TestHasUnpushedCommits_NoOriginRef(t *testing.T) {
-	// In a fresh repo with no remotes, HasUnpushedCommits should report
-	// false (inconclusive → don't flag) rather than erroring.
-	dir, cleanup := setupTestRepo(t)
-	defer cleanup()
+func TestSubmoduleStatuses_DetectsUnpushedInDetachedHead(t *testing.T) {
+	// Regression: an earlier branch-tip-vs-origin/branch check missed the
+	// case where edits were committed in detached HEAD (no branch points
+	// at the new SHA), letting `ezs push` silently publish a parent that
+	// records a SHA teammates can't fetch. The SHA-reachability check used
+	// here flags it correctly.
+	enableFileProtocol(t)
 
-	g := New(dir)
-	hasUnpushed, err := g.HasUnpushedCommits()
-	if err != nil {
-		t.Fatalf("HasUnpushedCommits: %v", err)
+	parent, parentCleanup := setupTestRepo(t)
+	defer parentCleanup()
+	src, srcCleanup := setupSubmoduleRepo(t, "detached-edit")
+	defer srcCleanup()
+
+	addSubmodule(t, parent, src, "vendor/x")
+
+	subDir := filepath.Join(parent, "vendor/x")
+	mustRun := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
 	}
-	if hasUnpushed {
-		t.Errorf("HasUnpushedCommits = true on repo with no remote, want false")
+
+	// Detach HEAD, then commit a new file. The new SHA exists on no
+	// branch and is not on origin.
+	currentSHA := strings.TrimSpace(mustOutput(t, subDir, "rev-parse", "HEAD"))
+	mustRun(subDir, "checkout", "--detach", currentSHA)
+	if err := os.WriteFile(filepath.Join(subDir, "local-only.txt"), []byte("x\n"), 0644); err != nil {
+		t.Fatalf("write local-only: %v", err)
+	}
+	mustRun(subDir, "add", "local-only.txt")
+	mustRun(subDir, "commit", "-m", "detached edit")
+
+	g := New(parent)
+	statuses, err := g.SubmoduleStatuses()
+	if err != nil {
+		t.Fatalf("SubmoduleStatuses: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("got %d statuses, want 1", len(statuses))
+	}
+	s := statuses[0]
+	if !s.HasUnpushed {
+		t.Errorf("HasUnpushed = false on detached-HEAD edit, want true (regression)")
+	}
+	if s.UnpushedCount != 1 {
+		t.Errorf("UnpushedCount = %d, want 1", s.UnpushedCount)
+	}
+	if !s.DetachedHead {
+		t.Errorf("DetachedHead = false, want true")
+	}
+}
+
+func TestSubmoduleStatuses_NoUnpushedWhenAtOrigin(t *testing.T) {
+	// A freshly-added submodule's checkout is exactly the SHA on origin.
+	// HasUnpushed must stay false and UnpushedCount must be zero.
+	enableFileProtocol(t)
+
+	parent, parentCleanup := setupTestRepo(t)
+	defer parentCleanup()
+	src, srcCleanup := setupSubmoduleRepo(t, "at-origin")
+	defer srcCleanup()
+
+	addSubmodule(t, parent, src, "vendor/x")
+
+	g := New(parent)
+	statuses, err := g.SubmoduleStatuses()
+	if err != nil {
+		t.Fatalf("SubmoduleStatuses: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("got %d statuses, want 1", len(statuses))
+	}
+	if statuses[0].HasUnpushed || statuses[0].UnpushedCount != 0 {
+		t.Errorf("expected no unpushed, got HasUnpushed=%v UnpushedCount=%d",
+			statuses[0].HasUnpushed, statuses[0].UnpushedCount)
+	}
+}
+
+func TestParseSubmoduleStatusLine(t *testing.T) {
+	cases := []struct {
+		name   string
+		line   string
+		marker byte
+		sha    string
+		path   string
+		ok     bool
+	}{
+		{"clean", " abc123 vendor/x", ' ', "abc123", "vendor/x", true},
+		{"changed", "+abc123 vendor/x (heads/main)", '+', "abc123", "vendor/x", true},
+		{"deinit", "-abc123 vendor/x", '-', "abc123", "vendor/x", true},
+		{"conflict", "Uabc123 vendor/x", 'U', "abc123", "vendor/x", true},
+		{"path with spaces", " abc123 vendor/dir with spaces", ' ', "abc123", "vendor/dir with spaces", true},
+		{"path with parens, no desc", " abc123 vendor/x(y)", ' ', "abc123", "vendor/x(y)", true},
+		{"empty", "", 0, "", "", false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			marker, sha, path, ok := parseSubmoduleStatusLine(c.line)
+			if marker != c.marker || sha != c.sha || path != c.path || ok != c.ok {
+				t.Errorf("got (marker=%q sha=%q path=%q ok=%v), want (marker=%q sha=%q path=%q ok=%v)",
+					marker, sha, path, ok, c.marker, c.sha, c.path, c.ok)
+			}
+		})
 	}
 }
 

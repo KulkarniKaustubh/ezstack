@@ -3,6 +3,7 @@ package git
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -41,30 +42,8 @@ func (g *Git) ListInitializedSubmodules() ([]string, error) {
 
 	var paths []string
 	for _, line := range strings.Split(out, "\n") {
-		if line == "" {
-			continue
-		}
-		// Status char is always the first byte. Lines are non-empty here.
-		status := line[0]
-		if status == '-' {
-			continue
-		}
-		// Format: "<status><sha> <path>[ (<desc>)]". Strip the status char,
-		// take the SHA up to the first space, then the path is the rest with
-		// the optional " (<desc>)" suffix removed. Parsing this way (rather
-		// than splitting on whitespace) preserves spaces inside submodule
-		// paths.
-		_, after, ok := strings.Cut(line[1:], " ")
-		if !ok || after == "" {
-			continue
-		}
-		path := after
-		if strings.HasSuffix(path, ")") {
-			if i := strings.LastIndex(path, " ("); i >= 0 {
-				path = path[:i]
-			}
-		}
-		if path == "" {
+		marker, _, path, ok := parseSubmoduleStatusLine(line)
+		if !ok || marker == '-' {
 			continue
 		}
 		paths = append(paths, path)
@@ -125,6 +104,11 @@ func (g *Git) UpdateSubmodulesRecursive() error {
 type SubmoduleStatus struct {
 	// Path is the submodule path relative to the parent repo root.
 	Path string
+	// SHA is the submodule's currently checked-out commit, as reported by
+	// `git submodule status`. When PointerChanged is false, this is also
+	// the SHA the parent records in its index; when true, the recorded
+	// SHA is whatever the parent's index points at instead.
+	SHA string
 	// PointerChanged is true when the parent's working tree records a
 	// different submodule SHA than its HEAD (the gitlink has been moved
 	// but not committed). Maps to the leading '+' from `git submodule
@@ -141,10 +125,16 @@ type SubmoduleStatus struct {
 	// the default state after `git submodule update`, but editing in this
 	// state risks orphaning commits.
 	DetachedHead bool
-	// HasUnpushed is true when the submodule has local commits on its
-	// current branch that are not present on its `origin` remote. Only set
-	// when the submodule has an `origin` remote and HEAD is on a branch.
+	// HasUnpushed is true when the submodule's checked-out commit is not
+	// reachable from any `origin/*` ref. Catches the case where edits
+	// were made in detached HEAD and committed (so no branch points at
+	// them), which a branch-tip check would miss. Set to false when the
+	// submodule has no `origin` remote — we can't decide, so don't flag.
 	HasUnpushed bool
+	// UnpushedCount is the number of commits reachable from the checked-out
+	// SHA but not from any `origin/*` ref. Surfaced in warnings so the user
+	// sees how much work is unpublished. Zero when HasUnpushed is false.
+	UnpushedCount int
 }
 
 // HasIssues returns true if the submodule has any state worth surfacing.
@@ -179,31 +169,15 @@ func (g *Git) SubmoduleStatuses() ([]SubmoduleStatus, error) {
 
 	var statuses []SubmoduleStatus
 	for _, line := range strings.Split(out, "\n") {
-		if line == "" {
-			continue
-		}
-		marker := line[0]
-		if marker == '-' {
-			// Not initialized — skip. We can't probe a submodule that
-			// has never been cloned.
-			continue
-		}
-		_, after, ok := strings.Cut(line[1:], " ")
-		if !ok || after == "" {
-			continue
-		}
-		path := after
-		if strings.HasSuffix(path, ")") {
-			if i := strings.LastIndex(path, " ("); i >= 0 {
-				path = path[:i]
-			}
-		}
-		if path == "" {
+		marker, sha, path, ok := parseSubmoduleStatusLine(line)
+		if !ok || marker == '-' {
+			// Not initialized or unparseable — skip.
 			continue
 		}
 
 		st := SubmoduleStatus{
 			Path:           path,
+			SHA:            sha,
 			PointerChanged: marker == '+',
 			MergeConflict:  marker == 'U',
 		}
@@ -215,13 +189,91 @@ func (g *Git) SubmoduleStatuses() ([]SubmoduleStatus, error) {
 		if detached, err := sub.IsDetachedHead(); err == nil {
 			st.DetachedHead = detached
 		}
-		if unpushed, err := sub.HasUnpushedCommits(); err == nil {
-			st.HasUnpushed = unpushed
+		// Use a SHA-based reachability check rather than branch-tip vs
+		// origin/branch. Submodules are commonly on a detached HEAD; a
+		// branch-tip check would silently miss commits made there.
+		if sha != "" {
+			if count, err := sub.commitsNotOnRemote("origin", sha); err == nil && count > 0 {
+				st.HasUnpushed = true
+				st.UnpushedCount = count
+			}
 		}
 
 		statuses = append(statuses, st)
 	}
 	return statuses, nil
+}
+
+// parseSubmoduleStatusLine pulls the marker, SHA, and path out of one line of
+// `git submodule status` output. Lines look like:
+//
+//	" <sha> <path>"             — initialized, clean
+//	"+<sha> <path> (<desc>)"    — initialized, working tree differs from index
+//	"-<sha> <path>"             — not initialized
+//	"U<sha> <path>"             — merge conflicts
+//
+// The optional `(<desc>)` suffix is `git describe` output, not part of the
+// path. Returns ok=false when the line can't be parsed (empty, malformed).
+// Path parsing preserves spaces inside the path itself.
+func parseSubmoduleStatusLine(line string) (marker byte, sha, path string, ok bool) {
+	if line == "" {
+		return 0, "", "", false
+	}
+	marker = line[0]
+	rest := line[1:]
+	shaPart, after, found := strings.Cut(rest, " ")
+	if !found || shaPart == "" || after == "" {
+		return 0, "", "", false
+	}
+	path = after
+	// Strip the optional " (<desc>)" suffix. Anchor on " (" — paths that
+	// happen to contain "(" elsewhere are preserved.
+	if strings.HasSuffix(path, ")") {
+		if i := strings.LastIndex(path, " ("); i >= 0 {
+			path = path[:i]
+		}
+	}
+	if path == "" {
+		return 0, "", "", false
+	}
+	return marker, shaPart, path, true
+}
+
+// commitsNotOnRemote returns the number of commits reachable from `sha` but
+// not reachable from any `<remote>/*` ref. Returns (0, nil) when the remote
+// has no tracked refs at all (in that case we can't decide whether `sha` is
+// "unpushed" — caller should not flag).
+//
+// Used by SubmoduleStatuses to drive the push gate: any positive count means
+// pushing the parent now would publish a recorded SHA that teammates can't
+// fetch.
+func (g *Git) commitsNotOnRemote(remote, sha string) (int, error) {
+	if remote == "" || sha == "" {
+		return 0, fmt.Errorf("remote and sha must be non-empty")
+	}
+	// Cheap existence check: if we have no remote-tracking refs at all for
+	// this remote, the rev-list below would treat `sha` as wholly unpushed
+	// and return its full ancestry — a misleading false positive. Skip.
+	refs, err := g.run("for-each-ref", "--format=%(refname)", "refs/remotes/"+remote+"/")
+	if err != nil || refs == "" {
+		return 0, err
+	}
+	out, err := g.run("rev-list", "--count", sha, "--not", "--remotes="+remote)
+	if err != nil {
+		return 0, err
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return 0, nil
+	}
+	n := 0
+	for _, c := range out {
+		if c < '0' || c > '9' {
+			return 0, fmt.Errorf("unexpected rev-list count %q", out)
+		}
+		n = n*10 + int(c-'0')
+	}
+	return n, nil
 }
 
 // HasUncommittedChanges reports whether g.RepoDir has any modified, staged,
@@ -235,83 +287,21 @@ func (g *Git) HasUncommittedChanges() (bool, error) {
 }
 
 // IsDetachedHead reports whether HEAD is detached (no symbolic ref).
+// Distinguishes the "detached" exit code from real failures (missing repo,
+// permission errors): only exit code 1 with `-q` means "not a symbolic ref";
+// anything else is propagated so callers don't misclassify a broken repo as
+// detached. Bypasses g.run because that wrapper formats the error and loses
+// the underlying *exec.ExitError needed to inspect the exit code.
 func (g *Git) IsDetachedHead() (bool, error) {
-	_, err := g.run("symbolic-ref", "-q", "HEAD")
-	if err == nil {
-		return false, nil
-	}
-	// `git symbolic-ref -q` exits 1 (no message) when HEAD is detached.
-	// Anything else is a real failure, but we can't distinguish without
-	// parsing — treat any error as "detached" since the caller's worst
-	// case is a false positive on a broken repo.
-	return true, nil
-}
-
-// HasUnpushedCommits reports whether the current branch has commits that
-// are not reachable from `origin/<same-name>`. Returns (false, nil) when
-// there is no `origin` remote, no matching remote-tracking ref, or HEAD is
-// detached — those states can't be checked, so they're not flagged.
-func (g *Git) HasUnpushedCommits() (bool, error) {
-	branch, err := g.CurrentBranch()
-	if err != nil || branch == "" || branch == "HEAD" {
-		return false, nil
-	}
-	remoteRef := "refs/remotes/origin/" + branch
-	if _, err := g.run("rev-parse", "--verify", "--quiet", remoteRef); err != nil {
-		// No matching remote-tracking ref — can't decide. Don't flag.
-		return false, nil
-	}
-	out, err := g.run("rev-list", "--count", remoteRef+".."+branch)
-	if err != nil {
-		return false, err
-	}
-	return strings.TrimSpace(out) != "0", nil
-}
-
-// SubmoduleHasCommit reports whether commit `sha` is reachable from any ref
-// on remote `remoteName` for the submodule rooted at `submodulePath`. Used
-// as a pre-push check: if the parent repo records a submodule SHA that
-// nobody else can fetch, pushing the parent breaks teammates.
-//
-// Returns (true, nil) when the SHA is on the remote, (false, nil) when it
-// is not. An error means we couldn't determine; the caller should treat
-// that as inconclusive rather than blocking the push.
-func SubmoduleHasCommit(submodulePath, remoteName, sha string) (bool, error) {
-	if submodulePath == "" || sha == "" {
-		return false, fmt.Errorf("submodule path and sha must be non-empty")
-	}
-	if remoteName == "" {
-		remoteName = "origin"
-	}
-	sub := New(submodulePath)
-	// `branch -r --contains <sha>` lists remote-tracking refs that
-	// contain the commit. If any of them belong to <remoteName>, the
-	// commit is on that remote.
-	out, err := sub.run("branch", "-r", "--contains", sha)
-	if err != nil {
-		// Most common cause: <sha> is unknown locally. That can mean the
-		// submodule's working tree is stale and we never fetched the
-		// commit — inconclusive, not a hard fail.
-		return false, err
-	}
-	prefix := remoteName + "/"
-	for _, line := range strings.Split(out, "\n") {
-		line = strings.TrimSpace(line)
-		// `branch -r` prefixes the active line with '*' — strip it.
-		line = strings.TrimPrefix(line, "* ")
-		if strings.HasPrefix(line, prefix) {
+	cmd := exec.Command("git", "symbolic-ref", "-q", "HEAD")
+	cmd.Dir = g.RepoDir
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
 			return true, nil
 		}
+		return false, fmt.Errorf("symbolic-ref HEAD: %w", err)
 	}
 	return false, nil
-}
-
-// SubmodulePointerSHA returns the submodule's currently-checked-out SHA at
-// `submodulePath` (relative to no specific repo — caller passes an absolute
-// path). This is the SHA `git submodule status` would print.
-func SubmodulePointerSHA(submodulePath string) (string, error) {
-	sub := New(submodulePath)
-	return sub.run("rev-parse", "HEAD")
 }
 
 // MirrorSubmodules initializes in destPath the same submodules that are

@@ -179,10 +179,26 @@ func warnUnpushedSubmodules(g *git.Git) {
 		return
 	}
 	for _, s := range statuses {
-		if s.HasUnpushed {
-			ui.Warn(fmt.Sprintf("Submodule '%s' has commits not on origin. Push the submodule first, otherwise teammates won't be able to fetch the SHA the parent records.", s.Path))
+		if !s.HasUnpushed {
+			continue
 		}
+		ui.Warn(fmt.Sprintf(
+			"Submodule '%s' has %s not on origin — pushing the parent now will record a SHA teammates can't fetch.\n    To push the submodule first: cd %s && git push",
+			s.Path, pluralizeCommits(s.UnpushedCount), s.Path,
+		))
 	}
+}
+
+// pluralizeCommits formats a commit count for human display. Used in
+// submodule warnings where "1 commit" reads better than "1 commits".
+func pluralizeCommits(n int) string {
+	if n == 1 {
+		return "1 commit"
+	}
+	if n <= 0 {
+		return "commits"
+	}
+	return fmt.Sprintf("%d commits", n)
 }
 
 func pushSpecificBranch(g *git.Git, branch string, force bool, remote string) error {
