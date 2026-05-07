@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/mattn/go-runewidth"
 )
 
 // PrintStack used to render the stack root as a bare name with PR info; the
@@ -185,11 +186,14 @@ func TestPrintStack_AlignsMetadataColumn(t *testing.T) {
 		if pr == -1 {
 			continue
 		}
-		prCols = append(prCols, pr)
+		// Measure DISPLAY column, not byte offset — the gap fill uses U+00B7
+		// middle dots (2 bytes in UTF-8 each), so byte indices diverge across
+		// rows even when they're visually aligned.
+		prCols = append(prCols, runewidth.StringWidth(clean[:pr]))
 		// Diff cells start with " +N" right after the (padded) PR cell. Only
 		// rows that actually have diff stats contribute to diff alignment.
 		if d := strings.Index(clean[pr:], " +"); d != -1 {
-			diffCols = append(diffCols, pr+d)
+			diffCols = append(diffCols, runewidth.StringWidth(clean[:pr+d]))
 		}
 	}
 	if len(prCols) < 2 {
@@ -208,6 +212,90 @@ func TestPrintStack_AlignsMetadataColumn(t *testing.T) {
 			t.Errorf("diff column row %d = %d, want %d (PR cell not padded), output:\n%s", i, c, diffCols[0], out)
 		}
 	}
+}
+
+// TestPrintStack_StrikethroughSpansDotLeader covers the gap-with-strike
+// substitution: when a merged/closed branch is shorter than the widest row,
+// its name-to-PR gap fills with leader dots whose escape sequence embeds a
+// Reset. Without re-applying Strikethrough after that Reset the PR cell on
+// merged rows would print without the strike, since strikethrough is a
+// separate SGR attribute that propagates until cleared.
+//
+// The widest branch deliberately carries no PR so its gap stays at the
+// 2-space floor — which forces the merged row's gap to actually contain
+// dots (vs. plain spaces, which would skip the substitution path entirely).
+func TestPrintStack_StrikethroughSpansDotLeader(t *testing.T) {
+	stack := &config.Stack{
+		Hash: "abc1234",
+		Root: "main",
+		Branches: []*config.Branch{
+			{Name: "feat-very-long-branch-name", Parent: "main"},
+			{Name: "merged", Parent: "main", PRNumber: 99, PRState: "MERGED"},
+		},
+	}
+
+	out := captureStderr(t, func() {
+		PrintStack(stack, "", false, nil)
+	})
+
+	var line string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.Contains(stripANSI(l), "merged") && strings.Contains(stripANSI(l), "[PR #") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatalf("merged-row line not found in:\n%s", out)
+	}
+	if !strings.Contains(stripANSI(line), "·") {
+		t.Fatalf("merged row's gap should contain leader dots; got %q", stripANSI(line))
+	}
+	prByte := strings.Index(line, "[PR #")
+	if prByte == -1 {
+		t.Fatalf("PR cell not found in merged-row line: %q", line)
+	}
+	if !sgrStrikethroughActiveAt(line, prByte) {
+		t.Errorf("strikethrough dropped before PR cell on merged row — gapWithStrike substitution broke; got line: %q", line)
+	}
+}
+
+// sgrStrikethroughActiveAt walks the SGR (CSI ... m) escape sequences in s up
+// to byte position pos and returns whether strikethrough (SGR 9) is the
+// active text-decoration state. Used to assert that the dot-leader gap
+// preserves strikethrough across its embedded Reset on merged-row renders.
+func sgrStrikethroughActiveAt(s string, pos int) bool {
+	strike := false
+	i := 0
+	for i < pos && i < len(s) {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && (s[j] >= '0' && s[j] <= '9' || s[j] == ';') {
+				j++
+			}
+			if j < len(s) && s[j] == 'm' {
+				params := s[i+2 : j]
+				if params == "" {
+					strike = false
+				} else {
+					for _, p := range strings.Split(params, ";") {
+						switch p {
+						case "0", "":
+							strike = false
+						case "9":
+							strike = true
+						case "29":
+							strike = false
+						}
+					}
+				}
+				i = j + 1
+				continue
+			}
+		}
+		i++
+	}
+	return strike
 }
 
 // indexOfAny returns the lowest index in s where any of the given substrings

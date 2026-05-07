@@ -615,21 +615,6 @@ func (m *Manager) SetBranchAgentSessionID(branchName, sessionID, mode string) er
 	return m.stackConfig.Save(m.repoDir)
 }
 
-// GetTreeChildren returns child branches based on the original tree structure (BaseBranch),
-// not the effective parent. This is used for navigation (up/down) where we want to
-// follow the tree hierarchy even when parents have been merged and children reparented.
-func (m *Manager) GetTreeChildren(branchName string) []*config.Branch {
-	var children []*config.Branch
-	for _, stack := range m.stackConfig.Stacks {
-		for _, branch := range stack.Branches {
-			if branch.BaseBranch == branchName {
-				children = append(children, branch)
-			}
-		}
-	}
-	return children
-}
-
 // IsMainBranch checks if a branch is the main/master branch.
 // Use only for protection (e.g. preventing deletion of main). For stack-root
 // logic, compare against Stack.Root or use GetStackForBranch instead.
