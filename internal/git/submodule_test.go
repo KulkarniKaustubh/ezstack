@@ -500,6 +500,14 @@ func TestSubmoduleStatuses_DetectsUnpushedInDetachedHead(t *testing.T) {
 		}
 	}
 
+	// Configure identity in the submodule's working tree. After `git
+	// submodule add`, the submodule's config lives in .git/modules/<path>/
+	// and does NOT inherit the source repo's identity. CI runners have no
+	// global gitconfig, so without this `git commit` would error with
+	// "Author identity unknown".
+	mustRun(subDir, "config", "user.email", "test@test.com")
+	mustRun(subDir, "config", "user.name", "Test User")
+
 	// Detach HEAD, then commit a new file. The new SHA exists on no
 	// branch and is not on origin.
 	currentSHA := strings.TrimSpace(mustOutput(t, subDir, "rev-parse", "HEAD"))
