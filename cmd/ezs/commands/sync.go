@@ -46,6 +46,9 @@ func Sync(args []string) error {
     --dry-run              Preview what would be synced without making changes
     --no-autostash         Don't stash uncommitted changes before rebase
     --json                 Output dry-run results as JSON (requires --dry-run)
+    --include-remote-worktrees   Include pickup branches (ezs new origin/<branch> / -r)
+                                 in bulk sync. Excluded by default to avoid rewriting
+                                 another contributor's history.
     -h, --help             Show this help message
 
 %sDESCRIPTION%s
@@ -95,6 +98,7 @@ func Sync(args []string) error {
 	continueFlag := fs.Bool("continue", false, "Continue after resolving conflicts")
 	noAutostashFlag := fs.Bool("no-autostash", false, "Don't stash uncommitted changes before rebase")
 	jsonFlag := fs.Bool("json", false, "Output dry-run results as JSON")
+	includeRemoteFlag := fs.Bool("include-remote-worktrees", false, "Include pickup branches (IsRemote=true) in bulk sync")
 
 	if err := fs.Parse(args); err != nil {
 		if err == pflag.ErrHelp {
@@ -233,7 +237,7 @@ func Sync(args []string) error {
 			return fmt.Errorf("branch %q is not part of any stack", *branchFlag)
 		}
 		if dryRun {
-			return syncDryRun(mgr, gh, []*config.Stack{targetStack}, jsonOutput)
+			return syncDryRun(mgr, gh, []*config.Stack{targetStack}, jsonOutput, *includeRemoteFlag)
 		}
 		// Use the branch's worktree path so stash operations target the correct worktree
 		branchCwd := cwd
@@ -252,9 +256,9 @@ func Sync(args []string) error {
 			return err
 		}
 		if dryRun {
-			return syncDryRun(mgr, gh, []*config.Stack{targetStack}, jsonOutput)
+			return syncDryRun(mgr, gh, []*config.Stack{targetStack}, jsonOutput, *includeRemoteFlag)
 		}
-		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash, useMerge)
+		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash, useMerge, *includeRemoteFlag)
 	}
 
 	// Try to get current stack (may fail if on main)
@@ -263,14 +267,14 @@ func Sync(args []string) error {
 		// On main or not in a stack - show main menu
 		if *allFlag || *stackFlag {
 			if dryRun {
-				return syncDryRunAll(mgr, gh, jsonOutput)
+				return syncDryRunAll(mgr, gh, jsonOutput, *includeRemoteFlag)
 			}
-			return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge)
+			return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge, *includeRemoteFlag)
 		}
 		if dryRun {
-			return syncDryRunAll(mgr, gh, jsonOutput)
+			return syncDryRunAll(mgr, gh, jsonOutput, *includeRemoteFlag)
 		}
-		return syncFromMain(mgr, gh, cwd, deleteLocal, autostash, useMerge)
+		return syncFromMain(mgr, gh, cwd, deleteLocal, autostash, useMerge, *includeRemoteFlag)
 	}
 
 	// In a stack worktree - existing behavior
@@ -282,16 +286,16 @@ func Sync(args []string) error {
 
 	if dryRun {
 		if *allFlag {
-			return syncDryRunAll(mgr, gh, jsonOutput)
+			return syncDryRunAll(mgr, gh, jsonOutput, *includeRemoteFlag)
 		}
-		return syncDryRun(mgr, gh, []*config.Stack{currentStack}, jsonOutput)
+		return syncDryRun(mgr, gh, []*config.Stack{currentStack}, jsonOutput, *includeRemoteFlag)
 	}
 
 	if *allFlag {
-		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge)
+		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge, *includeRemoteFlag)
 	}
 	if *stackFlag {
-		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash, useMerge)
+		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash, useMerge, *includeRemoteFlag)
 	}
 	if *currentFlag {
 		return syncCurrentBranch(mgr, gh, branch, cwd, autostash, useMerge)
@@ -303,7 +307,7 @@ func Sync(args []string) error {
 		return syncChildren(mgr, branch, useMerge)
 	}
 
-	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal, autostash, useMerge)
+	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal, autostash, useMerge, *includeRemoteFlag)
 }
 
 // printSyncStats prints a "commits ahead of parent" summary for each branch
@@ -454,8 +458,8 @@ func squashStackChildren(mgr *stack.Manager) error {
 }
 
 // syncDryRun previews what sync would do for specific stacks
-func syncDryRun(mgr *stack.Manager, gh *github.Client, stacks []*config.Stack, jsonOutput bool) error {
-	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, stacks)
+func syncDryRun(mgr *stack.Manager, gh *github.Client, stacks []*config.Stack, jsonOutput bool, includeRemote bool) error {
+	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, stacks, includeRemote)
 	if err != nil {
 		return err
 	}
@@ -472,8 +476,8 @@ func syncDryRun(mgr *stack.Manager, gh *github.Client, stacks []*config.Stack, j
 }
 
 // syncDryRunAll previews what sync would do across all stacks
-func syncDryRunAll(mgr *stack.Manager, gh *github.Client, jsonOutput bool) error {
-	syncNeeded, err := mgr.DetectSyncNeededAllStacks(gh)
+func syncDryRunAll(mgr *stack.Manager, gh *github.Client, jsonOutput bool, includeRemote bool) error {
+	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, mgr.ListStacks(), includeRemote)
 	if err != nil {
 		return err
 	}
@@ -490,7 +494,7 @@ func syncDryRunAll(mgr *stack.Manager, gh *github.Client, jsonOutput bool) error
 }
 
 // syncFromMain shows an interactive menu when running sync from main (not in a stack worktree)
-func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, autostash bool, useMerge bool) error {
+func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, autostash bool, useMerge bool, includeRemote bool) error {
 	stacks := mgr.ListStacks()
 	if len(stacks) == 0 {
 		ui.Info("No stacks found. Create a branch first with: ezs new <branch-name>")
@@ -512,13 +516,13 @@ func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal
 
 	switch selected {
 	case 0:
-		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge)
+		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge, includeRemote)
 	case 1:
 		targetStack, err := ui.SelectStack(stacks, "Select a stack to sync")
 		if err != nil {
 			return err
 		}
-		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash, useMerge)
+		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash, useMerge, includeRemote)
 	}
 
 	return nil
@@ -612,7 +616,7 @@ func formatSyncConfirmMsg(info stack.SyncInfo) string {
 // makeSyncCallbacks creates standard sync callbacks for interactive syncing.
 // When singleStackMode is true, declining a push shows a more detailed error
 // explaining that child branches can't be synced without pushing the parent.
-func makeSyncCallbacks(singleStackMode bool, autostash bool, useMerge bool) *stack.SyncCallbacks {
+func makeSyncCallbacks(singleStackMode bool, autostash bool, useMerge bool, includeRemote bool) *stack.SyncCallbacks {
 	beforeRebase := func(info stack.SyncInfo) bool {
 		if ui.ConfirmTUI(formatSyncConfirmMsg(info)) {
 			if useMerge {
@@ -672,10 +676,11 @@ func makeSyncCallbacks(singleStackMode bool, autostash bool, useMerge bool) *sta
 	}
 
 	return &stack.SyncCallbacks{
-		BeforeRebase: beforeRebase,
-		AfterRebase:  afterRebase,
-		Autostash:    autostash,
-		UseMerge:     useMerge,
+		BeforeRebase:           beforeRebase,
+		AfterRebase:            afterRebase,
+		Autostash:              autostash,
+		UseMerge:               useMerge,
+		IncludeRemoteWorktrees: includeRemote,
 	}
 }
 
@@ -827,10 +832,10 @@ func handleMergedBranchCleanup(mgr *stack.Manager, mergedBranches []stack.Merged
 }
 
 // syncSpecificStacks syncs a specific set of stacks
-func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, stacks []*config.Stack, autostash bool, useMerge bool) error {
+func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, stacks []*config.Stack, autostash bool, useMerge bool, includeRemote bool) error {
 	ui.Info("Fetching latest changes...")
 
-	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, stacks)
+	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, stacks, includeRemote)
 	if err != nil {
 		ui.Warn(fmt.Sprintf("Could not check for sync needed: %v", err))
 	}
@@ -861,7 +866,7 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 	if len(syncNeeded) > 0 {
 		fmt.Fprintln(os.Stderr)
 
-		callbacks := makeSyncCallbacks(len(stacks) == 1, autostash, useMerge)
+		callbacks := makeSyncCallbacks(len(stacks) == 1, autostash, useMerge, includeRemote)
 		results, err := mgr.SyncSpecificStacks(stacks, gh, callbacks)
 		if err != nil {
 			return err
@@ -889,7 +894,7 @@ func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, delet
 }
 
 // syncInteractive shows an interactive menu for sync operations
-func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config.Stack, branch *config.Branch, cwd string, deleteLocal bool, autostash bool, useMerge bool) error {
+func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config.Stack, branch *config.Branch, cwd string, deleteLocal bool, autostash bool, useMerge bool, includeRemote bool) error {
 	options := []string{}
 	optionActions := []string{}
 
@@ -947,9 +952,9 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 	action := optionActions[selected]
 	switch action {
 	case "auto":
-		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash, useMerge)
+		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash, useMerge, includeRemote)
 	case "auto-all":
-		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge)
+		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge, includeRemote)
 	case "current":
 		return syncCurrentBranch(mgr, gh, branch, cwd, autostash, useMerge)
 	case "parent":
@@ -962,7 +967,7 @@ func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config
 }
 
 // syncStacks resolves the target stacks and delegates to syncSpecificStacks.
-func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, allStacks bool, autostash bool, useMerge bool) error {
+func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, allStacks bool, autostash bool, useMerge bool, includeRemote bool) error {
 	var stacks []*config.Stack
 	if allStacks {
 		stacks = mgr.ListStacks()
@@ -977,7 +982,7 @@ func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal b
 		}
 		stacks = []*config.Stack{currentStack}
 	}
-	return syncSpecificStacks(mgr, gh, cwd, deleteLocal, stacks, autostash, useMerge)
+	return syncSpecificStacks(mgr, gh, cwd, deleteLocal, stacks, autostash, useMerge, includeRemote)
 }
 
 // continueScope captures the user-requested scope for `ezs sync --continue`.

@@ -7,6 +7,8 @@ export interface StackJSON {
   root_base?: string;
   root_pr_number?: number;
   root_pr_url?: string;
+  /** True when the stack root is a pickup branch (`ezs new -r`); drives the `(remote)` tag. */
+  root_is_remote?: boolean;
   root_additions?: number;
   root_deletions?: number;
   branches: BranchJSON[];
@@ -18,6 +20,8 @@ export interface BranchJSON {
   parent: string;
   is_merged: boolean;
   is_current: boolean;
+  /** True when the branch is a pickup (`ezs new origin/<branch>`); drives the `(remote)` tag. */
+  is_remote?: boolean;
   pr_number?: number;
   pr_url?: string;
   worktree_path?: string;
@@ -34,6 +38,8 @@ export interface StatusStackJSON {
   root_base?: string;
   root_pr_number?: number;
   root_pr_url?: string;
+  /** True when the stack root is a pickup branch (`ezs new -r`); drives the `(remote)` tag. */
+  root_is_remote?: boolean;
   root_additions?: number;
   root_deletions?: number;
   branches: StatusBranchJSON[];
