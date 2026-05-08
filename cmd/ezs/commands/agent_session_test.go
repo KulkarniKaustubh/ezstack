@@ -85,6 +85,47 @@ func TestSessionDisplayName(t *testing.T) {
 	}
 }
 
+func TestOneShotFeatureLabel(t *testing.T) {
+	cases := []struct {
+		desc string
+		uuid string
+		want string
+	}{
+		// Typical: short description plus 6-char UUID suffix.
+		{"Add user auth with JWT", "7a3b9f12-4567-89ab-cdef-1234567890ab", "add-user-auth-with-jwt-7a3b9f"},
+		// Empty description falls back to suffix only.
+		{"", "abcdef0123456789", "abcdef"},
+		// Pure-symbol description sanitizes to nothing → suffix only.
+		{"!!!", "abcdef0123456789", "abcdef"},
+		// Long description gets truncated at 32 sanitized chars before the suffix joins.
+		{"This is a very long description that goes on and on", "abcdef0123456789",
+			"this-is-a-very-long-description-abcdef"},
+		// Empty UUID degrades gracefully to description only.
+		{"feature x", "", "feature-x"},
+	}
+	for _, c := range cases {
+		if got := oneShotFeatureLabel(c.desc, c.uuid); got != c.want {
+			t.Errorf("oneShotFeatureLabel(%q, %q) = %q, want %q", c.desc, c.uuid, got, c.want)
+		}
+	}
+}
+
+// TestResolveFeatureSession_OneShotLabelEmbedsDescription pins the bug fix for
+// parallel feature sessions: two `ezs agent feature` runs with different
+// descriptions must produce distinct display labels even when no stack is bound.
+func TestResolveFeatureSession_OneShotLabelEmbedsDescription(t *testing.T) {
+	withStubSessionID(t, "abcdef1234567890")
+
+	plan := resolveFeatureSession("/repo", "claude", nil, false, "Add user authentication")
+	if plan == nil || plan.injection == nil {
+		t.Fatal("expected non-nil plan")
+	}
+	wantLabel := "_ezstack-feature-add-user-authentication-abcdef"
+	if !containsString(plan.injection.Args, wantLabel) {
+		t.Errorf("expected display label %q in args; got %v", wantLabel, plan.injection.Args)
+	}
+}
+
 // ── buildAgentSessionArgs (claude family) ──────────────────────────────────────
 
 func TestBuildAgentSessionArgs_ClaudeFreshWhenNoStored(t *testing.T) {
@@ -213,7 +254,7 @@ func TestBuildAgentSessionArgs_NonClaudeForceFreshMintsNew(t *testing.T) {
 func TestResolveFeatureSession_OneShotMintsUUID(t *testing.T) {
 	withStubSessionID(t, "feature-oneshot-uuid")
 
-	plan := resolveFeatureSession("/repo", "claude", nil, false)
+	plan := resolveFeatureSession("/repo", "claude", nil, false, "build a thing")
 	if plan == nil || plan.injection == nil {
 		t.Fatal("expected non-nil plan for feature one-shot mode")
 	}
@@ -233,7 +274,7 @@ func TestResolveFeatureSession_OneShotMintsUUID(t *testing.T) {
 func TestResolveFeatureSession_OneShotNonClaudeOmitsArgs(t *testing.T) {
 	withStubSessionID(t, "non-claude-oneshot")
 
-	plan := resolveFeatureSession("/repo", "aider", nil, false)
+	plan := resolveFeatureSession("/repo", "aider", nil, false, "build a thing")
 	if plan == nil || plan.injection == nil {
 		t.Fatal("expected non-nil plan for feature one-shot mode (non-claude)")
 	}
@@ -249,7 +290,7 @@ func TestResolveFeatureSession_ExistingStackResumes(t *testing.T) {
 	withStubSessionID(t, "should-not-be-used")
 	stack := &config.Stack{Hash: "abc1234", Name: "my-feature", AgentSessionID: "stored-feature-id"}
 
-	plan := resolveFeatureSession("/repo", "claude", stack, false)
+	plan := resolveFeatureSession("/repo", "claude", stack, false, "")
 	if plan == nil || plan.injection == nil {
 		t.Fatal("expected non-nil plan for existing-stack feature mode")
 	}
@@ -270,7 +311,7 @@ func TestResolveFeatureSession_ExistingStackForceFreshMints(t *testing.T) {
 	withStubSessionID(t, "minted-fresh-feature")
 	stack := &config.Stack{Hash: "abc1234", Name: "my-feature", AgentSessionID: "stored-feature-id"}
 
-	plan := resolveFeatureSession("/repo", "claude", stack, true)
+	plan := resolveFeatureSession("/repo", "claude", stack, true, "")
 	if !plan.injection.Fresh {
 		t.Error("--no-resume must mint a new ID even for existing-stack feature")
 	}

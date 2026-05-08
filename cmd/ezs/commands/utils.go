@@ -14,6 +14,7 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/hooks"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
+	"golang.org/x/term"
 )
 
 // BuildHookContext returns a hooks.Context populated with the current repo
@@ -54,13 +55,24 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
-// EmitCd outputs a cd command to stdout if running through the shell wrapper,
-// otherwise prints a message to stderr telling the user to cd manually.
+// EmitCd outputs a cd command to stdout when the parent shell is actually
+// capturing stdout via `eval "$(...)"`, and falls back to a stderr hint
+// otherwise.
+//
+// EZS_SHELL_WRAPPER=1 alone is not enough to decide: the shipped wrapper sets
+// it for *every* invocation (both the eval branch and the default branch), so
+// any command that calls EmitCd from a non-eval'd path (e.g. the merged-stack
+// cleanup inside `ezs ls`) would otherwise litter the user's terminal with a
+// raw `cd '/path'` line. We additionally check that stdout is not a TTY —
+// when the shell is doing command substitution, stdout is a pipe.
 func EmitCd(path string) {
-	if isShellWrapped() {
+	stdoutIsPipe := !term.IsTerminal(int(os.Stdout.Fd()))
+	if isShellWrapped() && stdoutIsPipe {
 		fmt.Printf("cd %s\n", shellQuote(path))
-	} else {
-		ui.Info(fmt.Sprintf("Run: cd %s", shellQuote(path)))
+		return
+	}
+	ui.Info(fmt.Sprintf("Run: cd %s", shellQuote(path)))
+	if !isShellWrapped() {
 		ui.Info("Tip: Add to your shell config for automatic cd: eval \"$(ezs --shell-init)\"")
 	}
 }

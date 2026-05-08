@@ -870,7 +870,7 @@ func agentFeature(agentCmd, repoPath, description string, existingStack *config.
 
 	// Feature mode binds its session to an existing stack when one was given,
 	// otherwise the session is one-shot (no stable identifier to resume from).
-	sess := resolveFeatureSession(repoPath, agentCmd, existingStack, extras.noResume)
+	sess := resolveFeatureSession(repoPath, agentCmd, existingStack, extras.noResume, description)
 
 	if extras.dryRun {
 		printDryRunPrompt("feature", prompt)

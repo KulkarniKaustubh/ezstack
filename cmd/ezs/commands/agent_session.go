@@ -307,6 +307,12 @@ func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, br
 // stable handle exposed via EZS_AGENT_SESSION_ID) but nothing is persisted
 // on the ezs side because there's no scope to attach to.
 //
+// description is used to derive a unique, human-readable label when there
+// is no existing stack — without it, multiple parallel `ezs agent feature`
+// invocations would all collide on `_ezstack-feature` in the agent's resume
+// picker. We append a short UUID suffix so identical descriptions still
+// produce distinct labels.
+//
 // Persisted entries are tagged config.AgentSessionFeatureMode so `agent ls
 // --feature` includes them. Note that work-mode and feature-mode share the
 // same Stack.AgentSessionID storage slot — running the other mode against
@@ -315,12 +321,15 @@ func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, br
 //
 // Plans are produced for any agent. Claude-family agents get CLI flag
 // injection; others get the env var only.
-func resolveFeatureSession(repoPath, agentCmd string, existingStack *config.Stack, forceFresh bool) *agentSessionPlan {
+func resolveFeatureSession(repoPath, agentCmd string, existingStack *config.Stack, forceFresh bool, description string) *agentSessionPlan {
 	if existingStack == nil {
 		// One-shot session: fresh UUID. forceFresh=true because there's no
 		// stored ID to resume from in this mode regardless of caller intent.
-		label := sessionDisplayName("feature", scopeStack)
-		inj := buildAgentSessionArgs(agentCmd, "", label, true)
+		// Mint the UUID up-front so we can use a slice of it as a
+		// uniqueness suffix on the display label.
+		id := newSessionID()
+		label := sessionDisplayName("feature-"+oneShotFeatureLabel(description, id), scopeStack)
+		inj := buildAgentSessionArgsWithID(agentCmd, label, id)
 		return &agentSessionPlan{injection: &inj, persist: func(string) error { return nil }}
 	}
 	identifier := existingStack.Name
@@ -335,6 +344,65 @@ func resolveFeatureSession(repoPath, agentCmd string, existingStack *config.Stac
 		persist: func(id string) error {
 			return persistStackSessionID(repoPath, hash, id, config.AgentSessionFeatureMode)
 		},
+	}
+}
+
+// oneShotFeatureLabel builds the identifier portion of a display label for a
+// no-stack feature session, by combining a sanitized, length-capped slice of
+// the feature description with a short UUID suffix. The suffix guarantees
+// uniqueness even when the user kicks off two features with identical (or
+// empty) descriptions, while the description prefix keeps the label
+// recognizable in the agent's resume picker.
+//
+// Examples:
+//
+//	oneShotFeatureLabel("Add user auth with JWT", "7a3b9f12-...") -> "add-user-auth-with-jwt-7a3b9f"
+//	oneShotFeatureLabel("",                       "abcdef01-...") -> "abcdef"
+func oneShotFeatureLabel(description, sessionID string) string {
+	const (
+		descMax   = 32 // chars of sanitized description retained
+		suffixLen = 6  // chars of UUID kept as the uniqueness suffix
+	)
+	suffix := sessionID
+	if len(suffix) > suffixLen {
+		suffix = suffix[:suffixLen]
+	}
+	// Lowercase the description so labels read uniformly regardless of how
+	// the user typed the prose (stack-derived labels are already lowercase).
+	desc := sanitizeSessionLabel(strings.ToLower(description))
+	if desc == "session" { // sanitizer's "no usable chars" sentinel
+		desc = ""
+	}
+	if len(desc) > descMax {
+		desc = strings.TrimRight(desc[:descMax], "-")
+	}
+	if desc == "" {
+		return suffix
+	}
+	if suffix == "" {
+		return desc
+	}
+	return desc + "-" + suffix
+}
+
+// buildAgentSessionArgsWithID is buildAgentSessionArgs's variant for callers
+// that have already minted the UUID externally (so it can flow into the
+// display label before the injection plan is built). Always treated as a
+// fresh session — there is no stored ID to resume from.
+func buildAgentSessionArgsWithID(agentCmd, displayName, sessionID string) agentSessionInjection {
+	if isClaudeFamily(agentCmd) {
+		return agentSessionInjection{
+			Args:          []string{"--session-id", sessionID, "--name", displayName},
+			IncludePrompt: true,
+			SessionID:     sessionID,
+			Fresh:         true,
+		}
+	}
+	return agentSessionInjection{
+		Args:          nil,
+		IncludePrompt: true,
+		SessionID:     sessionID,
+		Fresh:         true,
 	}
 }
 

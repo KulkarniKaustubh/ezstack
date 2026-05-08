@@ -366,7 +366,9 @@ func prCreateAllDraft(currentStack *config.Stack, draft, force bool, aiGen aiPRG
 		prBody := ""
 		if aiGen != nil {
 			ui.Info(fmt.Sprintf("Asking AI to draft PR for %s...", b.Name))
-			res, err := generatePRContent(g, aiGen, b)
+			// --stack always asks the AI for both fields: there is no
+			// per-branch -t/-b in this flow.
+			res, err := generatePRContent(g, aiGen, b, aiPRRequest{Title: true, Body: true})
 			if err != nil {
 				ui.Warn(fmt.Sprintf("--auto for %s: %v (using fallback title)", b.Name, err))
 			} else {
@@ -598,26 +600,35 @@ func prCreate(args []string) error {
 	// --force was confirmed. The branch cache has been reconciled by
 	// refreshPRStateFromGitHub. Proceed to create.
 
-	// --auto: ask the AI agent to draft title and body up front. -t/-b
-	// values still win over the AI output for the field they specify, so
-	// users can pin a title and let the AI fill the body, or vice versa.
+	// --auto: ask the AI agent to draft only the fields the user did not
+	// pin via -t / -b. If both are pinned, --auto is effectively a no-op
+	// and we skip the agent call entirely — previously we still ran the
+	// agent and discarded the unused fields, which wasted tokens and
+	// surfaced a stranger AI title in the success log that misled users
+	// into thinking their -t was being overridden.
 	if useAuto {
-		gen, genErr := buildAIPRGenerator(cwd)
-		if genErr != nil {
-			return genErr
+		req := aiPRRequest{Title: *title == "", Body: *body == ""}
+		switch {
+		case !req.Title && !req.Body:
+			ui.Info("--auto: -t and -b both supplied; skipping AI draft")
+		default:
+			gen, genErr := buildAIPRGenerator(cwd)
+			if genErr != nil {
+				return genErr
+			}
+			ui.Info(fmt.Sprintf("Asking AI agent to draft PR %s...", aiPRRequestSummary(req)))
+			res, aiErr := generatePRContent(g, gen, branch, req)
+			if aiErr != nil {
+				return fmt.Errorf("--auto: %w", aiErr)
+			}
+			if req.Title {
+				*title = res.Title
+			}
+			if req.Body {
+				*body = res.Body
+			}
+			ui.Success(aiDraftReadyMessage(req, *title, *body))
 		}
-		ui.Info("Asking AI agent to draft PR title and body...")
-		res, aiErr := generatePRContent(g, gen, branch)
-		if aiErr != nil {
-			return fmt.Errorf("--auto: %w", aiErr)
-		}
-		if *title == "" {
-			*title = res.Title
-		}
-		if *body == "" {
-			*body = res.Body
-		}
-		ui.Success(fmt.Sprintf("AI draft ready: title=%q (body %d chars)", res.Title, len(res.Body)))
 	}
 
 	prTitle := *title
