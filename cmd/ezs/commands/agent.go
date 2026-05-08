@@ -29,12 +29,14 @@ func Agent(args []string) error {
     ezs agent [options] [-- <agent-args>]   Launch agent scoped to a stack
     ezs agent feature|feat "description"    Launch agent to build a feature as stacked branches
     ezs agent ls|list [filter] [--json]     List tracked AI sessions (current repo only)
+    ezs agent rm|remove <filter>            Forget a tracked AI session binding
     ezs agent prompt <flag> <work|feature>  View or edit agent prompt templates
 
 %sMODES%s
     (default)       Work session — agent is scoped to a stack with full context
     feature (feat)  Feature builder — agent breaks a feature into incremental stacked branches
     ls (list)       List the AI sessions ezs has bound to stacks/branches in this repo
+    rm (remove)     Forget the persisted session binding for a stack/branch/repo
     prompt          View or edit the prompt templates used by the agent
 
 %sOPTIONS%s
@@ -121,6 +123,8 @@ func Agent(args []string) error {
 			return agentPrompt(rest)
 		case "ls", "list":
 			return agentList(rest)
+		case "rm", "remove":
+			return agentRm(rest)
 		}
 	}
 
@@ -221,7 +225,7 @@ func Agent(args []string) error {
 
 	// Reject unknown subcommands (e.g. "ezs agent new" or "ezs agent foo")
 	if fs.NArg() > 0 {
-		return fmt.Errorf("unknown agent subcommand %q.\nValid subcommands: feature (or feat), prompt\nFor help: ezs agent --help", fs.Arg(0))
+		return fmt.Errorf("unknown agent subcommand %q.\nValid subcommands: feature (or feat), ls (or list), rm (or remove), prompt\nFor help: ezs agent --help", fs.Arg(0))
 	}
 
 	// Work mode requires an existing stack
@@ -1094,20 +1098,21 @@ changes in them and add new branches to this stack as needed.
 2. Plan a series of incremental branches — present the plan to the user FIRST.
 3. For each branch after user approves:
    a. Create it: ezs -y new <descriptive-branch-name>
-   b. cd to the worktree path printed in the output
-   c. Implement the focused change for this branch
-   d. Commit: ezs -y commit -m "descriptive message"
-   e. Push: ezs -y push
-4. After the FIRST branch is created (this implicitly creates the stack), give
-   the stack a SHORT descriptive name with: ezs stack rename <stack-hash> <name>
-   - The name MUST be ≤5 words; 1–3 words is strongly preferred.
-   - Lowercase, hyphenated, no quotes (e.g. "jwt-auth", "rate-limiter",
-     "audit-fixes", "cli-ux-pass"). Avoid filler words like "feature", "add",
-     "implement".
-   - Get <stack-hash> from "ezs ls -a" or the stack hash printed by "ezs new".
-   - Do this BEFORE creating any subsequent branches so the rest of the stack
-     inherits the named identity.
-5. After all branches are created, show the final stack with: ezs ls`
+   b. AFTER THE FIRST BRANCH ONLY: name the stack BEFORE doing anything else.
+      Run: ezs stack rename <stack-hash> <name>
+      - <name> MUST be derived from the FEATURE_DESCRIPTION above, ≤5 words;
+        1–3 words is strongly preferred.
+      - Lowercase, hyphenated, no quotes (e.g. "jwt-auth", "rate-limiter",
+        "audit-fixes", "cli-ux-pass"). Avoid filler like "feature", "add",
+        "implement".
+      - Get <stack-hash> from the hash printed by "ezs new" (or "ezs ls -a").
+      - This is mandatory: skip it and the stack stays anonymously hash-named
+        and the session won't be findable in "ezs agent ls".
+   c. cd to the worktree path printed in the output
+   d. Implement the focused change for this branch
+   e. Commit: ezs -y commit -m "descriptive message"
+   f. Push: ezs -y push
+4. After all branches are created, show the final stack with: ezs ls`
 	}
 
 	return buildComposedPrompt(defaultFeaturePromptTemplate, vars, repoPath, "feature")

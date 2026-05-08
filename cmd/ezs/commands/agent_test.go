@@ -683,8 +683,15 @@ func TestBuildRenderedFeaturePrompt(t *testing.T) {
 	if !strings.Contains(prompt, "≤5 words") {
 		t.Error("feature prompt should pin the stack-name length budget at ≤5 words")
 	}
-	if !strings.Contains(prompt, "FIRST branch") {
+	if !strings.Contains(prompt, "FIRST BRANCH ONLY") {
 		t.Error("feature prompt should specify the rename happens after the first branch")
+	}
+	// The rename instruction must explicitly tie the chosen name to the
+	// FEATURE_DESCRIPTION (not generic "pick a label"). Without this anchor
+	// the agent often picks a name based on whatever the first branch
+	// happens to be, which doesn't reflect the broader feature.
+	if !strings.Contains(prompt, "derived from the FEATURE_DESCRIPTION") {
+		t.Error("feature prompt should anchor the stack name to FEATURE_DESCRIPTION")
 	}
 }
 
