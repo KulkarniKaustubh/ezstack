@@ -434,10 +434,10 @@ func TestAgentFeature_PromptIncludesStackRenameInstruction(t *testing.T) {
 	prompt := argv[len(argv)-1]
 
 	for _, want := range []string{
-		"Add JWT auth",                       // feature description survives template rendering
-		"ezs stack rename",                   // the rename instruction is in the rendered prompt
-		"≤5 words",                           // length budget is preserved
-		"FIRST BRANCH ONLY",                  // timing constraint is preserved
+		"Add JWT auth",                         // feature description survives template rendering
+		"ezs stack rename",                     // the rename instruction is in the rendered prompt
+		"≤5 words",                             // length budget is preserved
+		"FIRST BRANCH ONLY",                    // timing constraint is preserved
 		"derived from the FEATURE_DESCRIPTION", // name is anchored to the description
 	} {
 		if !strings.Contains(prompt, want) {
