@@ -621,6 +621,90 @@ ezs stack -b my-fix -B develop       # start a NEW stack rooted on `develop`
 new parent. If you want the rebase too, use `ezs reparent` (see the
 [`ezs reparent`](#ezs-reparent) reference).
 
+### Inserting a Branch Between Two Stacked Branches
+
+You're mid-review and realize a stack of `main → feature-1 → feature-2` should
+have a small refactor or schema change between the two branches. ezstack can
+splice a new branch into the middle without rebuilding the stack — `ezs new`
+creates the leaf, then `ezs reparent` re-points the existing child at it.
+
+```bash
+# Before:    main → feature-1 → feature-2
+# After:     main → feature-1 → refactor → feature-2
+
+# 1. Create the new branch as a child of feature-1.
+ezs new refactor --parent feature-1
+# ... edit files in the refactor worktree ...
+ezs commit -am "Extract shared helper"
+
+# 2. Re-point feature-2 (and any of its descendants) at the new branch.
+ezs reparent feature-2 refactor
+# Without --no-rebase, this runs:
+#   git rebase --onto refactor <old feature-1 tip> feature-2
+# so feature-2's commits land on top of the new branch. Children of
+# feature-2 are carried along automatically — see internal/stack/stack.go
+# (ExtractSubtree) and internal/config/config.go (ReparentBranch).
+```
+
+Step by step:
+
+1. **Create the inserted branch as a leaf on the upper half.** `ezs new refactor --parent feature-1` creates `refactor` pointing at the current tip of `feature-1`, materializes its own worktree, and records `parent=feature-1` in `stacks.json`. At this point the stack is `main → feature-1 → {refactor, feature-2}` — `refactor` is a sibling of `feature-2`, not yet between them.
+2. **Commit the change you actually wanted to splice in.** `ezs commit -am "..."` works exactly like in the canonical flow.
+3. **Reparent the lower half onto the new branch.** `ezs reparent feature-2 refactor` rewrites `stacks.json` so `feature-2`'s parent becomes `refactor`, then runs `git rebase --onto refactor <old feature-1 tip> feature-2`. Anything stacked under `feature-2` (`feature-3`, `feature-4`, …) rides along — the reparent operates on the whole subtree.
+4. **PR base is updated automatically.** If `feature-2` already has a PR, ezstack calls `gh pr edit --base refactor` so reviewers see only the diff against the new parent, then offers a force-push to publish the rebase.
+
+Notes:
+
+- If you want the metadata update only (no rebase yet — for example because
+  the new branch isn't ready to share commits with `feature-2` yet), pass
+  `ezs reparent feature-2 refactor --no-rebase`. The two branches will diverge
+  on disk until you sync.
+- `ezs stack` does the metadata-only insert as a one-liner: `ezs stack -b feature-2 -p refactor` — same effect as `--no-rebase`, no rebase or push offered.
+- Conflicts during the rebase are non-fatal: ezstack saves the new tracking metadata first, then drops you into the worktree with `git rebase --continue` instructions if the rebase trips. See [Recovering from a Sync Conflict](#recovering-from-a-sync-conflict).
+
+### Swapping a Branch With Its Parent
+
+You stacked `feature-2` on top of `feature-1`, then realized the dependency
+should run the other way — `feature-1`'s changes actually need `feature-2`
+underneath them. ezstack doesn't have a single `swap` command, but two
+`ezs reparent` calls do it. The order matters because `ezs reparent` rejects
+moves that would create a cycle (`internal/stack/stack.go`,
+`wouldCreateCycle`), so you can't go straight from `feature-1 → feature-2` to
+`feature-2 → feature-1` in one step — the child has to be detached first.
+
+```bash
+# Before:    main → feature-1 → feature-2
+# After:     main → feature-2 → feature-1
+
+# 1. Detach feature-2 from feature-1 — make it a sibling instead.
+ezs reparent feature-2 main
+# Now: main → feature-1
+#      main → feature-2
+
+# 2. Reparent feature-1 onto feature-2.
+ezs reparent feature-1 feature-2
+# Now: main → feature-2 → feature-1
+```
+
+Step by step:
+
+1. **Move the child up to be a sibling of its current parent.** `ezs reparent feature-2 main` rewrites `feature-2`'s parent to `main` and runs `git rebase --onto main <old feature-1 tip> feature-2`. After this step both branches sit directly on `main`, which breaks the parent/child relationship the cycle check is worried about.
+2. **Reparent the original parent onto the original child.** `ezs reparent feature-1 feature-2` is now legal because `feature-1` is no longer an ancestor of `feature-2`. The rebase replays `feature-1`'s commits on top of `feature-2`.
+3. **PR bases get rewritten automatically.** Both PRs end up pointing at their new parents (`feature-2` → `main`, `feature-1` → `feature-2`). Each step offers a force-push so the GitHub diffs match the new bases. Use `ezs pr stack` afterwards to refresh the cross-link block in the PR bodies.
+
+Notes:
+
+- If `feature-2` had its own children, they ride with it through step 1 and
+  end up *above* `feature-1` after step 2. That's usually what you want for a
+  swap; if not, reparent the unwanted descendants back onto `feature-1`
+  before step 2.
+- Add `--no-rebase` to either call if you only want the tracking metadata
+  flipped (no commit replay). Useful when you plan to rewrite history by hand
+  with `git rebase -i` afterwards.
+- The interactive parent picker (`ezs reparent` with no args) hides
+  descendants of the branch being moved, so it won't even offer the
+  one-shot swap — you have to do the two-step.
+
 ### Splitting a Single Large Worktree Into a Stack — Manually
 
 Sometimes a feature branch grows into a 2,000-line monster before review even
