@@ -579,6 +579,10 @@ func TestParseSubmoduleStatusLine(t *testing.T) {
 		{"conflict", "Uabc123 vendor/x", 'U', "abc123", "vendor/x", true},
 		{"path with spaces", " abc123 vendor/dir with spaces", ' ', "abc123", "vendor/dir with spaces", true},
 		{"path with parens, no desc", " abc123 vendor/x(y)", ' ', "abc123", "vendor/x(y)", true},
+		// `g.run` calls `strings.TrimSpace` on the full multi-line output,
+		// stripping the leading-space marker from the first line. Verify
+		// the parser still recovers the full SHA in that case.
+		{"clean, leading space stripped", "f5055296abc vendor/x (heads/main)", ' ', "f5055296abc", "vendor/x", true},
 		{"empty", "", 0, "", "", false},
 	}
 	for _, c := range cases {
@@ -695,5 +699,269 @@ func TestRebase_RefreshesSubmodules(t *testing.T) {
 	finalSubSHA := strings.TrimSpace(mustOutput(t, filepath.Join(parent, "vendor/x"), "rev-parse", "HEAD"))
 	if finalSubSHA != newSubSHA {
 		t.Errorf("after rebase, submodule SHA = %s, want %s — auto-refresh did not run", finalSubSHA, newSubSHA)
+	}
+}
+
+// TestSubmoduleStatuses_PushGateUsesGitlinkSHA exercises the divergence
+// between checkout and gitlink: the submodule's working tree has a new
+// local commit, but the parent's HEAD still pins the old SHA. Pushing the
+// parent now would record the OLD SHA, which is on origin — so the push
+// gate must NOT warn even though the user has unpushed local work in the
+// submodule. The doctor's informational HasUnpushed should still fire.
+func TestSubmoduleStatuses_PushGateUsesGitlinkSHA(t *testing.T) {
+	enableFileProtocol(t)
+
+	parent, parentCleanup := setupTestRepo(t)
+	defer parentCleanup()
+	src, srcCleanup := setupSubmoduleRepo(t, "pushgate")
+	defer srcCleanup()
+
+	addSubmodule(t, parent, src, "vendor/x")
+
+	subDir := filepath.Join(parent, "vendor/x")
+	mustRun := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
+	}
+	// Author identity inside the submodule (post-`submodule add` it has its
+	// own .git/modules/<path> config).
+	mustRun(subDir, "config", "user.email", "test@test.com")
+	mustRun(subDir, "config", "user.name", "Test")
+
+	// Detach + commit a new file in the submodule. CheckoutSHA advances;
+	// parent's gitlink still records the original SHA.
+	currentSHA := strings.TrimSpace(mustOutput(t, subDir, "rev-parse", "HEAD"))
+	mustRun(subDir, "checkout", "--detach", currentSHA)
+	if err := os.WriteFile(filepath.Join(subDir, "local.txt"), []byte("x\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustRun(subDir, "add", "local.txt")
+	mustRun(subDir, "commit", "-m", "local edit")
+
+	g := New(parent)
+	statuses, err := g.SubmoduleStatuses()
+	if err != nil {
+		t.Fatalf("SubmoduleStatuses: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("got %d statuses, want 1", len(statuses))
+	}
+	s := statuses[0]
+	// Doctor's check: the submodule's working tree has unpushed work.
+	if !s.HasUnpushed || s.UnpushedCount != 1 {
+		t.Errorf("HasUnpushed=%v UnpushedCount=%d, want true/1 (informational)", s.HasUnpushed, s.UnpushedCount)
+	}
+	// Push gate's check: the gitlink SHA (old) IS on origin, so pushing
+	// the parent is safe — must not flag.
+	if s.GitlinkUnpushed {
+		t.Errorf("GitlinkUnpushed=true, want false — gitlink still points at the on-origin SHA")
+	}
+	if s.GitlinkUnpushedCount != 0 {
+		t.Errorf("GitlinkUnpushedCount=%d, want 0", s.GitlinkUnpushedCount)
+	}
+	if !s.PointerChanged {
+		t.Errorf("PointerChanged=false, want true — gitlink and checkout disagree")
+	}
+}
+
+// TestSubmoduleStatuses_PushGateFiresAfterGitlinkBump verifies the push
+// gate DOES fire once the gitlink itself is committed to point at the
+// unpushed local SHA. This is the real "push will break teammates" state.
+func TestSubmoduleStatuses_PushGateFiresAfterGitlinkBump(t *testing.T) {
+	enableFileProtocol(t)
+
+	parent, parentCleanup := setupTestRepo(t)
+	defer parentCleanup()
+	src, srcCleanup := setupSubmoduleRepo(t, "gitlinkbump")
+	defer srcCleanup()
+
+	addSubmodule(t, parent, src, "vendor/x")
+
+	subDir := filepath.Join(parent, "vendor/x")
+	mustRun := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
+	}
+	mustRun(subDir, "config", "user.email", "test@test.com")
+	mustRun(subDir, "config", "user.name", "Test")
+
+	currentSHA := strings.TrimSpace(mustOutput(t, subDir, "rev-parse", "HEAD"))
+	mustRun(subDir, "checkout", "--detach", currentSHA)
+	if err := os.WriteFile(filepath.Join(subDir, "local.txt"), []byte("x\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	mustRun(subDir, "add", "local.txt")
+	mustRun(subDir, "commit", "-m", "local edit")
+
+	// Bump the gitlink in the parent.
+	mustRun(parent, "add", "vendor/x")
+	mustRun(parent, "commit", "-m", "bump submodule pin")
+
+	g := New(parent)
+	statuses, err := g.SubmoduleStatuses()
+	if err != nil {
+		t.Fatalf("SubmoduleStatuses: %v", err)
+	}
+	if len(statuses) != 1 {
+		t.Fatalf("got %d statuses, want 1", len(statuses))
+	}
+	s := statuses[0]
+	if !s.GitlinkUnpushed || s.GitlinkUnpushedCount != 1 {
+		t.Errorf("GitlinkUnpushed=%v GitlinkUnpushedCount=%d, want true/1", s.GitlinkUnpushed, s.GitlinkUnpushedCount)
+	}
+	if s.PointerChanged {
+		t.Errorf("PointerChanged=true, want false — gitlink == checkout after bump")
+	}
+}
+
+// TestSubmoduleStatuses_NestedSubmodules verifies that the recursive scan
+// surfaces issues in submodules-of-submodules with their full path from
+// the top-level worktree.
+func TestSubmoduleStatuses_NestedSubmodules(t *testing.T) {
+	enableFileProtocol(t)
+
+	parent, parentCleanup := setupTestRepo(t)
+	defer parentCleanup()
+
+	// We'll use a "middle" submodule which itself contains an "inner"
+	// submodule. setupSubmoduleRepo gives us a repo we can adopt as the
+	// inner; we then init+add it inside the middle source repo before
+	// adding middle to parent.
+	middle, middleCleanup := setupSubmoduleRepo(t, "middle")
+	defer middleCleanup()
+	inner, innerCleanup := setupSubmoduleRepo(t, "inner")
+	defer innerCleanup()
+
+	mustRun := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
+	}
+	// Add `inner` as a submodule inside `middle`.
+	mustRun(middle, "submodule", "add", inner, "nested/inner")
+	mustRun(middle, "commit", "-m", "add inner submodule")
+
+	// Add `middle` (which now contains inner) as a submodule of `parent`.
+	addSubmodule(t, parent, middle, "vendor/middle")
+	// `submodule add` does not recurse — the inner submodule isn't init'd
+	// in parent's checkout yet. Init it explicitly so it's on disk and
+	// SubmoduleStatuses can recurse into it.
+	mustRun(parent, "submodule", "update", "--init", "--recursive")
+
+	// Dirty up the inner submodule so the recursion has something to flag.
+	innerPath := filepath.Join(parent, "vendor/middle", "nested/inner")
+	if err := os.WriteFile(filepath.Join(innerPath, "SUB_README.md"), []byte("dirty\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	g := New(parent)
+	statuses, err := g.SubmoduleStatuses()
+	if err != nil {
+		t.Fatalf("SubmoduleStatuses: %v", err)
+	}
+	// Expect both vendor/middle and vendor/middle/nested/inner.
+	gotPaths := make(map[string]SubmoduleStatus, len(statuses))
+	for _, s := range statuses {
+		gotPaths[s.Path] = s
+	}
+	if _, ok := gotPaths["vendor/middle"]; !ok {
+		t.Errorf("missing vendor/middle in statuses: %+v", statuses)
+	}
+	innerStatus, ok := gotPaths["vendor/middle/nested/inner"]
+	if !ok {
+		t.Fatalf("missing nested submodule vendor/middle/nested/inner: %+v", statuses)
+	}
+	if !innerStatus.Dirty {
+		t.Errorf("nested inner submodule Dirty=false, want true")
+	}
+}
+
+// TestParseSubmoduleStatusLine_PathWithParenAndSpace documents the
+// known limitation: a submodule path that contains a literal " (...)" at
+// the end is indistinguishable from a `git describe` desc suffix, and the
+// parser will strip it. Real submodule paths essentially never look like
+// this (filesystem paths don't end in describe-style annotations), so we
+// accept the false-positive in exchange for a simple parser.
+func TestParseSubmoduleStatusLine_PathWithParenAndSpace(t *testing.T) {
+	// This is the documented mis-parse: the trailing " (annotation)" looks
+	// just like a describe suffix, so it gets stripped. The test pins the
+	// behavior so any future rewrite to truly disambiguate is a deliberate
+	// change rather than a silent fix.
+	marker, sha, path, ok := parseSubmoduleStatusLine(" abc123 vendor/dir (annotation)")
+	if !ok {
+		t.Fatalf("parser returned ok=false unexpectedly")
+	}
+	if marker != ' ' || sha != "abc123" {
+		t.Errorf("marker=%q sha=%q, want ' '/abc123", marker, sha)
+	}
+	if path != "vendor/dir" {
+		t.Errorf("path=%q, want 'vendor/dir' (the trailing ' (annotation)' is stripped — see comment)", path)
+	}
+}
+
+// TestMerge_RefreshesSubmodules locks in that the interactive Merge wrapper
+// runs the post-success submodule refresh. Uses MergeNonInteractive's
+// equivalent setup: no conflicts, fast-forward style.
+func TestMerge_RefreshesSubmodules(t *testing.T) {
+	enableFileProtocol(t)
+
+	parent, parentCleanup := setupTestRepo(t)
+	defer parentCleanup()
+	src, srcCleanup := setupSubmoduleRepo(t, "merge")
+	defer srcCleanup()
+
+	addSubmodule(t, parent, src, "vendor/x")
+
+	mustRun := func(dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v in %s: %v\n%s", args, dir, err, out)
+		}
+	}
+
+	startSubSHA := strings.TrimSpace(mustOutput(t, filepath.Join(parent, "vendor/x"), "rev-parse", "HEAD"))
+
+	// Branch off main, advance the submodule on the source, bump the
+	// parent's pointer on the branch.
+	mustRun(parent, "checkout", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(src, "extra.txt"), []byte("x\n"), 0644); err != nil {
+		t.Fatalf("write extra: %v", err)
+	}
+	mustRun(src, "add", "extra.txt")
+	mustRun(src, "commit", "-m", "extra")
+	newSubSHA := strings.TrimSpace(mustOutput(t, src, "rev-parse", "HEAD"))
+	mustRun(filepath.Join(parent, "vendor/x"), "fetch", "origin")
+	mustRun(filepath.Join(parent, "vendor/x"), "checkout", newSubSHA)
+	mustRun(parent, "add", "vendor/x")
+	mustRun(parent, "commit", "-m", "feature: bump submodule")
+
+	// Switch to main, force submodule back to old SHA, then merge feature.
+	mustRun(parent, "checkout", "main")
+	mustRun(filepath.Join(parent, "vendor/x"), "checkout", startSubSHA)
+
+	g := New(parent)
+	// Use MergeNonInteractive; the interactive Merge wrapper would
+	// require a TTY to behave normally. Both call refreshSubmodulesBest-
+	// Effort at the tail, so this exercises the same wiring.
+	result := g.MergeNonInteractive("feature")
+	if !result.Success {
+		t.Fatalf("merge failed: %+v", result)
+	}
+	finalSubSHA := strings.TrimSpace(mustOutput(t, filepath.Join(parent, "vendor/x"), "rev-parse", "HEAD"))
+	if finalSubSHA != newSubSHA {
+		t.Errorf("after merge, submodule SHA = %s, want %s — auto-refresh did not run", finalSubSHA, newSubSHA)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -102,17 +103,26 @@ func (g *Git) UpdateSubmodulesRecursive() error {
 
 // SubmoduleStatus categorizes the state of a single initialized submodule.
 type SubmoduleStatus struct {
-	// Path is the submodule path relative to the parent repo root.
+	// Path is the submodule path relative to the active worktree's repo root.
+	// Nested submodules carry their full path from the top (e.g.
+	// "vendor/x/inner/y").
 	Path string
-	// SHA is the submodule's currently checked-out commit, as reported by
-	// `git submodule status`. When PointerChanged is false, this is also
-	// the SHA the parent records in its index; when true, the recorded
-	// SHA is whatever the parent's index points at instead.
-	SHA string
-	// PointerChanged is true when the parent's working tree records a
-	// different submodule SHA than its HEAD (the gitlink has been moved
-	// but not committed). Maps to the leading '+' from `git submodule
-	// status`.
+	// CheckoutSHA is the submodule's working-tree HEAD, as reported by
+	// `git submodule status`. This is the commit the user is currently
+	// editing inside the submodule; it may differ from what the parent
+	// commits.
+	CheckoutSHA string
+	// GitlinkSHA is the SHA the parent's HEAD records for this submodule
+	// (i.e. what `git ls-tree HEAD <path>` returns). This is the SHA that
+	// gets *published* when the parent is pushed. Empty when the parent's
+	// HEAD has no entry for this path (e.g. unborn HEAD).
+	GitlinkSHA string
+	// PointerChanged is true when CheckoutSHA and GitlinkSHA disagree:
+	// either the user moved the submodule HEAD without committing the
+	// gitlink change, or staged a gitlink change without checking it out.
+	// Maps roughly to the leading '+' from `git submodule status` but is
+	// computed from gitlink-vs-checkout to be reliable across staged-but-
+	// not-committed cases.
 	PointerChanged bool
 	// MergeConflict is true when the submodule has unresolved merge
 	// conflicts. Maps to the leading 'U' from `git submodule status`.
@@ -125,16 +135,26 @@ type SubmoduleStatus struct {
 	// the default state after `git submodule update`, but editing in this
 	// state risks orphaning commits.
 	DetachedHead bool
-	// HasUnpushed is true when the submodule's checked-out commit is not
-	// reachable from any `origin/*` ref. Catches the case where edits
-	// were made in detached HEAD and committed (so no branch points at
-	// them), which a branch-tip check would miss. Set to false when the
-	// submodule has no `origin` remote — we can't decide, so don't flag.
+	// HasUnpushed is true when CheckoutSHA has commits not reachable from
+	// any `origin/*` ref — i.e. the submodule's working tree contains local
+	// work that hasn't been published. Informational; surfaced by the
+	// doctor. Set to false when the submodule has no `origin` remote (we
+	// can't decide, so don't flag) or when the SHA-reachability probe
+	// errored.
 	HasUnpushed bool
-	// UnpushedCount is the number of commits reachable from the checked-out
-	// SHA but not from any `origin/*` ref. Surfaced in warnings so the user
-	// sees how much work is unpublished. Zero when HasUnpushed is false.
+	// UnpushedCount is the number of commits reachable from CheckoutSHA
+	// but not from any `origin/*` ref. Zero when HasUnpushed is false.
 	UnpushedCount int
+	// GitlinkUnpushed is true when GitlinkSHA has commits not reachable
+	// from any `origin/*` ref. This is the precise push-gate condition:
+	// pushing the parent in this state records a submodule SHA teammates
+	// can't fetch. When PointerChanged=false, equals HasUnpushed; when
+	// true, only this matters for the push gate. False when GitlinkSHA is
+	// empty (e.g. `git submodule add` not yet committed).
+	GitlinkUnpushed bool
+	// GitlinkUnpushedCount is the commit count for GitlinkUnpushed. Zero
+	// when GitlinkUnpushed is false.
+	GitlinkUnpushedCount int
 }
 
 // HasIssues returns true if the submodule has any state worth surfacing.
@@ -145,12 +165,21 @@ func (s SubmoduleStatus) HasIssues() bool {
 	return s.MergeConflict || s.Dirty || s.HasUnpushed
 }
 
-// SubmoduleStatuses returns one SubmoduleStatus per initialized submodule.
-// Returns (nil, nil) when the repo has no submodules. Errors from individual
-// submodule probes are surfaced as zero-valued fields rather than aborting
-// the whole scan — a single broken submodule should not hide the state of
-// the others.
+// SubmoduleStatuses returns one SubmoduleStatus per initialized submodule
+// reachable from g, including nested submodules (depth-first). Nested paths
+// are rendered relative to g (e.g. "vendor/x/inner/y") so the doctor and
+// push-gate UI can show a single flat list. Returns (nil, nil) when the
+// repo has no submodules. Errors from individual submodule probes are
+// surfaced as zero-valued fields rather than aborting the whole scan — a
+// single broken submodule should not hide the state of the others.
 func (g *Git) SubmoduleStatuses() ([]SubmoduleStatus, error) {
+	return g.submoduleStatusesAt("")
+}
+
+// submoduleStatusesAt is the recursive engine for SubmoduleStatuses. It
+// produces statuses for submodules reachable from g, prefixing each Path
+// with pathPrefix so callers see the path from the top-level worktree.
+func (g *Git) submoduleStatusesAt(pathPrefix string) ([]SubmoduleStatus, error) {
 	if !g.HasSubmodules() {
 		return nil, nil
 	}
@@ -169,16 +198,27 @@ func (g *Git) SubmoduleStatuses() ([]SubmoduleStatus, error) {
 
 	var statuses []SubmoduleStatus
 	for _, line := range strings.Split(out, "\n") {
-		marker, sha, path, ok := parseSubmoduleStatusLine(line)
+		marker, checkoutSHA, path, ok := parseSubmoduleStatusLine(line)
 		if !ok || marker == '-' {
-			// Not initialized or unparseable — skip.
+			// Not initialized or unparseable — skip. We don't recurse into
+			// uninitialized submodules either; they have no on-disk repo.
 			continue
 		}
 
+		displayPath := path
+		if pathPrefix != "" {
+			displayPath = filepath.ToSlash(filepath.Join(pathPrefix, path))
+		}
+
+		// Gitlink SHA is what `ezs push` will publish. Falls back to "" on
+		// any error (e.g. unborn HEAD), in which case we use CheckoutSHA.
+		gitlinkSHA, _ := g.gitlinkSHA(path)
+
 		st := SubmoduleStatus{
-			Path:           path,
-			SHA:            sha,
-			PointerChanged: marker == '+',
+			Path:           displayPath,
+			CheckoutSHA:    checkoutSHA,
+			GitlinkSHA:     gitlinkSHA,
+			PointerChanged: marker == '+' || (gitlinkSHA != "" && gitlinkSHA != checkoutSHA),
 			MergeConflict:  marker == 'U',
 		}
 
@@ -189,19 +229,78 @@ func (g *Git) SubmoduleStatuses() ([]SubmoduleStatus, error) {
 		if detached, err := sub.IsDetachedHead(); err == nil {
 			st.DetachedHead = detached
 		}
-		// Use a SHA-based reachability check rather than branch-tip vs
-		// origin/branch. Submodules are commonly on a detached HEAD; a
-		// branch-tip check would silently miss commits made there.
-		if sha != "" {
-			if count, err := sub.commitsNotOnRemote("origin", sha); err == nil && count > 0 {
+		// Two unpushed checks against `origin/*` refs in the submodule:
+		//
+		//   - CheckoutSHA: drives the doctor's informational "submodule has
+		//     local commits" warning. SHA-based reachability (vs. branch-
+		//     tip) catches detached-HEAD edits.
+		//   - GitlinkSHA:  drives the push gate. When the parent is pushed
+		//     it publishes this SHA; if it isn't on origin, teammates can't
+		//     fetch it. Only meaningful when GitlinkSHA is set.
+		//
+		// When PointerChanged=false the two SHAs match and the two checks
+		// give the same answer; when true (uncommitted gitlink change) they
+		// can diverge and the consumer cares about the right one.
+		if checkoutSHA != "" {
+			if count, err := sub.commitsNotOnRemote("origin", checkoutSHA); err == nil && count > 0 {
 				st.HasUnpushed = true
 				st.UnpushedCount = count
 			}
 		}
+		if gitlinkSHA != "" {
+			if gitlinkSHA == checkoutSHA && st.HasUnpushed {
+				// Optimisation: both SHAs match; skip the second probe.
+				st.GitlinkUnpushed = true
+				st.GitlinkUnpushedCount = st.UnpushedCount
+			} else if gitlinkSHA != checkoutSHA {
+				if count, err := sub.commitsNotOnRemote("origin", gitlinkSHA); err == nil && count > 0 {
+					st.GitlinkUnpushed = true
+					st.GitlinkUnpushedCount = count
+				}
+			}
+		}
 
 		statuses = append(statuses, st)
+
+		// Recurse into the submodule. A failure here (e.g. nested
+		// submodule's repo is missing) is logged-but-not-fatal: the outer
+		// scan still returns what it found at this level.
+		if nested, err := sub.submoduleStatusesAt(displayPath); err == nil {
+			statuses = append(statuses, nested...)
+		}
 	}
 	return statuses, nil
+}
+
+// gitlinkSHA returns the SHA the parent's HEAD records for the submodule at
+// path. Empty string with nil error when the path isn't recorded as a
+// gitlink in HEAD (e.g. fresh `git submodule add` not yet committed, or an
+// unborn HEAD). Errors propagate when ls-tree itself fails.
+//
+// `git ls-tree HEAD -- <path>` output for a gitlink is:
+//
+//	"160000 commit <sha>\t<path>"
+func (g *Git) gitlinkSHA(path string) (string, error) {
+	out, err := g.run("ls-tree", "HEAD", "--", path)
+	if err != nil {
+		// Most common cause: HEAD is unborn. Treat as "no recorded SHA".
+		return "", nil
+	}
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "", nil
+	}
+	// Mode + type + sha + \t + path. Use Fields so any whitespace works
+	// before the tab; everything after the tab is the path (which we
+	// don't need here).
+	fields := strings.Fields(out)
+	if len(fields) < 3 || fields[0] != "160000" {
+		// Not a gitlink — could be a regular file or directory if the user
+		// converted a submodule to a tracked path. Caller falls back to
+		// CheckoutSHA.
+		return "", nil
+	}
+	return fields[2], nil
 }
 
 // parseSubmoduleStatusLine pulls the marker, SHA, and path out of one line of
@@ -215,12 +314,27 @@ func (g *Git) SubmoduleStatuses() ([]SubmoduleStatus, error) {
 // The optional `(<desc>)` suffix is `git describe` output, not part of the
 // path. Returns ok=false when the line can't be parsed (empty, malformed).
 // Path parsing preserves spaces inside the path itself.
+//
+// Important: callers commonly run `git submodule status` through helpers
+// that strip leading whitespace from the overall output. After such a
+// trim, the FIRST line of a multi-line clean status loses its leading
+// space marker. We detect this by treating any non-{+,-,U} first byte as
+// an implicit ' ' marker — clean submodules' SHAs always start with a hex
+// digit, never one of the marker characters.
 func parseSubmoduleStatusLine(line string) (marker byte, sha, path string, ok bool) {
 	if line == "" {
 		return 0, "", "", false
 	}
-	marker = line[0]
-	rest := line[1:]
+	var rest string
+	switch line[0] {
+	case '+', '-', 'U', ' ':
+		marker = line[0]
+		rest = line[1:]
+	default:
+		// Leading ' ' marker was stripped upstream — assume clean.
+		marker = ' '
+		rest = line
+	}
 	shaPart, after, found := strings.Cut(rest, " ")
 	if !found || shaPart == "" || after == "" {
 		return 0, "", "", false
@@ -242,7 +356,8 @@ func parseSubmoduleStatusLine(line string) (marker byte, sha, path string, ok bo
 // commitsNotOnRemote returns the number of commits reachable from `sha` but
 // not reachable from any `<remote>/*` ref. Returns (0, nil) when the remote
 // has no tracked refs at all (in that case we can't decide whether `sha` is
-// "unpushed" — caller should not flag).
+// "unpushed" — caller should not flag) or when any underlying git command
+// fails (so the caller sees "unknown" rather than a false positive).
 //
 // Used by SubmoduleStatuses to drive the push gate: any positive count means
 // pushing the parent now would publish a recorded SHA that teammates can't
@@ -266,12 +381,9 @@ func (g *Git) commitsNotOnRemote(remote, sha string) (int, error) {
 	if out == "" {
 		return 0, nil
 	}
-	n := 0
-	for _, c := range out {
-		if c < '0' || c > '9' {
-			return 0, fmt.Errorf("unexpected rev-list count %q", out)
-		}
-		n = n*10 + int(c-'0')
+	n, err := strconv.Atoi(out)
+	if err != nil {
+		return 0, fmt.Errorf("unexpected rev-list count %q: %w", out, err)
 	}
 	return n, nil
 }

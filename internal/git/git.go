@@ -685,9 +685,17 @@ func (g *Git) refreshSubmodulesBestEffort() {
 	}
 }
 
-// Merge merges target into the current branch interactively
+// Merge merges target into the current branch interactively. Refreshes
+// submodules after a successful merge so the working tree matches the new
+// HEAD's recorded submodule SHAs. As with interactive Rebase, a merge that
+// pauses on conflict and is resumed externally won't trigger this refresh
+// — `ezs doctor` will surface the resulting drift.
 func (g *Git) Merge(target string) error {
-	return g.RunInteractive("merge", target)
+	if err := g.RunInteractive("merge", target); err != nil {
+		return err
+	}
+	g.refreshSubmodulesBestEffort()
+	return nil
 }
 
 // StashPush stashes all changes including untracked files

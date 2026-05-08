@@ -163,13 +163,21 @@ func pushTargets(allRemotes bool, primary string) []string {
 }
 
 // warnUnpushedSubmodules prints a warning for each initialized submodule
-// that has local commits not on its origin. The parent's push will publish
-// commits whose recorded submodule SHA may not be fetchable by anyone
-// else, breaking teammates. This is a warning, not a block — the user may
-// be intentionally pushing the parent first and will push the submodule
-// next, or they may have already pushed the submodule and the local
-// remote-tracking ref is stale. We can't tell the difference without a
-// network fetch, and we don't want to slow down every push.
+// whose *gitlink* SHA — the SHA the parent's HEAD records, which is what
+// gets published — isn't reachable from origin. Pushing the parent in that
+// state would record a SHA teammates can't fetch, breaking their checkouts.
+//
+// This is a warning, not a block — the user may be intentionally pushing
+// the parent first and will push the submodule next, or they may have
+// already pushed the submodule and the local remote-tracking ref is stale.
+// We can't tell the difference without a network fetch, and we don't want
+// to slow down every push.
+//
+// We deliberately *do not* warn on a checkout-only divergence (submodule
+// has local commits but the parent's gitlink hasn't been bumped to them).
+// In that case pushing the parent records the *old* gitlink, which is on
+// origin — no harm to teammates. `ezs doctor` surfaces the pointer-changed
+// state separately.
 func warnUnpushedSubmodules(g *git.Git) {
 	if !g.HasSubmodules() {
 		return
@@ -179,12 +187,12 @@ func warnUnpushedSubmodules(g *git.Git) {
 		return
 	}
 	for _, s := range statuses {
-		if !s.HasUnpushed {
+		if !s.GitlinkUnpushed {
 			continue
 		}
 		ui.Warn(fmt.Sprintf(
 			"Submodule '%s' has %s not on origin — pushing the parent now will record a SHA teammates can't fetch.\n    To push the submodule first: cd %s && git push",
-			s.Path, pluralizeCommits(s.UnpushedCount), s.Path,
+			s.Path, pluralizeCommits(s.GitlinkUnpushedCount), s.Path,
 		))
 	}
 }
