@@ -75,6 +75,30 @@ const (
 	scopeBranch
 )
 
+// preferLiveAgentName picks the label we hand to `claude --name` on a
+// resume. When the user has run `/rename` (or otherwise renamed the session
+// inside Claude), the latest `agent-name` event in the session journal
+// reflects what they currently see in their resume picker — re-asserting
+// the deterministic ezstack label would silently overwrite their rename
+// the next time they run `ezs agent`.
+//
+// Returns the live name when:
+//   - storedID is non-empty (we have a session to resume against)
+//   - forceFresh is false (the user didn't pass --no-resume)
+//   - the JSONL contains an `agent-name` event for storedID
+//
+// Otherwise returns fallback (the deterministic `_ezstack-<...>` label),
+// preserving original behavior for fresh launches and non-claude agents.
+func preferLiveAgentName(storedID string, forceFresh bool, fallback string) string {
+	if storedID == "" || forceFresh {
+		return fallback
+	}
+	if name := claudeAgentName(storedID); name != "" {
+		return name
+	}
+	return fallback
+}
+
 // sessionDisplayName builds the "_ezstack-<identifier>" name we hand to
 // `claude --name`. The name is shown in claude's /resume picker and terminal
 // title, so it should be readable and short. We sanitize it because claude
@@ -264,7 +288,7 @@ func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, br
 				}
 			}
 		}
-		label := sessionDisplayName(branchName, scopeBranch)
+		label := preferLiveAgentName(stored, forceFresh, sessionDisplayName(branchName, scopeBranch))
 		inj := buildAgentSessionArgs(agentCmd, stored, label, forceFresh)
 		return &agentSessionPlan{
 			injection: &inj,
@@ -288,7 +312,7 @@ func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, br
 			identifier = targetStack.Hash
 		}
 	}
-	label := sessionDisplayName(identifier, scopeStack)
+	label := preferLiveAgentName(stored, forceFresh, sessionDisplayName(identifier, scopeStack))
 	inj := buildAgentSessionArgs(agentCmd, stored, label, forceFresh)
 	return &agentSessionPlan{
 		injection: &inj,
@@ -336,7 +360,7 @@ func resolveFeatureSession(repoPath, agentCmd string, existingStack *config.Stac
 	if identifier == "" {
 		identifier = existingStack.Hash
 	}
-	label := sessionDisplayName("feature-"+identifier, scopeStack)
+	label := preferLiveAgentName(existingStack.AgentSessionID, forceFresh, sessionDisplayName("feature-"+identifier, scopeStack))
 	inj := buildAgentSessionArgs(agentCmd, existingStack.AgentSessionID, label, forceFresh)
 	hash := existingStack.Hash
 	return &agentSessionPlan{

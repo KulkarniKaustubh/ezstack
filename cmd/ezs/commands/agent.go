@@ -61,7 +61,10 @@ func Agent(args []string) error {
 
     For Claude, the UUID is injected via 'claude --session-id <id> --name'
     on the first run and 'claude --resume <id> --name' on later runs, so
-    /resume reopens the prior conversation.
+    /resume reopens the prior conversation. If you rename the session
+    inside Claude (e.g. /rename my-name), ezs picks up the new name from
+    the session journal and re-asserts it on the next resume — your
+    rename sticks across launches and surfaces in 'ezs agent ls'.
 
     For other agents, ezs does not inject any flags (the schema differs per
     CLI) but always exposes the UUID via the EZS_AGENT_SESSION_ID

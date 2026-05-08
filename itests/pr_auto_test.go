@@ -403,6 +403,245 @@ exit 0
 	}
 }
 
+// TestPRCreateAuto_StackMode_SkipsBranchesWithExistingPR pins the cost-
+// control behavior of `pr create -s --auto`: branches that already have a
+// live PR are filtered out *before* the AI generator is invoked, so a
+// single re-run against a stack where most branches are already PR'd
+// doesn't burn N model calls only to discover all of them are skipped.
+//
+// We assert this by recording every branch the claude stub was invoked
+// against. The stub writes one filename per call; the absence of feat-a's
+// file proves the AI was never asked to draft for it.
+func TestPRCreateAuto_StackMode_SkipsBranchesWithExistingPR(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX + shell wrappers")
+	}
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	bare := filepath.Join(env.TmpDir, "bare.git")
+	mustRunGit(t, "", "init", "--bare", "-b", "main", bare)
+	mustRunGit(t, env.RepoDir, "remote", "add", "origin", "git@github.com:testorg/testrepo.git")
+	mustRunGit(t, env.RepoDir, "remote", "set-url", "--push", "origin", bare)
+	mustRunGit(t, env.RepoDir, "push", "-q", "origin", "main")
+
+	// Two-branch stack: feat-a already has a PR; feat-b doesn't.
+	CreateBranchWithCommit(t, env, "feat-a", "main")
+	CreateBranchWithCommit(t, env, "feat-b", "feat-a")
+
+	cfg, _ := config.Load()
+	repoCfg := cfg.GetRepoConfig(env.RepoDir)
+	repoCfg.AgentCommand = "claude"
+	cfg.SetRepoConfig(env.RepoDir, repoCfg)
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	// Pre-populate gh stub state and ezstack cache for feat-a's existing
+	// open PR — both halves are required so the fast-path `cacheClaimsLive`
+	// check fires *and* the slow-path GitHub refresh agrees.
+	stateDir := filepath.Join(env.TmpDir, "gh_state")
+	if err := os.MkdirAll(filepath.Join(stateDir, "prs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	preexistingPR := `{
+  "number": 1,
+  "url": "https://github.com/testorg/testrepo/pull/1",
+  "title": "feat-a existing",
+  "body": "",
+  "state": "open",
+  "baseRefName": "main",
+  "headRefName": "feat-a",
+  "mergedAt": "",
+  "mergeable": "MERGEABLE",
+  "isDraft": false,
+  "reviewDecision": ""
+}`
+	if err := os.WriteFile(filepath.Join(stateDir, "prs", "1.json"), []byte(preexistingPR), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "prs", "branch_feat-a"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Tell ezstack's cache feat-a has a live PR so the fast-path skip
+	// (which avoids even the GitHub refresh) is exercised end-to-end.
+	mgr, err := stack.NewReadOnlyManager(env.RepoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	feat := mgr.GetBranch("feat-a")
+	if feat == nil {
+		t.Fatal("feat-a not tracked")
+	}
+	feat.PRNumber = 1
+	feat.PRState = "OPEN"
+	feat.PRUrl = "https://github.com/testorg/testrepo/pull/1"
+	if err := mgr.GetStackConfig().Save(env.RepoDir); err != nil {
+		t.Fatalf("save cache: %v", err)
+	}
+
+	// Stub claude that records each invocation's branch name in its own
+	// file under invokeDir. The bulk path identifies branches in the
+	// prompt via <branch>X</branch>; we extract that and write an empty
+	// marker file. After the run, the set of marker filenames must NOT
+	// include feat-a.
+	invokeDir := filepath.Join(env.TmpDir, "claude_invocations")
+	if err := os.MkdirAll(invokeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	stub := `#!/bin/sh
+prompt=""
+saw_p=0
+for arg in "$@"; do
+  if [ $saw_p -eq 1 ]; then prompt="$arg"; saw_p=0; fi
+  if [ "$arg" = "-p" ]; then saw_p=1; fi
+done
+[ -z "$prompt" ] && exit 0
+
+# Extract branch name from <branch>NAME</branch> tag and record the call.
+branch=$(printf '%s' "$prompt" | sed -n 's|.*<branch>\([^<]*\)</branch>.*|\1|p')
+if [ -n "$branch" ]; then
+  : > "` + invokeDir + `/$branch"
+fi
+
+cat <<'__JSON_END__'
+{"title":"AI: drafted","body":"AI: drafted body"}
+__JSON_END__
+exit 0
+`
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), stub)
+
+	prevYes := ui.YesMode
+	ui.YesMode = true
+	defer func() { ui.YesMode = prevYes }()
+
+	oldWd, _ := os.Getwd()
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(filepath.Join(env.WorktreeDir, "feat-a")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := commands.PR([]string{"create", "-s", "--auto"}); err != nil {
+		t.Fatalf("pr create -s --auto: %v", err)
+	}
+
+	// feat-a must NOT have a recorded AI invocation: it already had a PR
+	// and should have been filtered before the AI generator ran.
+	if _, err := os.Stat(filepath.Join(invokeDir, "feat-a")); err == nil {
+		t.Error("AI generator was invoked for feat-a despite an existing live PR — bulk path must skip before --auto")
+	}
+	// feat-b must have one — it's the only branch that needed a PR.
+	if _, err := os.Stat(filepath.Join(invokeDir, "feat-b")); err != nil {
+		t.Errorf("AI generator should have run for feat-b: %v", err)
+	}
+}
+
+// TestPRCreateAuto_SingleBranch_DoesNotInvokeAIForExistingPR pins the
+// same cost-control invariant for the single-branch path: when a live PR
+// exists and --force is not set, the create flow must error out *before*
+// burning a model call. Otherwise scripted retries would re-draft a PR
+// for every run against an already-PR'd branch.
+func TestPRCreateAuto_SingleBranch_DoesNotInvokeAIForExistingPR(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX + shell wrappers")
+	}
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	bare := filepath.Join(env.TmpDir, "bare.git")
+	mustRunGit(t, "", "init", "--bare", "-b", "main", bare)
+	mustRunGit(t, env.RepoDir, "remote", "add", "origin", "git@github.com:testorg/testrepo.git")
+	mustRunGit(t, env.RepoDir, "remote", "set-url", "--push", "origin", bare)
+	mustRunGit(t, env.RepoDir, "push", "-q", "origin", "main")
+
+	CreateBranchWithCommit(t, env, "feat-existing", "main")
+
+	cfg, _ := config.Load()
+	repoCfg := cfg.GetRepoConfig(env.RepoDir)
+	repoCfg.AgentCommand = "claude"
+	cfg.SetRepoConfig(env.RepoDir, repoCfg)
+	if err := cfg.Save(); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	// Pre-existing live PR for feat-existing (gh stub + ezstack cache).
+	stateDir := filepath.Join(env.TmpDir, "gh_state")
+	if err := os.MkdirAll(filepath.Join(stateDir, "prs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	pr := `{
+  "number": 1,
+  "url": "https://github.com/testorg/testrepo/pull/1",
+  "title": "existing",
+  "body": "",
+  "state": "open",
+  "baseRefName": "main",
+  "headRefName": "feat-existing",
+  "mergedAt": "",
+  "mergeable": "MERGEABLE",
+  "isDraft": false,
+  "reviewDecision": ""
+}`
+	if err := os.WriteFile(filepath.Join(stateDir, "prs", "1.json"), []byte(pr), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "prs", "branch_feat-existing"), []byte("1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := stack.NewReadOnlyManager(env.RepoDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	feat := mgr.GetBranch("feat-existing")
+	feat.PRNumber = 1
+	feat.PRState = "OPEN"
+	feat.PRUrl = "https://github.com/testorg/testrepo/pull/1"
+	if err := mgr.GetStackConfig().Save(env.RepoDir); err != nil {
+		t.Fatalf("save cache: %v", err)
+	}
+
+	// Stub claude — if it ever runs, it leaves a marker file behind. We
+	// expect it never to be invoked because the create flow must reject
+	// before hitting the AI generator.
+	invokeMarker := filepath.Join(env.TmpDir, "claude_invoked")
+	stub := `#!/bin/sh
+saw_p=0
+for arg in "$@"; do
+  if [ $saw_p -eq 1 ]; then
+    : > "` + invokeMarker + `"
+    saw_p=0
+  fi
+  if [ "$arg" = "-p" ]; then saw_p=1; fi
+done
+cat <<'__JSON_END__'
+{"title":"AI","body":"AI"}
+__JSON_END__
+exit 0
+`
+	writeExecutable(t, filepath.Join(env.StubBinDir, "claude"), stub)
+
+	prevYes := ui.YesMode
+	ui.YesMode = true
+	defer func() { ui.YesMode = prevYes }()
+
+	oldWd, _ := os.Getwd()
+	defer os.Chdir(oldWd)
+	if err := os.Chdir(filepath.Join(env.WorktreeDir, "feat-existing")); err != nil {
+		t.Fatal(err)
+	}
+
+	err = commands.PR([]string{"create", "--auto", "--branch", "feat-existing"})
+	if err == nil {
+		t.Fatal("expected error from pr create --auto against an already-PR'd branch")
+	}
+	if !strings.Contains(err.Error(), "already has an open PR") {
+		t.Errorf("expected 'already has an open PR' error, got: %v", err)
+	}
+	if _, statErr := os.Stat(invokeMarker); statErr == nil {
+		t.Error("AI generator was invoked for an already-PR'd branch — single-branch path must reject before --auto")
+	}
+}
+
 // TestPRCreateAuto_RejectsNonClaudeAgent verifies the friendly error path
 // when --auto is used with an agent ezs can't drive non-interactively. We
 // don't want a silent hang or empty PR body.
