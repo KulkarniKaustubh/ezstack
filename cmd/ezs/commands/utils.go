@@ -839,6 +839,50 @@ func upstreamRef(g *git.Git, name string) string {
 	return resolveLocalRef(g, name)
 }
 
+// resolveDiffRefs returns the (parent, branch) refs that ezstack uses when
+// counting the commits "in" a branch. Centralized so `ezs ls` and `ezs diff`
+// agree on the answer:
+//   - Root branches diff against their RootBase (origin/<rootBase> when
+//     available), falling back to main/master for legacy stacks with no
+//     RootBase recorded. A stack rooted on main/master with no RootBase has
+//     no usable base and returns ok=false.
+//   - Child branches whose parent is the stack's base (Root or RootBase) diff
+//     against origin/<parent>; parents inside the stack diff against the local
+//     ref so unpushed commits on the parent aren't misreported as content of
+//     the child.
+//
+// Returns ok=false when there is no usable base for `branchName` in this stack.
+func resolveDiffRefs(g *git.Git, s *config.Stack, branchName string) (parentRef, branchRef string, ok bool) {
+	branchRef = resolveLocalRef(g, branchName)
+	if branchName == s.Root {
+		rootBase := s.RootBase
+		if rootBase == "" && s.Root != "main" && s.Root != "master" {
+			for _, candidate := range []string{"main", "master"} {
+				if g.RemoteBranchExists(candidate) {
+					rootBase = candidate
+					break
+				}
+			}
+		}
+		if rootBase == "" {
+			return "", branchRef, false
+		}
+		return upstreamRef(g, rootBase), branchRef, true
+	}
+	for _, b := range s.Branches {
+		if b.Name != branchName {
+			continue
+		}
+		if b.Parent != "" && (b.Parent == s.Root || b.Parent == s.RootBase) {
+			parentRef = upstreamRef(g, b.Parent)
+		} else {
+			parentRef = resolveLocalRef(g, b.Parent)
+		}
+		return parentRef, branchRef, true
+	}
+	return "", branchRef, false
+}
+
 // fetchDiffStats computes diff stats for all branches in a stack using parallel local git ops.
 // This is fast (no network) and safe to call from ezs ls.
 func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
@@ -846,39 +890,28 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// Compute diff for the root branch against its base.
-	// Use RootBase if stored, otherwise infer from common base branches
-	// when the root is a remote feature branch (not main/master itself).
-	rootBase := s.RootBase
-	if rootBase == "" && s.Root != "main" && s.Root != "master" {
-		for _, candidate := range []string{"main", "master"} {
-			if g.RemoteBranchExists(candidate) {
-				rootBase = candidate
-				break
-			}
+	record := func(name string) {
+		parentRef, branchRef, ok := resolveDiffRefs(g, s, name)
+		if !ok {
+			return
 		}
+		added, removed, err := g.GetDiffStat(parentRef, branchRef)
+		if err != nil {
+			return
+		}
+		mu.Lock()
+		statusMap[name] = &ui.BranchStatus{
+			Additions: added,
+			Deletions: removed,
+		}
+		mu.Unlock()
 	}
-	if rootBase != "" {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			// rootBase is the PR target of the stack's root branch — always an
-			// upstream-tracked branch (e.g. main). Diff against origin/<rootBase>
-			// so the stats don't drift with the local copy between fetches.
-			parentRef := upstreamRef(g, rootBase)
-			branchRef := resolveLocalRef(g, s.Root)
-			added, removed, err := g.GetDiffStat(parentRef, branchRef)
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			statusMap[s.Root] = &ui.BranchStatus{
-				Additions: added,
-				Deletions: removed,
-			}
-			mu.Unlock()
-		}()
-	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		record(s.Root)
+	}()
 
 	for _, branch := range s.Branches {
 		wg.Add(1)
@@ -887,31 +920,7 @@ func fetchDiffStats(g *git.Git, s *config.Stack) map[string]*ui.BranchStatus {
 			if b.IsMerged {
 				return
 			}
-			// When the parent is the stack's base (upstream-tracked: main,
-			// master, or a remote PR branch the stack sits on), diff against
-			// origin/<parent>. Local <parent> can be stale — sync rebases
-			// children onto origin/<base> without moving local <base>, which
-			// would otherwise make the diff include every upstream commit
-			// landed since the last local update. For non-base parents (other
-			// branches inside the stack) keep using the local ref so
-			// unpushed local commits aren't misreported as branch content.
-			var parentRef string
-			if b.Parent != "" && (b.Parent == s.Root || b.Parent == s.RootBase) {
-				parentRef = upstreamRef(g, b.Parent)
-			} else {
-				parentRef = resolveLocalRef(g, b.Parent)
-			}
-			branchRef := resolveLocalRef(g, b.Name)
-			added, removed, err := g.GetDiffStat(parentRef, branchRef)
-			if err != nil {
-				return
-			}
-			mu.Lock()
-			statusMap[b.Name] = &ui.BranchStatus{
-				Additions: added,
-				Deletions: removed,
-			}
-			mu.Unlock()
+			record(b.Name)
 		}(branch)
 	}
 
