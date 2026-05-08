@@ -415,6 +415,81 @@ func TestSyncItest_DryRunJSONIncludesBehindRemote(t *testing.T) {
 	}
 }
 
+// TestSyncItest_DryRunBranchFetchesBeforeDetect pins that
+// `ezs sync --branch X --dry-run` performs a fetch before detection,
+// so a teammate's commit that landed on origin/X via a separate clone
+// (not visible to our local tracking refs until fetch) shows up in the
+// preview. Without the fetch, dry-run would say "up to date" while
+// `ezs sync --branch X` would fetch and rebase — exactly the
+// preview-vs-apply divergence syncDryRunBranch exists to close.
+func TestSyncItest_DryRunBranchFetchesBeforeDetect(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+	withYesMode(t)
+
+	os.WriteFile(filepath.Join(env.RepoDir, "shared.txt"), []byte("v0\n"), 0644)
+	exec.Command("git", "-C", env.RepoDir, "add", ".").Run()
+	exec.Command("git", "-C", env.RepoDir, "commit", "-m", "seed").Run()
+	bareDir := initBareRemote(t, env)
+
+	CreateBranchWithCommit(t, env, "feat", "main")
+	featPath := filepath.Join(env.WorktreeDir, "feat")
+	featPath, _ = filepath.EvalSymlinks(featPath)
+	exec.Command("git", "-C", featPath, "push", "-u", "origin", "feat").Run()
+
+	// Teammate clones the bare and pushes a commit on feat. Our local
+	// origin/feat ref is now stale until we fetch.
+	collab, _ := os.MkdirTemp("", "collab-branch-dry-*")
+	defer os.RemoveAll(collab)
+	exec.Command("git", "clone", "-q", "-b", "feat", bareDir, collab).Run()
+	exec.Command("git", "-C", collab, "config", "user.email", "c@c.com").Run()
+	exec.Command("git", "-C", collab, "config", "user.name", "c").Run()
+	os.WriteFile(filepath.Join(collab, "x.txt"), []byte("teammate\n"), 0644)
+	exec.Command("git", "-C", collab, "add", ".").Run()
+	exec.Command("git", "-C", collab, "commit", "-q", "-m", "teammate work").Run()
+	exec.Command("git", "-C", collab, "push", "-q", "origin", "feat").Run()
+
+	// Drive sync from main so --branch routes through the named-branch path.
+	chdirOrFail(t, env.RepoDir)
+
+	orig := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	if err := commands.Sync([]string{"--branch", "feat", "--dry-run", "--json"}); err != nil {
+		w.Close()
+		os.Stdout = orig
+		t.Fatalf("sync --branch feat --dry-run --json: %v", err)
+	}
+	w.Close()
+	os.Stdout = orig
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read stdout: %v", err)
+	}
+
+	var entries []map[string]any
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		t.Fatalf("parse JSON: %v\nraw: %q", err, string(raw))
+	}
+	if len(entries) == 0 {
+		t.Fatalf("expected feat in dry-run preview after teammate pushed; got empty: %q", string(raw))
+	}
+	var featEntry map[string]any
+	for _, e := range entries {
+		if e["branch"] == "feat" {
+			featEntry = e
+			break
+		}
+	}
+	if featEntry == nil {
+		t.Fatalf("feat entry missing from dry-run JSON: %v", entries)
+	}
+	br, _ := featEntry["behind_remote"].(float64)
+	if int(br) <= 0 {
+		t.Errorf("behind_remote=%v after teammate pushed; dry-run --branch did not fetch before detect", br)
+	}
+}
+
 // TestSyncItest_RealBinaryExitCode builds and invokes the actual `ezs`
 // binary as a subprocess to confirm the partial-completion path returns
 // exit code != 0 (not just the in-process error). Scripts and CI rely on

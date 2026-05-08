@@ -856,13 +856,21 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 	// Render the root row. Root has no connector, but it shares the pointer
 	// + prefix gutter with branch rows so the name aligns with the tree's
 	// connector column and the PR/diff cells line up with the shared columns.
+	// rootCurrentColor is emitted BEFORE the pointer so the `>` itself
+	// renders green when the root is current. The inner Gray that follows
+	// re-colors the name to the muted root style; without it, the Green
+	// would bleed into the name. Branch rows mirror this ordering — see
+	// the per-row Fprintf below — so the cursor marker is consistently
+	// green across the whole stack listing.
 	rootPointer := " "
 	rootCurrentColor := ""
+	rootCurrentReset := ""
 	if currentBranch == stack.Root {
 		rootPointer = ">"
 		rootCurrentColor = Green
+		rootCurrentReset = Reset
 	}
-	rootLine := fmt.Sprintf("%s%s  %s%s%s", rootPointer, rootCurrentColor, Gray, stack.Root, Reset)
+	rootLine := fmt.Sprintf("%s%s%s  %s%s%s", rootCurrentColor, rootPointer, rootCurrentReset, Gray, stack.Root, Reset)
 	if stack.RootIsRemote {
 		rootLine += " " + Gray + "(remote)" + Reset
 	}
@@ -928,6 +936,12 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 
 		gap := padNameGap(r.nameWidth)
 
+		// Emit `color` BEFORE `pointer` so the leading `>` glyph itself
+		// renders green when the row is current — matching the root-row
+		// fix above. The previous order (pointer, then color) printed `>`
+		// in the terminal default and started green only on the prefix
+		// gutter, leaving the cursor marker visually identical to the
+		// non-current padding space.
 		if shouldStrike {
 			gapWithStrike := strings.ReplaceAll(gap, Reset, Reset+Strikethrough)
 			prWithStrike := strings.ReplaceAll(prFormatted, Reset, Reset+Strikethrough)
@@ -937,11 +951,11 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 				statusWithStrike = strings.ReplaceAll(statusInfo, Reset, Reset+Strikethrough)
 			}
 			fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
-				pointer, color, r.prefix, r.connector, Strikethrough+Bold, r.name, Reset+Strikethrough,
+				color, pointer, r.prefix, r.connector, Strikethrough+Bold, r.name, Reset+Strikethrough,
 				remoteTag, gapWithStrike, prWithStrike, diffWithStrike, statusWithStrike, Reset)
 		} else {
 			fmt.Fprintf(os.Stderr, "%s%s%s%s%s%s%s%s%s%s%s%s%s\n",
-				pointer, color, r.prefix, r.connector, Bold, r.name, Reset,
+				color, pointer, r.prefix, r.connector, Bold, r.name, Reset,
 				remoteTag, gap, prFormatted, diffFormatted, statusInfo, Reset)
 		}
 	}

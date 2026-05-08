@@ -237,7 +237,12 @@ func Sync(args []string) error {
 			return fmt.Errorf("branch %q is not part of any stack", *branchFlag)
 		}
 		if dryRun {
-			return syncDryRun(mgr, gh, []*config.Stack{targetStack}, jsonOutput, *includeRemoteFlag)
+			// Per-branch dry-run mirrors the execute path (syncCurrentBranch),
+			// which uses DetectSyncNeededForBranch and does NOT skip remote-only
+			// branches. Routing through syncDryRun (bulk detection) would filter
+			// pickups out and report "no sync needed" while the real run rebases
+			// — a divergence between preview and apply.
+			return syncDryRunBranch(mgr, gh, branch, jsonOutput)
 		}
 		// Use the branch's worktree path so stash operations target the correct worktree
 		branchCwd := cwd
@@ -468,6 +473,47 @@ func syncDryRun(mgr *stack.Manager, gh *github.Client, stacks []*config.Stack, j
 	}
 	if len(syncNeeded) == 0 {
 		ui.Success("All branches are up to date. Nothing to sync.")
+		return nil
+	}
+	ui.Info("[dry-run] The following branches would be synced:")
+	printSyncInfoList(syncNeeded)
+	return nil
+}
+
+// syncDryRunBranch previews what sync would do for a single explicitly-named
+// branch. Matches the execute path (syncCurrentBranch → DetectSyncNeededForBranch),
+// which never filters IsRemote because the user named the branch directly.
+//
+// We fetch before detecting because DetectSyncNeededForBranch only consults
+// local tracking refs — without a fetch, a teammate's just-pushed commit on
+// origin/<branch> would be invisible and we'd report "no sync needed",
+// while the execute path (which fetches at syncCurrentBranch start) would
+// see the commit and rebase. That's the same dry-run-vs-apply divergence
+// this wrapper exists to close. Failures are non-fatal: a stale tracking
+// ref just means the preview can't flag a remote-pull; surface a warning
+// so the user knows to retry once their network is healthy.
+func syncDryRunBranch(mgr *stack.Manager, gh *github.Client, branch *config.Branch, jsonOutput bool) error {
+	if !jsonOutput {
+		ui.Info("Fetching latest changes...")
+	}
+	if err := mgr.Fetch(); err != nil {
+		return fmt.Errorf("failed to fetch from remote: %w. Check your network connection and that the remote is accessible", err)
+	}
+	if r := branch.EffectiveRemote(); r != "" && r != "origin" && branch.CanPush() {
+		if ferr := mgr.FetchRemote(r); ferr != nil && !jsonOutput {
+			ui.Warn(fmt.Sprintf("Could not fetch %s for %s: %v — preview may miss collaborator commits on that remote.", r, branch.Name, ferr))
+		}
+	}
+	info := mgr.DetectSyncNeededForBranch(branch.Name, gh)
+	var syncNeeded []stack.SyncInfo
+	if info != nil && info.NeedsSync {
+		syncNeeded = []stack.SyncInfo{*info}
+	}
+	if jsonOutput {
+		return printSyncInfoJSON(syncNeeded)
+	}
+	if len(syncNeeded) == 0 {
+		ui.Success("Current branch is up to date. No sync needed.")
 		return nil
 	}
 	ui.Info("[dry-run] The following branches would be synced:")
