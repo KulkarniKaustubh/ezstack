@@ -230,8 +230,8 @@ ezstack handles the four submodule pain points that come up when stacks meet wor
 
 1. **Worktree creation.** In worktree mode, `ezs new` runs `git submodule update --init` against the same set of submodule paths that are currently initialized in the main worktree — so a new branch worktree starts with the same submodules active as the one you're working in. Useful for monorepos (e.g. SONiC) where only a subset of submodules is initialized per developer.
 2. **Auto-refresh after rebase / merge / checkout.** Whenever ezstack moves HEAD (`ezs sync`, `ezs goto <branch>`, etc.), already-initialized submodules are advanced to the SHA the new HEAD records via `git submodule update --recursive`. No more "dirty submodule" surprises after a sync. Uninitialized submodules stay uninitialized — opt-outs are respected.
-3. **Doctor checks.** `ezs doctor` flags submodules with uncommitted changes, unresolved merge conflicts, unpushed commits, and detached-HEAD edits in progress.
-4. **Push gate.** `ezs push` warns if a submodule has commits that aren't on its `origin` — pushing the parent in that state breaks anyone who doesn't have those submodule SHAs.
+3. **Doctor checks.** `ezs doctor` walks all initialized submodules (including nested ones) and flags uncommitted changes, unresolved merge conflicts, unpushed commits, detached-HEAD edits in progress, and pointer drift between the parent's record and the submodule's checkout.
+4. **Push gate.** `ezs push` warns if the *gitlink SHA the parent will publish* isn't on its submodule's `origin` — pushing in that state breaks anyone who doesn't have that submodule SHA. Local-only commits in the submodule that haven't been bumped into the parent's gitlink yet are surfaced by `ezs doctor` instead, since pushing the parent doesn't publish them.
 
 ```bash
 ezs new feature-a                       # mirror submodules from main worktree

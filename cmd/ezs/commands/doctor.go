@@ -136,7 +136,7 @@ func checkSubmoduleHealth(problems *int) {
 	if len(statuses) == 0 {
 		return
 	}
-	clean := true
+	warnings := 0
 	for _, s := range statuses {
 		// Print one warning line per actionable issue. Order matters:
 		// merge conflicts first (hard error), then unpushed (push gate),
@@ -149,7 +149,7 @@ func checkSubmoduleHealth(problems *int) {
 				s.Path, s.Path, s.Path,
 			))
 			*problems++
-			clean = false
+			warnings++
 			continue
 		}
 		if s.HasUnpushed {
@@ -157,32 +157,32 @@ func checkSubmoduleHealth(problems *int) {
 				"Submodule '%s' has %s not on origin.\n    To push: cd %s && git push",
 				s.Path, pluralizeCommits(s.UnpushedCount), s.Path,
 			))
-			clean = false
+			warnings++
 		}
 		if s.Dirty {
 			ui.Warn(fmt.Sprintf(
 				"Submodule '%s' has uncommitted changes.\n    Inspect: cd %s && git status",
 				s.Path, s.Path,
 			))
-			clean = false
+			warnings++
 		}
 		if s.DetachedHead && (s.Dirty || s.HasUnpushed) {
 			ui.Warn(fmt.Sprintf(
 				"Submodule '%s' is on a detached HEAD with edits — commits here can be orphaned.\n    Move to a branch: cd %s && git switch -c <branch>",
 				s.Path, s.Path,
 			))
-			clean = false
+			warnings++
 		}
 		if s.PointerChanged {
 			ui.Warn(fmt.Sprintf(
-				"Submodule '%s' pointer differs from parent's index — commit the gitlink change in the parent (`git add %s && git commit`) or revert (`git submodule update`).",
+				"Submodule '%s' pointer differs from parent's record — commit the gitlink change in the parent (`git add %s && git commit`) or revert (`git submodule update`).",
 				s.Path, s.Path,
 			))
-			clean = false
+			warnings++
 		}
 	}
-	if clean {
-		ui.Success(fmt.Sprintf("Submodules healthy (%d initialized)", len(statuses)))
+	if warnings == 0 {
+		ui.Success(fmt.Sprintf("Submodules clean (%d initialized)", len(statuses)))
 	}
 }
 
