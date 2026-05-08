@@ -90,7 +90,7 @@
       <div class="workflow-header" data-animate>
         <span class="mode-label mode-label-feature">New in v4.4</span>
         <h2>Zero-setup MCP when you launch with Claude</h2>
-        <p>When your agent CLI is <code>claude</code>, <code>ezs agent</code> automatically installs the <code>ezs-mcp</code> server and registers it with Claude Code before launching the session. The agent gets the full 21-tool ezstack surface natively &mdash; no <code>go install</code>, no <code>claude mcp add</code>, no embedded docs paste.</p>
+        <p>When your agent CLI is <code>claude</code>, <code>ezs agent</code> automatically installs the <code>ezs-mcp</code> server and registers it with Claude Code before launching the session. The agent gets the full 28-tool ezstack surface natively &mdash; no <code>go install</code>, no <code>claude mcp add</code>, no embedded docs paste.</p>
       </div>
 
       <div class="workflow-steps">
@@ -125,7 +125,7 @@
           <p>With MCP active, the shipped prompt switches from the full <code>DOCUMENTATION.md</code> dump to a short stub that tells the agent to prefer MCP tools. The agent gets strict tool schemas (with <em>destructive</em> annotations on mutating operations) instead of prose instructions &mdash; cheaper in tokens, more reliable in behavior.</p>
           <div class="step-code">
             <pre><code><span class="c-comment"># Before MCP: ~8KB of DOCUMENTATION.md embedded in every prompt</span>
-<span class="c-comment"># After MCP:  a short stub + 21 tool schemas delivered via MCP</span>
+<span class="c-comment"># After MCP:  a short stub + 28 tool schemas delivered via MCP</span>
 
 <span class="c-prompt">→</span> <span class="c-cmd">ezstack_status</span> <span class="c-flag">{ "decorated": true }</span>
 <span class="c-prompt">→</span> <span class="c-cmd">ezstack_commit</span> <span class="c-flag">{ "message": "Add auth middleware" }</span>

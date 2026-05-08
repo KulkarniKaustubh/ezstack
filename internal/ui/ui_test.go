@@ -260,6 +260,89 @@ func TestPrintStack_StrikethroughSpansDotLeader(t *testing.T) {
 	}
 }
 
+// TestPrintStack_RootCurrentPointerIsGreen pins that when the root is the
+// current branch, the leading `>` pointer actually renders in green. The
+// previous code emitted the Green SGR AFTER the pointer character, so `>`
+// printed in the terminal default and only the (invisible) padding spaces
+// between pointer and name picked up the green tint. The inner Gray on the
+// name still wins, but the pointer itself must be green to match branch-row
+// behavior and to give the user a visible "this is your current location"
+// signal on root rows.
+func TestPrintStack_RootCurrentPointerIsGreen(t *testing.T) {
+	stack := &config.Stack{
+		Hash: "abc1234",
+		Root: "main",
+		Branches: []*config.Branch{
+			{Name: "feat", Parent: "main"},
+		},
+	}
+
+	out := captureStderr(t, func() {
+		PrintStack(stack, "main", false, nil)
+	})
+
+	// Find the root line (contains "main" but not the connector chars used
+	// for branch rows).
+	var rootLine string
+	for _, l := range strings.Split(out, "\n") {
+		clean := stripANSI(l)
+		if strings.Contains(clean, "main") && !strings.Contains(clean, "feat") {
+			rootLine = l
+			break
+		}
+	}
+	if rootLine == "" {
+		t.Fatalf("root line not found; full output:\n%s", out)
+	}
+
+	// The pointer is the first non-SGR character on the line. We expect:
+	//   <Green SGR><pointer ">"><Reset SGR>...
+	// i.e. the Green escape must precede the literal `>`.
+	pointerByte := strings.Index(rootLine, ">")
+	if pointerByte == -1 {
+		t.Fatalf("expected `>` pointer on current-root line, got %q", rootLine)
+	}
+	if !sgrColorActiveAt(rootLine, pointerByte, "32") {
+		t.Errorf("`>` pointer not rendered in green on current-root line; got %q", rootLine)
+	}
+}
+
+// sgrColorActiveAt walks the SGR (CSI ... m) escape sequences in s up to byte
+// position pos and returns whether the given color code (e.g. "32" for green)
+// is the active foreground color. Used to pin the green-pointer contract for
+// the root-current row in PrintStack.
+func sgrColorActiveAt(s string, pos int, code string) bool {
+	active := ""
+	i := 0
+	for i < pos && i < len(s) {
+		if s[i] == 0x1b && i+1 < len(s) && s[i+1] == '[' {
+			j := i + 2
+			for j < len(s) && (s[j] >= '0' && s[j] <= '9' || s[j] == ';') {
+				j++
+			}
+			if j < len(s) && s[j] == 'm' {
+				params := s[i+2 : j]
+				if params == "" {
+					active = ""
+				} else {
+					for _, p := range strings.Split(params, ";") {
+						if p == "0" || p == "" {
+							active = ""
+						} else if (len(p) == 2 && p[0] == '3' && p[1] >= '0' && p[1] <= '9') ||
+							(len(p) == 2 && p[0] == '9' && p[1] >= '0' && p[1] <= '9') {
+							active = p
+						}
+					}
+				}
+				i = j + 1
+				continue
+			}
+		}
+		i++
+	}
+	return active == code
+}
+
 // sgrStrikethroughActiveAt walks the SGR (CSI ... m) escape sequences in s up
 // to byte position pos and returns whether strikethrough (SGR 9) is the
 // active text-decoration state. Used to assert that the dot-leader gap

@@ -237,7 +237,12 @@ func Sync(args []string) error {
 			return fmt.Errorf("branch %q is not part of any stack", *branchFlag)
 		}
 		if dryRun {
-			return syncDryRun(mgr, gh, []*config.Stack{targetStack}, jsonOutput, *includeRemoteFlag)
+			// Per-branch dry-run mirrors the execute path (syncCurrentBranch),
+			// which uses DetectSyncNeededForBranch and does NOT skip remote-only
+			// branches. Routing through syncDryRun (bulk detection) would filter
+			// pickups out and report "no sync needed" while the real run rebases
+			// — a divergence between preview and apply.
+			return syncDryRunBranch(mgr, gh, branch, jsonOutput)
 		}
 		// Use the branch's worktree path so stash operations target the correct worktree
 		branchCwd := cwd
@@ -468,6 +473,27 @@ func syncDryRun(mgr *stack.Manager, gh *github.Client, stacks []*config.Stack, j
 	}
 	if len(syncNeeded) == 0 {
 		ui.Success("All branches are up to date. Nothing to sync.")
+		return nil
+	}
+	ui.Info("[dry-run] The following branches would be synced:")
+	printSyncInfoList(syncNeeded)
+	return nil
+}
+
+// syncDryRunBranch previews what sync would do for a single explicitly-named
+// branch. Matches the execute path (syncCurrentBranch → DetectSyncNeededForBranch),
+// which never filters IsRemote because the user named the branch directly.
+func syncDryRunBranch(mgr *stack.Manager, gh *github.Client, branch *config.Branch, jsonOutput bool) error {
+	info := mgr.DetectSyncNeededForBranch(branch.Name, gh)
+	var syncNeeded []stack.SyncInfo
+	if info != nil && info.NeedsSync {
+		syncNeeded = []stack.SyncInfo{*info}
+	}
+	if jsonOutput {
+		return printSyncInfoJSON(syncNeeded)
+	}
+	if len(syncNeeded) == 0 {
+		ui.Success("Current branch is up to date. No sync needed.")
 		return nil
 	}
 	ui.Info("[dry-run] The following branches would be synced:")

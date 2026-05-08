@@ -148,6 +148,34 @@ func TestClaudeAgentName_PicksUpLateRename(t *testing.T) {
 	}
 }
 
+// TestClaudeAgentName_ToleratesOversizedLine pins the regression where a
+// single oversized journal line (e.g. a multi-MB tool output) caused the
+// scanner to silently truncate the search and lose every `agent-name`
+// event after it. The previous bufio.Scanner with a 4 MB line cap would
+// return false on the long line and stop, re-asserting the launch label
+// on resume even though a `/rename` event existed past the long line.
+// bufio.Reader.ReadBytes('\n') has no such cap, so the late rename is
+// surfaced as expected.
+func TestClaudeAgentName_ToleratesOversizedLine(t *testing.T) {
+	root := withClaudeProjectsDir(t)
+	sid := "oversized-uuid"
+	// Build a 5 MB single-line tool message — comfortably past the
+	// 4 MB cap the old scanner used. The line stays valid JSONL so the
+	// substring/decode path doesn't bail for the wrong reason.
+	bigPayload := strings.Repeat("x", 5*1024*1024)
+	bigLine := `{"type":"user","message":"` + bigPayload + `"}`
+	lines := []string{
+		nameEvent(sid, "_ezstack-launch-label"),
+		bigLine,
+		nameEvent(sid, "renamed-after-big-line"),
+	}
+	writeJSONL(t, root, "-Users-test-repo", sid, lines)
+
+	if got := claudeAgentName(sid); got != "renamed-after-big-line" {
+		t.Errorf("oversized line truncated scan: got %q, want %q", got, "renamed-after-big-line")
+	}
+}
+
 func TestClaudeAgentName_NoAgentNameEventReturnsEmpty(t *testing.T) {
 	root := withClaudeProjectsDir(t)
 	sid := "abc"

@@ -131,11 +131,13 @@ export function StackColumn({ stack, selectedBranch, onSelectBranch, onRename, o
           <div className="text-center text-xs text-muted-foreground py-6">No branches</div>
         ) : (
           <div className="space-y-0.5">
-            {/* Root indicator */}
+            {/* Root indicator. The (remote) badge already renders in the
+                column header above; rendering it here too produced a
+                duplicate. Keep this row name-only so the badge stays in one
+                canonical location, matching StackGraph. */}
             <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-muted-foreground">
               <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
               <span className="font-mono">{stack.root}</span>
-              {stack.root_is_remote && <RemoteTag kind="stack" className="font-mono" />}
             </div>
             {tree.map((node, i) => (
               <TreeNodeView

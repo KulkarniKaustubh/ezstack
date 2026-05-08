@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -40,14 +42,15 @@ var claudeProjectsDir = func() string {
 // — including deep into long-running sessions. A line-count cap would
 // silently lose a late rename and re-assert the launch label on resume,
 // defeating the whole point of this lookup; a byte cap keeps the worst-
-// case cost of `agent ls` bounded while still catching the most recent
-// rename in any realistic session journal.
+// case cost of `agent ls` bounded.
 //
 // 256 MiB is well past any session size we've seen in the wild — heavy
 // sessions land in the low-MB range — and reading that much off a local
-// SSD is sub-second. If a journal grows past this we degrade gracefully
-// to "use whatever we found in the first 256 MiB", which is identical to
-// today's line-cap behavior in failure mode.
+// SSD is sub-second. We read forward from the start; a tail-first scan
+// would be cheaper for the rename case but adds enough JSONL chunking
+// complexity that the simpler bounded forward read wins for now. If a
+// journal grows past this cap we degrade to "use whatever we found in
+// the first 256 MiB" — keeps the launch label visible at minimum.
 const claudeAgentNameMaxBytes = 256 * 1024 * 1024
 
 // agentNameEvent matches the JSON shape Claude writes for `claude --name X`
@@ -109,7 +112,13 @@ func claudeAgentName(sessionID string) string {
 // We use a cheap substring filter on the raw bytes before decoding because
 // the vast majority of lines in a session journal are tool calls / messages
 // with no `type` match — full json.Unmarshal on every line is wasteful.
-// Operating on the scanner's []byte avoids one allocation per line.
+//
+// Uses bufio.Reader (not bufio.Scanner) because Scanner returns false on
+// any line that exceeds its buffer size, with the error surfaced only via
+// scanner.Err(). A single oversized tool-output line in a journal would
+// silently truncate the scan and lose every `agent-name` event after it,
+// defeating the whole point of the lookup. Reader.ReadBytes('\n') has no
+// such cap.
 func scanLastAgentName(path, sessionID string) string {
 	f, err := os.Open(path)
 	if err != nil {
@@ -117,35 +126,34 @@ func scanLastAgentName(path, sessionID string) string {
 	}
 	defer f.Close()
 
-	scanner := bufio.NewScanner(f)
-	// Lines in claude session journals can be very long (tool outputs,
-	// diffs). Bump the buffer so we don't fail with bufio.ErrTooLong on a
-	// fat line and miss any agent-name events that come after it.
-	const maxLine = 4 * 1024 * 1024
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLine)
-
+	br := bufio.NewReaderSize(f, 64*1024)
 	needle := []byte(`"agent-name"`)
 	last := ""
 	bytesSeen := 0
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		// +1 for the newline the scanner stripped; keeps the budget
-		// honest against the on-disk size of what we've consumed.
-		bytesSeen += len(line) + 1
-		if bytesSeen > claudeAgentNameMaxBytes {
+	for {
+		line, err := br.ReadBytes('\n')
+		if len(line) > 0 {
+			bytesSeen += len(line)
+			if bytesSeen > claudeAgentNameMaxBytes {
+				break
+			}
+			if bytes.Contains(line, needle) {
+				var ev agentNameEvent
+				if jerr := json.Unmarshal(bytes.TrimRight(line, "\n"), &ev); jerr == nil {
+					if ev.Type == "agent-name" && ev.SessionID == sessionID {
+						last = ev.AgentName
+					}
+				}
+			}
+		}
+		if err != nil {
+			// io.EOF is expected at end of file; any other error stops the
+			// scan early but we still return whatever `last` we found.
+			if !errors.Is(err, io.EOF) {
+				break
+			}
 			break
 		}
-		if !bytes.Contains(line, needle) {
-			continue
-		}
-		var ev agentNameEvent
-		if err := json.Unmarshal(line, &ev); err != nil {
-			continue
-		}
-		if ev.Type != "agent-name" || ev.SessionID != sessionID {
-			continue
-		}
-		last = ev.AgentName
 	}
 	return last
 }

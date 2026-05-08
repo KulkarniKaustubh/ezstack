@@ -12,10 +12,30 @@ import {
   updateContextKeys,
 } from "./commands/fileNavigation";
 
+// pickWorkspaceRoot resolves the repo root for the extension. ezstack users
+// frequently open multiple worktrees in one window (one per stack branch),
+// so a flat `workspaceFolders[0]` would silently bind the extension to an
+// arbitrary folder. Prefer the active editor's containing folder when one
+// is open; otherwise fall back to the first folder.
+function pickWorkspaceRoot(): string | undefined {
+  const folders = vscode.workspace.workspaceFolders;
+  if (!folders || folders.length === 0) {
+    return undefined;
+  }
+  const activeEditor = vscode.window.activeTextEditor;
+  if (activeEditor) {
+    const containing = vscode.workspace.getWorkspaceFolder(activeEditor.document.uri);
+    if (containing) {
+      return containing.uri.fsPath;
+    }
+  }
+  return folders[0].uri.fsPath;
+}
+
 export async function activate(
   context: vscode.ExtensionContext,
 ): Promise<void> {
-  const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+  const workspaceRoot = pickWorkspaceRoot();
   if (!workspaceRoot) {
     return;
   }
@@ -208,16 +228,18 @@ export async function activate(
     }),
   );
 
-  // Config watcher for auto-refresh
-  const autoRefresh = vscode.workspace
-    .getConfiguration("ezstack")
-    .get<boolean>("autoRefresh", true);
-
+  // Config watcher for auto-refresh. Toggling `ezstack.autoRefresh` at
+  // runtime should start/stop the watcher live without requiring a window
+  // reload — onDidChangeConfiguration handles that here.
   const pendingTimers: ReturnType<typeof setTimeout>[] = [];
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let watcher: ConfigWatcher | undefined;
 
-  if (autoRefresh) {
-    const watcher = new ConfigWatcher(workspaceRoot);
+  const startWatcher = () => {
+    if (watcher) {
+      return;
+    }
+    watcher = new ConfigWatcher(workspaceRoot);
     watcher.onDidChange(() => {
       if (debounceTimer) {
         clearTimeout(debounceTimer);
@@ -228,8 +250,38 @@ export async function activate(
         void decorations.refresh();
       }, 500);
     });
-    context.subscriptions.push(watcher);
+  };
+  const stopWatcher = () => {
+    if (watcher) {
+      watcher.dispose();
+      watcher = undefined;
+    }
+  };
+
+  if (
+    vscode.workspace
+      .getConfiguration("ezstack")
+      .get<boolean>("autoRefresh", true)
+  ) {
+    startWatcher();
   }
+
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (!e.affectsConfiguration("ezstack.autoRefresh")) {
+        return;
+      }
+      const enabled = vscode.workspace
+        .getConfiguration("ezstack")
+        .get<boolean>("autoRefresh", true);
+      if (enabled) {
+        startWatcher();
+      } else {
+        stopWatcher();
+      }
+    }),
+    { dispose: stopWatcher },
+  );
 
   // Refresh git status on file save (debounced)
   let saveTimer: ReturnType<typeof setTimeout> | undefined;

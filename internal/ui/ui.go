@@ -856,13 +856,20 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 	// Render the root row. Root has no connector, but it shares the pointer
 	// + prefix gutter with branch rows so the name aligns with the tree's
 	// connector column and the PR/diff cells line up with the shared columns.
+	// rootCurrentColor is emitted BEFORE the pointer so the `>` itself
+	// renders green when the root is current. The inner Gray that follows
+	// re-colors the name to the muted root style; without it, the Green
+	// would bleed into the name. Branch rows look green-on-name because
+	// they use Bold (which doesn't reset color) instead of Gray.
 	rootPointer := " "
 	rootCurrentColor := ""
+	rootCurrentReset := ""
 	if currentBranch == stack.Root {
 		rootPointer = ">"
 		rootCurrentColor = Green
+		rootCurrentReset = Reset
 	}
-	rootLine := fmt.Sprintf("%s%s  %s%s%s", rootPointer, rootCurrentColor, Gray, stack.Root, Reset)
+	rootLine := fmt.Sprintf("%s%s%s  %s%s%s", rootCurrentColor, rootPointer, rootCurrentReset, Gray, stack.Root, Reset)
 	if stack.RootIsRemote {
 		rootLine += " " + Gray + "(remote)" + Reset
 	}
