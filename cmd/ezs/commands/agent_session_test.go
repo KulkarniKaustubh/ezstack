@@ -401,7 +401,7 @@ func TestResolveFeatureSession_ResumePrefersLiveRename(t *testing.T) {
 	})
 	stack := &config.Stack{Hash: "abc1234", Name: "my-feature", AgentSessionID: storedID}
 
-	plan := resolveFeatureSession("/repo", "claude", stack, false)
+	plan := resolveFeatureSession("/repo", "claude", stack, false, "")
 	if !containsString(plan.injection.Args, "feature-renamed") {
 		t.Errorf("expected feature resume to carry user's rename; got %v", plan.injection.Args)
 	}
