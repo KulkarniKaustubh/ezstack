@@ -793,13 +793,16 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 	}
 	collectRows(roots, "  ")
 
-	// Root contributes to every shared column. It has no pointer/connector
-	// but shares the gutter so its PR / diff cells line up with branch rows.
+	// Root contributes to every shared column. It has no connector but
+	// shares the pointer + prefix gutter with branch rows so its name lines
+	// up with the connector column and its PR/diff cells line up with the
+	// shared columns.
 	rootRemoteWidth := 0
 	if stack.RootIsRemote {
 		rootRemoteWidth = runewidth.StringWidth(" (remote)")
 	}
-	rootNameWidth := runewidth.StringWidth("  ") +
+	rootNameWidth := 1 + // pointer (" " or ">")
+		runewidth.StringWidth("  ") +
 		runewidth.StringWidth(stack.Root) +
 		rootRemoteWidth
 	rootPRText := getRootPRText(stack)
@@ -850,9 +853,16 @@ func PrintStack(stack *config.Stack, currentBranch string, showStatus bool, stat
 		return ""
 	}
 
-	// Render the root row. Root has no pointer/connector, but it shares the
-	// PR and diff columns with branch rows so the metadata lines up.
-	rootLine := fmt.Sprintf("  %s%s%s", Gray, stack.Root, Reset)
+	// Render the root row. Root has no connector, but it shares the pointer
+	// + prefix gutter with branch rows so the name aligns with the tree's
+	// connector column and the PR/diff cells line up with the shared columns.
+	rootPointer := " "
+	rootCurrentColor := ""
+	if currentBranch == stack.Root {
+		rootPointer = ">"
+		rootCurrentColor = Green
+	}
+	rootLine := fmt.Sprintf("%s%s  %s%s%s", rootPointer, rootCurrentColor, Gray, stack.Root, Reset)
 	if stack.RootIsRemote {
 		rootLine += " " + Gray + "(remote)" + Reset
 	}
