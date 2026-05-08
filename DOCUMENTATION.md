@@ -69,7 +69,7 @@ Verify the install:
 
 ```bash
 ezs --version
-# → ezstack version 4.8.3
+# → ezstack version 4.8.4
 ```
 
 ### 2. Wire up shell integration
@@ -1259,12 +1259,14 @@ Launch an AI agent with full stack context. The agent is scoped to a single stac
 ezs agent [options] [-- <agent-args>]
 ezs agent feature "description"
 ezs agent ls [filter] [--json]
+ezs agent rm <filter>
 ezs agent prompt <flag> <work|feature>
 
 Modes:
     (default)   Work session — agent scoped to a stack with full context
     feature     Feature builder — agent breaks a feature into stacked branches
     ls (list)   List the AI sessions ezs has bound to stacks/branches in this repo
+    rm (remove) Forget a tracked session binding (stack, branch, or all)
     prompt      View or edit the prompt templates used by the agent
 
 Options:
@@ -1323,6 +1325,18 @@ Filter the list with mutually-exclusive scope flags:
 - `--feature` — show only sessions created via `ezs agent feature`. The `mode` field on each session row distinguishes work-mode (`"work"`) from feature-mode (`"feature"`); legacy entries written before mode tracking surface as `"work"`.
 
 `agent ls` is intentionally scoped to the current repo only. Sessions from other ezstack-tracked repos in `~/.ezstack/stacks.json` are not surfaced — there's no cross-repo listing flag, by design, because surfacing unrelated sessions creates more confusion than it resolves. Only ezstack-bound sessions are listed — freestanding `claude` sessions you started by hand are not.
+
+#### Forgetting a session binding
+
+`ezs agent rm <filter>` (alias `ezs agent remove`) clears ezs's stored pointer to the AI session for the chosen scope. The next `ezs agent` run against that scope mints a fresh UUID instead of resuming. The agent's own conversation history (claude's session journal, etc.) is not touched — only ezs forgets the pointer. Use `ezs agent ls` to grab the UUID first if you want to resume manually later (`ezs agent -- --resume <uuid>`).
+
+Filters mirror `ezs agent ls` and are mutually exclusive — exactly one is required:
+
+- `-b` / `--branch` — forget the session bound to the current branch. Errors if no session is bound there.
+- `-s` / `--stack` — forget the session bound to the current stack. Errors if no session is bound there.
+- `--all` — forget every session in the current repo (stack + branch). Asks for confirmation since it touches multiple bindings at once; `-y` / `ui.YesMode` bypasses the prompt.
+
+The bare `ezs agent rm` errors out with guidance — silently picking a default would risk wiping the wrong session.
 
 **Display names follow `/rename`.** The `display_name` column is read live from the agent's session journal, so renaming a session inside Claude (`/rename my-name`) is reflected in `agent ls` on the next run. Fresh sessions and non-claude agents fall back to the deterministic `_ezstack-<identifier>` label. The rename also survives subsequent `ezs agent` resumes — ezs picks up the latest name from the journal and re-asserts it via `claude --name`, so your rename doesn't get clobbered the next time you launch.
 
@@ -2380,14 +2394,14 @@ checks, and review status) and a per-branch file browser. Auto-refreshes when
 
 ```bash
 # Pre-built (from the Releases page)
-code --install-extension ezstack-4.8.3.vsix
+code --install-extension ezstack-4.8.4.vsix
 
 # From source
 cd vscode-extension
 npm install
 npm run compile
 npx vsce package
-code --install-extension ezstack-4.8.3.vsix
+code --install-extension ezstack-4.8.4.vsix
 ```
 
 **Commands** are available under the `ezstack:` prefix in the command palette

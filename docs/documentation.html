@@ -714,7 +714,7 @@
       (<code>gh</code>) for any PR-related commands.</p>
       <p>Verify the install:</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">--version</span>
-<span class="c-comment"># → ezstack version 4.8.3</span>
+<span class="c-comment"># → ezstack version 4.8.4</span>
 </code></pre>
       <h3 id="2-wire-up-shell-integration">2. Wire up shell integration</h3>
       <p>A handful of ezstack commands need to change your shell's working directory:
@@ -1730,12 +1730,14 @@ golangci-lint <span class="c-flag">run</span>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">[options]</span> <span class="c-str">[--</span> <span class="c-str">&lt;agent-args&gt;]</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">feature</span> <span class="c-str">&#34;description&#34;</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">ls</span> <span class="c-str">[filter]</span> <span class="c-str">[--json]</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">rm</span> <span class="c-str">&lt;filter&gt;</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">prompt</span> <span class="c-str">&lt;flag&gt;</span> <span class="c-str">&lt;work|feature&gt;</span>
 
 Modes:
     (default)   <span class="c-dim">Work session — agent scoped to a stack with full context</span>
     <span class="c-cmd">feature</span>     <span class="c-dim">Feature builder — agent breaks a feature into stacked branches</span>
     <span class="c-cmd">ls</span> <span class="c-str">(list)</span>   <span class="c-dim">List the AI sessions ezs has bound to stacks/branches in this repo</span>
+    <span class="c-cmd">rm</span> <span class="c-str">(remove)</span> <span class="c-str">Forget</span> <span class="c-str">a</span> <span class="c-str">tracked</span> <span class="c-str">session</span> <span class="c-str">binding</span> <span class="c-str">(stack,</span> <span class="c-str">branch,</span> <span class="c-str">or</span> <span class="c-str">all)</span>
     <span class="c-cmd">prompt</span>      <span class="c-dim">View or edit the prompt templates used by the agent</span>
 
 Options:
@@ -1802,6 +1804,15 @@ Options:
       <li><code>--feature</code> — show only sessions created via <code>ezs agent feature</code>. The <code>mode</code> field on each session row distinguishes work-mode (<code>&quot;work&quot;</code>) from feature-mode (<code>&quot;feature&quot;</code>); legacy entries written before mode tracking surface as <code>&quot;work&quot;</code>.</li>
       </ul>
       <p><code>agent ls</code> is intentionally scoped to the current repo only. Sessions from other ezstack-tracked repos in <code>~/.ezstack/stacks.json</code> are not surfaced — there's no cross-repo listing flag, by design, because surfacing unrelated sessions creates more confusion than it resolves. Only ezstack-bound sessions are listed — freestanding <code>claude</code> sessions you started by hand are not.</p>
+      <h4 id="forgetting-a-session-binding">Forgetting a session binding</h4>
+      <p><code>ezs agent rm &lt;filter&gt;</code> (alias <code>ezs agent remove</code>) clears ezs's stored pointer to the AI session for the chosen scope. The next <code>ezs agent</code> run against that scope mints a fresh UUID instead of resuming. The agent's own conversation history (claude's session journal, etc.) is not touched — only ezs forgets the pointer. Use <code>ezs agent ls</code> to grab the UUID first if you want to resume manually later (<code>ezs agent -- --resume &lt;uuid&gt;</code>).</p>
+      <p>Filters mirror <code>ezs agent ls</code> and are mutually exclusive — exactly one is required:</p>
+      <ul>
+      <li><code>-b</code> / <code>--branch</code> — forget the session bound to the current branch. Errors if no session is bound there.</li>
+      <li><code>-s</code> / <code>--stack</code> — forget the session bound to the current stack. Errors if no session is bound there.</li>
+      <li><code>--all</code> — forget every session in the current repo (stack + branch). Asks for confirmation since it touches multiple bindings at once; <code>-y</code> / <code>ui.YesMode</code> bypasses the prompt.</li>
+      </ul>
+      <p>The bare <code>ezs agent rm</code> errors out with guidance — silently picking a default would risk wiping the wrong session.</p>
       <p><strong>Display names follow <code>/rename</code>.</strong> The <code>display_name</code> column is read live from the agent's session journal, so renaming a session inside Claude (<code>/rename my-name</code>) is reflected in <code>agent ls</code> on the next run. Fresh sessions and non-claude agents fall back to the deterministic <code>_ezstack-&lt;identifier&gt;</code> label. The rename also survives subsequent <code>ezs agent</code> resumes — ezs picks up the latest name from the journal and re-asserts it via <code>claude --name</code>, so your rename doesn't get clobbered the next time you launch.</p>
       <p><strong><code>--preset &lt;name&gt;</code>.</strong> Looks up <code>~/.ezstack/agent-presets/&lt;name&gt;.md</code> and appends it to the end of the fully composed prompt under a <code>## Preset: &lt;name&gt;</code> header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.</p>
       <p><strong><code>--save-prompt &lt;file&gt;</code>.</strong> Writes the fully composed prompt (after all three layers and any <code>--preset</code>) to <code>&lt;file&gt;</code>. Most useful with <code>--dry-run</code> to inspect exactly what the agent would see without spawning it.</p>
@@ -2867,14 +2878,14 @@ ref=$(git <span class="c-flag">stash</span> <span class="c-str">list</span> <spa
       <code>~/.ezstack/stacks.json</code> changes.</p>
       <p><strong>Install</strong></p>
       <pre><code><span class="c-comment"># Pre-built (from the Releases page)</span>
-<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.8.3.vsix</span>
+<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.8.4.vsix</span>
 
 <span class="c-comment"># From source</span>
 <span class="c-cmd">cd</span> <span class="c-str">vscode-extension</span>
 <span class="c-cmd">npm</span> <span class="c-flag">install</span>
 <span class="c-cmd">npm</span> <span class="c-flag">run</span> <span class="c-str">compile</span>
 <span class="c-cmd">npx</span> <span class="c-flag">vsce</span> <span class="c-str">package</span>
-<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.8.3.vsix</span>
+<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.8.4.vsix</span>
 </code></pre>
       <p><strong>Commands</strong> are available under the <code>ezstack:</code> prefix in the command palette
       (<code>Cmd+Shift+P</code>):</p>
@@ -3216,7 +3227,7 @@ ref=$(git <span class="c-flag">stash</span> <span class="c-str">list</span> <spa
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License · v4.8.3</span>
+          <span class="footer-meta">MIT License · v4.8.4</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>
