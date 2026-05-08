@@ -115,6 +115,26 @@ func TestAgentRm_BranchScope_ErrorsOnUntrackedBranch(t *testing.T) {
 	}
 }
 
+// TestAgentRm_BranchScope_ErrorsWhenNoSession pins the branch-scope variant of
+// the empty-slot guard exercised for stacks in
+// TestAgentRm_StackScope_ErrorsWhenNoSession. A tracked branch with no bound
+// session must hard-fail rather than silently no-op — the user passed
+// --branch expecting *some* effect, and a quiet success would leave them
+// wondering whether anything happened.
+func TestAgentRm_BranchScope_ErrorsWhenNoSession(t *testing.T) {
+	repoDir, mgr := setupCLITestEnv(t)
+	mustGit(t, repoDir, "checkout", "-b", "feat")
+	if _, err := mgr.RegisterExistingBranch("feat", repoDir, "main"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	// Tracked but never had a session bound — rm should be loud, not a
+	// silent no-op.
+	err := agentRm([]string{"-b"})
+	if err == nil || !strings.Contains(err.Error(), "no session is bound to branch") {
+		t.Errorf("expected no-session error; got %v", err)
+	}
+}
+
 func TestAgentRm_AllScope_ClearsEverything(t *testing.T) {
 	repoDir, mgr := setupCLITestEnv(t)
 	// Two stacks + a branch session, all bound.

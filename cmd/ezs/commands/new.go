@@ -163,10 +163,15 @@ func New(args []string) error {
 			return err
 		}
 
-		adoptActiveAgentSessionForBranch(mgr, branch.Name)
-
-		// Prompt for stack name
+		// Prompt for the stack name first so the user-typed name lands on
+		// `mgr` while its origSnapshot is still consistent with disk. Only
+		// then run adoption — adoption writes via a fresh manager, and if
+		// it ran first, the subsequent SetStackName save would 3-way-merge
+		// against a stale snapshot and silently overwrite the session ID
+		// (modify-vs-modify, mine wins, mine has session=""). See the
+		// regression test in agent_session_adopt_test.go.
 		promptStackName(mgr, branch.Name)
+		adoptActiveAgentSessionForBranch(mgr, branch.Name)
 
 		gh, ghErr := newGitHubClient(g)
 		if ghErr == nil {
@@ -250,14 +255,17 @@ func New(args []string) error {
 			return fmt.Errorf("failed to add branch to stack: %w", err)
 		}
 
+		// Prompt for stack name first so the user-typed name lands on `mgr`
+		// while its origSnapshot is still consistent with disk; adoption
+		// (fresh manager) then writes the session ID without a merge
+		// conflict on the same stack value. See agent_session_adopt_test.go.
+		promptStackName(mgr, userBranch.Name)
+
 		// remote.StackHash refers to the stack created by RegisterRemoteBranch
 		// inside selectAndRegisterRemoteBranch — it's always a fresh stack
 		// when this branch executes, so an active feature session should
 		// adopt it directly.
 		adoptActiveAgentSession(mgr.GetRepoDir(), remote.StackHash)
-
-		// Prompt for stack name (new stack was just created)
-		promptStackName(mgr, userBranch.Name)
 
 		if remote.PRNumber > 0 {
 			ui.Success(fmt.Sprintf("Created stack from PR #%d (%s)", remote.PRNumber, remote.Branch))
@@ -382,8 +390,12 @@ func New(args []string) error {
 		ui.Success(fmt.Sprintf("Created branch '%s' with worktree at '%s'", branch.Name, branch.WorktreePath))
 
 		if isNewStack {
-			adoptActiveAgentSessionForBranch(mgr, branch.Name)
+			// promptStackName must precede adoption: the rename writes via
+			// `mgr` while adoption writes via a fresh manager, and the
+			// reverse order leaves `mgr` with a stale snapshot whose Save
+			// silently overwrites the just-adopted session ID.
 			promptStackName(mgr, branch.Name)
+			adoptActiveAgentSessionForBranch(mgr, branch.Name)
 		}
 
 		if getCdAfterNew(cfg, repoDir, *cdFlag, *noCdFlag) {
@@ -408,8 +420,9 @@ func New(args []string) error {
 		ui.Success(fmt.Sprintf("Created branch '%s'", branch.Name))
 
 		if isNewStack {
-			adoptActiveAgentSessionForBranch(mgr, branch.Name)
+			// See worktree branch above for ordering rationale.
 			promptStackName(mgr, branch.Name)
+			adoptActiveAgentSessionForBranch(mgr, branch.Name)
 		}
 
 		// Switch to the new branch

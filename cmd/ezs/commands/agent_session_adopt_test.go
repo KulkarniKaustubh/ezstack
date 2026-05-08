@@ -240,3 +240,53 @@ func TestAdoptActiveAgentSessionForBranch_UntrackedBranchIsNoOp(t *testing.T) {
 	// return cleanly without writing anything.
 	adoptActiveAgentSessionForBranch(mgr, "ghost-branch")
 }
+
+// TestAdoptActiveAgentSession_SurvivesSubsequentMgrSave pins the ordering
+// requirement in new.go: a same-process Save on `mgr` after adoption (e.g.
+// the user accepting promptStackName with a non-empty value) must not
+// overwrite the freshly-adopted session ID.
+//
+// Adoption persists via a fresh stack.Manager, which means the *original*
+// mgr that called the adoption helper does not see the write. If new.go
+// then runs `mgr.SetStackName` (or any other mgr-mediated mutation), mgr's
+// Save 3-way-merges against a stale origSnapshot — modify-vs-modify on the
+// same stack value, last-writer-wins, mine has session="". Net effect: the
+// session ID disappears silently, breaking the headline `ezs new` flow.
+//
+// new.go avoids this by running promptStackName BEFORE adoption (so the
+// only Save that sees a stale snapshot is the harmless one with no
+// concurrent peer); this test pins that contract by exercising the
+// adopt-first-then-save shape and asserting the session survives.
+//
+// If this test fails, check the call order at every adopt site in new.go:
+// adoption must come AFTER any other mgr.Save you intend to run for the
+// same stack, not before.
+func TestAdoptActiveAgentSession_SurvivesSubsequentMgrSave(t *testing.T) {
+	repoDir, mgr := setupCLITestEnv(t)
+	mustGit(t, repoDir, "checkout", "-b", "feat")
+	if _, err := mgr.RegisterExistingBranch("feat", repoDir, "main"); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	hash := mgr.GetStackForBranch("feat").Hash
+
+	t.Setenv(agentSessionIDEnv, "feature-uuid")
+	t.Setenv(agentSessionModeEnv, config.AgentSessionFeatureMode)
+
+	// Mirror new.go's required order: rename first (mgr's only Save), then
+	// adopt (fresh-manager write).
+	if err := mgr.SetStackName(hash, "my-feature"); err != nil {
+		t.Fatalf("SetStackName: %v", err)
+	}
+	adoptActiveAgentSessionForBranch(mgr, "feat")
+
+	got := reloadManager(t, repoDir).GetStackConfig().Stacks[hash]
+	if got.AgentSessionID != "feature-uuid" {
+		t.Errorf("AgentSessionID = %q, want feature-uuid", got.AgentSessionID)
+	}
+	if got.Name != "my-feature" {
+		t.Errorf("Name = %q, want my-feature", got.Name)
+	}
+	if got.AgentSessionMode != config.AgentSessionFeatureMode {
+		t.Errorf("AgentSessionMode = %q, want %q", got.AgentSessionMode, config.AgentSessionFeatureMode)
+	}
+}

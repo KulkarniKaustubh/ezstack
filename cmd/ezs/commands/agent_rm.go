@@ -146,7 +146,7 @@ func agentRmBranchScope(mgr *stack.Manager, g *git.Git) error {
 	if err := mgr.SetBranchAgentSessionID(branch, "", ""); err != nil {
 		return fmt.Errorf("failed to clear branch session: %w", err)
 	}
-	ui.Success(fmt.Sprintf("Forgot session %s on branch %s", shortAgentSessionID(stored), branch))
+	ui.Success(fmt.Sprintf("Forgot session %s on branch %s", shortSessionID(stored), branch))
 	return nil
 }
 
@@ -164,7 +164,7 @@ func agentRmStackScope(mgr *stack.Manager) error {
 	if err := mgr.SetStackAgentSessionID(s.Hash, "", ""); err != nil {
 		return fmt.Errorf("failed to clear stack session: %w", err)
 	}
-	ui.Success(fmt.Sprintf("Forgot session %s on stack %s", shortAgentSessionID(stored), s.DisplayName()))
+	ui.Success(fmt.Sprintf("Forgot session %s on stack %s", shortSessionID(stored), s.DisplayName()))
 	return nil
 }
 

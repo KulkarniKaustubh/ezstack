@@ -516,20 +516,11 @@ func adoptActiveAgentSession(repoPath, stackHash string) {
 	}
 	if err := persistStackSessionID(repoPath, stackHash, sessionID, config.AgentSessionFeatureMode); err != nil {
 		ui.Warn(fmt.Sprintf("Could not bind active feature session %s to stack %s: %v",
-			shortAgentSessionID(sessionID), stackHash, err))
+			shortSessionID(sessionID), stackHash, err))
 		return
 	}
 	ui.Info(fmt.Sprintf("Bound active feature session %s to new stack %s",
-		shortAgentSessionID(sessionID), stackHash))
-}
-
-// shortAgentSessionID truncates a UUID to its first 8 chars for log lines.
-// Mirrors the format used by `ezs agent ls`.
-func shortAgentSessionID(id string) string {
-	if len(id) <= 8 {
-		return id
-	}
-	return id[:8]
+		shortSessionID(sessionID), stackHash))
 }
 
 // adoptActiveAgentSessionForBranch is a convenience wrapper for callers that
