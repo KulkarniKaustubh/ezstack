@@ -128,11 +128,12 @@ ezs config set sync_strategy rebase                # switch to rebase-based sync
 ezs config set agent_command aider                 # switch the agent CLI
 ezs config set default_base_branch master          # override the global default base
 ezs config set github_token ghp_...                # optional; otherwise falls back to `gh auth`
-
-# Multi-word values (or any value starting with `-`) MUST be quoted so the
-# shell collapses them to a single argument. Common case is agent_command:
 ezs config set agent_command "claude --dangerously-skip-permissions"
 ```
+
+Multi-word values (or any value starting with `-`) MUST be quoted so the shell
+collapses them to a single argument — the last line above shows the common case
+for `agent_command`.
 
 ### 4. Create a worktree from an existing branch
 
@@ -150,21 +151,23 @@ checkout.
 
 ```bash
 ezs new --from-worktree
-#   What this actually does (see cmd/ezs/commands/new.go: useFromWorktree):
-#     - `git worktree list --porcelain` to enumerate every worktree.
-#     - Picker labelled `<branch> (<path>)`; you select one.
-#     - Confirms before mutating anything (Y/N).
-#     - mgr.RegisterExistingBranch(branch, path, base):
-#         writes the branch into ~/.ezstack/stacks.json with parent=<configured
-#         base branch> and creates a fresh stack hash.
-#     - If a PR for the branch already exists on GitHub, ezstack hydrates the
-#       cached PR number, URL, state, and review status the first time.
-#     - Prompts for an optional stack name (Enter to skip).
-#     - cd's your shell into the worktree (when cd_after_new=true and the
-#       shell wrapper from step 2 is installed).
-
 ezs ls       # the new stack now shows up at the root level
 ```
+
+What `ezs new --from-worktree` does (see `cmd/ezs/commands/new.go`:
+`useFromWorktree`):
+
+1. Calls `git worktree list --porcelain` to enumerate every worktree.
+2. Shows a picker labelled `<branch> (<path>)`; you pick one and confirm before
+   anything is mutated.
+3. Calls `mgr.RegisterExistingBranch(branch, path, base)` — writes the branch
+   into `~/.ezstack/stacks.json` with `parent=<configured base branch>` and
+   mints a fresh stack hash.
+4. If a PR for the branch already exists on GitHub, hydrates the cached PR
+   number, URL, state, and review status on the first lookup.
+5. Prompts for an optional stack name (Enter to skip).
+6. `cd`s your shell into the worktree, when `cd_after_new=true` and the shell
+   wrapper from step 2 is installed.
 
 **b) You have a local branch but NO worktree yet.** First materialize a
 worktree for it (one git command), then adopt it with the same flow:
@@ -182,22 +185,23 @@ origin/<branch>` is a one-shot fetch + worktree + register:
 
 ```bash
 ezs new origin/feature-branch
-#   What this actually does (see cmd/ezs/commands/new.go: newFromRemoteRef):
-#     - `git fetch` so we're working off the latest remote refs.
-#     - Verifies the remote branch exists; errors out if not.
-#     - `git worktree add <base>/<dirified-branch-name> <branch>` tracking origin.
-#     - Mirrors initialized submodules from the main worktree (configurable).
-#     - Looks up the PR via `gh pr view --json` and registers the branch as
-#       a stack root with base = PR.base (or main/master fallback).
-#     - For fork PRs: detects "Allow edits from maintainers" and your push
-#       access; adds a fork remote when both are true, marks the branch
-#       read-only otherwise so `ezs push` won't try to publish commits you
-#       can't land.
-
-# Or with PR-number ergonomics:
 ezs new -r 42 my-local-name   # PR #42 → local branch "my-local-name"
 ezs new -r                    # interactive PR picker
 ```
+
+What `ezs new origin/<branch>` does (see `cmd/ezs/commands/new.go`:
+`newFromRemoteRef`):
+
+1. Runs `git fetch` so it works off the latest remote refs.
+2. Verifies the remote branch exists; errors out if not.
+3. Runs `git worktree add <base>/<dirified-branch-name> <branch>` tracking
+   `origin`.
+4. Mirrors initialized submodules from the main worktree (configurable).
+5. Looks up the PR via `gh pr view --json` and registers the branch as a stack
+   root with `base = PR.base` (or `main`/`master` fallback).
+6. For fork PRs: detects "Allow edits from maintainers" and your push access;
+   adds a fork remote when both are true, otherwise marks the branch read-only
+   so `ezs push` won't try to publish commits you can't land.
 
 The branch shows up in `ezs ls` with a `(remote)` tag, and every ezs command
 works on it (sync, push, commit, etc.).
@@ -218,31 +222,38 @@ you're on `main` first (or pass `--parent main` explicitly).
 ```bash
 git checkout main          # or:  ezs new feature-1 --parent main
 ezs new feature-1
-#   What this actually does (see cmd/ezs/commands/new.go):
-#     - reads use_worktrees / worktree_base_dir from the per-repo config
-#     - creates branch `feature-1` from the current branch (no implicit
-#       `git fetch` — work off whatever your local main currently points at)
-#     - if use_worktrees=true: `git worktree add <worktree_base_dir>/feature-1 feature-1`
-#     - records the branch in ~/.ezstack/stacks.json with parent=<your previous branch>
-#     - if this is the first branch in a new stack, prompts you for a stack name
-#     - if cd_after_new=true and the shell wrapper is installed: cd into the worktree
 ```
+
+What `ezs new feature-1` does (see `cmd/ezs/commands/new.go`):
+
+1. Reads `use_worktrees` / `worktree_base_dir` from the per-repo config.
+2. Creates branch `feature-1` from the current branch (no implicit `git fetch`
+   — works off whatever your local `main` currently points at).
+3. If `use_worktrees=true`: runs
+   `git worktree add <worktree_base_dir>/feature-1 feature-1`.
+4. Records the branch in `~/.ezstack/stacks.json` with
+   `parent=<your previous branch>`.
+5. If this is the first branch in a new stack, prompts you for a stack name.
+6. If `cd_after_new=true` and the shell wrapper is installed: `cd`s into the
+   worktree.
 
 Make some edits, then commit. `ezs commit` is a thin wrapper over `git commit`
 that also rebases child branches and offers to push for you.
 
 ```bash
 ezs commit -am "Scaffold feature"
-#   What this actually does (see cmd/ezs/commands/commit.go):
-#     1. Runs `git commit -am "..."` interactively (your editor still works for
-#        long messages — the -m here just bypasses it).
-#     2. If the branch already exists on the remote, prompts:
-#          "Push to remote? [Y/n]"
-#        — answer Y to push, or n to defer. (Amend prompts for `--force` push.)
-#     3. Looks up child branches in stacks.json and rebases (or merges,
-#        per sync_strategy) each child onto the new tip. On a brand-new
-#        leaf branch this is a no-op.
 ```
+
+What `ezs commit` does (see `cmd/ezs/commands/commit.go`):
+
+1. Runs `git commit -am "..."` interactively (your editor still works for long
+   messages — the `-m` here just bypasses it).
+2. If the branch already exists on the remote, prompts `Push to remote? [Y/n]`.
+   Answer `Y` to push or `n` to defer; `ezs amend` prompts for a `--force` push
+   instead.
+3. Looks up child branches in `stacks.json` and rebases (or merges, per
+   `sync_strategy`) each child onto the new tip. On a brand-new leaf branch
+   this is a no-op.
 
 Stack a second branch on top:
 
@@ -256,15 +267,17 @@ ezs commit -am "Wire up feature"
 
 ```bash
 ezs push --stack
-#   What this actually does (see cmd/ezs/commands/push.go):
-#     - walks every branch in the current stack, root → leaf, skipping any
-#       branches already marked merged
-#     - for each: `git push -u <remote> <branch>` (plain push, sets upstream)
-#     - skips branches whose remote is "no-push" (fork PRs without
-#       maintainer-push permission) with a warning
-#     - add `--force` (or `-f`) to switch to `git push -u --force-with-lease`,
-#       which is what you want after rebases or amends
 ```
+
+What `ezs push --stack` does (see `cmd/ezs/commands/push.go`):
+
+1. Walks every branch in the current stack, root → leaf, skipping branches
+   already marked merged.
+2. For each branch: `git push -u <remote> <branch>` (plain push, sets upstream).
+3. Skips branches whose remote is "no-push" (fork PRs without maintainer-push
+   permission) with a warning.
+4. Add `--force` (or `-f`) to switch to `git push -u --force-with-lease` — what
+   you want after rebases or amends.
 
 Open a PR for each branch. The base branch ezstack passes to `gh pr create`
 is the branch's recorded **parent** in `stacks.json`, NOT `main`. So
@@ -277,21 +290,27 @@ ezs pr create -t "Part 1: scaffolding"
 
 ezs goto feature-2
 ezs pr create -t "Part 2: wire it up"
-#   - shells out to `gh pr create --base <parent> --head <branch> --title "..."`
-#   - records the PR number back into stacks.json
-#   - add `-d` / `--draft` to open as a draft
 ```
+
+What `ezs pr create` does:
+
+1. Shells out to `gh pr create --base <parent> --head <branch> --title "..."`.
+2. Records the PR number back into `stacks.json`.
+3. Add `-d` / `--draft` to open as a draft.
 
 Now inject stack-navigation links into every PR description so reviewers can
 hop around the stack:
 
 ```bash
 ezs pr stack
-#   - calls gh.UpdateStackDescription for every PR in the stack
-#     (see cmd/ezs/commands/utils.go and the github client)
-#   - rewrites each PR body so it contains a managed block listing every
-#     branch in the stack, with the active branch marked
 ```
+
+What `ezs pr stack` does:
+
+1. Calls `gh.UpdateStackDescription` for every PR in the stack (see
+   `cmd/ezs/commands/utils.go` and the GitHub client).
+2. Rewrites each PR body so it contains a managed block listing every branch
+   in the stack, with the active branch marked.
 
 ### 7. Inspect the stack any time
 
@@ -419,58 +438,52 @@ command, jump to the [Commands](#commands) section below.
 ### Creating a Stacked PR
 
 The canonical flow: build two dependent branches, push them, open linked PRs.
-Every `ezs` line is a thin shell over git — the comments show the underlying
-operation so there is no magic.
+Every `ezs` line is a thin shell over git — the step-by-step list below the
+block names the underlying operation so there is no magic.
 
 ```bash
-# 1. Start a new stack rooted on the default base branch (main).
-#    - Fetches origin/main
-#    - Creates branch `feature-1` pointing at origin/main
-#    - Creates a worktree at <worktree_base_dir>/feature-1/ (if use_worktrees=true)
-#    - Records the branch in ~/.ezstack/stacks.json with parent=main
-#    - cd's your shell into the new worktree
 ezs new feature-1
-
 # ... edit files in the feature-1 worktree ...
-
-# 2. Commit. Equivalent to `git add -A && git commit -m ...` followed by an
-#    automatic `ezs sync --children` so any descendant branches get rebased
-#    onto the new tip. On a brand-new branch there are no children yet, so
-#    this is just: stage + commit.
 ezs commit -am "Add feature part 1"
 
-# 3. Stack a second branch on top of feature-1.
-#    - Creates branch `feature-2` pointing at feature-1 (not main)
-#    - Creates a second worktree at <worktree_base_dir>/feature-2/
-#    - Records parent=feature-1 in stacks.json
-#    - cd's into the feature-2 worktree
 ezs new feature-2 --parent feature-1
-
 # ... edit files in the feature-2 worktree ...
-
 ezs commit -am "Add feature part 2"
 
-# 4. Push the whole stack to the remote in one shot.
-#    - Walks the stack from root to leaf
-#    - For each branch: `git push --force-with-lease origin <branch>`
-#    - Sets upstream on the first push
 ezs push --stack
 
-# 5. Open a pull request for each branch. The base of each PR is the parent
-#    branch recorded in stacks.json, NOT main — so feature-2's PR targets
-#    feature-1, and only shows the feature-2 diff.
 ezs goto feature-1
 ezs pr create -t "Part 1: scaffolding"
 ezs goto feature-2
 ezs pr create -t "Part 2: wire it up"
 
-# 6. Write stack-navigation links into every PR description.
-#    - Fetches each PR body via `gh pr view`
-#    - Injects a managed block listing every branch in the stack with
-#      links and ✅ / 🔵 markers for merged / current
-#    - Pushes the updated bodies back with `gh pr edit`
 ezs pr stack
 ```
+
+Step by step:
+
+1. **Start a new stack rooted on `main`.** `ezs new feature-1` fetches
+   `origin/main`, creates branch `feature-1` pointing at it, materializes a
+   worktree at `<worktree_base_dir>/feature-1/` (when `use_worktrees=true`),
+   records the branch in `~/.ezstack/stacks.json` with `parent=main`, and
+   `cd`s your shell into the new worktree.
+2. **Commit.** `ezs commit -am` is equivalent to
+   `git add -A && git commit -m ...` followed by an automatic
+   `ezs sync --children` so descendants get rebased onto the new tip. On a
+   brand-new branch there are no children, so this is just stage + commit.
+3. **Stack a second branch on top.** `ezs new feature-2 --parent feature-1`
+   creates the branch pointing at `feature-1` (not `main`), creates a second
+   worktree, records `parent=feature-1`, and `cd`s into it.
+4. **Push the whole stack.** `ezs push --stack` walks root → leaf and runs
+   `git push --force-with-lease origin <branch>` for each, setting upstream
+   on the first push.
+5. **Open a pull request for each branch.** The base of each PR is the
+   *parent* branch recorded in `stacks.json`, not `main` — so `feature-2`'s
+   PR targets `feature-1` and only shows the `feature-2` diff.
+6. **Cross-link the PRs.** `ezs pr stack` fetches each PR body via
+   `gh pr view`, injects a managed block listing every branch in the stack
+   with links and ✅ / 🔵 markers for merged / current, then pushes the
+   updated bodies back with `gh pr edit`.
 
 ### Committing into the middle of an existing stack
 
@@ -480,32 +493,40 @@ Dependent branches below you would normally get left behind on the old tip of
 ```bash
 ezs goto feature-1
 ezs commit -am "Address review comment on part 1"
-# What this does under the hood:
-#   - git add -A && git commit -m "..."
-#   - For each descendant (feature-2, feature-3, ...):
-#       git rebase --onto <new feature-1 tip> <old feature-1 tip> <descendant>
-#     so their worktrees now sit on top of the amended parent.
-#   - If the branch is already on the remote, it auto-force-pushes the branch
-#     and every descendant, so the open PRs update in one shot.
 ```
+
+What `ezs commit` does under the hood:
+
+1. `git add -A && git commit -m "..."`.
+2. For each descendant (`feature-2`, `feature-3`, ...) runs
+   `git rebase --onto <new feature-1 tip> <old feature-1 tip> <descendant>`,
+   so their worktrees now sit on top of the amended parent.
+3. If the branch is already on the remote, auto-force-pushes the branch and
+   every descendant, so the open PRs update in one shot.
 
 ### After a Parent is Merged
 
 When an upstream PR (or a parent branch in the stack) lands on `main`, the
 descendants need to be re-rooted. `ezs sync` does the surgery.
 
-```bash
-# Case A: GitHub merged the PR (squash/rebase/merge — all handled).
-#   - Fetches origin/main
-#   - Detects that feature-1 has been merged (matching commit on main OR
-#     the PR's mergedAt field via `gh pr view --json`)
-#   - Drops feature-1 from the stack
-#   - Rebases feature-2 onto main: `git rebase --onto main <old feature-1> feature-2`
-#   - Updates stacks.json so feature-2's parent is now main
-#   - Deletes the merged local branch + worktree (unless you `cd`'d elsewhere)
-ezs sync --all
+**Case A: GitHub merged the PR** (squash / rebase / merge — all handled).
 
-# Case B: you want to merge from the CLI and keep the stack clean in one go.
+```bash
+ezs sync --all
+```
+
+1. Fetches `origin/main`.
+2. Detects that `feature-1` has been merged (matching commit on `main` OR the
+   PR's `mergedAt` field via `gh pr view --json`).
+3. Drops `feature-1` from the stack.
+4. Rebases `feature-2` onto `main`:
+   `git rebase --onto main <old feature-1> feature-2`.
+5. Updates `stacks.json` so `feature-2`'s parent is now `main`.
+6. Deletes the merged local branch + worktree (unless you `cd`'d elsewhere).
+
+**Case B: you want to merge from the CLI** and keep the stack clean in one go.
+
+```bash
 ezs goto feature-1
 ezs pr merge -m squash    # shells out to `gh pr merge --squash`
 ezs goto feature-2
@@ -532,27 +553,30 @@ it, and still commit back if you have maintainer access — all without touching
 your own stack.
 
 ```bash
-# Checkout someone else's branch into a fresh stack.
-#   - Runs `git fetch origin <branch>` (or the PR's head ref for fork PRs)
-#   - Creates a local branch tracking that ref
-#   - Creates a worktree for it
-#   - Looks up the PR via `gh pr view --json` and records it in stacks.json
-#     with its base branch as the stack root
-#   - Prints a summary panel (PR title, URL, state, review status, +/- diff)
 ezs new origin/feature-branch
-
-# The branch now shows up in `ezs ls` with a (remote) tag, and every ezs
-# command works on it — you can edit, `ezs commit`, `ezs push`, `ezs sync`.
-
-# For fork PRs, ezstack auto-detects maintainer-push capability:
-#   - If the PR has "Allow edits from maintainers" AND you have write access
-#     to the fork → adds the fork as a git remote and pushes there.
-#   - Otherwise → the branch is marked read-only so `ezs push` / `ezs sync`
-#     won't try to publish commits you can't land.
-
-# When you're done, blow away the worktree and the local branch in one call.
+# ... review, run, edit, ezs commit / push / sync as needed ...
 ezs delete feature-branch
 ```
+
+What `ezs new origin/<branch>` does:
+
+1. Runs `git fetch origin <branch>` (or the PR's head ref for fork PRs).
+2. Creates a local branch tracking that ref.
+3. Creates a worktree for it.
+4. Looks up the PR via `gh pr view --json` and records it in `stacks.json`
+   with its base branch as the stack root.
+5. Prints a summary panel (PR title, URL, state, review status, +/- diff).
+
+The branch now shows up in `ezs ls` with a `(remote)` tag, and every ezs
+command works on it. `ezs delete` at the end removes the worktree and local
+branch in one call.
+
+For fork PRs, ezstack auto-detects maintainer-push capability:
+
+- If the PR has "Allow edits from maintainers" AND you have write access to
+  the fork → adds the fork as a git remote and pushes there.
+- Otherwise → the branch is marked read-only so `ezs push` / `ezs sync`
+  won't try to publish commits you can't land.
 
 ### Stacking on a Remote PR
 
@@ -561,17 +585,22 @@ it to merge:
 
 ```bash
 ezs stack
-# Launches an interactive picker:
-#   1. "Start a new stack from a remote PR"  → pick the PR via fzf
-#   2. Pick a local branch (or create one)   → it gets reparented onto the PR
-#
-# Result in stacks.json:
-#   <teammate-pr-branch>      parent=main      (remote, read-only)
-#     └── <your-branch>        parent=<teammate-pr-branch>
-#
-# Your branch is now rebased on top of their work, and `ezs sync --all` will
-# keep it up to date as they push new commits.
 ```
+
+`ezs stack` launches an interactive picker:
+
+1. Choose "Start a new stack from a remote PR" and pick the PR via fzf.
+2. Pick a local branch (or create one); it gets reparented onto the PR.
+
+Result in `stacks.json`:
+
+```
+<teammate-pr-branch>      parent=main      (remote, read-only)
+  └── <your-branch>        parent=<teammate-pr-branch>
+```
+
+Your branch is now rebased on top of their work, and `ezs sync --all` will
+keep it up to date as they push new commits.
 
 ### Adopting an Existing Worktree as a Stack Root
 
@@ -581,41 +610,42 @@ You don't have to delete and recreate — `ezs new --from-worktree` registers an
 existing worktree as the root of a new stack in place.
 
 ```bash
-# 1. From anywhere inside the repo, launch the picker.
-#    (See cmd/ezs/commands/new.go: useFromWorktree branch.)
 ezs new --from-worktree
-# What this actually does:
-#   - Calls `git worktree list --porcelain` to enumerate every worktree
-#     attached to this repo.
-#   - Shows them in a picker labelled `<branch> (<path>)`.
-#   - Confirms before mutating anything.
-#   - Calls mgr.RegisterExistingBranch(branch, path, base) — writes the
-#     branch into ~/.ezstack/stacks.json with parent=<configured base
-#     branch> and creates a fresh stack hash.
-#   - If a PR already exists for the branch on GitHub, ezstack hydrates
-#     the cached PR number, URL, state, and review status the first time.
-#   - Prompts for an optional stack name (skip with Enter).
-#   - cd's your shell into the worktree (when cd_after_new=true and the
-#     shell wrapper is installed).
-
-# 2. From here on, every ezs command works against that branch:
 ezs ls                           # the new stack shows up at the root level
 ezs new sub-feature              # add a child branch on top
 ezs pr create -t "Long-running feature"
 ```
 
+What `ezs new --from-worktree` does (see `cmd/ezs/commands/new.go`:
+`useFromWorktree` branch):
+
+1. Calls `git worktree list --porcelain` to enumerate every worktree attached
+   to this repo.
+2. Shows them in a picker labelled `<branch> (<path>)` and confirms before
+   mutating anything.
+3. Calls `mgr.RegisterExistingBranch(branch, path, base)` — writes the branch
+   into `~/.ezstack/stacks.json` with `parent=<configured base branch>` and
+   mints a fresh stack hash.
+4. If a PR already exists for the branch on GitHub, hydrates the cached PR
+   number, URL, state, and review status on the first lookup.
+5. Prompts for an optional stack name (Enter to skip).
+6. `cd`s your shell into the worktree, when `cd_after_new=true` and the shell
+   wrapper is installed.
+
+From here on, every `ezs` command works against that branch.
+
 Already have a tracked stack but a *separate* untracked worktree you want to
 graft onto it? Use `ezs stack` instead — it's the symmetric move:
 
 ```bash
-# Interactive: pick the untracked worktree, then the parent inside an
-# existing stack. (See cmd/ezs/commands/stack.go: choice 0.)
-ezs stack
-
-# Or fully scripted:
+ezs stack                                 # interactive: pick worktree, then parent
 ezs stack -b my-fix -p feature-1     # add my-fix as a child of feature-1
 ezs stack -b my-fix -B develop       # start a NEW stack rooted on `develop`
 ```
+
+The interactive form (no flags) walks you through choosing the untracked
+worktree and then the parent inside an existing stack — see
+`cmd/ezs/commands/stack.go` (choice 0).
 
 `ezs stack` only updates the metadata — it doesn't rebase your commits onto the
 new parent. If you want the rebase too, use `ezs reparent` (see the
@@ -632,18 +662,11 @@ creates the leaf, then `ezs reparent` re-points the existing child at it.
 # Before:    main → feature-1 → feature-2
 # After:     main → feature-1 → refactor → feature-2
 
-# 1. Create the new branch as a child of feature-1.
 ezs new refactor --parent feature-1
 # ... edit files in the refactor worktree ...
 ezs commit -am "Extract shared helper"
 
-# 2. Re-point feature-2 (and any of its descendants) at the new branch.
 ezs reparent feature-2 refactor
-# Without --no-rebase, this runs:
-#   git rebase --onto refactor <old feature-1 tip> feature-2
-# so feature-2's commits land on top of the new branch. Children of
-# feature-2 are carried along automatically — see internal/stack/stack.go
-# (ExtractSubtree) and internal/config/config.go (ReparentBranch).
 ```
 
 Step by step:
@@ -676,14 +699,8 @@ moves that would create a cycle (`internal/stack/stack.go`,
 # Before:    main → feature-1 → feature-2
 # After:     main → feature-2 → feature-1
 
-# 1. Detach feature-2 from feature-1 — make it a sibling instead.
-ezs reparent feature-2 main
-# Now: main → feature-1
-#      main → feature-2
-
-# 2. Reparent feature-1 onto feature-2.
-ezs reparent feature-1 feature-2
-# Now: main → feature-2 → feature-1
+ezs reparent feature-2 main      # main → feature-1, main → feature-2 (siblings)
+ezs reparent feature-1 feature-2 # main → feature-2 → feature-1
 ```
 
 Step by step:
@@ -720,62 +737,66 @@ The recipe below assumes:
   configured.
 
 ```bash
-# 0. Make sure your work is durably on a remote first — splitting rewrites
-#    history locally, and a stray force-push could lose work.
 git push origin mega-feature      # safety backup
 git log --oneline main..HEAD       # eyeball the commits you'll redistribute
-
-# 1. Snapshot the parent branch SHA so each new stack branch can point at it.
 BASE=$(git rev-parse origin/main)
 
-# 2. Carve up commits into logical groups. Two patterns work well:
-#
-#    Pattern A — commit-by-commit. Each existing commit becomes its own stack
-#    branch. Use when commits are already small and self-contained.
-#
-#    Pattern B — diff-by-feature. Use when the existing commits are messy and
-#    you want to redistribute the diff into new branches by topic.
-#
-#    The example below uses Pattern A.
-
-# 3. Create the first stack branch on top of main.
-git checkout main                # the new stack's root must be a known good base
+git checkout main
 ezs new part-1 --parent main
-# (cd's into <worktree_base_dir>/part-1 if cd_after_new=true)
-
-# 4. Cherry-pick the relevant commits from mega-feature into part-1's worktree.
-#    (Cherry-pick because the worktree is on its own branch — no checkouts.)
 git cherry-pick <sha-1> <sha-2>
-ezs commit --amend --no-edit       # only if you need to fold commits together
+ezs commit --amend --no-edit       # optional: fold commits together
 
-# 5. Stack part-2 on top of part-1, repeat. ezs new chains the parents
-#    automatically because cd-after-new put you on part-1.
 ezs new part-2
 git cherry-pick <sha-3>
 git cherry-pick <sha-4>
 
-# 6. Repeat for as many slices as you need.
 ezs new part-3
 git cherry-pick <sha-5>
-# ...
 
-# 7. Verify the layout.
 ezs ls
-#   main
-#   └── part-1   PR—   +210 -12
-#       └── part-2  PR—   +180 -9
-#           └── part-3  PR—   +95 -3
-
-# 8. Push the entire stack and open one PR per branch.
 ezs push --stack
-ezs pr create --stack                # creates a PR per branch (one per call)
-ezs pr stack                          # cross-link them in PR descriptions
+ezs pr create --stack
+ezs pr stack
 
-# 9. (optional) Once the new stack is reviewable, retire the old monolith.
-ezs delete mega-feature              # if it was tracked by ezstack
-git branch -D mega-feature           # if it was a plain branch
+ezs delete mega-feature              # or `git branch -D` if untracked
 git push origin --delete mega-feature
 ```
+
+Step by step:
+
+1. **Push to remote first.** Splitting rewrites history locally; a stray
+   force-push could lose work without this safety backup.
+2. **Snapshot the base SHA** with `git rev-parse origin/main` so each new
+   stack branch can be anchored to a known-good commit.
+3. **Pick a carve-up pattern.** Pattern A — commit-by-commit, each existing
+   commit becomes its own stack branch (used in the example above; works best
+   when commits are already small and self-contained). Pattern B —
+   diff-by-feature, redistribute the diff into new branches by topic when the
+   existing commits are messy.
+4. **Create the first stack branch on top of `main`.**
+   `ezs new part-1 --parent main` gives the new stack a known-good base;
+   `cd_after_new` moves you into `<worktree_base_dir>/part-1`.
+5. **Cherry-pick the relevant commits from `mega-feature` into `part-1`'s
+   worktree.** Cherry-pick (rather than checkout) because the worktree is
+   already on its own branch.
+6. **Stack `part-2` on top of `part-1`, repeat.** `ezs new` chains the parents
+   automatically because `cd_after_new` put you on `part-1`.
+7. **Repeat for as many slices as you need** — `part-3`, `part-4`, etc.
+8. **Verify the layout** with `ezs ls`:
+
+   ```
+   main
+   └── part-1   PR—   +210 -12
+       └── part-2  PR—   +180 -9
+           └── part-3  PR—   +95 -3
+   ```
+
+9. **Push the entire stack and open one PR per branch.**
+   `ezs pr create --stack` makes a PR per branch and `ezs pr stack`
+   cross-links them in the PR descriptions.
+10. **Retire the old monolith** (optional) once the new stack is reviewable.
+    `ezs delete` if it was tracked by ezstack, plain `git branch -D` if it
+    wasn't, then `git push origin --delete` to clean up the remote.
 
 Note: `git cherry-pick` runs inside whichever worktree your shell is in, so
 each `ezs new` step *must* leave you cd'd into the new branch's worktree (the
@@ -791,47 +812,60 @@ root (so the agent has somewhere to plan from), then ask the agent to refactor
 the diff into incremental child branches.
 
 ```bash
-# 1. Adopt the existing big-branch worktree as a stack root.
 ezs new --from-worktree
-# (Pick the worktree for `mega-feature` from the picker. It is now the root
-#  of a brand-new stack — no children yet.)
+ezs stack rename
 
-# 2. Optionally name the stack so it's easy to find later.
-ezs stack rename                    # interactive: pick the stack, type a name
+ezs agent feature "$(cat <<'EOF'
+split mega-feature into reviewable stacked branches: one per concern
+(data model, business logic, API surface, tests).
+Cherry-pick or move commits as needed; leave mega-feature as the parent
+of the new branches and trim it once everything is moved.
+EOF
+)"
 
-# 3. Launch feature mode against THIS stack so the agent sees the existing
-#    branch as part of its scope. (See cmd/ezs/commands/agent.go: agentFeature
-#    runs against an existingStack when one is provided.)
-ezs agent feature "split mega-feature into reviewable stacked branches: \
-one per concern (data model, business logic, API surface, tests). \
-Cherry-pick or move commits as needed; leave mega-feature as the parent of \
-the new branches and trim it once everything is moved."
-
-# What ezs agent feature does:
-#   - Composes the shipped feature-mode prompt + your repo's
-#     <repo>/.ezstack/agent-feature-prompt.md (if any) + ~/.ezstack/agent-
-#     feature-prompt.md (if any) + the current stack JSON.
-#   - When a stack is provided, the prompt swaps in the EXISTING-STACK
-#     instructions (see buildRenderedFeaturePrompt in
-#     cmd/ezs/commands/agent.go): the agent is told to use the existing
-#     branches as a starting point, and to add new ones on top.
-#   - Spawns the configured `agent_command` (claude by default) inside the
-#     stack root's worktree, with a persistent session bound to the stack.
-#     Re-running `ezs agent` later resumes the same conversation.
-#   - When the configured agent is claude, ezs auto-installs and registers
-#     `ezs-mcp` so the agent drives ezstack via MCP tools instead of
-#     shelling out — far more reliable for a complex split.
-
-# 4. The agent will propose a plan first; approve before it starts running
-#    `ezs new` / `ezs commit` / `git cherry-pick` calls. Watch its work via:
 ezs ls                                # in another terminal
 ezs status --watch                    # live PR/CI dashboard
 
-# 5. When the agent is done, push and open PRs as usual.
 ezs push --stack
 ezs pr create --stack --auto          # ← see "AI-drafted PRs" below
 ezs pr stack
 ```
+
+Step by step:
+
+1. **Adopt the existing big-branch worktree as a stack root.**
+   `ezs new --from-worktree` opens a picker; pick the worktree for
+   `mega-feature`. It is now the root of a brand-new stack with no children
+   yet.
+2. **Optionally name the stack** with `ezs stack rename` (interactive: pick
+   the stack, type a name) so it's easy to find later.
+3. **Launch feature mode against THIS stack** with `ezs agent feature "..."`
+   so the agent sees the existing branch as part of its scope. The heredoc
+   above is one safe way to keep a multi-line prompt readable; a single
+   quoted string works too. See `cmd/ezs/commands/agent.go` (`agentFeature`
+   runs against an `existingStack` when one is provided).
+4. **Watch the agent work** in a second terminal with `ezs ls` and
+   `ezs status --watch`. The agent will propose a plan first; approve before
+   it starts running `ezs new` / `ezs commit` / `git cherry-pick` calls.
+5. **When the agent is done, push and open PRs as usual.**
+   `ezs pr create --stack --auto` will AI-draft titles and bodies for every
+   PR (see "AI-drafted PRs" below), then `ezs pr stack` cross-links them.
+
+What `ezs agent feature` does:
+
+- Composes the shipped feature-mode prompt + your repo's
+  `<repo>/.ezstack/agent-feature-prompt.md` (if any) +
+  `~/.ezstack/agent-feature-prompt.md` (if any) + the current stack JSON.
+- When a stack is provided, swaps in the EXISTING-STACK instructions (see
+  `buildRenderedFeaturePrompt` in `cmd/ezs/commands/agent.go`): the agent is
+  told to use the existing branches as a starting point and to add new ones
+  on top.
+- Spawns the configured `agent_command` (`claude` by default) inside the
+  stack root's worktree, with a persistent session bound to the stack.
+  Re-running `ezs agent` later resumes the same conversation.
+- When the configured agent is `claude`, auto-installs and registers
+  `ezs-mcp` so the agent drives ezstack via MCP tools instead of shelling
+  out — far more reliable for a complex split.
 
 Tips:
 
@@ -853,26 +887,26 @@ usual gating still happens — push, base validation, fork detection, stack
 description update.
 
 ```bash
-# Single branch, AI-drafted title and body.
 ezs goto feature-2
-ezs pr create --auto
-
-# What this does (see cmd/ezs/commands/pr_auto.go):
-#   1. Validates that the configured agent_command is a Claude-family CLI.
-#      (--auto currently only works with claude — the prompt expects JSON
-#      output and other agents don't have a stable non-interactive contract.)
-#   2. Captures `git diff <parent>..HEAD` for the branch (capped at 80 KB).
-#   3. Captures `git log --oneline <parent>..HEAD` for the commits.
-#   4. Reads the repo's pull-request template from
-#      `.github/pull_request_template.md` / `PULL_REQUEST_TEMPLATE.md` /
-#      `docs/pull_request_template.md` (or repo-root variants).
-#   5. Wraps everything in a hardened prompt (every untrusted span is wrapped
-#      in <data> tags so the agent can't be diff-injected) and shells out to
-#      `claude --print --output-format json --append-system-prompt …`.
-#      A 5-minute timeout caps the call.
-#   6. Parses the JSON `{title, body}` and feeds it into the regular PR
-#      create flow.
+ezs pr create --auto       # single branch, AI-drafted title and body
 ```
+
+What `ezs pr create --auto` does (see `cmd/ezs/commands/pr_auto.go`):
+
+1. Validates that the configured `agent_command` is a Claude-family CLI.
+   (`--auto` currently only works with `claude` — the prompt expects JSON
+   output and other agents don't have a stable non-interactive contract.)
+2. Captures `git diff <parent>..HEAD` for the branch (capped at 80 KB).
+3. Captures `git log --oneline <parent>..HEAD` for the commits.
+4. Reads the repo's pull-request template from
+   `.github/pull_request_template.md` / `PULL_REQUEST_TEMPLATE.md` /
+   `docs/pull_request_template.md` (or repo-root variants).
+5. Wraps everything in a hardened prompt (every untrusted span is wrapped in
+   `<data>` tags so the agent can't be diff-injected) and shells out to
+   `claude --print --output-format json --append-system-prompt …`. A 5-minute
+   timeout caps the call.
+6. Parses the JSON `{title, body}` and feeds it into the regular PR create
+   flow.
 
 Pin one field, let the agent draft the other:
 
@@ -886,11 +920,12 @@ Roll back when you don't like the result:
 ```bash
 gh pr view --web                       # eyeball it
 gh pr edit <num> --title "..." --body "..."
-# Or recreate from scratch with a different prompt context (e.g. after
-# squashing more commits in):
 ezs pr unlink                          # drop the cached PR association
 ezs pr create --auto                   # regenerate
 ```
+
+The last two lines recreate the PR from scratch with a different prompt
+context — useful after squashing more commits in, for example.
 
 ### AI-Drafted PRs Across the Whole Stack
 
@@ -898,31 +933,35 @@ ezs pr create --auto                   # regenerate
 pushed stack so every branch gets a populated description in one shot.
 
 ```bash
-# 1. Push every branch in the current stack.
 ezs push --stack
-
-# 2. Create a real PR per branch, AI-drafted title + body for each.
-#    (cmd/ezs/commands/pr.go: prCreateAllForceAI.)
 ezs pr create --stack --auto
-#   - Walks every branch in the stack root → leaf.
-#   - For each branch without a live PR: runs the same diff/commits/template
-#     flow as single-branch --auto, then `gh pr create --base <parent>
-#     --head <branch> --title "..." --body "..."`.
-#   - Skips branches that already have a non-merged PR (use --force to
-#     override per-branch).
-
-# 3. Cross-link them so reviewers can navigate the stack.
 ezs pr stack
-
-# Variant: every branch becomes a DRAFT PR with AI-drafted body.
-#    (cmd/ezs/commands/pr.go: --draft-all + --auto.)
-ezs pr create --draft-all --auto
-# Equivalent to: walk stack → AI-draft each → gh pr create --draft.
-
-# Variant: every branch becomes a draft PR with branch-name titles, NO AI.
-#    Cheaper, faster, no agent dependency.
-ezs pr --draft-all
 ```
+
+Step by step:
+
+1. **Push every branch in the current stack** with `ezs push --stack`.
+2. **Create a real PR per branch, AI-drafted title + body for each.**
+   `ezs pr create --stack --auto` (see `cmd/ezs/commands/pr.go`:
+   `prCreateAllForceAI`) walks every branch root → leaf. For each branch
+   without a live PR it runs the same diff/commits/template flow as
+   single-branch `--auto`, then
+   `gh pr create --base <parent> --head <branch> --title "..." --body "..."`.
+   Branches that already have a non-merged PR are skipped (use `--force` to
+   override per-branch).
+3. **Cross-link them** with `ezs pr stack` so reviewers can navigate.
+
+Variants:
+
+```bash
+ezs pr create --draft-all --auto    # every branch = DRAFT PR, AI-drafted body
+ezs pr --draft-all                  # every branch = draft PR, branch-name title, NO AI
+```
+
+The first variant is the same flow but emits drafts (see
+`cmd/ezs/commands/pr.go`: `--draft-all` + `--auto`). The second is cheaper and
+faster — no agent dependency, just `gh pr create --draft` per branch with the
+branch name as the title.
 
 A few practical notes:
 
@@ -946,34 +985,38 @@ recovery flow is the same as a stock git rebase, with a single ezs follow-up
 to re-cascade the rest of the stack.
 
 ```bash
-# 1. Try to sync.
 ezs sync --stack
 # →  CONFLICT (content): Merge conflict in src/auth.go
 # →  exits with code 3.
 
-# 2. Resolve the conflict in the worktree git stopped in.
 $EDITOR src/auth.go                   # fix conflict markers
 git add src/auth.go
 git rebase --continue                 # advance the rebase one commit
 
-# 3. Once `git rebase` finishes (no more conflicts), tell ezs to finish the
-#    cascade. ezs sync --continue replays the descendant subtree using the
-#    pre-sync SHAs it snapshotted in stacks.json before the conflict.
 ezs sync --continue
-#    - Picks up where the original sync left off.
-#    - Honors the same scope flags as the original call (-s, -a, -c, -b,
-#      <hash-prefix>) — re-add them if the original was scoped narrower
-#      than "everything".
-#    - Force-pushes any branches that were already on the remote.
-#    - Runs the post-sync hook to mark the sync complete.
 ```
+
+Step by step:
+
+1. **Try to sync.** `ezs sync --stack` rebases each branch onto its parent.
+   If a hunk conflicts it stops mid-rebase and exits with code `3`.
+2. **Resolve the conflict in the worktree git stopped in.** Edit, `git add`,
+   `git rebase --continue` until the rebase finishes (no more conflicts).
+3. **Tell ezs to finish the cascade** with `ezs sync --continue`. It replays
+   the descendant subtree using the pre-sync SHAs it snapshotted in
+   `stacks.json` before the conflict, picks up where the original sync left
+   off, honors the same scope flags as the original call (`-s`, `-a`, `-c`,
+   `-b`, `<hash-prefix>` — re-add them if the original was scoped narrower
+   than "everything"), force-pushes any branches that were already on the
+   remote, and runs the post-sync hook to mark the sync complete.
 
 If you want to bail out instead of resolving:
 
 ```bash
 git rebase --abort                    # back out the rebase you were in
-# ezs sync exited cleanly with code 3 already; nothing else to do.
 ```
+
+`ezs sync` exited cleanly with code `3` already; nothing else to do.
 
 Notes:
 
@@ -992,12 +1035,15 @@ land as a single squashed commit:
 
 ```bash
 ezs sync --stack --squash
-#   - Walks each branch in the stack with ≥2 commits since its parent.
-#   - Collapses those commits into one before rebasing onto the parent.
-#   - Branches that are already a single commit are left untouched.
-#   - Auto-force-pushes any branch that was already on the remote (the
-#     squash rewrites history, so a regular push would be rejected).
 ```
+
+What `ezs sync --stack --squash` does:
+
+- Walks each branch in the stack with ≥2 commits since its parent.
+- Collapses those commits into one before rebasing onto the parent.
+- Branches that are already a single commit are left untouched.
+- Auto-force-pushes any branch that was already on the remote (the squash
+  rewrites history, so a regular push would be rejected).
 
 Pair with `ezs pr update` to push the collapsed history and keep PR bases /
 descriptions in sync:
@@ -1005,8 +1051,7 @@ descriptions in sync:
 ```bash
 ezs pr update --branch part-1
 ezs pr update --branch part-2
-# or, for the whole stack:
-ezs sync --stack && ezs pr stack
+ezs sync --stack && ezs pr stack    # or, for the whole stack
 ```
 
 ### Pre-Push Validation as a Hard Requirement (`--verify`)
@@ -1015,8 +1060,9 @@ Want to enforce that every push is gated by tests, lints, or a security check
 — not just *if* the hook happens to be installed? Use `--verify` to require
 the hook.
 
+First, install the hook once:
+
 ```bash
-# 1. Install the hook once.
 mkdir -p ~/.ezstack/hooks
 cat > ~/.ezstack/hooks/pre-push <<'SH'
 #!/usr/bin/env bash
@@ -1035,13 +1081,18 @@ go test ./...
 golangci-lint run
 SH
 chmod +x ~/.ezstack/hooks/pre-push
-
-# 2. Push with --verify so a missing/non-executable hook is a hard error.
-ezs push --stack --verify
-#   - Without --verify: the hook runs if installed, else no-op.
-#   - With --verify:    ezs aborts when the hook is missing, not executable,
-#                       or exits non-zero — useful in CI and shared dev hosts.
 ```
+
+Then push with `--verify` so a missing or non-executable hook is a hard error:
+
+```bash
+ezs push --stack --verify
+```
+
+`--verify` makes a missing/non-executable hook a hard error: without it the
+hook runs if installed and is a no-op otherwise; with it ezs aborts when the
+hook is missing, not executable, or exits non-zero — useful in CI and shared
+dev hosts.
 
 Available hook environment variables: `EZS_HOOK`, `EZS_REPO_ROOT`,
 `EZS_BRANCH`, `EZS_STACK_HASH`, `EZS_STACK_NAME`, plus `EZS_AGENT_NO_PUSH=1`
@@ -1055,17 +1106,13 @@ you've just pushed a multi-branch stack and want to watch CI light up branch
 by branch.
 
 ```bash
-# Default: re-render every 5 seconds (clamped to a 2-second minimum so we
-# don't hammer `gh`).
-ezs status --watch
-
-# Custom interval (space- or =-separated):
-ezs status --watch 10
+ezs status --watch                       # default: re-render every 5 seconds
+ezs status --watch 10                    # custom interval (space- or =-separated)
 ezs status --watch=10
-
-# Scope: a specific branch's stack rather than the current one.
-ezs status --branch feature-1 --watch
+ezs status --branch feature-1 --watch    # scope: specific branch's stack
 ```
+
+The interval is clamped to a 2-second minimum so we don't hammer `gh`.
 
 Caveats: watch mode requires a TTY (it clears the screen on each refresh) and
 cannot be combined with `--json`. Ctrl-C exits cleanly.
@@ -1076,35 +1123,34 @@ Just installed `ezs` on a new laptop or a CI runner? Run this top-to-bottom
 once:
 
 ```bash
-# 1. Sanity-check tooling. Doesn't require being inside a git repo.
 ezs doctor
-#   - Reports git/gh/fzf presence, versions, config dir state, and per-repo
-#     worktree base directory health.
-#   - Exit 0 means you're good; non-zero with a one-line summary otherwise.
-
-# 2. Restore your global config from a backup, if you have one.
-#    (Per-machine github_token is preserved across imports — exporting
-#    redacts it, importing skips the redaction sentinel — so round-trips
-#    are safe.)
 ezs config import ~/Dropbox/ezs-backup.json
-
-# 3. Per-repo wizard. Run inside each repo you want ezs to manage.
 cd ~/code/my-project
 ezs config
-
-# 4. Wire up the shell wrapper so cd-on-new and tab completion work.
 echo 'eval "$(ezs --shell-init)"' >> ~/.zshrc && exec zsh
 ```
+
+Step by step:
+
+1. **Sanity-check tooling** with `ezs doctor` (doesn't require being inside a
+   git repo). It reports git/gh/fzf presence, versions, config dir state, and
+   per-repo worktree base directory health. Exit `0` means you're good;
+   non-zero with a one-line summary otherwise.
+2. **Restore your global config** from a backup if you have one. Per-machine
+   `github_token` is preserved across imports — exporting redacts it,
+   importing skips the redaction sentinel — so round-trips are safe.
+3. **Run the per-repo wizard** inside each repo you want ezs to manage.
+4. **Wire up the shell wrapper** so cd-on-new and tab completion work.
 
 For the corresponding *backup* flow before you wipe a machine:
 
 ```bash
 ezs config export ~/Dropbox/ezs-backup.json
-#   - mode 0600
-#   - github_token replaced with the literal sentinel
-#     "<redacted-by-ezs-export>" so the file is safe to share / commit /
-#     sync to untrusted storage.
 ```
+
+The export is mode `0600` with `github_token` replaced by the literal sentinel
+`<redacted-by-ezs-export>`, so the file is safe to share / commit / sync to
+untrusted storage.
 
 ### Resetting a Stale PR Association — `unlink`, then `create` or `refresh`
 
@@ -1115,48 +1161,54 @@ which PR a branch was tied to, etc. — the recovery primitive is
 `ezs pr unlink`.
 
 ```bash
-# 1. Drop the cached link. Does NOT touch GitHub — only mutates stacks.json.
-#    (cmd/ezs/commands/pr.go: prUnlink — clears pr_url, pr_state, is_merged.)
 ezs pr unlink                          # current branch
 ezs pr unlink --branch feature-2       # specific branch
 ezs pr unlink --all                    # every branch in the current stack
 ezs pr unlink --all -y                 # skip the confirmation prompt
 ```
 
+`ezs pr unlink` (see `cmd/ezs/commands/pr.go`: `prUnlink`) drops the cached
+link by clearing `pr_url`, `pr_state`, and `is_merged` in `stacks.json`. It
+does NOT touch GitHub.
+
 From here you have two paths back to a healthy cache, depending on whether
 you want to **start over with a brand-new PR** or **re-discover an existing
 PR that's still live on GitHub**:
 
+**Path A: start over.** ezs opens a brand-new PR for the branch and writes the
+new `pr_url` into `stacks.json`. Use this when the prior PR was closed,
+replaced, or just "burn it down and start fresh".
+
 ```bash
-# Path A: start over. ezs opens a brand-new PR for the branch and writes
-# the new pr_url into stacks.json. Use this when the prior PR was closed,
-# replaced, or just "burn it down and start fresh".
-#   (cmd/ezs/commands/pr.go: prCreate. After unlink the cache is empty, so
-#   pr create has no existing-PR guard to trip and proceeds straight to
-#   `gh pr create --base <parent> --head <branch>`.)
 ezs pr create -t "Part 2 (v2): wire it up"
 ezs pr create --auto                   # AI-drafted title + body
 ```
 
+After `unlink` the cache is empty, so `pr create` has no existing-PR guard to
+trip and proceeds straight to `gh pr create --base <parent> --head <branch>`
+(see `cmd/ezs/commands/pr.go`: `prCreate`).
+
+**Path B: re-discover the existing PR.** If a PR for the branch still exists
+on GitHub, `pr refresh` queries GitHub by branch name, repopulates the cache,
+and restores the link without opening a new PR.
+
+> **Important:** `pr refresh` requires a non-empty cache to operate on — after
+> a hard `pr unlink` (which clears both `pr_number` and `pr_url`), refresh
+> exits with `"Branch '...' has no cached PR association."` For Path B you
+> typically want to skip the unlink and just run refresh on the still-linked
+> branch:
+
 ```bash
-# Path B: re-discover the existing PR. If a PR for the branch still exists
-# on GitHub, run pr refresh to query GitHub by branch name, repopulate the
-# cache, and restore the link without opening a new PR.
-#
-# IMPORTANT: pr refresh requires a non-empty cache to operate on — after a
-# hard `pr unlink` (which clears both pr_number and pr_url), refresh exits
-# with "Branch '...' has no cached PR association." For Path B you typically
-# want to skip the unlink and just run refresh on the still-linked branch:
 ezs pr refresh                         # current branch
 ezs pr refresh --branch feature-2
 ezs pr refresh --stack                 # parallel refresh across the stack
-#   - For each targeted branch, ezs calls gh.GetPR(<cached number>); on a
-#     stale or 404 number it falls back to gh.GetPRByBranch(<branch name>).
-#     Whatever it finds (live PR, merged PR, closed PR, no PR) is written
-#     back into the cache. (See fetchLivePR + applyPRRefresh in
-#     cmd/ezs/commands/utils.go.)
-#   - This is the "GitHub UI moved underneath me" recovery path.
 ```
+
+For each targeted branch, ezs calls `gh.GetPR(<cached number>)`; on a stale
+or 404 number it falls back to `gh.GetPRByBranch(<branch name>)`. Whatever it
+finds (live PR, merged PR, closed PR, no PR) is written back into the cache
+(see `fetchLivePR` + `applyPRRefresh` in `cmd/ezs/commands/utils.go`). This is
+the "GitHub UI moved underneath me" recovery path.
 
 Mental model: `pr unlink` is the *forget* primitive, `pr create` is the *make*
 primitive, and `pr refresh` is the *re-discover and reconcile* primitive. Run
@@ -1169,23 +1221,28 @@ If every new worktree needs the same `.envrc`, IDE settings, or scaffold
 files, drop them into `~/.ezstack/templates/<name>/` once and use the
 `--template` flag to overlay them on every new worktree.
 
+Author a template once:
+
 ```bash
-# 1. Author a template once.
 mkdir -p ~/.ezstack/templates/go-service
 cp .envrc ~/.ezstack/templates/go-service/
 cp -r .vscode ~/.ezstack/templates/go-service/
-
-# 2. Create a worktree from the template. The overlay is applied AFTER the
-#    worktree is created — existing files are overwritten, new dirs created,
-#    file modes (including the executable bit) preserved.
-ezs new feature-x --template go-service
-
-# Safety: the overlay aborts on:
-#   - Symlinks at the template root.
-#   - Any source/destination path that escapes the worktree (ezs validates
-#     symlinks and `..` components inside the template).
-#   - Any failure mid-copy. Partial overlays are never left behind.
 ```
+
+Then create a worktree from the template:
+
+```bash
+ezs new feature-x --template go-service
+```
+
+The overlay is applied AFTER the worktree is created — existing files are
+overwritten, new dirs created, file modes (including the executable bit)
+preserved.
+
+Safety: the overlay aborts on symlinks at the template root, any
+source/destination path that escapes the worktree (ezs validates symlinks
+and `..` components inside the template), and any failure mid-copy. Partial
+overlays are never left behind.
 
 Templates compose with everything else — `--from-worktree`, `--from-remote`,
 `--parent`, etc. all work alongside `--template`.
