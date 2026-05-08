@@ -12,7 +12,7 @@ import (
 func TestAgentProcessEnv_InjectsNoPushFlag(t *testing.T) {
 	parent := []string{"PATH=/usr/bin", "HOME=/home/test", "UNRELATED=x"}
 
-	got := agentProcessEnv(parent, true, "")
+	got := agentProcessEnv(parent, true, "", "")
 
 	var seen bool
 	for _, kv := range got {
@@ -45,7 +45,7 @@ func TestAgentProcessEnv_InjectsNoPushFlag(t *testing.T) {
 func TestAgentProcessEnv_DoesNotSetFlagWhenDisabled(t *testing.T) {
 	parent := []string{"PATH=/usr/bin", "HOME=/home/test"}
 
-	got := agentProcessEnv(parent, false, "")
+	got := agentProcessEnv(parent, false, "", "")
 
 	for _, kv := range got {
 		if strings.HasPrefix(kv, agentNoPushEnv+"=") {
@@ -78,7 +78,7 @@ func TestAgentProcessEnv_StripsInheritedGateWhenDisabled(t *testing.T) {
 		"HOME=/home/test",
 	}
 
-	got := agentProcessEnv(parent, false, "")
+	got := agentProcessEnv(parent, false, "", "")
 
 	for _, kv := range got {
 		if strings.HasPrefix(kv, agentNoPushEnv+"=") {
@@ -98,7 +98,7 @@ func TestAgentProcessEnv_DeduplicatesWhenEnabled(t *testing.T) {
 		agentNoPushEnv + "=stale-value",
 	}
 
-	got := agentProcessEnv(parent, true, "")
+	got := agentProcessEnv(parent, true, "", "")
 
 	count := 0
 	for _, kv := range got {
@@ -117,7 +117,7 @@ func TestAgentProcessEnv_DeduplicatesWhenEnabled(t *testing.T) {
 // TestAgentProcessEnv_NilParentDoesNotCrash pins down defensive behavior
 // when the caller passes a nil env (possible in synthetic test contexts).
 func TestAgentProcessEnv_NilParentDoesNotCrash(t *testing.T) {
-	got := agentProcessEnv(nil, true, "")
+	got := agentProcessEnv(nil, true, "", "")
 
 	if len(got) < 1 || got[len(got)-1] != agentNoPushEnv+"=1" {
 		t.Errorf("expected gate var as final element even with nil parent; got %v", got)

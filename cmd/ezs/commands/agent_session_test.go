@@ -131,7 +131,7 @@ func TestResolveFeatureSession_OneShotLabelEmbedsDescription(t *testing.T) {
 func TestBuildAgentSessionArgs_ClaudeFreshWhenNoStored(t *testing.T) {
 	withStubSessionID(t, "stub-uuid-1")
 
-	inj := buildAgentSessionArgs("claude", "", "_ezstack-foo", false)
+	inj := buildAgentSessionArgs("claude", "", "_ezstack-foo", false, config.AgentSessionWorkMode)
 
 	if !inj.Fresh {
 		t.Error("expected Fresh=true when no stored session ID")
@@ -151,7 +151,7 @@ func TestBuildAgentSessionArgs_ClaudeFreshWhenNoStored(t *testing.T) {
 func TestBuildAgentSessionArgs_ClaudeResumeWhenStored(t *testing.T) {
 	withStubSessionID(t, "should-not-be-used")
 
-	inj := buildAgentSessionArgs("claude", "existing-id", "_ezstack-bar", false)
+	inj := buildAgentSessionArgs("claude", "existing-id", "_ezstack-bar", false, config.AgentSessionWorkMode)
 
 	if inj.Fresh {
 		t.Error("expected Fresh=false when reusing stored session")
@@ -171,7 +171,7 @@ func TestBuildAgentSessionArgs_ClaudeResumeWhenStored(t *testing.T) {
 func TestBuildAgentSessionArgs_ClaudeForceFreshIgnoresStored(t *testing.T) {
 	withStubSessionID(t, "fresh-uuid")
 
-	inj := buildAgentSessionArgs("claude", "existing-id", "_ezstack-baz", true)
+	inj := buildAgentSessionArgs("claude", "existing-id", "_ezstack-baz", true, config.AgentSessionWorkMode)
 
 	if !inj.Fresh {
 		t.Error("--no-resume must override a stored session ID")
@@ -194,7 +194,7 @@ func TestBuildAgentSessionArgs_ClaudeForceFreshIgnoresStored(t *testing.T) {
 func TestBuildAgentSessionArgs_NonClaudeFreshOmitsArgs(t *testing.T) {
 	withStubSessionID(t, "uuid-non-claude-fresh")
 
-	inj := buildAgentSessionArgs("aider --model gpt-4", "", "_ezstack-foo", false)
+	inj := buildAgentSessionArgs("aider --model gpt-4", "", "_ezstack-foo", false, config.AgentSessionWorkMode)
 
 	if !inj.Fresh {
 		t.Error("expected Fresh=true with no stored ID")
@@ -213,7 +213,7 @@ func TestBuildAgentSessionArgs_NonClaudeFreshOmitsArgs(t *testing.T) {
 func TestBuildAgentSessionArgs_NonClaudeResumeOmitsArgs(t *testing.T) {
 	withStubSessionID(t, "should-not-be-used")
 
-	inj := buildAgentSessionArgs("aider", "stored-id", "_ezstack-bar", false)
+	inj := buildAgentSessionArgs("aider", "stored-id", "_ezstack-bar", false, config.AgentSessionWorkMode)
 
 	if inj.Fresh {
 		t.Error("expected Fresh=false when reusing stored ID")
@@ -232,7 +232,7 @@ func TestBuildAgentSessionArgs_NonClaudeResumeOmitsArgs(t *testing.T) {
 func TestBuildAgentSessionArgs_NonClaudeForceFreshMintsNew(t *testing.T) {
 	withStubSessionID(t, "minted-fresh")
 
-	inj := buildAgentSessionArgs("cursor", "stored-id", "_ezstack-baz", true)
+	inj := buildAgentSessionArgs("cursor", "stored-id", "_ezstack-baz", true, config.AgentSessionWorkMode)
 
 	if !inj.Fresh {
 		t.Error("--no-resume must mint a new ID for non-claude too")
@@ -439,11 +439,15 @@ func TestSplitAgentExtras(t *testing.T) {
 func TestAgentProcessEnv_InjectsSessionID(t *testing.T) {
 	parent := []string{"PATH=/usr/bin", "HOME=/home/test"}
 
-	got := agentProcessEnv(parent, false, "abc-123")
+	got := agentProcessEnv(parent, false, "abc-123", config.AgentSessionFeatureMode)
 
 	wantPair := agentSessionIDEnv + "=abc-123"
 	if !containsString(got, wantPair) {
 		t.Errorf("agent env missing %s; got %v", wantPair, got)
+	}
+	wantMode := agentSessionModeEnv + "=" + config.AgentSessionFeatureMode
+	if !containsString(got, wantMode) {
+		t.Errorf("agent env missing %s; got %v", wantMode, got)
 	}
 }
 
@@ -451,13 +455,17 @@ func TestAgentProcessEnv_StripsInheritedSessionWhenEmpty(t *testing.T) {
 	parent := []string{
 		"PATH=/usr/bin",
 		agentSessionIDEnv + "=stale-id-from-outer-agent",
+		agentSessionModeEnv + "=feature",
 	}
 
-	got := agentProcessEnv(parent, false, "")
+	got := agentProcessEnv(parent, false, "", "")
 
 	for _, kv := range got {
 		if strings.HasPrefix(kv, agentSessionIDEnv+"=") {
 			t.Errorf("expected stale %s to be stripped when sessionID is empty; got %v", agentSessionIDEnv, got)
+		}
+		if strings.HasPrefix(kv, agentSessionModeEnv+"=") {
+			t.Errorf("expected stale %s to be stripped when sessionID is empty; got %v", agentSessionModeEnv, got)
 		}
 	}
 }
@@ -466,11 +474,13 @@ func TestAgentProcessEnv_DeduplicatesSessionID(t *testing.T) {
 	parent := []string{
 		"PATH=/usr/bin",
 		agentSessionIDEnv + "=stale",
+		agentSessionModeEnv + "=work",
 	}
 
-	got := agentProcessEnv(parent, false, "fresh")
+	got := agentProcessEnv(parent, false, "fresh", config.AgentSessionFeatureMode)
 
 	count := 0
+	modeCount := 0
 	for _, kv := range got {
 		if strings.HasPrefix(kv, agentSessionIDEnv+"=") {
 			count++
@@ -478,9 +488,18 @@ func TestAgentProcessEnv_DeduplicatesSessionID(t *testing.T) {
 				t.Errorf("expected session ID = fresh, got %q", kv)
 			}
 		}
+		if strings.HasPrefix(kv, agentSessionModeEnv+"=") {
+			modeCount++
+			if kv != agentSessionModeEnv+"="+config.AgentSessionFeatureMode {
+				t.Errorf("expected mode = %s, got %q", config.AgentSessionFeatureMode, kv)
+			}
+		}
 	}
 	if count != 1 {
 		t.Errorf("expected exactly one %s entry, got %d", agentSessionIDEnv, count)
+	}
+	if modeCount != 1 {
+		t.Errorf("expected exactly one %s entry, got %d", agentSessionModeEnv, modeCount)
 	}
 }
 

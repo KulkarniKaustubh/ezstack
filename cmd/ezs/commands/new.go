@@ -163,6 +163,8 @@ func New(args []string) error {
 			return err
 		}
 
+		adoptActiveAgentSessionForBranch(mgr, branch.Name)
+
 		// Prompt for stack name
 		promptStackName(mgr, branch.Name)
 
@@ -247,6 +249,12 @@ func New(args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to add branch to stack: %w", err)
 		}
+
+		// remote.StackHash refers to the stack created by RegisterRemoteBranch
+		// inside selectAndRegisterRemoteBranch — it's always a fresh stack
+		// when this branch executes, so an active feature session should
+		// adopt it directly.
+		adoptActiveAgentSession(mgr.GetRepoDir(), remote.StackHash)
 
 		// Prompt for stack name (new stack was just created)
 		promptStackName(mgr, userBranch.Name)
@@ -374,6 +382,7 @@ func New(args []string) error {
 		ui.Success(fmt.Sprintf("Created branch '%s' with worktree at '%s'", branch.Name, branch.WorktreePath))
 
 		if isNewStack {
+			adoptActiveAgentSessionForBranch(mgr, branch.Name)
 			promptStackName(mgr, branch.Name)
 		}
 
@@ -399,6 +408,7 @@ func New(args []string) error {
 		ui.Success(fmt.Sprintf("Created branch '%s'", branch.Name))
 
 		if isNewStack {
+			adoptActiveAgentSessionForBranch(mgr, branch.Name)
 			promptStackName(mgr, branch.Name)
 		}
 

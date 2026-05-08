@@ -2,11 +2,13 @@ package commands
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 	"github.com/google/uuid"
 )
 
@@ -169,6 +171,14 @@ type agentSessionInjection struct {
 	SessionID string
 	// Fresh is true if a brand-new session ID was minted (vs reusing one).
 	Fresh bool
+	// Mode is the launch mode (config.AgentSessionWorkMode or
+	// config.AgentSessionFeatureMode). Exposed to the spawned agent via
+	// EZS_AGENT_SESSION_MODE so that nested `ezs new` calls (CLI or MCP) can
+	// decide whether to adopt the active session onto a freshly-created stack.
+	// Adoption only fires for feature mode — work-mode sessions are scoped to
+	// the stack they were launched in and shouldn't follow the agent into
+	// unrelated stacks it spins up later.
+	Mode string
 }
 
 // buildAgentSessionArgs computes the session-related argv (if any) to inject
@@ -188,7 +198,7 @@ type agentSessionInjection struct {
 // For claude-family agents the flags are injected into argv. For other
 // agents Args is empty (we don't risk misparsing flags whose schema we
 // don't know); the session ID still flows through via the env var.
-func buildAgentSessionArgs(agentCmd, storedID, displayName string, forceFresh bool) agentSessionInjection {
+func buildAgentSessionArgs(agentCmd, storedID, displayName string, forceFresh bool, mode string) agentSessionInjection {
 	isClaude := isClaudeFamily(agentCmd)
 	resuming := storedID != "" && !forceFresh
 
@@ -201,6 +211,7 @@ func buildAgentSessionArgs(agentCmd, storedID, displayName string, forceFresh bo
 				IncludePrompt: false,
 				SessionID:     storedID,
 				Fresh:         false,
+				Mode:          mode,
 			}
 		}
 		// Non-claude resume: no CLI args (we don't know the agent's resume
@@ -211,6 +222,7 @@ func buildAgentSessionArgs(agentCmd, storedID, displayName string, forceFresh bo
 			IncludePrompt: true,
 			SessionID:     storedID,
 			Fresh:         false,
+			Mode:          mode,
 		}
 	}
 
@@ -221,6 +233,7 @@ func buildAgentSessionArgs(agentCmd, storedID, displayName string, forceFresh bo
 			IncludePrompt: true,
 			SessionID:     id,
 			Fresh:         true,
+			Mode:          mode,
 		}
 	}
 	return agentSessionInjection{
@@ -228,6 +241,7 @@ func buildAgentSessionArgs(agentCmd, storedID, displayName string, forceFresh bo
 		IncludePrompt: true,
 		SessionID:     id,
 		Fresh:         true,
+		Mode:          mode,
 	}
 }
 
@@ -289,7 +303,7 @@ func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, br
 			}
 		}
 		label := preferLiveAgentName(stored, forceFresh, sessionDisplayName(branchName, scopeBranch))
-		inj := buildAgentSessionArgs(agentCmd, stored, label, forceFresh)
+		inj := buildAgentSessionArgs(agentCmd, stored, label, forceFresh, config.AgentSessionWorkMode)
 		return &agentSessionPlan{
 			injection: &inj,
 			persist: func(id string) error {
@@ -313,7 +327,7 @@ func resolveWorkSession(repoPath, agentCmd string, targetStack *config.Stack, br
 		}
 	}
 	label := preferLiveAgentName(stored, forceFresh, sessionDisplayName(identifier, scopeStack))
-	inj := buildAgentSessionArgs(agentCmd, stored, label, forceFresh)
+	inj := buildAgentSessionArgs(agentCmd, stored, label, forceFresh, config.AgentSessionWorkMode)
 	return &agentSessionPlan{
 		injection: &inj,
 		persist: func(id string) error {
@@ -353,7 +367,7 @@ func resolveFeatureSession(repoPath, agentCmd string, existingStack *config.Stac
 		// uniqueness suffix on the display label.
 		id := newSessionID()
 		label := sessionDisplayName("feature-"+oneShotFeatureLabel(description, id), scopeStack)
-		inj := buildAgentSessionArgsWithID(agentCmd, label, id)
+		inj := buildAgentSessionArgsWithID(agentCmd, label, id, config.AgentSessionFeatureMode)
 		return &agentSessionPlan{injection: &inj, persist: func(string) error { return nil }}
 	}
 	identifier := existingStack.Name
@@ -361,7 +375,7 @@ func resolveFeatureSession(repoPath, agentCmd string, existingStack *config.Stac
 		identifier = existingStack.Hash
 	}
 	label := preferLiveAgentName(existingStack.AgentSessionID, forceFresh, sessionDisplayName("feature-"+identifier, scopeStack))
-	inj := buildAgentSessionArgs(agentCmd, existingStack.AgentSessionID, label, forceFresh)
+	inj := buildAgentSessionArgs(agentCmd, existingStack.AgentSessionID, label, forceFresh, config.AgentSessionFeatureMode)
 	hash := existingStack.Hash
 	return &agentSessionPlan{
 		injection: &inj,
@@ -413,13 +427,14 @@ func oneShotFeatureLabel(description, sessionID string) string {
 // that have already minted the UUID externally (so it can flow into the
 // display label before the injection plan is built). Always treated as a
 // fresh session — there is no stored ID to resume from.
-func buildAgentSessionArgsWithID(agentCmd, displayName, sessionID string) agentSessionInjection {
+func buildAgentSessionArgsWithID(agentCmd, displayName, sessionID, mode string) agentSessionInjection {
 	if isClaudeFamily(agentCmd) {
 		return agentSessionInjection{
 			Args:          []string{"--session-id", sessionID, "--name", displayName},
 			IncludePrompt: true,
 			SessionID:     sessionID,
 			Fresh:         true,
+			Mode:          mode,
 		}
 	}
 	return agentSessionInjection{
@@ -427,6 +442,7 @@ func buildAgentSessionArgsWithID(agentCmd, displayName, sessionID string) agentS
 		IncludePrompt: true,
 		SessionID:     sessionID,
 		Fresh:         true,
+		Mode:          mode,
 	}
 }
 
@@ -460,6 +476,78 @@ func persistStackSessionID(repoPath, stackHash, sessionID, mode string) error {
 		return err
 	}
 	return mgr.SetStackAgentSessionID(stackHash, sessionID, mode)
+}
+
+// adoptActiveAgentSession binds the EZS_AGENT_SESSION_ID env var (set on the
+// agent process by `ezs agent feature`) onto a freshly-created stack, tagged
+// as feature mode. Called by every `ezs new` codepath right after a new
+// stack is registered, so an agent that creates its first stack mid-feature
+// gets the dangling session UUID stitched onto the new stack — without this,
+// `ezs agent ls` would show nothing for the new stack and a follow-up
+// `ezs agent` inside it would mint a fresh session instead of resuming.
+//
+// Adoption is gated on EZS_AGENT_SESSION_MODE == feature. Work-mode sessions
+// are scoped to the stack they were launched in and would only confuse
+// users if they silently followed the agent into an unrelated new stack.
+// When the mode env is unset (e.g. a session launched by an older ezs
+// before mode tracking, or `ezs new` invoked from a plain shell), this is a
+// no-op — preserving the prior "no adoption" behavior.
+//
+// Re-bind semantics: if the same feature session creates multiple stacks,
+// every new stack gets the same UUID written onto it. claude keys resume by
+// UUID (not by stack), so resuming via either stack lands in the same
+// conversation; `ezs agent ls` will show one row per stack with the same
+// short ID, which truthfully reflects "one session, multiple stacks."
+//
+// Failures persist as a warning, not an error: the stack creation already
+// mutated git state and the user can recover by passing --session-id or
+// --resume manually. We do not want a best-effort bookkeeping failure to
+// fail the whole `ezs new` after the worktree is already on disk.
+func adoptActiveAgentSession(repoPath, stackHash string) {
+	if stackHash == "" {
+		return
+	}
+	sessionID := os.Getenv(agentSessionIDEnv)
+	if sessionID == "" {
+		return
+	}
+	if os.Getenv(agentSessionModeEnv) != config.AgentSessionFeatureMode {
+		return
+	}
+	if err := persistStackSessionID(repoPath, stackHash, sessionID, config.AgentSessionFeatureMode); err != nil {
+		ui.Warn(fmt.Sprintf("Could not bind active feature session %s to stack %s: %v",
+			shortAgentSessionID(sessionID), stackHash, err))
+		return
+	}
+	ui.Info(fmt.Sprintf("Bound active feature session %s to new stack %s",
+		shortAgentSessionID(sessionID), stackHash))
+}
+
+// shortAgentSessionID truncates a UUID to its first 8 chars for log lines.
+// Mirrors the format used by `ezs agent ls`.
+func shortAgentSessionID(id string) string {
+	if len(id) <= 8 {
+		return id
+	}
+	return id[:8]
+}
+
+// adoptActiveAgentSessionForBranch is a convenience wrapper for callers that
+// have a branch name but not the new stack's hash yet — it asks the manager
+// for the stack containing branchName and forwards to adoptActiveAgentSession.
+// Used by `ezs new` codepaths where stack creation only returns the branch.
+//
+// The lookup is done lazily here (and not at every `ezs new` site) so paths
+// that don't end up creating a new stack don't pay the cost.
+func adoptActiveAgentSessionForBranch(mgr *stack.Manager, branchName string) {
+	if mgr == nil || branchName == "" {
+		return
+	}
+	s := mgr.GetStackForBranch(branchName)
+	if s == nil {
+		return
+	}
+	adoptActiveAgentSession(mgr.GetRepoDir(), s.Hash)
 }
 
 // sessionLogSuffix returns a short " (resumed: <id>)" or " (fresh session: <id>)"

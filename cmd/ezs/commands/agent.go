@@ -1248,10 +1248,12 @@ func spawnAgentProcess(spec agentSpawnSpec) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	sessionEnvID := ""
+	sessionEnvMode := ""
 	if spec.session != nil && spec.session.injection != nil {
 		sessionEnvID = spec.session.injection.SessionID
+		sessionEnvMode = spec.session.injection.Mode
 	}
-	cmd.Env = agentProcessEnv(os.Environ(), spec.noPush, sessionEnvID)
+	cmd.Env = agentProcessEnv(os.Environ(), spec.noPush, sessionEnvID, sessionEnvMode)
 
 	runErr := cmd.Run()
 
@@ -1287,6 +1289,15 @@ func spawnAgentProcess(spec agentSpawnSpec) error {
 // for user scripts.
 const agentSessionIDEnv = "EZS_AGENT_SESSION_ID"
 
+// agentSessionModeEnv carries the launch mode of the active session
+// (config.AgentSessionWorkMode or config.AgentSessionFeatureMode) into the
+// spawned agent's environment. It's consumed by `ezs new`'s session-adoption
+// path: a freshly-created stack only inherits the active session when the
+// mode is feature, since a feature session is meant to span the stacks the
+// agent spins up while building. Work-mode sessions are scoped to the stack
+// they were launched from and shouldn't leak into unrelated new stacks.
+const agentSessionModeEnv = "EZS_AGENT_SESSION_MODE"
+
 // formatPersistFailureWarning renders the warning surfaced when the
 // best-effort persist of an agent session UUID fails. The message
 // includes the raw UUID and a manual-resume hint so the user has a
@@ -1309,21 +1320,28 @@ func formatPersistFailureWarning(sessionID, agentBinary string, err error) strin
 // the user didn't ask to propagate.
 //
 // sessionID, when non-empty, is exposed to the child as EZS_AGENT_SESSION_ID;
-// any pre-existing inherited value is stripped so a nested agent doesn't see
-// a stale ID from its parent. Empty sessionID strips the var entirely.
+// sessionMode (when both sessionID and sessionMode are non-empty) is exposed
+// as EZS_AGENT_SESSION_MODE so nested `ezs new` calls can decide whether to
+// adopt the active session. Any pre-existing inherited values for both vars
+// are stripped first so a nested agent doesn't see a stale ID/mode from its
+// parent. Empty sessionID strips both vars entirely.
 //
 // Extracted for testability: nothing else about spawnAgentProcess can be
 // exercised without running a real command.
-func agentProcessEnv(parentEnv []string, noPush bool, sessionID string) []string {
+func agentProcessEnv(parentEnv []string, noPush bool, sessionID, sessionMode string) []string {
 	noPushPrefix := agentNoPushEnv + "="
 	sessionPrefix := agentSessionIDEnv + "="
-	env := make([]string, 0, len(parentEnv)+2)
+	modePrefix := agentSessionModeEnv + "="
+	env := make([]string, 0, len(parentEnv)+3)
 	for _, kv := range parentEnv {
 		if strings.HasPrefix(kv, noPushPrefix) {
 			continue // either we'll re-add it or we want it gone
 		}
 		if strings.HasPrefix(kv, sessionPrefix) {
 			continue // ditto for the session ID
+		}
+		if strings.HasPrefix(kv, modePrefix) {
+			continue // and the mode tag — paired with the ID
 		}
 		env = append(env, kv)
 	}
@@ -1332,6 +1350,9 @@ func agentProcessEnv(parentEnv []string, noPush bool, sessionID string) []string
 	}
 	if sessionID != "" {
 		env = append(env, sessionPrefix+sessionID)
+		if sessionMode != "" {
+			env = append(env, modePrefix+sessionMode)
+		}
 	}
 	return env
 }
