@@ -99,6 +99,8 @@ var agentSubcommandFlags = map[string][]string{
 	"prompt": {"--shipped", "--custom", "--repo", "--edit", "--reset", "--help", "-h"},
 	"ls":     {"--branch", "-b", "--stack", "-s", "--feature", "--json", "--help", "-h"},
 	"list":   {"--branch", "-b", "--stack", "-s", "--feature", "--json", "--help", "-h"},
+	"rm":     {"--branch", "-b", "--stack", "-s", "--all", "--help", "-h"},
+	"remove": {"--branch", "-b", "--stack", "-s", "--all", "--help", "-h"},
 }
 
 // branchPositionalCommands take a branch name as their first positional arg.
@@ -277,6 +279,8 @@ func printCompletions(args []string) {
 			fmt.Println("feat")
 			fmt.Println("ls")
 			fmt.Println("list")
+			fmt.Println("rm")
+			fmt.Println("remove")
 			fmt.Println("prompt")
 			return
 		}
