@@ -4,8 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
-	"errors"
-	"io"
 	"os"
 	"path/filepath"
 )
@@ -147,11 +145,9 @@ func scanLastAgentName(path, sessionID string) string {
 			}
 		}
 		if err != nil {
-			// io.EOF is expected at end of file; any other error stops the
-			// scan early but we still return whatever `last` we found.
-			if !errors.Is(err, io.EOF) {
-				break
-			}
+			// io.EOF is expected at end of file; any other read error
+			// (truncated journal, transient disk hiccup) is treated the
+			// same — stop the scan and return whatever `last` we found.
 			break
 		}
 	}

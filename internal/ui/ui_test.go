@@ -307,6 +307,49 @@ func TestPrintStack_RootCurrentPointerIsGreen(t *testing.T) {
 	}
 }
 
+// TestPrintStack_BranchCurrentPointerIsGreen mirrors the root-pointer
+// contract for tree branch rows: when a non-root branch is current, the
+// leading `>` must also render in green. Pre-fix, branch rows emitted
+// the pointer character BEFORE the green SGR, so `>` printed in the
+// terminal default while the rest of the row picked up green via the
+// non-resetting Bold that follows. Visually inconsistent with the root
+// row and unhelpful as a cursor marker — pin both rows to the same
+// ordering so future renderer churn can't silently regress one without
+// the other.
+func TestPrintStack_BranchCurrentPointerIsGreen(t *testing.T) {
+	stack := &config.Stack{
+		Hash: "abc1234",
+		Root: "main",
+		Branches: []*config.Branch{
+			{Name: "feat", Parent: "main"},
+		},
+	}
+
+	out := captureStderr(t, func() {
+		PrintStack(stack, "feat", false, nil)
+	})
+
+	var branchLine string
+	for _, l := range strings.Split(out, "\n") {
+		clean := stripANSI(l)
+		if strings.Contains(clean, "feat") && !strings.Contains(clean, "main") {
+			branchLine = l
+			break
+		}
+	}
+	if branchLine == "" {
+		t.Fatalf("branch line not found; full output:\n%s", out)
+	}
+
+	pointerByte := strings.Index(branchLine, ">")
+	if pointerByte == -1 {
+		t.Fatalf("expected `>` pointer on current-branch line, got %q", branchLine)
+	}
+	if !sgrColorActiveAt(branchLine, pointerByte, "32") {
+		t.Errorf("`>` pointer not rendered in green on current-branch line; got %q", branchLine)
+	}
+}
+
 // sgrColorActiveAt walks the SGR (CSI ... m) escape sequences in s up to byte
 // position pos and returns whether the given color code (e.g. "32" for green)
 // is the active foreground color. Used to pin the green-pointer contract for
