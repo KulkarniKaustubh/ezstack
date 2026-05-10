@@ -25,8 +25,19 @@ export class StackNode extends vscode.TreeItem {
       stack.name || `Stack ${stack.hash.slice(0, 7)}`,
       vscode.TreeItemCollapsibleState.Expanded,
     );
-    this.description = `root: ${stack.root}`;
+    // Mirror the CLI: a stack rooted on a pickup branch (`ezs new -r`) shows
+    // `(remote)` next to the root so the tree explains the same context as
+    // `ezs ls`. Without this, VS Code users couldn't tell their stack was
+    // anchored on someone else's PR vs. their own branch.
+    this.description = stack.root_is_remote
+      ? `root: ${stack.root} (remote)`
+      : `root: ${stack.root}`;
     this.iconPath = new vscode.ThemeIcon("layers");
+    // contextValue stays "stack" regardless of root_is_remote so the menu
+    // entries gated on `viewItem == stack` (renameStack, sync, newBranch,
+    // prRefresh, prUnlink, openAgent, openAgentFeature, editAgentPrompt)
+    // still appear on pickup-rooted stacks. The (remote) cue lives in
+    // description + tooltip; it's a label, not a capability gate.
     this.contextValue = "stack";
   }
 }
@@ -65,6 +76,13 @@ export class BranchNode extends vscode.TreeItem {
     git?: WorktreeGitStatus,
   ): string {
     const parts: string[] = [];
+    // Mirror the CLI's `(remote)` tag for pickup branches so the user can
+    // tell at a glance which branches are theirs vs. another contributor's
+    // — bulk sync skips IsRemote branches and a force-push to one would
+    // clobber the contributor's history, so the visual cue is load-bearing.
+    if (b.is_remote) {
+      parts.push("(remote)");
+    }
     if (b.pr_number) {
       parts.push(`PR #${b.pr_number}`);
     }
@@ -142,8 +160,14 @@ export class BranchNode extends vscode.TreeItem {
     git?: WorktreeGitStatus,
   ): vscode.MarkdownString {
     const md = new vscode.MarkdownString();
-    md.appendMarkdown(`**${b.name}**\n\n`);
+    md.appendMarkdown(`**${b.name}**${b.is_remote ? " *(remote)*" : ""}\n\n`);
     md.appendMarkdown(`Parent: \`${b.parent}\`\n\n`);
+    if (b.is_remote) {
+      md.appendMarkdown(
+        "*Pickup branch — belongs to another contributor. Excluded from " +
+          "bulk sync (`ezs sync -a`) by default.*\n\n",
+      );
+    }
     if (b.pr_number && b.pr_url) {
       md.appendMarkdown(`PR: [#${b.pr_number}](${b.pr_url})`);
       if (b.pr_state) {

@@ -372,6 +372,62 @@ func TestShowDiffStatsAgainstBase_BaseDriftedFromOrigin(t *testing.T) {
 	}
 }
 
+// TestEmitCd_PipedStdoutEmitsCd verifies that when the parent shell wrapper
+// has captured stdout via `eval "$(...)"` (stdout = pipe, NOT a TTY) and
+// EZS_SHELL_WRAPPER=1 is set, EmitCd writes a literal "cd <path>" line.
+// This is the eval'd cd path that powers `ezs delete`, `ezs goto`, etc.
+func TestEmitCd_PipedStdoutEmitsCd(t *testing.T) {
+	t.Setenv("EZS_SHELL_WRAPPER", "1")
+	stdout := captureStdoutForTest(t, func() {
+		EmitCd("/some/path")
+	})
+	want := "cd '/some/path'\n"
+	if stdout != want {
+		t.Errorf("piped stdout: got %q, want %q", stdout, want)
+	}
+}
+
+// TestEmitCd_TTYStdoutDoesNotEmitCd is the regression gate for the leak the
+// shipped wrapper exposes: it sets EZS_SHELL_WRAPPER=1 in *both* its case
+// branches, so when a non-eval'd command path (e.g. the merged-stack cleanup
+// inside `ezs ls`) calls EmitCd, the env var alone is not a reliable
+// stdout-is-captured signal. We additionally require stdout to NOT be a TTY
+// before printing the cd line — the test's pipe makes stdout non-TTY, so we
+// flip the env var off here to simulate the "no eval capture" half. The
+// behavior we want: nothing on stdout, advice on stderr.
+func TestEmitCd_NoShellWrapperFallsBackToStderr(t *testing.T) {
+	t.Setenv("EZS_SHELL_WRAPPER", "")
+	stdout := captureStdoutForTest(t, func() {
+		EmitCd("/some/path")
+	})
+	if stdout != "" {
+		t.Errorf("stdout should be empty when wrapper isn't active; got %q", stdout)
+	}
+}
+
+// captureStdoutForTest swaps os.Stdout for a pipe and returns whatever was
+// written. The pipe path also makes term.IsTerminal(stdout) return false,
+// which is exactly the state we want EmitCd to interpret as "captured".
+func captureStdoutForTest(t *testing.T, fn func()) string {
+	t.Helper()
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	done := make(chan string, 1)
+	go func() {
+		var sb strings.Builder
+		io.Copy(&sb, r)
+		done <- sb.String()
+	}()
+	fn()
+	w.Close()
+	os.Stdout = orig
+	return <-done
+}
+
 func TestShellQuote(t *testing.T) {
 	tests := []struct {
 		input string

@@ -50,10 +50,14 @@ func agentList(args []string) error {
 
 %sDESCRIPTION%s
     Each row reports one ezstack-bound AI session: which stack or branch
-    it's attached to, the display name shown in the agent's resume picker,
-    a short prefix of the session ID, the launch mode (work or feature),
-    and the exact 'ezs agent' command that resumes it. Only sessions ezs
-    has minted (display name prefixed with "_ezstack-") are listed.
+    it's attached to, the display name currently shown in the agent's
+    resume picker, a short prefix of the session ID, the launch mode
+    (work or feature), and the exact 'ezs agent' command that resumes it.
+
+    Display names are read live from the agent's session journal, so a
+    rename inside Claude (e.g. /rename) shows up here on the next 'ezs
+    agent ls'. Fresh-launched or non-claude sessions fall back to the
+    deterministic ezstack label, "_ezstack-<identifier>".
 
     The text output is grouped: stack-scoped sessions first, then
     branch-scoped sessions. JSON fields:
@@ -201,10 +205,6 @@ func collectAgentSessionsFromStackConfig(currentRepo string, sc *config.StackCon
 		}
 		// Stack-scoped session.
 		if s.AgentSessionID != "" {
-			identifier := s.Name
-			if identifier == "" {
-				identifier = s.Hash
-			}
 			resume := "ezs agent -s " + s.Hash
 			if s.Name != "" {
 				resume = "ezs agent -s " + quoteIfNeeded(s.Name)
@@ -214,7 +214,7 @@ func collectAgentSessionsFromStackConfig(currentRepo string, sc *config.StackCon
 				Mode:        modeOrDefault(s.AgentSessionMode),
 				StackHash:   s.Hash,
 				StackName:   s.Name,
-				DisplayName: stackDisplayLabel(s),
+				DisplayName: resolveDisplayName(s.AgentSessionID, stackDisplayLabel(s)),
 				SessionID:   s.AgentSessionID,
 				ResumeCmd:   resume,
 			})
@@ -248,13 +248,28 @@ func collectAgentSessionsFromStackConfig(currentRepo string, sc *config.StackCon
 				StackHash:   s.Hash,
 				StackName:   s.Name,
 				BranchName:  name,
-				DisplayName: sessionDisplayName(name, scopeBranch),
+				DisplayName: resolveDisplayName(bc.AgentSessionID, sessionDisplayName(name, scopeBranch)),
 				SessionID:   bc.AgentSessionID,
 				ResumeCmd:   "ezs agent --branch " + quoteIfNeeded(name),
 			})
 		}
 	}
 	return rows
+}
+
+// resolveDisplayName prefers the user-set Claude session name (from
+// `claude --name X` at launch or a `/rename` inside the session) over the
+// deterministic `_ezstack-<...>` fallback. Returning the live name keeps
+// `ezs agent ls` aligned with what the user sees in claude's resume picker
+// after they've renamed a session, instead of the original launch label.
+//
+// fallback is used when the JSONL doesn't exist (non-claude agents,
+// fresh-but-never-launched session) or has no agent-name event yet.
+func resolveDisplayName(sessionID, fallback string) string {
+	if name := claudeAgentName(sessionID); name != "" {
+		return name
+	}
+	return fallback
 }
 
 // stackDisplayLabel returns the "_ezstack-<...>" label for a stack-scoped

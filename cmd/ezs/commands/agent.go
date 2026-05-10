@@ -29,12 +29,14 @@ func Agent(args []string) error {
     ezs agent [options] [-- <agent-args>]   Launch agent scoped to a stack
     ezs agent feature|feat "description"    Launch agent to build a feature as stacked branches
     ezs agent ls|list [filter] [--json]     List tracked AI sessions (current repo only)
+    ezs agent rm|remove <filter>            Forget a tracked AI session binding
     ezs agent prompt <flag> <work|feature>  View or edit agent prompt templates
 
 %sMODES%s
     (default)       Work session — agent is scoped to a stack with full context
     feature (feat)  Feature builder — agent breaks a feature into incremental stacked branches
     ls (list)       List the AI sessions ezs has bound to stacks/branches in this repo
+    rm (remove)     Forget the persisted session binding for a stack/branch/repo
     prompt          View or edit the prompt templates used by the agent
 
 %sOPTIONS%s
@@ -61,7 +63,10 @@ func Agent(args []string) error {
 
     For Claude, the UUID is injected via 'claude --session-id <id> --name'
     on the first run and 'claude --resume <id> --name' on later runs, so
-    /resume reopens the prior conversation.
+    /resume reopens the prior conversation. If you rename the session
+    inside Claude (e.g. /rename my-name), ezs picks up the new name from
+    the session journal and re-asserts it on the next resume — your
+    rename sticks across launches and surfaces in 'ezs agent ls'.
 
     For other agents, ezs does not inject any flags (the schema differs per
     CLI) but always exposes the UUID via the EZS_AGENT_SESSION_ID
@@ -118,6 +123,8 @@ func Agent(args []string) error {
 			return agentPrompt(rest)
 		case "ls", "list":
 			return agentList(rest)
+		case "rm", "remove":
+			return agentRm(rest)
 		}
 	}
 
@@ -218,7 +225,7 @@ func Agent(args []string) error {
 
 	// Reject unknown subcommands (e.g. "ezs agent new" or "ezs agent foo")
 	if fs.NArg() > 0 {
-		return fmt.Errorf("unknown agent subcommand %q.\nValid subcommands: feature (or feat), prompt\nFor help: ezs agent --help", fs.Arg(0))
+		return fmt.Errorf("unknown agent subcommand %q.\nValid subcommands: feature (or feat), ls (or list), rm (or remove), prompt\nFor help: ezs agent --help", fs.Arg(0))
 	}
 
 	// Work mode requires an existing stack
@@ -870,7 +877,7 @@ func agentFeature(agentCmd, repoPath, description string, existingStack *config.
 
 	// Feature mode binds its session to an existing stack when one was given,
 	// otherwise the session is one-shot (no stable identifier to resume from).
-	sess := resolveFeatureSession(repoPath, agentCmd, existingStack, extras.noResume)
+	sess := resolveFeatureSession(repoPath, agentCmd, existingStack, extras.noResume, description)
 
 	if extras.dryRun {
 		printDryRunPrompt("feature", prompt)
@@ -1091,20 +1098,21 @@ changes in them and add new branches to this stack as needed.
 2. Plan a series of incremental branches — present the plan to the user FIRST.
 3. For each branch after user approves:
    a. Create it: ezs -y new <descriptive-branch-name>
-   b. cd to the worktree path printed in the output
-   c. Implement the focused change for this branch
-   d. Commit: ezs -y commit -m "descriptive message"
-   e. Push: ezs -y push
-4. After the FIRST branch is created (this implicitly creates the stack), give
-   the stack a SHORT descriptive name with: ezs stack rename <stack-hash> <name>
-   - The name MUST be ≤5 words; 1–3 words is strongly preferred.
-   - Lowercase, hyphenated, no quotes (e.g. "jwt-auth", "rate-limiter",
-     "audit-fixes", "cli-ux-pass"). Avoid filler words like "feature", "add",
-     "implement".
-   - Get <stack-hash> from "ezs ls -a" or the stack hash printed by "ezs new".
-   - Do this BEFORE creating any subsequent branches so the rest of the stack
-     inherits the named identity.
-5. After all branches are created, show the final stack with: ezs ls`
+   b. AFTER THE FIRST BRANCH ONLY: name the stack BEFORE doing anything else.
+      Run: ezs stack rename <stack-hash> <name>
+      - <name> MUST be derived from the FEATURE_DESCRIPTION above, ≤5 words;
+        1–3 words is strongly preferred.
+      - Lowercase, hyphenated, no quotes (e.g. "jwt-auth", "rate-limiter",
+        "audit-fixes", "cli-ux-pass"). Avoid filler like "feature", "add",
+        "implement".
+      - Get <stack-hash> from the hash printed by "ezs new" (or "ezs ls -a").
+      - This is mandatory: skip it and the stack stays anonymously hash-named
+        and the session won't be findable in "ezs agent ls".
+   c. cd to the worktree path printed in the output
+   d. Implement the focused change for this branch
+   e. Commit: ezs -y commit -m "descriptive message"
+   f. Push: ezs -y push
+4. After all branches are created, show the final stack with: ezs ls`
 	}
 
 	return buildComposedPrompt(defaultFeaturePromptTemplate, vars, repoPath, "feature")
@@ -1245,10 +1253,12 @@ func spawnAgentProcess(spec agentSpawnSpec) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	sessionEnvID := ""
+	sessionEnvMode := ""
 	if spec.session != nil && spec.session.injection != nil {
 		sessionEnvID = spec.session.injection.SessionID
+		sessionEnvMode = spec.session.injection.Mode
 	}
-	cmd.Env = agentProcessEnv(os.Environ(), spec.noPush, sessionEnvID)
+	cmd.Env = agentProcessEnv(os.Environ(), spec.noPush, sessionEnvID, sessionEnvMode)
 
 	runErr := cmd.Run()
 
@@ -1284,6 +1294,15 @@ func spawnAgentProcess(spec agentSpawnSpec) error {
 // for user scripts.
 const agentSessionIDEnv = "EZS_AGENT_SESSION_ID"
 
+// agentSessionModeEnv carries the launch mode of the active session
+// (config.AgentSessionWorkMode or config.AgentSessionFeatureMode) into the
+// spawned agent's environment. It's consumed by `ezs new`'s session-adoption
+// path: a freshly-created stack only inherits the active session when the
+// mode is feature, since a feature session is meant to span the stacks the
+// agent spins up while building. Work-mode sessions are scoped to the stack
+// they were launched from and shouldn't leak into unrelated new stacks.
+const agentSessionModeEnv = "EZS_AGENT_SESSION_MODE"
+
 // formatPersistFailureWarning renders the warning surfaced when the
 // best-effort persist of an agent session UUID fails. The message
 // includes the raw UUID and a manual-resume hint so the user has a
@@ -1306,21 +1325,28 @@ func formatPersistFailureWarning(sessionID, agentBinary string, err error) strin
 // the user didn't ask to propagate.
 //
 // sessionID, when non-empty, is exposed to the child as EZS_AGENT_SESSION_ID;
-// any pre-existing inherited value is stripped so a nested agent doesn't see
-// a stale ID from its parent. Empty sessionID strips the var entirely.
+// sessionMode (when both sessionID and sessionMode are non-empty) is exposed
+// as EZS_AGENT_SESSION_MODE so nested `ezs new` calls can decide whether to
+// adopt the active session. Any pre-existing inherited values for both vars
+// are stripped first so a nested agent doesn't see a stale ID/mode from its
+// parent. Empty sessionID strips both vars entirely.
 //
 // Extracted for testability: nothing else about spawnAgentProcess can be
 // exercised without running a real command.
-func agentProcessEnv(parentEnv []string, noPush bool, sessionID string) []string {
+func agentProcessEnv(parentEnv []string, noPush bool, sessionID, sessionMode string) []string {
 	noPushPrefix := agentNoPushEnv + "="
 	sessionPrefix := agentSessionIDEnv + "="
-	env := make([]string, 0, len(parentEnv)+2)
+	modePrefix := agentSessionModeEnv + "="
+	env := make([]string, 0, len(parentEnv)+3)
 	for _, kv := range parentEnv {
 		if strings.HasPrefix(kv, noPushPrefix) {
 			continue // either we'll re-add it or we want it gone
 		}
 		if strings.HasPrefix(kv, sessionPrefix) {
 			continue // ditto for the session ID
+		}
+		if strings.HasPrefix(kv, modePrefix) {
+			continue // and the mode tag — paired with the ID
 		}
 		env = append(env, kv)
 	}
@@ -1329,6 +1355,9 @@ func agentProcessEnv(parentEnv []string, noPush bool, sessionID string) []string
 	}
 	if sessionID != "" {
 		env = append(env, sessionPrefix+sessionID)
+		if sessionMode != "" {
+			env = append(env, modePrefix+sessionMode)
+		}
 	}
 	return env
 }

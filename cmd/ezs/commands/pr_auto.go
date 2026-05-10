@@ -34,6 +34,13 @@ import (
 // untrusted input can't fake a section boundary and break out — see the
 // "prompt injection" hardening tests in pr_auto_test.go.
 //
+// {{OUTPUT_SPEC}} is filled in per-request: when the caller already has a
+// title (because the user passed -t) we tell the model not to draft one.
+// Likewise for body. Without this, --auto with -t still asked for and
+// surfaced a fresh AI title that would have been ignored — wasting tokens
+// and confusing users who saw an unfamiliar title flash by in the success
+// log.
+//
 // We deliberately ask for raw JSON only; the parser does tolerate ```json
 // fences in the response, but the less of that the better. The output
 // example uses {curly} placeholders rather than <angle> placeholders so
@@ -64,10 +71,45 @@ described under "Output".
 ## Output
 
 Respond with ONLY a single JSON object on one line, no markdown fences, no
-commentary, no preface, no trailing prose. Both fields are required.
+commentary, no preface, no trailing prose.
 
-{"title":"{imperative-mood, under 72 chars, no trailing period}","body":"{markdown body; if a template is provided above, fill it in based on the diff and commits, otherwise write a Summary + Test plan section}"}
+{{OUTPUT_SPEC}}
 `
+
+// aiPRRequest tells the prompt builder which fields the caller actually
+// wants the model to draft. Fields the caller has already supplied via -t
+// or -b are skipped — both in the prompt (so the model doesn't waste
+// tokens drafting something that will be discarded) and in the parser
+// (so a model that obeys "don't include this field" doesn't trip the
+// missing-field check).
+type aiPRRequest struct {
+	Title bool
+	Body  bool
+}
+
+// outputSpec returns the {{OUTPUT_SPEC}} block for the given request. The
+// JSON shape advertised here is the contract parseAIPRResponse will
+// enforce — keep them in sync.
+func (r aiPRRequest) outputSpec() string {
+	switch {
+	case r.Title && r.Body:
+		return `Both fields are required.
+
+{"title":"{imperative-mood, under 72 chars, no trailing period}","body":"{markdown body; if a template is provided above, fill it in based on the diff and commits, otherwise write a Summary + Test plan section}"}`
+	case r.Title:
+		return `Only the "title" field is required. Do NOT include a "body" field — the caller has already supplied one.
+
+{"title":"{imperative-mood, under 72 chars, no trailing period}"}`
+	case r.Body:
+		return `Only the "body" field is required. Do NOT include a "title" field — the caller has already supplied one.
+
+{"body":"{markdown body; if a template is provided above, fill it in based on the diff and commits, otherwise write a Summary + Test plan section}"}`
+	}
+	// Caller asked for nothing; this should be short-circuited upstream
+	// before we ever build the prompt. Returned text is harmless but
+	// uninformative on the off chance the prompt is built anyway.
+	return `Respond with the literal string {} on one line.`
+}
 
 // aiPRDiffMaxBytes caps how much diff we ship to the agent. Beyond ~80KB the
 // model's context fills with diff and the quality of the description drops.
@@ -98,11 +140,44 @@ type aiPRResult struct {
 	Body  string `json:"body"`
 }
 
+// aiPRRequestSummary renders a short "title", "body", or "title and body"
+// phrase for log messages so users can see exactly which fields the agent
+// is being asked to draft.
+func aiPRRequestSummary(req aiPRRequest) string {
+	switch {
+	case req.Title && req.Body:
+		return "title and body"
+	case req.Title:
+		return "title"
+	case req.Body:
+		return "body"
+	}
+	return "(nothing)"
+}
+
+// aiDraftReadyMessage builds the success log shown after --auto returns.
+// It reports the title/body that will actually be used (whether they came
+// from -t/-b or from the AI), not the model's raw output — which would
+// mislead users into thinking a user-pinned -t was being overridden.
+func aiDraftReadyMessage(req aiPRRequest, finalTitle, finalBody string) string {
+	switch {
+	case req.Title && req.Body:
+		return fmt.Sprintf("AI draft ready: title=%q (body %d chars)", finalTitle, len(finalBody))
+	case req.Title:
+		return fmt.Sprintf("AI draft ready: title=%q (body kept from -b: %d chars)", finalTitle, len(finalBody))
+	case req.Body:
+		return fmt.Sprintf("AI draft ready: body=%d chars (title kept from -t: %q)", len(finalBody), finalTitle)
+	}
+	return "AI draft ready"
+}
+
 // aiPRGenerator produces a title and body for a branch using an AI agent.
 // Defined as an interface so tests can swap in a deterministic generator
-// without spawning a real CLI.
+// without spawning a real CLI. The request lets callers narrow the
+// generator's job to whichever fields are still missing — the prompt and
+// response validation both adapt accordingly.
 type aiPRGenerator interface {
-	Generate(prompt string) (aiPRResult, error)
+	Generate(prompt string, req aiPRRequest) (aiPRResult, error)
 }
 
 // claudePRGenerator implements aiPRGenerator by shelling out to claude CLI in
@@ -114,7 +189,7 @@ type claudePRGenerator struct {
 	cwd      string // repo root; passed as cmd.Dir so claude resolves CLAUDE.md, settings, etc.
 }
 
-func (c *claudePRGenerator) Generate(prompt string) (aiPRResult, error) {
+func (c *claudePRGenerator) Generate(prompt string, req aiPRRequest) (aiPRResult, error) {
 	fields := strings.Fields(c.agentCmd)
 	if len(fields) == 0 {
 		return aiPRResult{}, fmt.Errorf("agent_command is empty")
@@ -143,22 +218,24 @@ func (c *claudePRGenerator) Generate(prompt string) (aiPRResult, error) {
 	if err != nil {
 		return aiPRResult{}, fmt.Errorf("agent CLI %q failed: %w (stderr: %s)", fields[0], err, truncateForError(stderr.String(), aiPRStderrCap))
 	}
-	res, err := parseAIPRResponse(stdout.String())
+	res, err := parseAIPRResponse(stdout.String(), req)
 	if err != nil {
 		return aiPRResult{}, fmt.Errorf("parsing agent response: %w (raw: %s)", err, truncateForError(stdout.String(), 200))
 	}
 	return res, nil
 }
 
-// parseAIPRResponse extracts a JSON {"title","body"} object from the agent's
-// output. It tolerates leading/trailing whitespace, an optional `\`\`\`json`
-// (or bare `\`\`\“) code fence, and any prose before/after the object.
+// parseAIPRResponse extracts a JSON object from the agent's output and
+// validates it against the request — only the fields the caller asked for
+// must be present and non-empty. It tolerates leading/trailing whitespace,
+// an optional `\`\`\`json` (or bare `\`\`\“) code fence, and any prose
+// before/after the object.
 //
 // Strategy: scan for the first `{` and the matching closing `}` (depth-aware,
 // honoring strings) and decode that span as JSON. If the model wraps the
 // answer in markdown fences, the fence chars are outside the scanned span so
 // they don't break decoding.
-func parseAIPRResponse(raw string) (aiPRResult, error) {
+func parseAIPRResponse(raw string, req aiPRRequest) (aiPRResult, error) {
 	span, ok := findFirstJSONObject(raw)
 	if !ok {
 		return aiPRResult{}, fmt.Errorf("no JSON object found in response")
@@ -167,10 +244,10 @@ func parseAIPRResponse(raw string) (aiPRResult, error) {
 	if err := json.Unmarshal([]byte(span), &res); err != nil {
 		return aiPRResult{}, fmt.Errorf("decode JSON: %w", err)
 	}
-	if strings.TrimSpace(res.Title) == "" {
+	if req.Title && strings.TrimSpace(res.Title) == "" {
 		return aiPRResult{}, fmt.Errorf("response missing title")
 	}
-	if strings.TrimSpace(res.Body) == "" {
+	if req.Body && strings.TrimSpace(res.Body) == "" {
 		return aiPRResult{}, fmt.Errorf("response missing body")
 	}
 	return res, nil
@@ -249,7 +326,12 @@ func stripClosingTags(s string) string {
 // commit message can't break out of the data section into instructions.
 // Empty templates are replaced with an explicit "(no template)" so the
 // model knows to fall back to a Summary/Test-plan layout.
-func buildAIPRPrompt(branchName, parentName, diff string, commits []git.Commit, template string) string {
+//
+// req controls which output fields the model is asked to produce —
+// callers that already have a -t / -b should pass req with the
+// corresponding bit set false so the model doesn't draft something the
+// caller will throw away.
+func buildAIPRPrompt(branchName, parentName, diff string, commits []git.Commit, template string, req aiPRRequest) string {
 	branchName = stripClosingTags(branchName)
 	parentName = stripClosingTags(parentName)
 
@@ -282,6 +364,7 @@ func buildAIPRPrompt(branchName, parentName, diff string, commits []git.Commit, 
 		"{{COMMITS}}", commitsBlock,
 		"{{DIFF}}", diff,
 		"{{TEMPLATE_OR_NONE}}", templateBlock,
+		"{{OUTPUT_SPEC}}", req.outputSpec(),
 	)
 	return r.Replace(aiPRPromptTemplate)
 }
@@ -397,15 +480,24 @@ func formatSecretFindingsError(findings []secretFinding) error {
 }
 
 // generatePRContent gathers the diff/commits/template for a single branch and
-// asks the agent to produce a {title, body} pair. Returns a clear error when
-// the inputs are unusable (no diff, agent failure, malformed JSON) so the
-// caller can decide whether to skip or fall back to interactive prompts.
+// asks the agent to produce the fields named in req. Returns a clear error
+// when the inputs are unusable (no diff, agent failure, malformed JSON) so
+// the caller can decide whether to skip or fall back to interactive prompts.
 //
 // The full diff is scanned for high-confidence secret patterns before any
 // LLM call; on a hit, we refuse with a clear message rather than ship the
 // secret to an external agent. The scan runs against the un-truncated diff
 // so secrets past the LLM-context truncation point are still caught.
-func generatePRContent(g *git.Git, gen aiPRGenerator, branch *config.Branch) (aiPRResult, error) {
+//
+// A request that asks for nothing is a no-op success — there is nothing
+// for the agent to draft, so we return a zero result without spawning the
+// CLI. Callers that already have user-supplied -t and -b should rely on
+// this to avoid round-tripping through the model just to throw the output
+// away.
+func generatePRContent(g *git.Git, gen aiPRGenerator, branch *config.Branch, req aiPRRequest) (aiPRResult, error) {
+	if !req.Title && !req.Body {
+		return aiPRResult{}, nil
+	}
 	parent := branch.Parent
 	parentRef := parent
 	if g.RemoteBranchExists(parent) {
@@ -431,8 +523,8 @@ func generatePRContent(g *git.Git, gen aiPRGenerator, branch *config.Branch) (ai
 	}
 
 	template := g.GetPRTemplate()
-	prompt := buildAIPRPrompt(branch.Name, parent, diff, commits, template)
-	return gen.Generate(prompt)
+	prompt := buildAIPRPrompt(branch.Name, parent, diff, commits, template, req)
+	return gen.Generate(prompt, req)
 }
 
 // newPRGeneratorForAgent returns the right aiPRGenerator for the configured

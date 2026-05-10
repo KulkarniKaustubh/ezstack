@@ -13,9 +13,13 @@ import (
 
 // ── parseAIPRResponse ──────────────────────────────────────────────────────────
 
+// reqBoth is the most common request shape (title + body) — used in the
+// existing tests that pre-date the per-field request switch.
+var reqBoth = aiPRRequest{Title: true, Body: true}
+
 func TestParseAIPRResponse_HappyPath(t *testing.T) {
 	raw := `{"title":"Add login","body":"## Summary\nAdds login flow."}`
-	res, err := parseAIPRResponse(raw)
+	res, err := parseAIPRResponse(raw, reqBoth)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -32,7 +36,7 @@ func TestParseAIPRResponse_TolerateMarkdownFences(t *testing.T) {
 	// Our parser scans for the first balanced { } object, so the fence is
 	// outside the scanned span and ignored.
 	raw := "Sure! Here's the PR:\n\n```json\n{\"title\":\"Fix bug\",\"body\":\"Fixes #1.\"}\n```\n"
-	res, err := parseAIPRResponse(raw)
+	res, err := parseAIPRResponse(raw, reqBoth)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -47,7 +51,7 @@ func TestParseAIPRResponse_TolerateProseAround(t *testing.T) {
 {"title":"Refactor cache","body":"### Summary\nRefactors the cache layer."}
 
 Let me know if you want changes.`
-	res, err := parseAIPRResponse(raw)
+	res, err := parseAIPRResponse(raw, reqBoth)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -60,7 +64,7 @@ func TestParseAIPRResponse_HandlesBracesInsideStrings(t *testing.T) {
 	// A close-brace inside a JSON string must not prematurely close the
 	// outer object. This is the regression for naive single-pass scanning.
 	raw := `{"title":"Use {brace} delimiters","body":"Body has } in it"}`
-	res, err := parseAIPRResponse(raw)
+	res, err := parseAIPRResponse(raw, reqBoth)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -77,7 +81,7 @@ func TestParseAIPRResponse_EscapedQuotesInsideString(t *testing.T) {
 	// early — otherwise the scanner thinks it's outside-string and treats
 	// later `}` as a closer.
 	raw := `prose {"title":"a \"quoted\" thing","body":"text"} more prose`
-	res, err := parseAIPRResponse(raw)
+	res, err := parseAIPRResponse(raw, reqBoth)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,9 +100,29 @@ func TestParseAIPRResponse_RejectsMissingFields(t *testing.T) {
 		`{"title":"abc","body":"def"`,        // unclosed
 	}
 	for _, raw := range cases {
-		if _, err := parseAIPRResponse(raw); err == nil {
+		if _, err := parseAIPRResponse(raw, reqBoth); err == nil {
 			t.Errorf("expected error for %q", raw)
 		}
+	}
+}
+
+// TestParseAIPRResponse_PerFieldRequirementsRelax pins the bug fix for
+// `pr create --auto -t "..."`: when the caller only asks for a body, a
+// response that omits "title" must NOT error. Symmetrically, a title-only
+// request must accept a response without "body".
+func TestParseAIPRResponse_PerFieldRequirementsRelax(t *testing.T) {
+	titleOnly := aiPRRequest{Title: true}
+	bodyOnly := aiPRRequest{Body: true}
+
+	if _, err := parseAIPRResponse(`{"title":"Add login"}`, titleOnly); err != nil {
+		t.Errorf("title-only request rejected title-only response: %v", err)
+	}
+	if _, err := parseAIPRResponse(`{"body":"Body content"}`, bodyOnly); err != nil {
+		t.Errorf("body-only request rejected body-only response: %v", err)
+	}
+	// Title-only must still reject empty/missing title.
+	if _, err := parseAIPRResponse(`{"body":"x"}`, titleOnly); err == nil {
+		t.Error("title-only request accepted response with no title")
 	}
 }
 
@@ -134,7 +158,7 @@ func TestBuildAIPRPrompt_Substitutes(t *testing.T) {
 		{Hash: "abcdef0123456", Subject: "Add auth"},
 		{Hash: "fedcba", Subject: "Fix typo"},
 	}
-	prompt := buildAIPRPrompt("feat-auth", "main", "diff content here", commits, "## Summary\n\n## Test plan\n")
+	prompt := buildAIPRPrompt("feat-auth", "main", "diff content here", commits, "## Summary\n\n## Test plan\n", reqBoth)
 
 	for _, want := range []string{
 		"feat-auth",
@@ -152,7 +176,7 @@ func TestBuildAIPRPrompt_Substitutes(t *testing.T) {
 }
 
 func TestBuildAIPRPrompt_NoTemplateUsesFallbackInstruction(t *testing.T) {
-	prompt := buildAIPRPrompt("feat", "main", "diff", nil, "")
+	prompt := buildAIPRPrompt("feat", "main", "diff", nil, "", reqBoth)
 	if !strings.Contains(prompt, "no PR template found") {
 		t.Errorf("expected fallback instruction when template is empty; prompt=%q", prompt)
 	}
@@ -160,7 +184,7 @@ func TestBuildAIPRPrompt_NoTemplateUsesFallbackInstruction(t *testing.T) {
 
 func TestBuildAIPRPrompt_TruncatesLargeDiff(t *testing.T) {
 	huge := strings.Repeat("x", aiPRDiffMaxBytes+1024)
-	prompt := buildAIPRPrompt("feat", "main", huge, nil, "")
+	prompt := buildAIPRPrompt("feat", "main", huge, nil, "", reqBoth)
 	if !strings.Contains(prompt, "[diff truncated") {
 		t.Errorf("expected truncation marker for diff > %d bytes", aiPRDiffMaxBytes)
 	}
@@ -172,10 +196,115 @@ func TestBuildAIPRPrompt_TruncatesLargeDiff(t *testing.T) {
 }
 
 func TestBuildAIPRPrompt_NoCommitsGracefully(t *testing.T) {
-	prompt := buildAIPRPrompt("feat", "main", "diff", nil, "tmpl")
+	prompt := buildAIPRPrompt("feat", "main", "diff", nil, "tmpl", reqBoth)
 	if !strings.Contains(prompt, "(none)") {
 		t.Errorf("expected '(none)' for empty commits, got prompt=%q", prompt)
 	}
+}
+
+// TestBuildAIPRPrompt_OutputSpecAdaptsToRequest is the regression gate for
+// `pr create --auto -t "..."`: with -t pinned, the prompt must instruct
+// the model NOT to draft a title. Symmetrically for -b. Without this,
+// --auto with -t still asked for a title, then displayed it in the success
+// log, which misled users into thinking their pinned -t was being
+// overridden.
+func TestBuildAIPRPrompt_OutputSpecAdaptsToRequest(t *testing.T) {
+	titleOnly := buildAIPRPrompt("f", "main", "diff", nil, "", aiPRRequest{Title: true})
+	if !strings.Contains(titleOnly, `Only the "title" field is required`) {
+		t.Errorf("title-only prompt missing the title-only instruction; prompt:\n%s", titleOnly)
+	}
+	if strings.Contains(titleOnly, `"body":"`) {
+		t.Errorf("title-only prompt still advertises a body field in the JSON shape; prompt:\n%s", titleOnly)
+	}
+
+	bodyOnly := buildAIPRPrompt("f", "main", "diff", nil, "", aiPRRequest{Body: true})
+	if !strings.Contains(bodyOnly, `Only the "body" field is required`) {
+		t.Errorf("body-only prompt missing the body-only instruction; prompt:\n%s", bodyOnly)
+	}
+	if strings.Contains(bodyOnly, `"title":"`) {
+		t.Errorf("body-only prompt still advertises a title field in the JSON shape; prompt:\n%s", bodyOnly)
+	}
+
+	both := buildAIPRPrompt("f", "main", "diff", nil, "", reqBoth)
+	if !strings.Contains(both, "Both fields are required") {
+		t.Errorf("both-fields prompt missing the both-required instruction; prompt:\n%s", both)
+	}
+}
+
+// TestAIPRRequestSummary covers the short label fed into "Asking AI agent
+// to draft PR <summary>..." log lines.
+func TestAIPRRequestSummary(t *testing.T) {
+	cases := []struct {
+		req  aiPRRequest
+		want string
+	}{
+		{aiPRRequest{Title: true, Body: true}, "title and body"},
+		{aiPRRequest{Title: true}, "title"},
+		{aiPRRequest{Body: true}, "body"},
+		{aiPRRequest{}, "(nothing)"},
+	}
+	for _, c := range cases {
+		if got := aiPRRequestSummary(c.req); got != c.want {
+			t.Errorf("aiPRRequestSummary(%+v) = %q, want %q", c.req, got, c.want)
+		}
+	}
+}
+
+// TestAIDraftReadyMessage_ReportsActualValues pins that the success log
+// shows the title/body that will actually be used (whether from -t/-b or
+// from the AI), not the model's raw output. This is the surface change
+// for the user-reported "spit out another title" bug.
+func TestAIDraftReadyMessage_ReportsActualValues(t *testing.T) {
+	// Both fields drafted by AI: log shows the AI title.
+	got := aiDraftReadyMessage(aiPRRequest{Title: true, Body: true}, "AI Title", "ai body content")
+	if !strings.Contains(got, `title="AI Title"`) {
+		t.Errorf("both-mode log missing actual title; got %q", got)
+	}
+
+	// Title pinned by user, body drafted by AI: log shows the user's title
+	// and notes that the body came from the AI.
+	got = aiDraftReadyMessage(aiPRRequest{Body: true}, "User -t Title", "ai body")
+	if !strings.Contains(got, `title kept from -t: "User -t Title"`) {
+		t.Errorf("body-only log should reference the user-supplied title; got %q", got)
+	}
+	if strings.Contains(got, "AI Title") {
+		t.Errorf("body-only log should NOT surface a fabricated AI title; got %q", got)
+	}
+
+	// Body pinned by user, title drafted by AI.
+	got = aiDraftReadyMessage(aiPRRequest{Title: true}, "AI Title", "user body")
+	if !strings.Contains(got, `body kept from -b`) {
+		t.Errorf("title-only log should reference the user-supplied body; got %q", got)
+	}
+}
+
+// TestGeneratePRContent_NothingRequested pins that --auto with both -t
+// and -b skips the AI agent entirely (no exec, no diff scan, no error).
+// This is the optimization side of the bug fix: previously we ran the
+// model and threw away both fields.
+func TestGeneratePRContent_NothingRequested(t *testing.T) {
+	// A generator that fails the test if it's ever called.
+	gen := stubPRGen{
+		generate: func(prompt string, req aiPRRequest) (aiPRResult, error) {
+			t.Errorf("generator was called for an empty request")
+			return aiPRResult{}, nil
+		},
+	}
+	res, err := generatePRContent(nil, gen, nil, aiPRRequest{})
+	if err != nil {
+		t.Fatalf("empty request should be a no-op success; got err=%v", err)
+	}
+	if res.Title != "" || res.Body != "" {
+		t.Errorf("empty request should return zero result; got %+v", res)
+	}
+}
+
+type stubPRGen struct {
+	generate func(prompt string, req aiPRRequest) (aiPRResult, error)
+}
+
+func (s stubPRGen) Generate(prompt string, req aiPRRequest) (aiPRResult, error) {
+	return s.generate(prompt, req)
 }
 
 // ── newPRGeneratorForAgent ─────────────────────────────────────────────────────
@@ -224,7 +353,7 @@ func TestBuildAIPRPrompt_WrapsInputsInDataTags(t *testing.T) {
 	// user-controlled value lives inside an XML-style section so the model
 	// knows it's data, not instructions. Pin this so a future refactor
 	// doesn't accidentally drop the framing.
-	prompt := buildAIPRPrompt("feat-x", "main", "the diff", nil, "")
+	prompt := buildAIPRPrompt("feat-x", "main", "the diff", nil, "", reqBoth)
 	for _, want := range []string{
 		"<branch>feat-x</branch>",
 		"<parent>main</parent>",
@@ -257,7 +386,7 @@ func TestBuildAIPRPrompt_StripsClosingTagsFromUntrustedInputs(t *testing.T) {
 	commits := []git.Commit{
 		{Hash: "deadbee", Subject: hostileCommitSubject},
 	}
-	prompt := buildAIPRPrompt(hostileBranch, hostileParent, hostileDiff, commits, hostileTemplate)
+	prompt := buildAIPRPrompt(hostileBranch, hostileParent, hostileDiff, commits, hostileTemplate, reqBoth)
 
 	// Each closing tag must appear EXACTLY at the section boundary positions
 	// the template defines, and nowhere else.
@@ -505,7 +634,7 @@ func TestClaudePRGenerator_TimeoutErrorMessage(t *testing.T) {
 
 	gen := &claudePRGenerator{agentCmd: stub, cwd: dir}
 	start := time.Now()
-	_, err := gen.Generate("ignored")
+	_, err := gen.Generate("ignored", reqBoth)
 	elapsed := time.Since(start)
 
 	if err == nil {
@@ -538,7 +667,7 @@ func TestClaudePRGenerator_StderrTruncated(t *testing.T) {
 	}
 
 	gen := &claudePRGenerator{agentCmd: stub, cwd: dir}
-	_, err := gen.Generate("ignored")
+	_, err := gen.Generate("ignored", reqBoth)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

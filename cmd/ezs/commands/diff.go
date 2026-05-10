@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
@@ -59,36 +60,43 @@ func Diff(args []string) error {
 		return err
 	}
 
+	var s *config.Stack
 	var branchName string
-	var parent string
 
 	if *branchFlag != "" {
-		branch := mgr.GetBranch(*branchFlag)
-		if branch == nil {
-			return fmt.Errorf("branch %q not found in any stack", *branchFlag)
+		branchName = *branchFlag
+		s = mgr.FindStackForBranch(branchName)
+		if s == nil {
+			// Not a child branch — try matching it as a stack root.
+			roots := mgr.GetStacksWithRoot(branchName)
+			if len(roots) == 0 {
+				return fmt.Errorf("branch %q not found in any stack", branchName)
+			}
+			s = roots[0]
 		}
-		branchName = branch.Name
-		parent = branch.Parent
 	} else {
-		_, branch, err := mgr.GetCurrentStack()
+		cs, branch, err := mgr.GetCurrentStack()
 		if err != nil {
 			return err
 		}
+		s = cs
 		branchName = branch.Name
-		parent = branch.Parent
 	}
 
-	// Use origin/ for the parent when available to get consistent diffs
-	parentRef := parent
-	if g.RemoteBranchExists(parent) {
-		parentRef = "origin/" + parent
+	// Resolve refs through the same helper `ezs ls` uses so the diff matches
+	// the line counts shown in `ezs ls`/`ezs status`. Notably: parents inside
+	// the stack diff against the local ref (not origin/<parent>) so unpushed
+	// commits on the parent don't leak into the child's diff.
+	parentRef, branchRef, ok := resolveDiffRefs(g, s, branchName)
+	if !ok {
+		return fmt.Errorf("cannot determine diff base for branch %q in stack %q", branchName, s.DisplayName())
 	}
 
 	if *jsonFlag {
-		return diffJSON(g, parentRef, branchName)
+		return diffJSON(g, parentRef, branchRef)
 	}
 
-	diffArgs := []string{"diff", parentRef + "..." + branchName}
+	diffArgs := []string{"diff", parentRef + "..." + branchRef}
 	if *stat {
 		diffArgs = append(diffArgs, "--stat")
 	}
@@ -110,8 +118,8 @@ type diffOutputJSON struct {
 	TotalDeleted int            `json:"total_deletions"`
 }
 
-func diffJSON(g *git.Git, parentRef, branchName string) error {
-	output, err := g.RunCapture("diff", "--numstat", parentRef+"..."+branchName)
+func diffJSON(g *git.Git, parentRef, branchRef string) error {
+	output, err := g.RunCapture("diff", "--numstat", parentRef+"..."+branchRef)
 	if err != nil {
 		return fmt.Errorf("git diff failed: %w", err)
 	}

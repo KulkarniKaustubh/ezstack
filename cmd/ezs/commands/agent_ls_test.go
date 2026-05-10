@@ -336,6 +336,96 @@ func TestCollectAgentSessions_NilStackConfig(t *testing.T) {
 	}
 }
 
+// TestCollectAgentSessions_DisplayNamePrefersLiveRename pins the
+// `/rename`-from-Claude integration end-to-end. When a session journal
+// records an `agent-name` event newer than the launch label, both the
+// stack-scoped and branch-scoped rows surface that user-set name —
+// otherwise `agent ls` would silently lie about which session is which
+// after a rename.
+func TestCollectAgentSessions_DisplayNamePrefersLiveRename(t *testing.T) {
+	root := withClaudeProjectsDir(t)
+
+	stackUUID := "stack-uuid"
+	branchUUID := "branch-uuid"
+	writeJSONL(t, root, "-Users-test-repo", stackUUID, []string{
+		nameEvent(stackUUID, "_ezstack-original-stack-label"),
+		nameEvent(stackUUID, "stack-renamed-by-user"),
+	})
+	writeJSONL(t, root, "-Users-test-repo", branchUUID, []string{
+		nameEvent(branchUUID, "branch-renamed-by-user"),
+	})
+
+	stack := &config.Stack{
+		Hash:             "abc1234",
+		Name:             "my-stack",
+		Root:             "main",
+		AgentSessionID:   stackUUID,
+		AgentSessionMode: config.AgentSessionWorkMode,
+		Tree: config.BranchTree{
+			"feat-x": config.BranchTree{},
+		},
+	}
+	cache := &config.CacheConfig{
+		Branches: map[string]*config.BranchCache{
+			"feat-x": {AgentSessionID: branchUUID, AgentSessionMode: config.AgentSessionWorkMode},
+		},
+	}
+	stack.PopulateBranchesWithCache(cache)
+	sc := &config.StackConfig{
+		Stacks: map[string]*config.Stack{"abc1234": stack},
+		Cache:  cache,
+	}
+
+	rows := collectAgentSessionsFromStackConfig("/r", sc)
+	var stackRow, branchRow *agentSessionRow
+	for i := range rows {
+		switch rows[i].Scope {
+		case "stack":
+			stackRow = &rows[i]
+		case "branch":
+			branchRow = &rows[i]
+		}
+	}
+	if stackRow == nil || branchRow == nil {
+		t.Fatalf("expected one stack + one branch row, got %+v", rows)
+	}
+	if stackRow.DisplayName != "stack-renamed-by-user" {
+		t.Errorf("stack row DisplayName = %q, want stack-renamed-by-user", stackRow.DisplayName)
+	}
+	if branchRow.DisplayName != "branch-renamed-by-user" {
+		t.Errorf("branch row DisplayName = %q, want branch-renamed-by-user", branchRow.DisplayName)
+	}
+}
+
+// TestCollectAgentSessions_DisplayNameFallsBackWhenNoLiveName pins the
+// non-rename behavior: with no agent-name event in the journal (or no
+// journal at all — non-claude agents), the deterministic
+// `_ezstack-<...>` label still drives the row's DisplayName so existing
+// behavior is preserved for fresh sessions.
+func TestCollectAgentSessions_DisplayNameFallsBackWhenNoLiveName(t *testing.T) {
+	withClaudeProjectsDir(t) // empty projects dir — no journals exist
+
+	stack := &config.Stack{
+		Hash:             "abc1234",
+		Name:             "my-stack",
+		Root:             "main",
+		AgentSessionID:   "no-journal-uuid",
+		AgentSessionMode: config.AgentSessionWorkMode,
+	}
+	sc := &config.StackConfig{
+		Stacks: map[string]*config.Stack{"abc1234": stack},
+		Cache:  &config.CacheConfig{},
+	}
+
+	rows := collectAgentSessionsFromStackConfig("/r", sc)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if rows[0].DisplayName != "_ezstack-my-stack" {
+		t.Errorf("expected fallback label, got %q", rows[0].DisplayName)
+	}
+}
+
 // TestFilterRowsByBranch / ByStack / ByMode pin the three filter helpers
 // behind the --branch / --stack / --feature flags. Each must return a
 // non-nil empty slice on no-match so JSON output stays as `[]`.
