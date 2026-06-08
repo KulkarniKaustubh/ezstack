@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import * as vscode from "vscode";
 import { EzsCli } from "./ezsCli";
 
 // Access private static methods via the class prototype for testing.
@@ -140,5 +141,43 @@ describe("EzsCli.parseVersionSemver", () => {
     // must degrade to skipping the warning, not to a thrown exception.
     expect(() => EzsCli.parseVersionSemver("")).not.toThrow();
     expect(EzsCli.parseVersionSemver("")).toBeNull();
+  });
+});
+
+describe("repoArgs", () => {
+  it("returns [] when ezstack.repo is unset (mock returns default)", () => {
+    const cli = new EzsCli("/workspace");
+    expect((cli as unknown as { repoArgs: string[] }).repoArgs).toEqual([]);
+  });
+
+  it("prepends --repo <path> when ezstack.repo is set", () => {
+    const spy = vi
+      .spyOn(vscode.workspace, "getConfiguration")
+      .mockReturnValue({
+        get: (_key: string, _def: unknown) => "/my/repo",
+      } as unknown as ReturnType<typeof vscode.workspace.getConfiguration>);
+    try {
+      const cli = new EzsCli("/workspace");
+      expect((cli as unknown as { repoArgs: string[] }).repoArgs).toEqual([
+        "--repo",
+        "/my/repo",
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("ignores a blank/whitespace-only ezstack.repo value", () => {
+    const spy = vi
+      .spyOn(vscode.workspace, "getConfiguration")
+      .mockReturnValue({
+        get: (_key: string, _def: unknown) => "   ",
+      } as unknown as ReturnType<typeof vscode.workspace.getConfiguration>);
+    try {
+      const cli = new EzsCli("/workspace");
+      expect((cli as unknown as { repoArgs: string[] }).repoArgs).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

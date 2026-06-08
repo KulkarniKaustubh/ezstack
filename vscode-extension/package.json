@@ -700,6 +700,11 @@
           "default": "ezs",
           "description": "Path to the ezs CLI binary"
         },
+        "ezstack.repo": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to a repository to run ezstack against, overriding the open workspace folder. When set, it is passed to every ezs invocation as --repo. Leave empty to use the workspace folder."
+        },
         "ezstack.autoRefresh": {
           "type": "boolean",
           "default": true,

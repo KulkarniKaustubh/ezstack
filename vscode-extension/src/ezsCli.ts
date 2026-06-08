@@ -113,6 +113,21 @@ export class EzsCli {
     return this.resolvedPath ?? "ezs";
   }
 
+  /**
+   * Args that pin ezs to a configured repository, or [] when unset. When the
+   * `ezstack.repo` setting is non-empty it is prepended to every invocation as
+   * `--repo <path>`, so the extension targets that repo regardless of the open
+   * workspace folder. The CLI strips --repo before dispatch, so its position
+   * relative to the subcommand doesn't matter.
+   */
+  private get repoArgs(): string[] {
+    const repo = vscode.workspace
+      .getConfiguration("ezstack")
+      .get<string>("repo", "")
+      .trim();
+    return repo ? ["--repo", repo] : [];
+  }
+
   /** Quote a string for safe shell use. */
   private static shellQuote(s: string): string {
     if (/^[a-zA-Z0-9_./:@=-]+$/.test(s)) {
@@ -139,11 +154,12 @@ export class EzsCli {
 
   /** Run an ezs command and return stdout. */
   private exec(args: string[]): Promise<string> {
+    const fullArgs = [...this.repoArgs, ...args];
     return new Promise((resolve, reject) => {
-      const cmdStr = `ezs ${args.join(" ")}`;
+      const cmdStr = `ezs ${fullArgs.join(" ")}`;
       execFile(
         this.cliPath,
-        args,
+        fullArgs,
         { cwd: this.workspaceRoot, timeout: 30_000 },
         (error, stdout, stderr) => {
           const cleanStderr = EzsCli.stripAnsi(stderr).trim();
