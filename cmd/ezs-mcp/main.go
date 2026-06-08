@@ -21,6 +21,19 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// resolveMCPRepo applies the flag > EZSTACK_REPO precedence and returns the
+// chosen repo path plus a source label ("--repo" / "EZSTACK_REPO") for error
+// messages. Returns ("", "") when neither is set.
+func resolveMCPRepo(flag, env string) (path, source string) {
+	if flag != "" {
+		return flag, "--repo"
+	}
+	if env != "" {
+		return env, "EZSTACK_REPO"
+	}
+	return "", ""
+}
+
 func main() {
 	// --repo sets the working directory (git repo root). Useful when the MCP
 	// server is launched from a parent workspace directory.
@@ -59,9 +72,17 @@ func main() {
 		}
 		return
 	}
-	if *repo != "" {
-		if err := os.Chdir(*repo); err != nil {
-			fmt.Fprintf(os.Stderr, "ezs-mcp: --repo %s: %v\n", *repo, err)
+	// --repo wins; otherwise fall back to EZSTACK_REPO so the env var works
+	// for headless launches that can't pass a flag. Matches the ezs CLI's
+	// flag > EZSTACK_REPO > cwd precedence.
+	repoPath, repoSource := resolveMCPRepo(*repo, os.Getenv("EZSTACK_REPO"))
+	if repoPath != "" {
+		if err := os.Chdir(repoPath); err != nil {
+			if repoSource == "--repo" {
+				fmt.Fprintf(os.Stderr, "ezs-mcp: --repo %s: %v\n", repoPath, err)
+			} else {
+				fmt.Fprintf(os.Stderr, "ezs-mcp: EZSTACK_REPO=%s: %v\n", repoPath, err)
+			}
 			os.Exit(1)
 		}
 	}
