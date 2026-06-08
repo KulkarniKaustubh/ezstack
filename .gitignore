@@ -1,5 +1,6 @@
 # Binaries
 /ezs
+/ezs-mcp
 /docsgen
 /bin/
 *.exe
