@@ -119,12 +119,34 @@ fn ezs_binary() -> &'static str {
     EZS_BINARY.get_or_init(find_ezs_binary)
 }
 
+/// Resolve the effective repo directory for an ezs invocation: the explicit
+/// `repo_path` when non-empty, otherwise the `EZSTACK_REPO` environment
+/// variable. Mirrors the CLI's `--repo` flag > `EZSTACK_REPO` precedence; the
+/// desktop UI applies it via `current_dir`, which is equivalent to passing
+/// `--repo`. Returns the original (possibly empty) value when neither yields a
+/// path.
+pub fn resolve_repo_path(repo_path: &str) -> String {
+    resolve_repo_path_with(repo_path, std::env::var("EZSTACK_REPO").ok().as_deref())
+}
+
+/// Pure core of [`resolve_repo_path`], with the env value injected for testing.
+fn resolve_repo_path_with(repo_path: &str, env: Option<&str>) -> String {
+    if !repo_path.is_empty() {
+        return repo_path.to_string();
+    }
+    match env {
+        Some(e) if !e.is_empty() => e.to_string(),
+        _ => repo_path.to_string(),
+    }
+}
+
 /// Run an ezs CLI command in the given repo directory.
 pub fn run_ezs(repo_path: &str, args: &[&str]) -> Result<CommandResult, String> {
     let binary = ezs_binary();
+    let repo = resolve_repo_path(repo_path);
     let output = Command::new(binary)
         .args(args)
-        .current_dir(repo_path)
+        .current_dir(&repo)
         .output()
         .map_err(|e| format!("Failed to run ezs (resolved: {binary}): {e}"))?;
 
@@ -152,13 +174,14 @@ pub fn open_in_terminal(repo_path: &str, args: &[String]) -> Result<(), String> 
     let script_path = tmp_dir.join(script_name);
 
     let ezs_path = ezs_binary();
+    let repo = resolve_repo_path(repo_path);
     let mut script = String::from("#!/bin/bash\n");
     // Clean up the temp script on exit
     script.push_str(&format!(
         "trap 'rm -f '\\''{}'\\''' EXIT\n",
         script_path.display()
     ));
-    script.push_str(&format!("cd '{}'\n", repo_path.replace('\'', "'\\''")));
+    script.push_str(&format!("cd '{}'\n", repo.replace('\'', "'\\''")));
     script.push_str(&format!("'{}'", ezs_path.replace('\'', "'\\''")));
     for arg in args {
         script.push(' ');
@@ -422,4 +445,26 @@ pub fn ssh_host_fingerprints(host: &str, port: u16) -> Result<String, String> {
         ));
     }
     Ok(String::from_utf8_lossy(&out.stdout).to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_repo_path_with;
+
+    #[test]
+    fn explicit_repo_path_wins_over_env() {
+        assert_eq!(resolve_repo_path_with("/a", Some("/env")), "/a");
+        assert_eq!(resolve_repo_path_with("/a", None), "/a");
+    }
+
+    #[test]
+    fn falls_back_to_env_when_repo_path_empty() {
+        assert_eq!(resolve_repo_path_with("", Some("/env")), "/env");
+    }
+
+    #[test]
+    fn empty_when_neither_is_set() {
+        assert_eq!(resolve_repo_path_with("", None), "");
+        assert_eq!(resolve_repo_path_with("", Some("")), "");
+    }
 }
