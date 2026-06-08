@@ -158,6 +158,7 @@ Right-click branches in the tree view for quick actions:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `ezstack.cliPath` | `"ezs"` | Path to the `ezs` CLI binary |
+| `ezstack.repo` | `""` | Absolute path to a repo to run ezstack against, overriding the open workspace folder. Passed to every `ezs` call as `--repo`. Empty = use the workspace folder. |
 | `ezstack.autoRefresh` | `true` | Auto-refresh tree view when config files change |
 
 ## How It Works

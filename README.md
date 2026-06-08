@@ -224,6 +224,16 @@ ezs commit -m "fix" --rebase  # rebase children even if config says merge
 
 The `--merge` and `--rebase` flags work with `sync`, `commit`, `amend`, and `reparent`.
 
+### Running Against a Fixed Repo
+
+By default `ezs` operates on the repo in your current directory. To target a different repo without `cd`-ing there, pass `--repo <path>` (valid in any position):
+
+```bash
+ezs --repo ~/code/app status --all
+```
+
+For a persistent default, set `EZSTACK_REPO` instead of passing the flag each time. Precedence is `--repo` flag > `EZSTACK_REPO` > current directory. The `ezs-mcp` server honors the same variable, and the [editor/desktop integrations](#editor--desktop-integrations) expose equivalent settings (`ezstack.repo` in VS Code, the `repo` option in Neovim). Avoid exporting `EZSTACK_REPO` globally — it makes every `ezs` in every terminal target that one repo; prefer per-project (direnv) or a dedicated shell.
+
 ### Submodule Mirroring
 
 In worktree mode, `ezs new` automatically runs `git submodule update --init` against the same set of submodule paths that are currently initialized in the main worktree — so a new branch worktree starts with the same submodules active as the one you're working in. This matches the monorepo workflow (e.g. SONiC) where only a subset of submodules is initialized per developer.
@@ -272,7 +282,8 @@ code --install-extension ezstack-4.8.4.vsix
 
 Then open the **ezstack** panel in the activity bar. Auto-refreshes on
 `~/.ezstack/stacks.json` changes. Configure with `ezstack.cliPath`,
-`ezstack.autoRefresh`, and `ezstack.ticketPattern`.
+`ezstack.autoRefresh`, `ezstack.ticketPattern`, and `ezstack.repo` (pin the
+extension to a fixed repo regardless of the open workspace folder).
 
 ### Neovim
 
@@ -286,8 +297,9 @@ Then open the **ezstack** panel in the activity bar. Auto-refreshes on
 ```
 
 Requires Neovim 0.10+ and the `ezs` CLI on `$PATH`. Run `:Ezs` to open the
-stack viewer or `:Telescope ezstack branches` for fuzzy picking. See
-`:help ezstack` for the full reference.
+stack viewer or `:Telescope ezstack branches` for fuzzy picking. Set the `repo`
+option in `setup()` to pin the plugin to a fixed repo. See `:help ezstack` for
+the full reference.
 
 ### Desktop App
 

@@ -421,11 +421,20 @@ These flags work with any command and can appear in any position:
 -y, --yes        Auto-confirm all yes/no prompts (selection menus still show)
 -h, --help       Show help
 -v, --version    Show version
+--repo <path>    Run against this repo instead of the current directory
 --shell-init     Output shell function for cd support
 --info           Print a diagnostic dump (versions, config state) for bug reports
 ```
 
 `ezs --info` prints ezstack version, `go`/`git`/`gh`/`fzf` versions, the config directory path, whether `config.json` is present and loads cleanly, the number of configured repos, and the default base branch. It's safe to paste into bug reports — no secrets are included.
+
+### Running against a fixed repo (`--repo` / `EZSTACK_REPO`)
+
+By default `ezs` operates on the git repository containing your current directory. To run it against a different repo without `cd`-ing there, pass `--repo <path>` (it works in any position, e.g. `ezs --repo ~/code/app status --all`). `ezs` changes to that repo's root before running, so commands that infer the current branch from your location (`status`, `sync`, `up`/`down`, …) behave as they would from the repo root — pass `--branch` / `--all` / `--stack` to target a specific branch's stack.
+
+For a persistent default, set the `EZSTACK_REPO` environment variable instead of passing the flag every time. Precedence is **`--repo` flag > `EZSTACK_REPO` > current directory**. The same variable is honored by the `ezs-mcp` server, and the VS Code extension (`ezstack.repo` setting), Neovim plugin (`repo` option), and desktop app expose equivalent settings.
+
+> **Heads-up:** exporting `EZSTACK_REPO` in your global shell rc makes *every* `ezs` in *every* terminal target that one repo. Prefer setting it per-project (e.g. via [direnv](https://direnv.net/)) or in a dedicated shell session.
 
 ---
 
