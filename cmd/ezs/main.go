@@ -129,10 +129,20 @@ func hasRepoConfig(repoPath string) bool {
 }
 
 func main() {
+	// Resolve a --repo / EZSTACK_REPO override before any cwd-based repo
+	// discovery. resolveRepoOverride strips every --repo token from the args
+	// (like -y below) so subcommand parsers never see it. Precedence is
+	// flag > EZSTACK_REPO env > current directory.
+	rest, overridePath, overrideSource, repoErr := resolveRepoOverride(os.Args[1:], os.Getenv("EZSTACK_REPO"))
+	if repoErr != nil {
+		ui.Error(repoErr.Error())
+		os.Exit(ui.ExitUsage)
+	}
+
 	// Pre-parse -y/--yes before dispatching so it works in any position,
 	// e.g. "ezs -y sync", "ezs sync -y", "ezs delete -y my-branch".
 	var cleanArgs []string
-	for _, arg := range os.Args[1:] {
+	for _, arg := range rest {
 		if arg == "-y" || arg == "--yes" {
 			ui.YesMode = true
 		} else {
@@ -147,12 +157,18 @@ func main() {
 		args = cleanArgs[1:]
 	}
 
-	// Commands that don't require repo check
+	// Commands that don't require a repo. They run before the fatal chdir
+	// below so a misconfigured override can never block them. --completions
+	// does a best-effort chdir so branch-name completion reflects the
+	// override, but never fails on a bad path.
 	switch cmd {
 	case "--shell-init":
 		printShellInit()
 		return
 	case "--completions":
+		if overridePath != "" {
+			_ = os.Chdir(overridePath)
+		}
 		printCompletions(args)
 		return
 	case "-h", "--help":
@@ -166,12 +182,26 @@ func main() {
 		return
 	}
 
+	// Apply the repo override for every real command: chdir so all downstream
+	// cwd-based discovery behaves as if run from the repo root. Failure names
+	// the source (--repo vs EZSTACK_REPO) so misconfiguration is obvious.
+	if overridePath != "" {
+		if err := os.Chdir(overridePath); err != nil {
+			ui.Error(fmt.Sprintf("%s: %v", repoSourceLabel(overrideSource, overridePath), err))
+			os.Exit(ui.ExitNotInRepo)
+		}
+	}
+
 	// Check if we're in a git repo for all other commands. `doctor` is the
 	// exception — it's meant to be the first thing users run on a fresh
 	// machine, including before they've cloned or initialized any repo.
 	repoPath, inRepo := checkRepoRoot()
 	if !inRepo && commandNeedsRepoCheck(cmd) {
-		ui.Error("ezs must be run from a git repository root (or a worktree)")
+		if overridePath != "" {
+			ui.Error(fmt.Sprintf("%s is not a git repository", repoSourceLabel(overrideSource, overridePath)))
+		} else {
+			ui.Error("ezs must be run from a git repository root (or a worktree)")
+		}
 		os.Exit(ui.ExitNotInRepo)
 	}
 
@@ -373,6 +403,8 @@ func printUsage() {
     -h, --help       Show this help message
     -v, --version    Show version
     -y, --yes        Auto-confirm all yes/no prompts (selection menus still show)
+    --repo <path>    Run against this repo instead of the current directory
+                     (or set EZSTACK_REPO; the flag wins)
     --shell-init     Output shell function for cd support
 
 %sSETUP%s
@@ -407,7 +439,23 @@ func printShellInit() {
 	fmt.Print(`# ezs shell function for cd support
 # Add this to your shell config: eval "$(ezs --shell-init)"
 ezs() {
-    case "${1:-}" in
+    # Resolve the effective command word past any leading global flags
+    # (--repo <path>, --repo=<path>, -y/--yes) so navigation commands still
+    # get their "cd <path>" output eval'd when a flag precedes the command,
+    # e.g. "ezs --repo /path goto feature".
+    local _ezs_cmd="" _ezs_skip=0 _ezs_arg
+    for _ezs_arg in "$@"; do
+        if [ "$_ezs_skip" = "1" ]; then
+            _ezs_skip=0
+            continue
+        fi
+        case "$_ezs_arg" in
+            --repo) _ezs_skip=1 ;;
+            --repo=*|-y|--yes) ;;
+            *) _ezs_cmd="$_ezs_arg"; break ;;
+        esac
+    done
+    case "$_ezs_cmd" in
         goto|go|new|n|delete|del|rm|sync|up|down|menu)
             # These commands may output "cd <path>" which we need to eval
             eval "$(EZS_SHELL_WRAPPER=1 command ezs "$@")"
