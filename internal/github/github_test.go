@@ -422,6 +422,55 @@ func TestUpdateBodyWithStack(t *testing.T) {
 	}
 }
 
+// TestBodyNeedsUpdate guards against the PR-description churn bug: GitHub appends
+// a trailing newline (and may switch to \r\n) when it stores a body, so the body
+// we fetch back is never byte-for-byte equal to the one we generated. A naive
+// `newBody != pr.Body` check therefore rewrites every PR on every push/sync,
+// re-firing "edited" events across the whole stack.
+func TestBodyNeedsUpdate(t *testing.T) {
+	generated := "Description\n\n---\n## PR Stack\n\n1. PR #1\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n"
+
+	tests := []struct {
+		name        string
+		newBody     string
+		currentBody string
+		want        bool
+	}{
+		{
+			name:        "identical",
+			newBody:     generated,
+			currentBody: generated,
+			want:        false,
+		},
+		{
+			name:        "github appended trailing newline",
+			newBody:     generated,
+			currentBody: generated + "\n",
+			want:        false,
+		},
+		{
+			name:        "github returned CRLF and trailing newline",
+			newBody:     generated,
+			currentBody: strings.ReplaceAll(generated, "\n", "\r\n") + "\r\n",
+			want:        false,
+		},
+		{
+			name:        "content actually changed",
+			newBody:     generated,
+			currentBody: strings.Replace(generated, "PR #1", "PR #2", 1),
+			want:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bodyNeedsUpdate(tt.newBody, tt.currentBody); got != tt.want {
+				t.Errorf("bodyNeedsUpdate() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestGetPRChecksParser(t *testing.T) {
 	// Test the check parsing logic
 	tests := []struct {

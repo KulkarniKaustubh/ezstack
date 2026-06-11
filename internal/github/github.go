@@ -501,7 +501,7 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 
 		// Update the body with the stack section
 		newBody := updateBodyWithStack(pr.Body, stackSection, branch.Name == currentBranch)
-		if newBody != pr.Body {
+		if bodyNeedsUpdate(newBody, pr.Body) {
 			if err := c.UpdatePR(branch.PRNumber, newBody); err != nil {
 				return fmt.Errorf("failed to update PR #%d: %w", branch.PRNumber, err)
 			}
@@ -542,7 +542,7 @@ func (c *Client) UpdateStackDescriptionCached(stack *config.Stack, currentBranch
 
 		stackSection := generateStackSection(stack, branch.Name)
 		newBody := updateBodyWithStack(pr.Body, stackSection, branch.Name == currentBranch)
-		if newBody != pr.Body {
+		if bodyNeedsUpdate(newBody, pr.Body) {
 			if err := c.UpdatePR(branch.PRNumber, newBody); err != nil {
 				return fmt.Errorf("failed to update PR #%d: %w", branch.PRNumber, err)
 			}
@@ -596,9 +596,7 @@ func generateStackSection(stack *config.Stack, currentPRBranch string) string {
 }
 
 func updateBodyWithStack(body, stackSection string, isCurrent bool) string {
-	// Normalize line endings (GitHub API may return \r\n)
-	body = strings.ReplaceAll(body, "\r\n", "\n")
-	body = strings.ReplaceAll(body, "\r", "\n")
+	body = normalizeBody(body)
 
 	// Remove existing stack section - it's always appended at the end,
 	// so we just truncate from the first "---\n## PR Stack" marker onwards
@@ -611,4 +609,29 @@ func updateBodyWithStack(body, stackSection string, isCurrent bool) string {
 
 	// Add new stack section
 	return strings.TrimSpace(body) + stackSection
+}
+
+// normalizeBody canonicalizes a PR body so that bodies which differ only in
+// line endings can be compared. GitHub returns bodies with \r\n on some
+// platforms; we rewrite them to \n.
+func normalizeBody(body string) string {
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	body = strings.ReplaceAll(body, "\r", "\n")
+	return body
+}
+
+// bodyNeedsUpdate reports whether the freshly generated body differs from the
+// PR's current body in a way worth pushing to GitHub.
+//
+// GitHub appends a trailing newline (and may use \r\n) when it stores a body,
+// so a byte-for-byte comparison of our generated body against the fetched body
+// is ALWAYS unequal — even when the rendered content is identical. Without this
+// normalization, ezstack rewrites every PR body on every push/sync/update,
+// re-firing "edited" events and notifications on the whole stack. We therefore
+// compare after normalizing line endings and trailing whitespace.
+func bodyNeedsUpdate(newBody, currentBody string) bool {
+	trim := func(s string) string {
+		return strings.TrimRight(normalizeBody(s), "\n")
+	}
+	return trim(newBody) != trim(currentBody)
 }
