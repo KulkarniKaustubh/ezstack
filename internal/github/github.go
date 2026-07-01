@@ -597,18 +597,52 @@ func generateStackSection(stack *config.Stack, currentPRBranch string) string {
 
 func updateBodyWithStack(body, stackSection string, isCurrent bool) string {
 	body = normalizeBody(body)
-
-	// Remove existing stack section - it's always appended at the end,
-	// so we just truncate from the first "---\n## PR Stack" marker onwards
-	for _, marker := range []string{"---\n## PR Stack", "---\n## 📚 PR Stack"} {
-		if idx := strings.Index(body, marker); idx != -1 {
-			body = body[:idx]
-			break
-		}
-	}
+	body = stripStackSections(body)
 
 	// Add new stack section
 	return strings.TrimSpace(body) + stackSection
+}
+
+// stackSectionMarkers are every known form of the "---\n## ... PR Stack" heading
+// that ezstack (current or historical) has ever emitted at the start of its
+// appended-at-end PR-stack section. Because the section is always appended at
+// the end, truncating body at the EARLIEST byte position of any known marker
+// deletes the whole section — and collapses any accidental duplicates that
+// older versions left behind. The emoji variant was never emitted by the
+// generator in git history, but bodies in the wild (or manually edited PRs)
+// may contain it, so we still recognize it defensively.
+var stackSectionMarkers = []string{
+	"---\n## PR Stack",
+	"---\n## 📚 PR Stack",
+}
+
+// stripStackSections removes every previously-appended ezstack "PR Stack"
+// section from body. Because the section is always appended at the end,
+// truncating at the earliest occurrence of any known marker also drops
+// every later duplicate section — so N sections collapse down to zero on
+// a single call. Callers append exactly one fresh section afterwards.
+//
+// The earliest-across-all-markers scan (rather than picking the first
+// marker in a fixed order) is what makes this dedup work when a body has
+// mixed marker variants — e.g. an emoji-style section left over from a
+// historical writer followed by a current no-emoji section. Truncating at
+// only the first-encountered marker in list order would leave the earlier
+// variant intact and re-duplicate on the next append.
+func stripStackSections(body string) string {
+	earliest := -1
+	for _, marker := range stackSectionMarkers {
+		idx := strings.Index(body, marker)
+		if idx < 0 {
+			continue
+		}
+		if earliest < 0 || idx < earliest {
+			earliest = idx
+		}
+	}
+	if earliest < 0 {
+		return body
+	}
+	return body[:earliest]
 }
 
 // normalizeBody canonicalizes a PR body so that bodies which differ only in
