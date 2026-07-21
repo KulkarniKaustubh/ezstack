@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 	"github.com/spf13/pflag"
 )
@@ -98,12 +99,91 @@ ezstack configuration is valid.
 		}
 	}
 
+	checkSubmoduleHealth(&problems)
+
 	fmt.Fprintln(os.Stderr)
 	if problems == 0 {
 		ui.Success("No problems detected")
 		return nil
 	}
 	return fmt.Errorf("%d problem(s) detected", problems)
+}
+
+// checkSubmoduleHealth surfaces submodule states that the user is likely
+// to want to know about: merge conflicts, dirty working trees, unpushed
+// commits, detached-HEAD edits in progress, and uncommitted gitlink
+// changes. Runs in the current working directory's repo only — the active
+// worktree is what the user is editing.
+//
+// Increments *problems only for hard errors (merge conflicts). Other
+// states are warnings: dirty/unpushed/detached are common in mid-flow
+// work; flagging them as failures would make `ezs doctor` impossible to
+// satisfy in a normal workflow.
+func checkSubmoduleHealth(problems *int) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return
+	}
+	g := git.New(cwd)
+	if !g.HasSubmodules() {
+		return
+	}
+	statuses, err := g.SubmoduleStatuses()
+	if err != nil {
+		ui.Warn(fmt.Sprintf("Could not inspect submodules: %v", err))
+		return
+	}
+	if len(statuses) == 0 {
+		return
+	}
+	warnings := 0
+	for _, s := range statuses {
+		// Print one warning line per actionable issue. Order matters:
+		// merge conflicts first (hard error), then unpushed (push gate),
+		// then dirty/detached/pointer (state surface). Detached HEAD is
+		// only flagged when paired with edits — bare detached HEAD is
+		// the default after `git submodule update` and not actionable.
+		if s.MergeConflict {
+			ui.Error(fmt.Sprintf(
+				"Submodule '%s' has unresolved merge conflicts.\n    Resolve in %s, then `git add %s` in the parent.",
+				s.Path, s.Path, s.Path,
+			))
+			*problems++
+			warnings++
+			continue
+		}
+		if s.HasUnpushed {
+			ui.Warn(fmt.Sprintf(
+				"Submodule '%s' has %s not on origin.\n    To push: cd %s && git push",
+				s.Path, pluralizeCommits(s.UnpushedCount), s.Path,
+			))
+			warnings++
+		}
+		if s.Dirty {
+			ui.Warn(fmt.Sprintf(
+				"Submodule '%s' has uncommitted changes.\n    Inspect: cd %s && git status",
+				s.Path, s.Path,
+			))
+			warnings++
+		}
+		if s.DetachedHead && (s.Dirty || s.HasUnpushed) {
+			ui.Warn(fmt.Sprintf(
+				"Submodule '%s' is on a detached HEAD with edits — commits here can be orphaned.\n    Move to a branch: cd %s && git switch -c <branch>",
+				s.Path, s.Path,
+			))
+			warnings++
+		}
+		if s.PointerChanged {
+			ui.Warn(fmt.Sprintf(
+				"Submodule '%s' pointer differs from parent's record — commit the gitlink change in the parent (`git add %s && git commit`) or revert (`git submodule update`).",
+				s.Path, s.Path,
+			))
+			warnings++
+		}
+	}
+	if warnings == 0 {
+		ui.Success(fmt.Sprintf("Submodules clean (%d initialized)", len(statuses)))
+	}
 }
 
 // Info prints a diagnostic report (versions, config state) for bug reports.

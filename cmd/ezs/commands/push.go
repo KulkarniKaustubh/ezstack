@@ -78,6 +78,7 @@ func Push(args []string) error {
 	}()
 
 	g := git.New(cwd)
+	warnUnpushedSubmodules(g)
 
 	// Look up the branch's configured remote (if any), running fork detection lazily
 	// for branches tagged is_remote that don't yet have a fork remote recorded.
@@ -159,6 +160,53 @@ func pushTargets(allRemotes bool, primary string) []string {
 		return []string{primary}
 	}
 	return out
+}
+
+// warnUnpushedSubmodules prints a warning for each initialized submodule
+// whose *gitlink* SHA — the SHA the parent's HEAD records, which is what
+// gets published — isn't reachable from origin. Pushing the parent in that
+// state would record a SHA teammates can't fetch, breaking their checkouts.
+//
+// This is a warning, not a block — the user may be intentionally pushing
+// the parent first and will push the submodule next, or they may have
+// already pushed the submodule and the local remote-tracking ref is stale.
+// We can't tell the difference without a network fetch, and we don't want
+// to slow down every push.
+//
+// We deliberately *do not* warn on a checkout-only divergence (submodule
+// has local commits but the parent's gitlink hasn't been bumped to them).
+// In that case pushing the parent records the *old* gitlink, which is on
+// origin — no harm to teammates. `ezs doctor` surfaces the pointer-changed
+// state separately.
+func warnUnpushedSubmodules(g *git.Git) {
+	if !g.HasSubmodules() {
+		return
+	}
+	statuses, err := g.SubmoduleStatuses()
+	if err != nil || len(statuses) == 0 {
+		return
+	}
+	for _, s := range statuses {
+		if !s.GitlinkUnpushed {
+			continue
+		}
+		ui.Warn(fmt.Sprintf(
+			"Submodule '%s' has %s not on origin — pushing the parent now will record a SHA teammates can't fetch.\n    To push the submodule first: cd %s && git push",
+			s.Path, pluralizeCommits(s.GitlinkUnpushedCount), s.Path,
+		))
+	}
+}
+
+// pluralizeCommits formats a commit count for human display. Used in
+// submodule warnings where "1 commit" reads better than "1 commits".
+func pluralizeCommits(n int) string {
+	if n == 1 {
+		return "1 commit"
+	}
+	if n <= 0 {
+		return "commits"
+	}
+	return fmt.Sprintf("%d commits", n)
 }
 
 func pushSpecificBranch(g *git.Git, branch string, force bool, remote string) error {

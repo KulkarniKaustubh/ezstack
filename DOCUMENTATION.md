@@ -1660,6 +1660,20 @@ Options:
 
 **Submodule mirroring.** By default, `ezs new` inspects the main worktree's initialized submodules (via `git submodule status`) and runs `git submodule update --init -- <paths>` on the same paths in the new worktree. Submodules that are deinit'd in the main worktree are left uninitialized in the new worktree too — which matches the monorepo workflow (e.g. SONiC) where developers only init the subset of submodules they work on. Mirroring can be disabled globally via `ezs config set init_submodules false`, and overridden per-invocation with `--init-submodules` / `--no-init-submodules`. A failure to mirror submodules is logged as a warning and does not fail branch creation.
 
+**Submodule auto-refresh after HEAD-changing operations.** When ezstack moves HEAD via rebase, merge, or branch checkout, it follows up with `git submodule update --recursive` so already-initialized submodules advance to the SHA the new HEAD records. This avoids the "submodule pointer changed but working tree didn't" gotcha that bites users after `git rebase` or `git checkout`. The refresh deliberately does *not* pass `--init`, so submodules a user has chosen not to clone stay that way — opt-outs are respected. Failures are warnings, never fatal.
+
+**Submodule doctor checks.** `ezs doctor` walks the current worktree's initialized submodules — including nested submodules-of-submodules, with their full path from the worktree root — and surfaces:
+
+- unresolved merge conflicts (error)
+- uncommitted changes (warning)
+- local commits in the submodule's checkout that aren't on `origin` (warning — informational; remember to push the submodule too)
+- detached-HEAD edits in progress (warning — commits there can be orphaned)
+- pointer drift between the parent's record and the submodule's checkout (warning)
+
+A clean repo with N initialized submodules prints `Submodules clean (N initialized)`.
+
+**Submodule push gate.** Before `ezs push` invokes git, it checks the *gitlink SHA the parent will publish* against the submodule's `origin/*` refs. If the gitlink SHA isn't on origin, it warns — teammates won't be able to fetch the submodule SHA the parent records. The push still proceeds (the user may be intentionally pushing parent first), but the warning makes the order explicit. Local commits in the submodule's checkout that haven't been bumped into the parent's gitlink yet are *not* push-gated: pushing the parent in that state publishes the old gitlink, which is on origin, so teammates aren't broken. The doctor surfaces the uncommitted gitlink change separately.
+
 **`--template <name>`.** After the worktree is created, ezstack copies the contents of `~/.ezstack/templates/<name>/` into it as an overlay. Existing files in the worktree are overwritten, new directories are created, and file modes (including the executable bit) are preserved. The copy is guarded:
 
 - The template root must be a real directory, never a symlink.
