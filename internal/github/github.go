@@ -468,21 +468,7 @@ func (c *Client) runGH(args ...string) (string, error) {
 
 // UpdateStackDescription updates PR descriptions with stack info.
 func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch string) error {
-	// Count how many PRs are in the stack (including root PR if present)
-	prCount := 0
-	if stack.RootPRNumber > 0 {
-		prCount++
-	}
-	for _, branch := range stack.Branches {
-		if branch.PRNumber > 0 {
-			prCount++
-		}
-	}
-
-	// Only update descriptions when there are 2+ PRs in the stack
-	if prCount < 2 {
-		return nil
-	}
+	prCount := stackPRCount(stack)
 
 	for _, branch := range stack.Branches {
 		if branch.PRNumber == 0 {
@@ -495,12 +481,7 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 			continue
 		}
 
-		// Generate stack section with arrow pointing to THIS PR
-		// Uses PR numbers/URLs from the config cache (.ezstack.json)
-		stackSection := generateStackSection(stack, branch.Name)
-
-		// Update the body with the stack section
-		newBody := updateBodyWithStack(pr.Body, stackSection, branch.Name == currentBranch)
+		newBody := stackDescriptionBody(stack, branch.Name, pr.Body, prCount)
 		if bodyNeedsUpdate(newBody, pr.Body) {
 			if err := c.UpdatePR(branch.PRNumber, newBody); err != nil {
 				return fmt.Errorf("failed to update PR #%d: %w", branch.PRNumber, err)
@@ -513,21 +494,7 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 
 // UpdateStackDescriptionCached updates PR descriptions using pre-fetched PR data to avoid extra API calls.
 func (c *Client) UpdateStackDescriptionCached(stack *config.Stack, currentBranch string, prMap map[int]*PR) error {
-	// Count how many PRs are in the stack (including root PR if present)
-	prCount := 0
-	if stack.RootPRNumber > 0 {
-		prCount++
-	}
-	for _, branch := range stack.Branches {
-		if branch.PRNumber > 0 {
-			prCount++
-		}
-	}
-
-	// Only update descriptions when there are 2+ PRs in the stack
-	if prCount < 2 {
-		return nil
-	}
+	prCount := stackPRCount(stack)
 
 	for _, branch := range stack.Branches {
 		if branch.PRNumber == 0 {
@@ -540,8 +507,7 @@ func (c *Client) UpdateStackDescriptionCached(stack *config.Stack, currentBranch
 			continue
 		}
 
-		stackSection := generateStackSection(stack, branch.Name)
-		newBody := updateBodyWithStack(pr.Body, stackSection, branch.Name == currentBranch)
+		newBody := stackDescriptionBody(stack, branch.Name, pr.Body, prCount)
 		if bodyNeedsUpdate(newBody, pr.Body) {
 			if err := c.UpdatePR(branch.PRNumber, newBody); err != nil {
 				return fmt.Errorf("failed to update PR #%d: %w", branch.PRNumber, err)
@@ -550,6 +516,34 @@ func (c *Client) UpdateStackDescriptionCached(stack *config.Stack, currentBranch
 	}
 
 	return nil
+}
+
+// stackPRCount counts how many PRs are in the stack, including the root PR if present.
+func stackPRCount(stack *config.Stack) int {
+	count := 0
+	if stack.RootPRNumber > 0 {
+		count++
+	}
+	for _, branch := range stack.Branches {
+		if branch.PRNumber > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+// stackDescriptionBody renders what a PR's body should look like given the current
+// stack membership. A stack section is only appended when there are 2+ PRs in the
+// stack; below that threshold any previously-appended section is stripped rather
+// than left in place, since a lone remaining PR still carrying a stale multi-PR
+// stack list (e.g. after siblings were merged/unstacked) is itself a bug — see
+// stripStackSections.
+func stackDescriptionBody(stack *config.Stack, branchName, currentBody string, prCount int) string {
+	if prCount < 2 {
+		return strings.TrimSpace(stripStackSections(normalizeBody(currentBody)))
+	}
+	stackSection := generateStackSection(stack, branchName)
+	return updateBodyWithStack(currentBody, stackSection)
 }
 
 func generateStackSection(stack *config.Stack, currentPRBranch string) string {
@@ -595,7 +589,7 @@ func generateStackSection(stack *config.Stack, currentPRBranch string) string {
 	return sb.String()
 }
 
-func updateBodyWithStack(body, stackSection string, isCurrent bool) string {
+func updateBodyWithStack(body, stackSection string) string {
 	body = normalizeBody(body)
 	body = stripStackSections(body)
 
