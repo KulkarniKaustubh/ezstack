@@ -2,7 +2,7 @@
   "name": "ezstack",
   "displayName": "ezstack",
   "description": "Manage stacked pull requests with git worktrees",
-  "version": "4.8.4",
+  "version": "4.8.5",
   "icon": "resources/icon.png",
   "publisher": "kaustubh",
   "license": "MIT",

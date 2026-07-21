@@ -96,14 +96,16 @@ func parseNavigateArgs(direction string, args []string) (int, error) {
 
 // navigate handles the shared logic for up/down navigation.
 //
-// Navigation follows the *effective* tree (skipping merged ancestors), not
-// the literal BaseBranch tree. A merged branch has had both its worktree
-// and its local git branch deleted by MarkBranchMerged, so trying to
-// `cd` or `git checkout` it always fails — landing on one would leave the
-// user with an error mid-traversal. Walking via Branch.Parent (the nearest
-// non-merged ancestor, computed in walkTree) and Manager.GetChildren
-// (effective-parent children, excluding merged) keeps navigation in sync
-// with how `goto` and `sync` already treat merged branches: as gone.
+// Navigation walks the literal stack tree (via Branch.BaseBranch) and lands on
+// the first branch whose worktree still exists, bridging over any branch that
+// can't be reached. A branch is unreachable only when it has been merged AND
+// its worktree is gone: `ezs pr merge` (MarkBranchMerged) deletes both the
+// worktree and the local git ref, so cd/checkout there always fails. A merged
+// branch whose worktree is still on disk — e.g. a merge that `ezs ls` detected
+// from GitHub but hasn't pruned yet — is still a valid stop, so up/down keep
+// working both *through* and *from* it. (The effective Branch.Parent that
+// walkTree computes re-points a merged branch's children past it, which is
+// exactly why `down` from such a branch used to report no children.)
 //
 // Up stops at the top of the stack (does NOT go to main/root).
 func navigate(direction string, steps int) error {
@@ -166,11 +168,10 @@ func navigate(direction string, steps int) error {
 		return nil // No movement
 	}
 
-	// Defensive guard: if for any reason we land on a merged branch
-	// (shouldn't happen with the effective-tree walk above, but the cost
-	// of being wrong is a confusing `git checkout` failure), surface a
-	// clear error matching `goto`'s behavior.
-	if targetBranch.IsMerged {
+	// Defensive guard: both selection helpers only return landable branches,
+	// but if we somehow target one whose worktree is gone the cd would have
+	// nowhere to land — surface a clear error matching `goto`'s behavior.
+	if !landable(targetBranch) {
 		return fmt.Errorf("branch '%s' has been merged and its worktree was deleted", targetBranch.Name)
 	}
 
@@ -178,29 +179,94 @@ func navigate(direction string, steps int) error {
 }
 
 // effectiveParentForNavigation returns the branch `up` should land on, or nil
-// if currentBranch sits at the top of its stack. It walks via Branch.Parent
-// (the nearest non-merged ancestor populated by walkTree) so merged ancestors
-// are seamlessly skipped — landing on one would attempt a `git checkout` of a
-// branch MarkBranchMerged already deleted. Pure function (no I/O), exported
-// within the package so navigate_test.go can pin its behavior with a real
+// if currentBranch sits at the top of its stack. It walks the literal stack
+// tree upward (via Branch.BaseBranch) and returns the first ancestor we can
+// land on, bridging over any merged ancestor whose worktree is gone. Walking
+// the literal tree (rather than the effective Branch.Parent) is what lets `up`
+// work *from* a merged branch whose worktree is still on disk. Exported within
+// the package so navigate_merged_test.go can pin its behavior with a real
 // stack.Manager fixture.
 func effectiveParentForNavigation(mgr *stack.Manager, currentBranch *config.Branch) *config.Branch {
-	return mgr.GetBranch(currentBranch.Parent)
+	name := currentBranch.BaseBranch
+	for name != "" {
+		parent := mgr.GetBranch(name)
+		if parent == nil {
+			// Reached the stack root (e.g. "main"), which is not tracked as a
+			// Branch — currentBranch is at the top of the stack.
+			return nil
+		}
+		if landable(parent) {
+			return parent
+		}
+		name = parent.BaseBranch
+	}
+	return nil
 }
 
-// effectiveChildrenForNavigation returns the non-merged candidates `down`
-// should choose between, sorted alphabetically for determinism. Walks via
-// Manager.GetChildren (effective parent) so a merged intermediate is bridged
-// out: A → B(merged) → C surfaces C as a direct candidate of A. The IsMerged
-// filter is still required because a merged direct child of A keeps
-// Parent=A until walkTree re-points its descendants past it.
+// effectiveChildrenForNavigation returns the candidates `down` should choose
+// between, sorted alphabetically for determinism. It walks the literal stack
+// tree (via Branch.BaseBranch) and bridges over any merged child whose worktree
+// is gone, surfacing the nearest landable descendant on each path: A →
+// B(merged, worktree deleted) → C surfaces C as a direct candidate of A. A
+// merged child whose worktree is still present is itself landable and surfaces
+// directly.
 func effectiveChildrenForNavigation(mgr *stack.Manager, branchName string) []*config.Branch {
 	var out []*config.Branch
-	for _, c := range mgr.GetChildren(branchName) {
-		if !c.IsMerged {
-			out = append(out, c)
+	var walk func(parent string)
+	walk = func(parent string) {
+		for _, c := range literalChildren(mgr, parent) {
+			if landable(c) {
+				out = append(out, c)
+				continue
+			}
+			// Worktree-less merged intermediate: descend through it so a
+			// landable grandchild still surfaces as a direct candidate.
+			walk(c.Name)
 		}
 	}
+	walk(branchName)
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
+}
+
+// literalChildren returns the branches whose literal tree parent (BaseBranch)
+// is parent, across every stack. Unlike Manager.GetChildren — which uses the
+// effective Branch.Parent that walkTree re-points past merged branches — this
+// follows the unchanged tree structure so navigation can decide for itself
+// which branches to bridge over.
+func literalChildren(mgr *stack.Manager, parent string) []*config.Branch {
+	var out []*config.Branch
+	for _, b := range mgr.GetAllBranchesInAllStacks() {
+		if b.BaseBranch == parent {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
+// landable reports whether navigation can stop on b: a branch we can actually
+// cd into. A branch is unreachable only when it has been merged AND its
+// worktree is gone — MarkBranchMerged (via `ezs pr merge`) clears WorktreePath
+// and deletes both the worktree and the local git ref. A merged branch whose
+// worktree is still on disk — e.g. a merge that `ezs ls` detected from GitHub
+// but has not pruned yet — remains landable, so up/down keep working from and
+// through it.
+func landable(b *config.Branch) bool {
+	if b == nil {
+		return false
+	}
+	if b.IsMerged && !worktreeExists(b) {
+		return false
+	}
+	return true
+}
+
+// worktreeExists reports whether b's worktree directory is recorded and still
+// present on disk.
+func worktreeExists(b *config.Branch) bool {
+	if b.WorktreePath == "" {
+		return false
+	}
+	info, err := os.Stat(b.WorktreePath)
+	return err == nil && info.IsDir()
 }

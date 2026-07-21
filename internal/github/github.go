@@ -468,21 +468,7 @@ func (c *Client) runGH(args ...string) (string, error) {
 
 // UpdateStackDescription updates PR descriptions with stack info.
 func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch string) error {
-	// Count how many PRs are in the stack (including root PR if present)
-	prCount := 0
-	if stack.RootPRNumber > 0 {
-		prCount++
-	}
-	for _, branch := range stack.Branches {
-		if branch.PRNumber > 0 {
-			prCount++
-		}
-	}
-
-	// Only update descriptions when there are 2+ PRs in the stack
-	if prCount < 2 {
-		return nil
-	}
+	prCount := stackPRCount(stack)
 
 	for _, branch := range stack.Branches {
 		if branch.PRNumber == 0 {
@@ -495,13 +481,8 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 			continue
 		}
 
-		// Generate stack section with arrow pointing to THIS PR
-		// Uses PR numbers/URLs from the config cache (.ezstack.json)
-		stackSection := generateStackSection(stack, branch.Name)
-
-		// Update the body with the stack section
-		newBody := updateBodyWithStack(pr.Body, stackSection, branch.Name == currentBranch)
-		if newBody != pr.Body {
+		newBody := stackDescriptionBody(stack, branch.Name, pr.Body, prCount)
+		if bodyNeedsUpdate(newBody, pr.Body) {
 			if err := c.UpdatePR(branch.PRNumber, newBody); err != nil {
 				return fmt.Errorf("failed to update PR #%d: %w", branch.PRNumber, err)
 			}
@@ -513,21 +494,7 @@ func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch strin
 
 // UpdateStackDescriptionCached updates PR descriptions using pre-fetched PR data to avoid extra API calls.
 func (c *Client) UpdateStackDescriptionCached(stack *config.Stack, currentBranch string, prMap map[int]*PR) error {
-	// Count how many PRs are in the stack (including root PR if present)
-	prCount := 0
-	if stack.RootPRNumber > 0 {
-		prCount++
-	}
-	for _, branch := range stack.Branches {
-		if branch.PRNumber > 0 {
-			prCount++
-		}
-	}
-
-	// Only update descriptions when there are 2+ PRs in the stack
-	if prCount < 2 {
-		return nil
-	}
+	prCount := stackPRCount(stack)
 
 	for _, branch := range stack.Branches {
 		if branch.PRNumber == 0 {
@@ -540,9 +507,8 @@ func (c *Client) UpdateStackDescriptionCached(stack *config.Stack, currentBranch
 			continue
 		}
 
-		stackSection := generateStackSection(stack, branch.Name)
-		newBody := updateBodyWithStack(pr.Body, stackSection, branch.Name == currentBranch)
-		if newBody != pr.Body {
+		newBody := stackDescriptionBody(stack, branch.Name, pr.Body, prCount)
+		if bodyNeedsUpdate(newBody, pr.Body) {
 			if err := c.UpdatePR(branch.PRNumber, newBody); err != nil {
 				return fmt.Errorf("failed to update PR #%d: %w", branch.PRNumber, err)
 			}
@@ -550,6 +516,34 @@ func (c *Client) UpdateStackDescriptionCached(stack *config.Stack, currentBranch
 	}
 
 	return nil
+}
+
+// stackPRCount counts how many PRs are in the stack, including the root PR if present.
+func stackPRCount(stack *config.Stack) int {
+	count := 0
+	if stack.RootPRNumber > 0 {
+		count++
+	}
+	for _, branch := range stack.Branches {
+		if branch.PRNumber > 0 {
+			count++
+		}
+	}
+	return count
+}
+
+// stackDescriptionBody renders what a PR's body should look like given the current
+// stack membership. A stack section is only appended when there are 2+ PRs in the
+// stack; below that threshold any previously-appended section is stripped rather
+// than left in place, since a lone remaining PR still carrying a stale multi-PR
+// stack list (e.g. after siblings were merged/unstacked) is itself a bug — see
+// stripStackSections.
+func stackDescriptionBody(stack *config.Stack, branchName, currentBody string, prCount int) string {
+	if prCount < 2 {
+		return strings.TrimSpace(stripStackSections(normalizeBody(currentBody)))
+	}
+	stackSection := generateStackSection(stack, branchName)
+	return updateBodyWithStack(currentBody, stackSection)
 }
 
 func generateStackSection(stack *config.Stack, currentPRBranch string) string {
@@ -595,20 +589,77 @@ func generateStackSection(stack *config.Stack, currentPRBranch string) string {
 	return sb.String()
 }
 
-func updateBodyWithStack(body, stackSection string, isCurrent bool) string {
-	// Normalize line endings (GitHub API may return \r\n)
-	body = strings.ReplaceAll(body, "\r\n", "\n")
-	body = strings.ReplaceAll(body, "\r", "\n")
-
-	// Remove existing stack section - it's always appended at the end,
-	// so we just truncate from the first "---\n## PR Stack" marker onwards
-	for _, marker := range []string{"---\n## PR Stack", "---\n## 📚 PR Stack"} {
-		if idx := strings.Index(body, marker); idx != -1 {
-			body = body[:idx]
-			break
-		}
-	}
+func updateBodyWithStack(body, stackSection string) string {
+	body = normalizeBody(body)
+	body = stripStackSections(body)
 
 	// Add new stack section
 	return strings.TrimSpace(body) + stackSection
+}
+
+// stackSectionMarkers are every known form of the "---\n## ... PR Stack" heading
+// that ezstack (current or historical) has ever emitted at the start of its
+// appended-at-end PR-stack section. Because the section is always appended at
+// the end, truncating body at the EARLIEST byte position of any known marker
+// deletes the whole section — and collapses any accidental duplicates that
+// older versions left behind. The emoji variant was never emitted by the
+// generator in git history, but bodies in the wild (or manually edited PRs)
+// may contain it, so we still recognize it defensively.
+var stackSectionMarkers = []string{
+	"---\n## PR Stack",
+	"---\n## 📚 PR Stack",
+}
+
+// stripStackSections removes every previously-appended ezstack "PR Stack"
+// section from body. Because the section is always appended at the end,
+// truncating at the earliest occurrence of any known marker also drops
+// every later duplicate section — so N sections collapse down to zero on
+// a single call. Callers append exactly one fresh section afterwards.
+//
+// The earliest-across-all-markers scan (rather than picking the first
+// marker in a fixed order) is what makes this dedup work when a body has
+// mixed marker variants — e.g. an emoji-style section left over from a
+// historical writer followed by a current no-emoji section. Truncating at
+// only the first-encountered marker in list order would leave the earlier
+// variant intact and re-duplicate on the next append.
+func stripStackSections(body string) string {
+	earliest := -1
+	for _, marker := range stackSectionMarkers {
+		idx := strings.Index(body, marker)
+		if idx < 0 {
+			continue
+		}
+		if earliest < 0 || idx < earliest {
+			earliest = idx
+		}
+	}
+	if earliest < 0 {
+		return body
+	}
+	return body[:earliest]
+}
+
+// normalizeBody canonicalizes a PR body so that bodies which differ only in
+// line endings can be compared. GitHub returns bodies with \r\n on some
+// platforms; we rewrite them to \n.
+func normalizeBody(body string) string {
+	body = strings.ReplaceAll(body, "\r\n", "\n")
+	body = strings.ReplaceAll(body, "\r", "\n")
+	return body
+}
+
+// bodyNeedsUpdate reports whether the freshly generated body differs from the
+// PR's current body in a way worth pushing to GitHub.
+//
+// GitHub appends a trailing newline (and may use \r\n) when it stores a body,
+// so a byte-for-byte comparison of our generated body against the fetched body
+// is ALWAYS unequal — even when the rendered content is identical. Without this
+// normalization, ezstack rewrites every PR body on every push/sync/update,
+// re-firing "edited" events and notifications on the whole stack. We therefore
+// compare after normalizing line endings and trailing whitespace.
+func bodyNeedsUpdate(newBody, currentBody string) bool {
+	trim := func(s string) string {
+		return strings.TrimRight(normalizeBody(s), "\n")
+	}
+	return trim(newBody) != trim(currentBody)
 }

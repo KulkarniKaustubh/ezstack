@@ -69,7 +69,7 @@ Verify the install:
 
 ```bash
 ezs --version
-# → ezstack version 4.8.4
+# → ezstack version 4.8.5
 ```
 
 ### 2. Wire up shell integration
@@ -2408,14 +2408,14 @@ checks, and review status) and a per-branch file browser. Auto-refreshes when
 
 ```bash
 # Pre-built (from the Releases page)
-code --install-extension ezstack-4.8.4.vsix
+code --install-extension ezstack-4.8.5.vsix
 
 # From source
 cd vscode-extension
 npm install
 npm run compile
 npx vsce package
-code --install-extension ezstack-4.8.4.vsix
+code --install-extension ezstack-4.8.5.vsix
 ```
 
 **Commands** are available under the `ezstack:` prefix in the command palette
