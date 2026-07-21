@@ -164,6 +164,33 @@ export function StackNode({ branch, isSelected, onClick, actions }: StackNodePro
           {branch.pr_number && (
             <span className="text-xs text-muted-foreground font-mono">#{branch.pr_number}</span>
           )}
+          {/* Public-fork stacking chips: cross-repo upstream, fork-side
+              intermediate, or promote-pending alert. Sit immediately
+              right of the PR # so reviewers see them on the same row. */}
+          {branch.pr_target_repo === "upstream" && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded bg-purple-600/20 border border-purple-600/40 text-purple-300 font-mono whitespace-nowrap"
+              title={`Cross-repo PR in ${branch.pr_target_repo_label || "upstream"}`}
+            >
+              ↑ {branch.pr_target_repo_label || "upstream"}
+            </span>
+          )}
+          {branch.pr_target_repo === "fork" && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded bg-amber-600/20 text-amber-300 font-mono"
+              title="PR lives in your fork (intermediate stack PR)"
+            >
+              fork
+            </span>
+          )}
+          {branch.is_promote_pending && (
+            <span
+              className="text-[10px] px-1.5 py-0.5 rounded bg-rose-600/30 text-rose-300 font-mono animate-pulse"
+              title="Parent merged in upstream — run `ezs pr promote` to advance"
+            >
+              ⇡ promote
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <ReviewBadge state={branch.review_state} />

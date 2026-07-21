@@ -137,6 +137,54 @@ describe("BranchNode", () => {
     });
   });
 
+  describe("public-fork stacking chips", () => {
+    it("shows ↑upstream chip for cross-repo PR", () => {
+      const node = new BranchNode(
+        makeBranch({
+          pr_number: 100,
+          pr_target_repo: "upstream",
+          pr_target_repo_label: "kubernetes/kubernetes",
+        }),
+        "abc123",
+        false,
+      );
+      expect(node.description).toContain("[↑kubernetes/kubernetes]");
+    });
+
+    it("shows [fork] chip for fork-side intermediate PR", () => {
+      const node = new BranchNode(
+        makeBranch({ pr_number: 101, pr_target_repo: "fork" }),
+        "abc123",
+        false,
+      );
+      expect(node.description).toContain("[fork]");
+    });
+
+    it("shows promote-pending alert when parent merged in upstream", () => {
+      const node = new BranchNode(
+        makeBranch({
+          pr_number: 101,
+          pr_target_repo: "fork",
+          is_promote_pending: true,
+        }),
+        "abc123",
+        false,
+      );
+      expect(node.description).toContain("⇡ promote");
+    });
+
+    it("omits chips for classic single-repo PRs (no fork mode)", () => {
+      const node = new BranchNode(
+        makeBranch({ pr_number: 50, pr_state: "OPEN" }),
+        "abc123",
+        false,
+      );
+      const desc = node.description as string;
+      expect(desc).not.toContain("[fork]");
+      expect(desc).not.toContain("↑");
+      expect(desc).not.toContain("⇡");
+    });
+  });
   // is_remote drives the (remote) tag in the CLI's `ezs ls`. Without a
   // matching tag in VS Code, the tree silently presented pickup branches
   // (`ezs new origin/<branch>`) as if they were the user's own — the

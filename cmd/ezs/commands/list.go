@@ -106,13 +106,35 @@ func List(args []string) error {
 	}
 
 	if *jsonFlag {
-		return printStacksJSON(stacksToShow, currentBranch, diffMaps)
+		return printStacksJSONWithFork(stacksToShow, currentBranch, diffMaps, buildForkModeJSONContext(g, mgr))
 	}
 
 	for i, s := range stacksToShow {
 		ui.PrintStack(s, currentBranch, false, diffMaps[i])
 	}
 	return nil
+}
+
+// buildForkModeJSONContext assembles the per-call fork-mode metadata for
+// the JSON printers. Returns nil when fork mode is not enabled (so legacy
+// non-fork output is byte-identical). Reads cached config only — never
+// prompts or hits GitHub.
+func buildForkModeJSONContext(g *git.Git, mgr *stack.Manager) *forkModeJSONContext {
+	up := UpstreamFromConfig(mgr)
+	if up == nil {
+		return nil
+	}
+	originLabel := ""
+	if originURL, err := g.GetRemote("origin"); err == nil {
+		if c, err := github.NewClient(originURL); err == nil {
+			originLabel = c.Owner() + "/" + c.Repo()
+		}
+	}
+	return &forkModeJSONContext{
+		IsForkStack: mgr.IsForkStack,
+		OriginLabel: originLabel,
+		Up:          up,
+	}
 }
 
 // stackJSON represents a stack in JSON output
@@ -127,6 +149,15 @@ type stackJSON struct {
 	RootAdds     int          `json:"root_additions,omitempty"`
 	RootDels     int          `json:"root_deletions,omitempty"`
 	Branches     []branchJSON `json:"branches"`
+
+	// Public-fork stacking fields. Populated only when fork mode is enabled
+	// and this stack is rooted on the upstream's default branch. UI clients
+	// (VSCode, Tauri, nvim) use these to render the "fork → upstream/repo"
+	// indicator and the per-branch PR-target chip.
+	IsForkMode            bool   `json:"is_fork_mode,omitempty"`
+	UpstreamRepo          string `json:"upstream_repo,omitempty"` // "owner/repo"
+	UpstreamRemote        string `json:"upstream_remote,omitempty"`
+	UpstreamDefaultBranch string `json:"upstream_default_branch,omitempty"`
 }
 
 // branchJSON represents a branch in JSON output
@@ -141,6 +172,15 @@ type branchJSON struct {
 	WorktreePath string `json:"worktree_path,omitempty"`
 	Additions    int    `json:"additions"`
 	Deletions    int    `json:"deletions"`
+
+	// Public-fork stacking fields.
+	// PRTargetRepo: "" (origin / classic), "fork", or "upstream".
+	// PRTargetRepoLabel: human-readable "owner/repo" the PR lives in.
+	// PreviousPRNumber: when this branch's PR was promoted from fork to
+	//   upstream via close-and-reopen, the fork-side PR # that was closed.
+	PRTargetRepo      string `json:"pr_target_repo,omitempty"`
+	PRTargetRepoLabel string `json:"pr_target_repo_label,omitempty"`
+	PreviousPRNumber  int    `json:"previous_pr_number,omitempty"`
 }
 
 // statusStackJSON represents a stack in JSON status output (with PR/CI info)
@@ -155,6 +195,11 @@ type statusStackJSON struct {
 	RootAdds     int                `json:"root_additions,omitempty"`
 	RootDels     int                `json:"root_deletions,omitempty"`
 	Branches     []statusBranchJSON `json:"branches"`
+
+	IsForkMode            bool   `json:"is_fork_mode,omitempty"`
+	UpstreamRepo          string `json:"upstream_repo,omitempty"`
+	UpstreamRemote        string `json:"upstream_remote,omitempty"`
+	UpstreamDefaultBranch string `json:"upstream_default_branch,omitempty"`
 }
 
 // statusBranchJSON extends branchJSON with PR and CI status fields.
@@ -168,10 +213,61 @@ type statusBranchJSON struct {
 	CISummary   string `json:"ci_summary,omitempty"`
 	Mergeable   string `json:"mergeable,omitempty"`
 	ReviewState string `json:"review_state,omitempty"`
+
+	// IsPromotePending: this branch's parent has a merged upstream PR but
+	// this branch's PR is still fork-side. UI clients render an alert
+	// chip and link to `ezs pr promote`.
+	IsPromotePending bool `json:"is_promote_pending,omitempty"`
+}
+
+// forkModeJSONContext carries the per-repo fork-mode metadata that the
+// JSON printers need in order to populate the IsForkMode / UpstreamRepo /
+// PRTargetRepoLabel / IsPromotePending fields. nil ⇒ classic single-repo
+// output (back-compat with legacy callers and tests).
+type forkModeJSONContext struct {
+	IsForkStack func(*config.Stack) bool // returns true if the stack is fork-mode
+	OriginLabel string                   // "owner/repo" of origin (the contributor's fork)
+	Up          *upstreamInfo            // cached upstream info; nil ⇒ no upstream
+}
+
+// branchTargetLabel resolves the human-readable "owner/repo" for a branch
+// based on its PRTargetRepo. Returns "" when fork mode is off.
+func (fm *forkModeJSONContext) branchTargetLabel(b *config.Branch) string {
+	if fm == nil || fm.Up == nil {
+		return ""
+	}
+	switch b.PRTargetRepo {
+	case config.PRTargetRepoUpstream:
+		return fm.Up.Label()
+	case config.PRTargetRepoFork:
+		return fm.OriginLabel
+	}
+	return ""
+}
+
+// promotePendingFor reports whether a branch's parent has merged in
+// upstream while this branch's PR is still fork-side — see
+// detectPromoteCandidatesInStack for the rule. Caller is expected to pass
+// in the parent branch already resolved (via parentByName).
+func (fm *forkModeJSONContext) promotePendingFor(b *config.Branch, parent *config.Branch) bool {
+	if fm == nil || fm.Up == nil || !fm.Up.Enabled {
+		return false
+	}
+	if b.PRTargetRepo == config.PRTargetRepoUpstream {
+		return false
+	}
+	if parent == nil {
+		return false
+	}
+	return parent.PRTargetRepo == config.PRTargetRepoUpstream && parent.IsMerged
 }
 
 // printStacksJSON outputs stacks as JSON to stdout
 func printStacksJSON(stacks []*config.Stack, currentBranch string, diffMaps []map[string]*ui.BranchStatus) error {
+	return printStacksJSONWithFork(stacks, currentBranch, diffMaps, nil)
+}
+
+func printStacksJSONWithFork(stacks []*config.Stack, currentBranch string, diffMaps []map[string]*ui.BranchStatus, fm *forkModeJSONContext) error {
 	result := make([]stackJSON, 0, len(stacks))
 	for i, s := range stacks {
 		sj := stackJSON{
@@ -183,6 +279,12 @@ func printStacksJSON(stacks []*config.Stack, currentBranch string, diffMaps []ma
 			RootPRUrl:    s.RootPRUrl,
 			RootIsRemote: s.RootIsRemote,
 			Branches:     make([]branchJSON, 0, len(s.Branches)),
+		}
+		if fm != nil && fm.IsForkStack != nil && fm.IsForkStack(s) && fm.Up != nil {
+			sj.IsForkMode = true
+			sj.UpstreamRepo = fm.Up.Label()
+			sj.UpstreamRemote = fm.Up.Remote
+			sj.UpstreamDefaultBranch = fm.Up.DefaultBranch
 		}
 		var dm map[string]*ui.BranchStatus
 		if i < len(diffMaps) {
@@ -196,14 +298,17 @@ func printStacksJSON(stacks []*config.Stack, currentBranch string, diffMaps []ma
 		}
 		for _, b := range s.Branches {
 			bj := branchJSON{
-				Name:         b.Name,
-				Parent:       b.Parent,
-				IsMerged:     b.IsMerged,
-				IsCurrent:    b.Name == currentBranch,
-				IsRemote:     b.IsRemote,
-				PRNumber:     b.PRNumber,
-				PRUrl:        b.PRUrl,
-				WorktreePath: b.WorktreePath,
+				Name:              b.Name,
+				Parent:            b.Parent,
+				IsMerged:          b.IsMerged,
+				IsCurrent:         b.Name == currentBranch,
+				IsRemote:          b.IsRemote,
+				PRNumber:          b.PRNumber,
+				PRUrl:             b.PRUrl,
+				WorktreePath:      b.WorktreePath,
+				PRTargetRepo:      b.PRTargetRepo,
+				PRTargetRepoLabel: fm.branchTargetLabel(b),
+				PreviousPRNumber:  b.PreviousPRNumber,
 			}
 			if dm != nil {
 				if bs, ok := dm[b.Name]; ok {
@@ -222,6 +327,10 @@ func printStacksJSON(stacks []*config.Stack, currentBranch string, diffMaps []ma
 
 // printStacksStatusJSON outputs stacks with PR/CI status as JSON to stdout
 func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusMaps []map[string]*ui.BranchStatus) error {
+	return printStacksStatusJSONWithFork(stacks, currentBranch, statusMaps, nil)
+}
+
+func printStacksStatusJSONWithFork(stacks []*config.Stack, currentBranch string, statusMaps []map[string]*ui.BranchStatus, fm *forkModeJSONContext) error {
 	result := make([]statusStackJSON, 0, len(stacks))
 	for i, s := range stacks {
 		sj := statusStackJSON{
@@ -233,6 +342,18 @@ func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusM
 			RootPRUrl:    s.RootPRUrl,
 			RootIsRemote: s.RootIsRemote,
 			Branches:     make([]statusBranchJSON, 0, len(s.Branches)),
+		}
+		if fm != nil && fm.IsForkStack != nil && fm.IsForkStack(s) && fm.Up != nil {
+			sj.IsForkMode = true
+			sj.UpstreamRepo = fm.Up.Label()
+			sj.UpstreamRemote = fm.Up.Remote
+			sj.UpstreamDefaultBranch = fm.Up.DefaultBranch
+		}
+		// Index branches by name once so we can look up parents for
+		// is_promote_pending in O(1) per branch.
+		parentByName := make(map[string]*config.Branch, len(s.Branches))
+		for _, b := range s.Branches {
+			parentByName[b.Name] = b
 		}
 		var sm map[string]*ui.BranchStatus
 		if i < len(statusMaps) {
@@ -247,15 +368,19 @@ func printStacksStatusJSON(stacks []*config.Stack, currentBranch string, statusM
 		for _, b := range s.Branches {
 			sbj := statusBranchJSON{
 				branchJSON: branchJSON{
-					Name:         b.Name,
-					Parent:       b.Parent,
-					IsMerged:     b.IsMerged,
-					IsCurrent:    b.Name == currentBranch,
-					IsRemote:     b.IsRemote,
-					PRNumber:     b.PRNumber,
-					PRUrl:        b.PRUrl,
-					WorktreePath: b.WorktreePath,
+					Name:              b.Name,
+					Parent:            b.Parent,
+					IsMerged:          b.IsMerged,
+					IsCurrent:         b.Name == currentBranch,
+					IsRemote:          b.IsRemote,
+					PRNumber:          b.PRNumber,
+					PRUrl:             b.PRUrl,
+					WorktreePath:      b.WorktreePath,
+					PRTargetRepo:      b.PRTargetRepo,
+					PRTargetRepoLabel: fm.branchTargetLabel(b),
+					PreviousPRNumber:  b.PreviousPRNumber,
 				},
+				IsPromotePending: fm.promotePendingFor(b, parentByName[b.Parent]),
 			}
 			if sm != nil {
 				if bs, ok := sm[b.Name]; ok {
@@ -435,9 +560,10 @@ func Status(args []string) error {
 	}
 
 	// printOrJSON prints stacks to terminal or outputs JSON based on --json flag
+	forkCtx := buildForkModeJSONContext(g, mgr)
 	printOrJSON := func(targetStacks []*config.Stack, statusMaps []map[string]*ui.BranchStatus) error {
 		if *jsonFlag {
-			return printStacksStatusJSON(targetStacks, currentBranch, statusMaps)
+			return printStacksStatusJSONWithFork(targetStacks, currentBranch, statusMaps, forkCtx)
 		}
 		for i, s := range targetStacks {
 			var sm map[string]*ui.BranchStatus

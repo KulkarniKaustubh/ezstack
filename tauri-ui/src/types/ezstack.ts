@@ -16,6 +16,15 @@ export interface Branch {
   // frontend reads them on the StatusBranch subclass via inheritance.
   additions?: number;
   deletions?: number;
+  // Public-fork stacking: where this branch's PR lives. "" = origin
+  // (classic), "fork" = same-repo within the contributor's fork
+  // (intermediate), "upstream" = cross-repo PR in upstream parent (bottom).
+  pr_target_repo?: "" | "fork" | "upstream";
+  // Human-readable "owner/repo" the PR lives in.
+  pr_target_repo_label?: string;
+  // When this branch's PR was promoted from a fork-side PR to a cross-
+  // repo PR via close-and-reopen, this is the closed fork-side PR #.
+  previous_pr_number?: number;
 }
 
 export interface StatusBranch extends Branch {
@@ -25,6 +34,9 @@ export interface StatusBranch extends Branch {
   mergeable?: "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
   review_state?: "APPROVED" | "CHANGES_REQUESTED" | "REVIEW_REQUIRED";
   // additions/deletions are inherited from Branch above.
+  // Public-fork stacking: parent merged in upstream while this branch's
+  // PR is still fork-side. Run `ezs pr promote` to advance the chain.
+  is_promote_pending?: boolean;
 }
 
 // Stack root metadata. The CLI emits these so the desktop can display the
@@ -41,6 +53,12 @@ export interface StackRootInfo {
   root_is_remote?: boolean;
   root_additions?: number;
   root_deletions?: number;
+  // Public-fork stacking — true when this stack roots on the upstream
+  // default branch and fork mode is enabled for the repo.
+  is_fork_mode?: boolean;
+  upstream_repo?: string;
+  upstream_remote?: string;
+  upstream_default_branch?: string;
 }
 
 export interface StatusStack extends StackRootInfo {

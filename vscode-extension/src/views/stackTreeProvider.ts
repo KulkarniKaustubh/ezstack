@@ -29,16 +29,28 @@ export class StackNode extends vscode.TreeItem {
     // `(remote)` next to the root so the tree explains the same context as
     // `ezs ls`. Without this, VS Code users couldn't tell their stack was
     // anchored on someone else's PR vs. their own branch.
-    this.description = stack.root_is_remote
+    const rootLabel = stack.root_is_remote
       ? `root: ${stack.root} (remote)`
       : `root: ${stack.root}`;
+    const descParts = [rootLabel];
+    // Public-fork stacking: surface the upstream parent so the user can
+    // see at a glance that this stack contributes cross-repo.
+    if (stack.is_fork_mode && stack.upstream_repo) {
+      descParts.push(`fork → ${stack.upstream_repo}`);
+    }
+    this.description = descParts.join("  ·  ");
     this.iconPath = new vscode.ThemeIcon("layers");
-    // contextValue stays "stack" regardless of root_is_remote so the menu
-    // entries gated on `viewItem == stack` (renameStack, sync, newBranch,
-    // prRefresh, prUnlink, openAgent, openAgentFeature, editAgentPrompt)
-    // still appear on pickup-rooted stacks. The (remote) cue lives in
-    // description + tooltip; it's a label, not a capability gate.
-    this.contextValue = "stack";
+    // contextValue is "stackFork" for fork-mode stacks (fork-specific menu
+    // entries key off it); otherwise "stack" — including pickup-rooted
+    // stacks (root_is_remote), where (remote) is a label, not a capability
+    // gate, so menu entries gated on `viewItem == stack` still appear.
+    this.contextValue = stack.is_fork_mode ? "stackFork" : "stack";
+    if (stack.is_fork_mode && stack.upstream_repo) {
+      const md = new vscode.MarkdownString();
+      md.appendMarkdown(`**Fork mode** — bottom PR cross-repo to **${stack.upstream_repo}**, intermediates in your fork.\n\n`);
+      md.appendMarkdown(`Run \`ezs pr promote\` after the bottom PR merges to advance the chain.`);
+      this.tooltip = md;
+    }
   }
 }
 
@@ -88,6 +100,17 @@ export class BranchNode extends vscode.TreeItem {
     }
     if (b.pr_state) {
       parts.push(`[${b.pr_state}]`);
+    }
+    // Public-fork stacking chip: render right after the PR # so reviewers
+    // see "PR #123 [↑org/repo]" for cross-repo and "[fork]" for fork-side
+    // intermediates. Promote-pending alert sits next to it for urgency.
+    if (b.pr_target_repo === "upstream") {
+      parts.push(`[↑${b.pr_target_repo_label || "upstream"}]`);
+    } else if (b.pr_target_repo === "fork") {
+      parts.push("[fork]");
+    }
+    if (b.is_promote_pending) {
+      parts.push("⇡ promote");
     }
     if (b.ci_summary) {
       parts.push(`CI: ${b.ci_summary}`);
@@ -174,6 +197,17 @@ export class BranchNode extends vscode.TreeItem {
         md.appendMarkdown(` (${b.pr_state})`);
       }
       md.appendMarkdown("\n\n");
+      if (b.pr_target_repo === "upstream" && b.pr_target_repo_label) {
+        md.appendMarkdown(`Cross-repo PR in **${b.pr_target_repo_label}**\n\n`);
+      } else if (b.pr_target_repo === "fork" && b.pr_target_repo_label) {
+        md.appendMarkdown(`Fork-side PR in **${b.pr_target_repo_label}**\n\n`);
+      }
+      if (b.previous_pr_number) {
+        md.appendMarkdown(`Replaces #${b.previous_pr_number}\n\n`);
+      }
+      if (b.is_promote_pending) {
+        md.appendMarkdown(`**Promotion pending** — run \`ezs pr promote\` to close-and-reopen this PR cross-repo against upstream.\n\n`);
+      }
     }
     if (b.ci_state && b.ci_state !== "none") {
       md.appendMarkdown(`CI: ${b.ci_state}`);

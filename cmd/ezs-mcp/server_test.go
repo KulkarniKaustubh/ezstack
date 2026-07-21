@@ -108,6 +108,12 @@ func TestListTools_Registered(t *testing.T) {
 		"ezstack_config_set",
 		"ezstack_config_export",
 		"ezstack_config_import",
+		// Public-fork stacking
+		"ezstack_pr_promote",
+		"ezstack_upstream_show",
+		"ezstack_upstream_set",
+		"ezstack_upstream_unset",
+		"ezstack_upstream_init",
 	}
 	sort.Strings(want)
 	var got []string

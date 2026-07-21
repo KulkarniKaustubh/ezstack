@@ -104,7 +104,19 @@ export function StackColumn({ stack, selectedBranch, onSelectBranch, onRename, o
       <div className="flex items-center gap-2 px-3 py-2.5 border-b" onContextMenu={onContextMenu}>
         <div className={cn("h-2 w-2 rounded-full shrink-0", getStackHealthColor(stack))} />
         <div className="min-w-0 flex-1">
-          <div className="text-sm font-semibold truncate">{displayName}</div>
+          <div className="text-sm font-semibold truncate flex items-center gap-1.5">
+            <span className="truncate">{displayName}</span>
+            {/* Public-fork stacking: surface upstream parent so reviewers
+                see at a glance that this stack contributes cross-repo. */}
+            {stack.is_fork_mode && stack.upstream_repo && (
+              <span
+                className="text-[9px] px-1 py-0.5 rounded bg-purple-600/20 border border-purple-600/40 text-purple-300 font-mono whitespace-nowrap"
+                title={`Fork mode → ${stack.upstream_repo}. Bottom PR cross-repo to upstream; intermediates in your fork.`}
+              >
+                fork → {stack.upstream_repo}
+              </span>
+            )}
+          </div>
           <div className="text-[10px] text-muted-foreground font-mono">
             {stack.root}
             {stack.root_is_remote && <RemoteTag kind="stack" className="ml-1" />}

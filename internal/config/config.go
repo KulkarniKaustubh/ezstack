@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/spf13/viper"
 )
@@ -69,6 +70,20 @@ type RepoConfig struct {
 	InitSubmodules      *bool  `json:"init_submodules,omitempty"` // Mirror main worktree's initialized submodules into new worktrees (default: true)
 	SyncStrategy        string `json:"sync_strategy,omitempty"`   // "rebase" (default) or "merge"
 	AgentCommand        string `json:"agent_command,omitempty"`   // AI agent CLI command (default: "claude")
+
+	// ForkMode controls public-fork stacked-PR routing for this repo:
+	//   ""/"auto"  — detect on first `pr create`; prompt the user once.
+	//   "enabled"  — origin is a fork; bottom PRs target upstream, intermediates target the fork.
+	//   "disabled" — never treat origin as a fork; all PRs target origin (classic behavior).
+	ForkMode string `json:"fork_mode,omitempty"`
+
+	// Upstream{Owner,Repo,Remote,DefaultBranch,DetectedAt}: cached metadata
+	// for the parent repo on GitHub when ForkMode == "enabled".
+	UpstreamOwner         string `json:"upstream_owner,omitempty"`
+	UpstreamRepo          string `json:"upstream_repo,omitempty"`
+	UpstreamRemote        string `json:"upstream_remote,omitempty"` // local git remote name; defaults to "upstream"
+	UpstreamDefaultBranch string `json:"upstream_default_branch,omitempty"`
+	UpstreamDetectedAt    int64  `json:"upstream_detected_at,omitempty"`
 }
 
 // GetAgentCommand returns the configured agent command, defaulting to "claude".
@@ -148,6 +163,87 @@ func (c *Config) GetSyncStrategy(repoPath string) string {
 	return "rebase"
 }
 
+// ForkMode constants for RepoConfig.ForkMode.
+const (
+	ForkModeAuto     = "auto"
+	ForkModeEnabled  = "enabled"
+	ForkModeDisabled = "disabled"
+)
+
+// GetForkMode returns the fork-mode setting for a repo.
+// Defaults to "auto" when unset, meaning detection runs lazily on first PR
+// command.
+func (c *Config) GetForkMode(repoPath string) string {
+	if repoCfg := c.GetRepoConfig(repoPath); repoCfg != nil && repoCfg.ForkMode != "" {
+		return repoCfg.ForkMode
+	}
+	return ForkModeAuto
+}
+
+// GetUpstream returns (owner, repo, remote, defaultBranch) for the repo's
+// upstream, or four empty strings when no upstream is configured. The remote
+// defaults to "upstream" when an owner is set but the remote name was left
+// blank.
+func (c *Config) GetUpstream(repoPath string) (owner, repo, remote, defaultBranch string) {
+	rc := c.GetRepoConfig(repoPath)
+	if rc == nil {
+		return "", "", "", ""
+	}
+	rem := rc.UpstreamRemote
+	if rem == "" && rc.UpstreamOwner != "" {
+		rem = "upstream"
+	}
+	return rc.UpstreamOwner, rc.UpstreamRepo, rem, rc.UpstreamDefaultBranch
+}
+
+// SetUpstream persists upstream metadata for the repo and flips ForkMode to
+// "enabled". If the RepoConfig doesn't yet exist for repoPath, it's created.
+// Stamps UpstreamDetectedAt with the current Unix time for staleness checks.
+func (c *Config) SetUpstream(repoPath, owner, repo, remote, defaultBranch string) {
+	rc := c.GetRepoConfig(repoPath)
+	if rc == nil {
+		rc = &RepoConfig{RepoPath: repoPath}
+	}
+	rc.UpstreamOwner = owner
+	rc.UpstreamRepo = repo
+	if remote == "" {
+		remote = "upstream"
+	}
+	rc.UpstreamRemote = remote
+	rc.UpstreamDefaultBranch = defaultBranch
+	rc.UpstreamDetectedAt = time.Now().Unix()
+	rc.ForkMode = ForkModeEnabled
+	c.SetRepoConfig(repoPath, rc)
+}
+
+// ClearUpstream removes upstream metadata and flips ForkMode to "disabled" so
+// detection won't re-prompt. Used by `ezs upstream unset` and as the
+// auto-lock when detection finds origin is not a fork.
+func (c *Config) ClearUpstream(repoPath string) {
+	rc := c.GetRepoConfig(repoPath)
+	if rc == nil {
+		rc = &RepoConfig{RepoPath: repoPath}
+	}
+	rc.UpstreamOwner = ""
+	rc.UpstreamRepo = ""
+	rc.UpstreamRemote = ""
+	rc.UpstreamDefaultBranch = ""
+	rc.UpstreamDetectedAt = time.Now().Unix()
+	rc.ForkMode = ForkModeDisabled
+	c.SetRepoConfig(repoPath, rc)
+}
+
+// SetForkMode sets ForkMode without touching upstream metadata. Used by
+// `ezs upstream auto` and `ezs upstream disable`.
+func (c *Config) SetForkMode(repoPath, mode string) {
+	rc := c.GetRepoConfig(repoPath)
+	if rc == nil {
+		rc = &RepoConfig{RepoPath: repoPath}
+	}
+	rc.ForkMode = mode
+	c.SetRepoConfig(repoPath, rc)
+}
+
 // BranchTree is a recursive map representing the stack hierarchy
 // Each key is a branch name, and its value is another BranchTree of its children
 type BranchTree map[string]BranchTree
@@ -160,7 +256,7 @@ type repoData struct {
 
 // currentStackConfigVersion is the latest version of the stacks.json format.
 // Bump this when adding a new migration.
-const currentStackConfigVersion = 5
+const currentStackConfigVersion = 6
 
 // stackConfigFile is the on-disk format that stores stacks for all repos
 type stackConfigFile struct {
@@ -290,7 +386,27 @@ type BranchCache struct {
 	// "work" on write and consumed by `ezs agent ls --feature` to filter rows.
 	// Empty on legacy entries written before mode tracking; treated as "work".
 	AgentSessionMode string `json:"agent_session_mode,omitempty"`
+	// PRTargetRepo records which repo hosts this branch's PR for public-fork
+	// stacking. "" (default) means origin (classic, single-repo flow).
+	// "fork" — same-repo PR within the contributor's fork (intermediate).
+	// "upstream" — cross-repo PR in the upstream (parent) repo (bottom).
+	// Used by `pr refresh`, `pr update`, and `pr promote` to point gh at
+	// the right repo without re-querying GitHub for every branch.
+	PRTargetRepo string `json:"pr_target_repo,omitempty"`
+	// PreviousPRNumber records the PR # that was closed when this branch's
+	// PR was promoted from a fork-side PR to a cross-repo PR (close-and-
+	// reopen flow — no API can change a PR's base repo). Used to render
+	// "Replaces #N" links and surfaces in promote diagnostics. 0 means
+	// the branch's PR was never promoted.
+	PreviousPRNumber int `json:"previous_pr_number,omitempty"`
 }
+
+// PRTargetRepo constants for BranchCache.PRTargetRepo / Branch.PRTargetRepo.
+const (
+	PRTargetRepoOrigin   = ""         // classic same-repo PR (no fork mode)
+	PRTargetRepoFork     = "fork"     // intermediate stack PR in the fork
+	PRTargetRepoUpstream = "upstream" // cross-repo PR in the upstream parent
+)
 
 // ClearPRFields zeroes the PR-association fields on this BranchCache while
 // preserving worktree, fork-remote, and is_remote metadata. Used by `ezs pr
@@ -321,16 +437,18 @@ type CacheConfig struct {
 
 // Branch represents a single branch in a stack, constructed from the tree and cache at runtime.
 type Branch struct {
-	Name         string `json:"name"`
-	Parent       string `json:"parent"`
-	WorktreePath string `json:"worktree_path"`
-	PRNumber     int    `json:"-"` // Runtime-only: derived from PRUrl via PRNumberFromURL
-	PRUrl        string `json:"pr_url,omitempty"`
-	PRState      string `json:"pr_state,omitempty"`  // Cached: "OPEN", "DRAFT", "MERGED", "CLOSED"
-	BaseBranch   string `json:"base_branch"`         // original tree parent, used for display ordering
-	IsRemote     bool   `json:"is_remote,omitempty"` // branch belongs to another contributor
-	IsMerged     bool   `json:"is_merged,omitempty"`
-	Remote       string `json:"remote,omitempty"` // Git remote to push to (empty means "origin")
+	Name             string `json:"name"`
+	Parent           string `json:"parent"`
+	WorktreePath     string `json:"worktree_path"`
+	PRNumber         int    `json:"-"` // Runtime-only: derived from PRUrl via PRNumberFromURL
+	PRUrl            string `json:"pr_url,omitempty"`
+	PRState          string `json:"pr_state,omitempty"`  // Cached: "OPEN", "DRAFT", "MERGED", "CLOSED"
+	BaseBranch       string `json:"base_branch"`         // original tree parent, used for display ordering
+	IsRemote         bool   `json:"is_remote,omitempty"` // branch belongs to another contributor
+	IsMerged         bool   `json:"is_merged,omitempty"`
+	Remote           string `json:"remote,omitempty"`             // Git remote to push to (empty means "origin")
+	PRTargetRepo     string `json:"pr_target_repo,omitempty"`     // "" (origin), "fork", or "upstream" — see BranchCache docstring
+	PreviousPRNumber int    `json:"previous_pr_number,omitempty"` // For promoted PRs (close-and-reopen)
 }
 
 // RemoteNoPush is a sentinel value indicating that push is not allowed for this branch
@@ -500,6 +618,7 @@ func migrateStackConfig(data []byte, srcVersion, dstVersion int) ([]byte, error)
 		migrateV2ToV3,
 		migrateV3ToV4,
 		migrateV4ToV5,
+		migrateV5ToV6,
 	}
 
 	for v := srcVersion; v < dstVersion; v++ {
@@ -894,6 +1013,24 @@ func migrateV4ToV5(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	file.Version = 5
+	return json.MarshalIndent(file, "", "  ")
+}
+
+// migrateV5ToV6 introduces optional BranchCache.PRTargetRepo and
+// PreviousPRNumber fields used by public-fork stacked-PR routing. No
+// structural change in stacks.json — the new fields are omitempty. The
+// version bump exists only so older ezstack binaries trip
+// refuseNewerStackConfig instead of silently dropping the new fields when
+// they next save.
+func migrateV5ToV6(data []byte) ([]byte, error) {
+	var file struct {
+		Version int                  `json:"version"`
+		Repos   map[string]*repoData `json:"repos"`
+	}
+	if err := json.Unmarshal(data, &file); err != nil {
+		return nil, err
+	}
+	file.Version = 6
 	return json.MarshalIndent(file, "", "  ")
 }
 
@@ -1863,6 +2000,8 @@ func (s *Stack) walkTree(treeParent, effectiveParent string, tree BranchTree, ca
 				branch.IsMerged = bc.IsMerged
 				branch.IsRemote = bc.IsRemote
 				branch.Remote = bc.Remote
+				branch.PRTargetRepo = bc.PRTargetRepo
+				branch.PreviousPRNumber = bc.PreviousPRNumber
 			}
 		}
 

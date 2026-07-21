@@ -98,6 +98,8 @@ func PR(args []string) error {
 		return prStack(args[1:])
 	case "refresh":
 		return prRefresh(args[1:])
+	case "promote":
+		return prPromote(args[1:])
 	default:
 		return fmt.Errorf("unknown pr command: %s. Run 'ezs pr --help' for available subcommands", args[0])
 	}
@@ -255,12 +257,25 @@ func prCreateAllDraft(currentStack *config.Stack, draft, force bool, aiGen aiPRG
 	}
 
 	g := git.New(cwd)
-	gh, err := newGitHubClient(g)
+	originGH, err := newGitHubClient(g)
 	if err != nil {
 		return err
 	}
 
 	mainWorktree := getMainWorktreePath(g)
+
+	// Public-fork stacking: detect upstream lazily so the bottom PR of a
+	// fork-mode stack lands cross-repo in upstream while intermediates stay
+	// in the contributor's fork. Returns nil silently when fork mode is
+	// disabled or origin isn't a fork.
+	mgr, mgrErr := stack.NewManager(cwd)
+	var up *upstreamInfo
+	if mgrErr == nil {
+		up, _ = EnsureUpstreamDetected(g, mgr)
+	}
+	// gh used for back-compat single-repo paths (e.g. updateStackDescriptions
+	// when fork mode is disabled). Fork-mode targets pick a per-branch client.
+	gh := originGH
 
 	branchesToCreate := []*config.Branch{}
 	for _, b := range currentStack.Branches {
@@ -377,7 +392,20 @@ func prCreateAllDraft(currentStack *config.Stack, draft, force bool, aiGen aiPRG
 			}
 		}
 
-		pr, err := gh.CreatePR(prTitle, prBody, b.Name, b.Parent, draft)
+		// Fork-mode aware target resolution: bottom of a fork-stack opens
+		// cross-repo in upstream, intermediates stay in the fork.
+		target, tErr := resolvePRTarget(g, mgr, b, up)
+		if tErr != nil {
+			ui.Warn(fmt.Sprintf("Failed to resolve PR target for %s: %v", b.Name, tErr))
+			failed++
+			continue
+		}
+		cl := gh
+		if target.IsCrossRepo {
+			cl = newGitHubClientForTarget(target.TargetOwner, target.TargetRepo)
+		}
+
+		pr, err := cl.CreatePR(prTitle, prBody, target.HeadRef, target.BaseRef, draft)
 		if err != nil {
 			ui.Warn(fmt.Sprintf("Failed to create PR for %s: %v", b.Name, err))
 			failed++
@@ -388,9 +416,29 @@ func prCreateAllDraft(currentStack *config.Stack, draft, force bool, aiGen aiPRG
 		b.PRUrl = pr.URL
 		b.PRState = prStateFromGitHub(pr)
 		b.IsMerged = pr.Merged
+		// Persist where this branch's PR lives so refresh/promote know
+		// which repo to address. "" stays the default for non-fork-mode.
+		newTargetRepo := ""
+		if up != nil && up.Enabled {
+			if target.IsCrossRepo {
+				newTargetRepo = config.PRTargetRepoUpstream
+			} else {
+				newTargetRepo = config.PRTargetRepoFork
+			}
+		}
+		b.PRTargetRepo = newTargetRepo
+		if mgrErr == nil && newTargetRepo != "" {
+			if err := mgr.SetBranchPRTarget(b.Name, newTargetRepo, 0); err != nil {
+				ui.Warn(fmt.Sprintf("Could not persist PR target for %s: %v", b.Name, err))
+			}
+		}
 		savePRToCache(mainWorktree, b.Name, pr)
 		created++
-		ui.Success(fmt.Sprintf("Created PR #%d for %s: %s", pr.Number, b.Name, pr.URL))
+		if target.IsCrossRepo {
+			ui.Success(fmt.Sprintf("Created cross-repo PR #%d for %s in %s/%s: %s", pr.Number, b.Name, target.TargetOwner, target.TargetRepo, pr.URL))
+		} else {
+			ui.Success(fmt.Sprintf("Created PR #%d for %s: %s", pr.Number, b.Name, pr.URL))
+		}
 	}
 
 	if created > 0 {
@@ -558,13 +606,31 @@ func prCreate(args []string) error {
 		return err
 	}
 
+	// Public-fork stacking: detect upstream lazily. resolvePRTarget below
+	// uses the result to decide whether this branch's PR should be created
+	// cross-repo against upstream (bottom of stack) or same-repo within the
+	// fork (intermediate). Returns nil silently when fork mode is disabled.
+	up, _ := EnsureUpstreamDetected(g, mgr)
+	target, tErr := resolvePRTarget(g, mgr, branch, up)
+	if tErr != nil {
+		return tErr
+	}
+	cl := gh
+	if target.IsCrossRepo {
+		cl = newGitHubClientForTarget(target.TargetOwner, target.TargetRepo)
+	}
+
 	// Reconcile local cache against GitHub before deciding whether to refuse.
 	// Issue #22: previously a cached PR (in any state) blocked recreation
 	// outright. We now trust GitHub as source of truth — a terminal-state PR
 	// (MERGED/CLOSED) lets the new PR proceed silently, a still-live PR
 	// requires --force.
+	//
+	// Fork-mode aware: if the branch's PR was already promoted to upstream,
+	// look it up there rather than in origin (where it would 404).
 	mainWorktree := getMainWorktreePath(g)
-	livePR, refreshErr := refreshPRStateFromGitHub(gh, mainWorktree, branch)
+	refreshClient := clientForBranch(branch, gh, up)
+	livePR, refreshErr := refreshPRStateFromGitHub(refreshClient, mainWorktree, branch)
 	switch {
 	case refreshErr != nil:
 		// Couldn't reach GitHub (or the branch genuinely has no PR — the
@@ -729,8 +795,12 @@ func prCreate(args []string) error {
 		}
 	}
 
-	ui.Info(fmt.Sprintf("Creating %s with base branch: %s", prType, branch.Parent))
-	pr, err := gh.CreatePR(prTitle, prBody, branch.Name, branch.Parent, isDraft)
+	if target.IsCrossRepo {
+		ui.Info(fmt.Sprintf("Creating %s in %s/%s with base branch: %s", prType, target.TargetOwner, target.TargetRepo, target.BaseRef))
+	} else {
+		ui.Info(fmt.Sprintf("Creating %s with base branch: %s", prType, target.BaseRef))
+	}
+	pr, err := cl.CreatePR(prTitle, prBody, target.HeadRef, target.BaseRef, isDraft)
 	if err != nil {
 		return fmt.Errorf("failed to create PR: %w. Check that the branch is pushed and you have repo access", err)
 	}
@@ -739,11 +809,29 @@ func prCreate(args []string) error {
 	branch.PRUrl = pr.URL
 	branch.PRState = prStateFromGitHub(pr)
 	branch.IsMerged = pr.Merged
+	// Persist where this branch's PR lives (for refresh/promote routing).
+	newTargetRepo := ""
+	if up != nil && up.Enabled {
+		if target.IsCrossRepo {
+			newTargetRepo = config.PRTargetRepoUpstream
+		} else {
+			newTargetRepo = config.PRTargetRepoFork
+		}
+	}
+	branch.PRTargetRepo = newTargetRepo
+	if newTargetRepo != "" {
+		if err := mgr.SetBranchPRTarget(branch.Name, newTargetRepo, 0); err != nil {
+			ui.Warn(fmt.Sprintf("Could not persist PR target for %s: %v", branch.Name, err))
+		}
+	}
 
 	savePRToCache(getMainWorktreePath(g), branch.Name, pr)
 
 	ui.Success(fmt.Sprintf("Created %s #%d: %s", prType, pr.Number, pr.URL))
 
+	// Stack descriptions are updated against origin even in fork mode — the
+	// stack-nav table needs to show fork-side intermediate PRs too. Cross-
+	// repo PRs use absolute URLs in the table so reviewers can navigate.
 	if err := updateStackDescriptions(gh, currentStack, branch.Name); err != nil {
 		ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
 	}
@@ -952,9 +1040,10 @@ func prUpdate(args []string) error {
 
 	// Reuse the gh client already constructed for the reconcile pass — we
 	// only need to update PR metadata when GitHub is reachable, and that
-	// determination was already made above.
+	// determination was already made above. Fork-mode-aware: the per-branch
+	// PRTargetRepo is honored by updatePRMetadata's internal routing.
 	if ghErr == nil {
-		updatePRMetadata(gh, currentStack, branch)
+		updatePRMetadata(gh, currentStack, branch, UpstreamFromConfig(mgr))
 	}
 
 	return nil
@@ -1316,15 +1405,27 @@ func prRefresh(args []string) error {
 		return err
 	}
 
+	// Fork-mode aware: each branch's PR may live in origin (default) or
+	// in upstream (cross-repo bottom PR). clientForBranch resolves the
+	// right client per branch using the cached PRTargetRepo. Detection is
+	// non-prompting here — refresh shouldn't be the place where users
+	// first see the fork-mode dialog. Use UpstreamFromConfig.
+	up := UpstreamFromConfig(mgr)
+	resolveClient := func(b *config.Branch) *github.Client {
+		return clientForBranch(b, gh, up)
+	}
+
 	mainWorktree := getMainWorktreePath(g)
 
-	// Collect targets.
+	// Collect targets. Track stack for promote-on-merge detection later.
 	var branches []*config.Branch
+	var refreshStack *config.Stack
 	if *stackFlag {
 		currentStack, _, err := mgr.GetCurrentStack()
 		if err != nil {
 			return err
 		}
+		refreshStack = currentStack
 		for _, b := range currentStack.Branches {
 			// Match the single-branch filter below: a branch with a cached PRUrl
 			// but no parsed PRNumber (URL parse failure on legacy entries) is
@@ -1345,8 +1446,9 @@ func prRefresh(args []string) error {
 			if b == nil {
 				return fmt.Errorf("branch '%s' is not tracked by ezstack", *branchFlag)
 			}
+			refreshStack = mgr.GetStackForBranch(*branchFlag)
 		} else {
-			_, b, err = mgr.GetCurrentStack()
+			refreshStack, b, err = mgr.GetCurrentStack()
 			if err != nil {
 				return err
 			}
@@ -1385,7 +1487,8 @@ func prRefresh(args []string) error {
 			oldNum := br.PRNumber
 			oldURL := br.PRUrl
 			oldState := br.PRState
-			pr, fetchErr := fetchLivePR(gh, br)
+			cl := resolveClient(br)
+			pr, fetchErr := fetchLivePR(cl, br)
 			results[idx] = result{branch: br, oldNum: oldNum, oldURL: oldURL, oldState: oldState, newPR: pr, err: fetchErr}
 		}(i, b)
 	}
@@ -1446,7 +1549,69 @@ func prRefresh(args []string) error {
 	default:
 		ui.Info("All branches already in sync with GitHub.")
 	}
+
+	// Public-fork promote-on-merge: when a fork-mode bottom (cross-repo
+	// upstream) PR merges, the fork-side child PR is now stranded — its
+	// base ref still exists in the fork but the chain to upstream is
+	// broken. Detect candidates and offer to promote (close-and-reopen
+	// cross-repo). Reads from the just-updated stack cache so we see
+	// freshly-applied IsMerged flags from the refresh above.
+	if up != nil && up.Enabled && refreshStack != nil {
+		promoteCandidates := detectPromoteCandidatesInStack(refreshStack)
+		if len(promoteCandidates) > 0 {
+			fmt.Fprintln(os.Stderr)
+			ui.Warn(fmt.Sprintf("%d branch(es) have a merged-upstream parent and need promotion:", len(promoteCandidates)))
+			for _, b := range promoteCandidates {
+				fmt.Fprintf(os.Stderr, "  %s %s (current PR #%d in fork)\n", ui.IconBullet, b.Name, b.PRNumber)
+			}
+			fmt.Fprintln(os.Stderr, "  Promotion closes the fork-side PR and creates a new cross-repo PR in upstream.")
+			fmt.Fprintln(os.Stderr, "  Lost: PR #/URL, inline review comments, approvals, CI history.")
+			fmt.Fprintln(os.Stderr, "  Preserved (copied): title, body, labels, assignees, reviewers, milestone.")
+			if ui.ConfirmTUI("Promote now?") {
+				return runPromote(g, mgr, promoteCandidates, true)
+			}
+			fmt.Fprintln(os.Stderr, "  Run `ezs pr promote` when ready.")
+		}
+	}
 	return nil
+}
+
+// detectPromoteCandidatesInStack returns branches whose parent has a
+// merged upstream PR but whose own PR is still fork-side. These need
+// close-and-reopen to keep the chain landing in upstream.
+//
+// The branch cache must already reflect the latest GitHub state — call
+// after applyPRRefresh has run for the stack.
+func detectPromoteCandidatesInStack(stack *config.Stack) []*config.Branch {
+	if stack == nil {
+		return nil
+	}
+	parentByName := make(map[string]*config.Branch, len(stack.Branches))
+	for _, b := range stack.Branches {
+		parentByName[b.Name] = b
+	}
+	var out []*config.Branch
+	for _, child := range stack.Branches {
+		if child.PRNumber == 0 {
+			continue
+		}
+		// Already cross-repo → nothing to promote.
+		if child.PRTargetRepo == config.PRTargetRepoUpstream {
+			continue
+		}
+		parent := parentByName[child.Parent]
+		if parent == nil {
+			continue
+		}
+		if parent.PRTargetRepo != config.PRTargetRepoUpstream {
+			continue
+		}
+		if !parent.IsMerged {
+			continue
+		}
+		out = append(out, child)
+	}
+	return out
 }
 
 // prUnlink clears the cached PR association for one or more branches without
