@@ -80,6 +80,7 @@ jobs:
           args: release --clean --release-notes=${{ steps.notes.outputs.changelog }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
   verify-go-install:
     # Confirms `go install github.com/.../ezstack/v4/cmd/ezs@<tag>` resolves

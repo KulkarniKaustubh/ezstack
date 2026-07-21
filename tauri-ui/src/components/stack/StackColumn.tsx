@@ -2,6 +2,7 @@ import { Plus, Pencil, RefreshCcw, Bot } from "lucide-react";
 import { Button } from "../ui/button";
 import { Tooltip } from "../ui/tooltip";
 import { StackNode, type StackNodeActions } from "./StackNode";
+import { RemoteTag } from "./RemoteTag";
 import { ContextMenu, useContextMenu } from "../ui/context-menu";
 import { cn } from "../../lib/utils";
 import type { StatusStack, TreeNode } from "../../types/ezstack";
@@ -117,7 +118,9 @@ export function StackColumn({ stack, selectedBranch, onSelectBranch, onRename, o
             )}
           </div>
           <div className="text-[10px] text-muted-foreground font-mono">
-            {stack.root} &middot; {stack.branches.length} branch{stack.branches.length !== 1 ? "es" : ""}
+            {stack.root}
+            {stack.root_is_remote && <RemoteTag kind="stack" className="ml-1" />}
+            {" "}&middot; {stack.branches.length} branch{stack.branches.length !== 1 ? "es" : ""}
           </div>
         </div>
         <div className="flex items-center gap-0.5 shrink-0">
@@ -140,7 +143,10 @@ export function StackColumn({ stack, selectedBranch, onSelectBranch, onRename, o
           <div className="text-center text-xs text-muted-foreground py-6">No branches</div>
         ) : (
           <div className="space-y-0.5">
-            {/* Root indicator */}
+            {/* Root indicator. The (remote) badge already renders in the
+                column header above; rendering it here too produced a
+                duplicate. Keep this row name-only so the badge stays in one
+                canonical location, matching StackGraph. */}
             <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-muted-foreground">
               <div className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40" />
               <span className="font-mono">{stack.root}</span>

@@ -485,7 +485,7 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_pr_create",
-			mcp.WithDescription("Create a pull request for a branch. Use branch to target a specific branch when not on a stack branch. Set auto=true to have the configured AI agent draft the title and body from the diff and the repo's PR template; combine auto=true with stack=true to auto-draft for every branch in the stack. -t/-b values still win over the AI output."),
+			mcp.WithDescription("Create a pull request for a branch. Use branch to target a specific branch when not on a stack branch. Set auto=true to have the configured AI agent draft the title and body from the diff and the repo's PR template; combine auto=true with stack=true to auto-draft for every branch in the stack. -t/-b values still win over the AI output. DESTRUCTIVE: when the remote branch has diverged, this tool force-pushes to overwrite the remote — under MCP YesMode the in-CLI confirmation is auto-accepted, so the MCP client's destructive-action prompt is the consent gate."),
 			mcp.WithString("branch", mcp.Description("Branch to create PR for (defaults to current branch)")),
 			mcp.WithString("title", mcp.Description("PR title (defaults to branch name)")),
 			mcp.WithString("body", mcp.Description("PR body / description")),
@@ -493,9 +493,9 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithBoolean("stack", mcp.Description("Create PRs for every branch in the current stack")),
 			mcp.WithBoolean("auto", mcp.Description("Use the configured AI agent to draft PR title/body from diff + template")),
 			mcp.WithBoolean("force", mcp.Description("Recreate the PR even if one already exists for the branch (alias of --recreate). Skips the confirmation prompt that would otherwise hang the MCP transport on stdin; the warning is still emitted to stderr.")),
-			mcp.WithDestructiveHintAnnotation(false),
+			mcp.WithDestructiveHintAnnotation(true),
 		),
-		toolHandler(commands.PR, func(req mcp.CallToolRequest) []string {
+		yesModeHandler(commands.PR, func(req mcp.CallToolRequest) []string {
 			args := []string{"create"}
 			stringFlag(&args, req, "branch", "--branch")
 			stringFlag(&args, req, "title", "--title")

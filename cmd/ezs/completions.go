@@ -71,7 +71,7 @@ var commandFlags = map[string][]string{
 	"reparent": {"--branch", "-b", "--parent", "-p", "--merge", "--rebase", "--no-rebase", "--help", "-h"},
 	"stack":    {"--branch", "-b", "--parent", "-p", "--base", "-B", "--help", "-h"},
 	"status":   {"--all", "-a", "--branch", "-b", "--debug", "-d", "--json", "--watch", "--help", "-h"},
-	"sync":     {"--stats", "--squash", "--stack", "-s", "--all", "-a", "--current", "-c", "--branch", "-b", "--parent", "-p", "--children", "-C", "--merge", "--rebase", "--no-delete-local", "--dry-run", "--continue", "--no-autostash", "--json", "--help", "-h"},
+	"sync":     {"--stats", "--squash", "--stack", "-s", "--all", "-a", "--current", "-c", "--branch", "-b", "--parent", "-p", "--children", "-C", "--merge", "--rebase", "--no-delete-local", "--dry-run", "--continue", "--no-autostash", "--json", "--include-remote-worktrees", "--help", "-h"},
 	"unstack":  {"--branch", "-b", "--help", "-h"},
 	"up":       {"--help", "-h"},
 	"upgrade":  {"--check", "--version", "--force", "--no-mcp", "--yes", "-y", "--help", "-h"},
@@ -99,6 +99,8 @@ var agentSubcommandFlags = map[string][]string{
 	"prompt": {"--shipped", "--custom", "--repo", "--edit", "--reset", "--help", "-h"},
 	"ls":     {"--branch", "-b", "--stack", "-s", "--feature", "--json", "--help", "-h"},
 	"list":   {"--branch", "-b", "--stack", "-s", "--feature", "--json", "--help", "-h"},
+	"rm":     {"--branch", "-b", "--stack", "-s", "--all", "--help", "-h"},
+	"remove": {"--branch", "-b", "--stack", "-s", "--all", "--help", "-h"},
 }
 
 // branchPositionalCommands take a branch name as their first positional arg.
@@ -277,6 +279,8 @@ func printCompletions(args []string) {
 			fmt.Println("feat")
 			fmt.Println("ls")
 			fmt.Println("list")
+			fmt.Println("rm")
+			fmt.Println("remove")
 			fmt.Println("prompt")
 			return
 		}

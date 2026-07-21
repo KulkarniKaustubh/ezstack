@@ -134,7 +134,7 @@ func TestPrintCompletions_ConfigShowEmitsNothing(t *testing.T) {
 
 func TestPrintCompletions_AgentSubcommands(t *testing.T) {
 	got := captureCompletions(t, []string{"agent", ""})
-	for _, want := range []string{"feature", "feat", "prompt"} {
+	for _, want := range []string{"feature", "feat", "ls", "list", "rm", "remove", "prompt"} {
 		if !contains(got, want) {
 			t.Errorf("missing agent subcommand %q in %v", want, got)
 		}

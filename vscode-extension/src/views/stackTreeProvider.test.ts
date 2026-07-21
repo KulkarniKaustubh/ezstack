@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { BranchNode } from "./stackTreeProvider";
-import type { StatusBranchJSON, WorktreeGitStatus } from "../types";
+import { BranchNode, StackNode } from "./stackTreeProvider";
+import type { StatusBranchJSON, StatusStackJSON, WorktreeGitStatus } from "../types";
 
 function makeBranch(overrides: Partial<StatusBranchJSON> = {}): StatusBranchJSON {
   return {
@@ -184,5 +184,66 @@ describe("BranchNode", () => {
       expect(desc).not.toContain("↑");
       expect(desc).not.toContain("⇡");
     });
+  });
+  // is_remote drives the (remote) tag in the CLI's `ezs ls`. Without a
+  // matching tag in VS Code, the tree silently presented pickup branches
+  // (`ezs new origin/<branch>`) as if they were the user's own — the
+  // failure mode that motivated this fix.
+  describe("(remote) tag", () => {
+    it("prepends (remote) to the branch description when is_remote is true", () => {
+      const node = new BranchNode(
+        makeBranch({ is_remote: true, pr_number: 7 }),
+        "abc123",
+        false,
+      );
+      expect(node.description).toContain("(remote)");
+      // Stays first so the tag is the leftmost cue, mirroring the CLI.
+      expect(node.description?.toString().indexOf("(remote)")).toBeLessThan(
+        node.description?.toString().indexOf("PR") ?? Infinity,
+      );
+    });
+
+    it("does not show (remote) for user-owned branches", () => {
+      const node = new BranchNode(makeBranch(), "abc123", false);
+      expect(node.description).not.toContain("(remote)");
+    });
+
+    it("notes pickup status in the tooltip when is_remote is true", () => {
+      const node = new BranchNode(makeBranch({ is_remote: true }), "h", false);
+      const tooltip = node.tooltip as { value: string };
+      expect(tooltip.value).toContain("(remote)");
+    });
+  });
+});
+
+describe("StackNode", () => {
+  // root_is_remote is set by `ezs new -r` (pickup at the stack root). The
+  // tree pane needs to surface the same `(remote)` cue the CLI shows or the
+  // user can't tell their stack is anchored on someone else's PR.
+  it("appends (remote) to the root description when root_is_remote is true", () => {
+    const stack: StatusStackJSON = {
+      hash: "abc1234",
+      root: "alice/feature",
+      root_is_remote: true,
+      branches: [],
+    };
+    const node = new StackNode(stack);
+    expect(node.description).toBe("root: alice/feature (remote)");
+    // contextValue must stay "stack" so the menu entries gated on
+    // `viewItem == stack` in package.json still show on pickup-rooted
+    // stacks. The (remote) cue belongs in description + tooltip, not as
+    // a capability gate.
+    expect(node.contextValue).toBe("stack");
+  });
+
+  it("does not append (remote) for a user-owned stack root", () => {
+    const stack: StatusStackJSON = {
+      hash: "abc1234",
+      root: "main",
+      branches: [],
+    };
+    const node = new StackNode(stack);
+    expect(node.description).toBe("root: main");
+    expect(node.contextValue).toBe("stack");
   });
 });

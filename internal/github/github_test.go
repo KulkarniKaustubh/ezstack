@@ -326,6 +326,121 @@ func TestGenerateStackSection(t *testing.T) {
 	}
 }
 
+// TestStackDescriptionBody_StripsStaleStackSectionBelowTwoPRs guards against a
+// bug where UpdateStackDescription/UpdateStackDescriptionCached bailed out
+// entirely whenever a stack had fewer than 2 PRs, skipping stripStackSections
+// along with the append. If a PR's body already carried a stack section from
+// when the stack had 2+ PRs (e.g. siblings later got merged/unstacked/deleted,
+// dropping the stack to a single PR), that stale section — listing branches no
+// longer part of any real stack — was never removed. stackDescriptionBody must
+// still strip any existing section when prCount < 2, it just must not append a
+// fresh one.
+func TestStackDescriptionBody_StripsStaleStackSectionBelowTwoPRs(t *testing.T) {
+	solo := convertTestStack(&Stack{
+		Name: "feature-a",
+		Branches: []*Branch{
+			{Name: "feature-a", PRNumber: 1, PRUrl: "https://github.com/org/repo/pull/1"},
+		},
+	})
+
+	staleBody := "My description" +
+		"\n\n---\n## PR Stack\n\n1. https://github.com/org/repo/pull/1 ← **This PR**\n" +
+		"2. https://github.com/org/repo/pull/2\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n"
+
+	got := stackDescriptionBody(solo, "feature-a", staleBody, stackPRCount(solo))
+
+	if strings.Contains(got, "PR Stack") {
+		t.Errorf("stale stack section survived on a <2-PR stack:\n%s", got)
+	}
+	if !strings.Contains(got, "My description") {
+		t.Errorf("user content was destroyed:\n%s", got)
+	}
+
+	// Applying it again must be a no-op — no flapping between calls.
+	again := stackDescriptionBody(solo, "feature-a", got, stackPRCount(solo))
+	if bodyNeedsUpdate(again, got) {
+		t.Errorf("not idempotent once below 2 PRs:\nfirst:\n%s\nsecond:\n%s", got, again)
+	}
+}
+
+// TestStackDescriptionBody_NoSpuriousUpdateBelowTwoPRs ensures a PR with no
+// existing stack section, in a stack that has never had 2+ PRs, is left alone
+// (no needless GitHub write on every push/sync).
+func TestStackDescriptionBody_NoSpuriousUpdateBelowTwoPRs(t *testing.T) {
+	solo := convertTestStack(&Stack{
+		Name: "feature-a",
+		Branches: []*Branch{
+			{Name: "feature-a", PRNumber: 1, PRUrl: "https://github.com/org/repo/pull/1"},
+		},
+	})
+
+	body := "Just a plain description, never stacked."
+	got := stackDescriptionBody(solo, "feature-a", body, stackPRCount(solo))
+
+	if bodyNeedsUpdate(got, body) {
+		t.Errorf("expected no update for a body with no stack section on a <2-PR stack, got:\n%s", got)
+	}
+}
+
+// TestStackDescriptionBody_AppendsSectionAtTwoOrMorePRs is the complementary
+// happy path: once a stack has 2+ PRs, a fresh section must be appended.
+func TestStackDescriptionBody_AppendsSectionAtTwoOrMorePRs(t *testing.T) {
+	pair := convertTestStack(&Stack{
+		Name: "feature-a",
+		Branches: []*Branch{
+			{Name: "feature-a", PRNumber: 1, PRUrl: "https://github.com/org/repo/pull/1"},
+			{Name: "feature-b", PRNumber: 2, PRUrl: "https://github.com/org/repo/pull/2"},
+		},
+	})
+
+	got := stackDescriptionBody(pair, "feature-a", "My description", stackPRCount(pair))
+
+	if !strings.Contains(got, "PR Stack") {
+		t.Errorf("expected a stack section to be appended for a 2-PR stack, got:\n%s", got)
+	}
+	if !strings.Contains(got, "pull/2") {
+		t.Errorf("expected sibling PR listed, got:\n%s", got)
+	}
+}
+
+// TestStackPRCount checks the root-PR-inclusive counting used to decide
+// whether a stack section should be rendered at all.
+func TestStackPRCount(t *testing.T) {
+	tests := []struct {
+		name  string
+		stack *config.Stack
+		want  int
+	}{
+		{
+			name:  "no PRs",
+			stack: convertTestStack(&Stack{Branches: []*Branch{{Name: "a"}}}),
+			want:  0,
+		},
+		{
+			name:  "one branch PR",
+			stack: convertTestStack(&Stack{Branches: []*Branch{{Name: "a", PRNumber: 1}}}),
+			want:  1,
+		},
+		{
+			name: "root PR plus one branch PR",
+			stack: func() *config.Stack {
+				s := convertTestStack(&Stack{Branches: []*Branch{{Name: "a", PRNumber: 1}}})
+				s.RootPRNumber = 99
+				return s
+			}(),
+			want: 2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stackPRCount(tt.stack); got != tt.want {
+				t.Errorf("stackPRCount() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
 // Helper types for testing (shadows config types)
 type Stack struct {
 	Name     string
@@ -359,7 +474,6 @@ func TestUpdateBodyWithStack(t *testing.T) {
 		name         string
 		body         string
 		stackSection string
-		isCurrent    bool
 		wantContains []string
 		wantMissing  []string
 	}{
@@ -367,21 +481,18 @@ func TestUpdateBodyWithStack(t *testing.T) {
 			name:         "Empty body",
 			body:         "",
 			stackSection: "\n\n---\n## PR Stack\n\n1. PR #1\n",
-			isCurrent:    true,
 			wantContains: []string{"PR Stack", "PR #1"},
 		},
 		{
 			name:         "Body with existing content",
 			body:         "This is my PR description\n\nSome more text",
 			stackSection: "\n\n---\n## PR Stack\n\n1. PR #1\n",
-			isCurrent:    false,
 			wantContains: []string{"This is my PR description", "PR Stack"},
 		},
 		{
 			name:         "Replace existing stack section",
 			body:         "Description\n\n---\n## PR Stack\n\n1. Old PR\n\n_This stack was created by ezstack_\n",
 			stackSection: "\n\n---\n## PR Stack\n\n1. New PR\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n",
-			isCurrent:    true,
 			wantContains: []string{"New PR"},
 			wantMissing:  []string{"Old PR"},
 		},
@@ -389,7 +500,6 @@ func TestUpdateBodyWithStack(t *testing.T) {
 			name:         "Replace stack section with hyperlink footer",
 			body:         "Description\n\n---\n## PR Stack\n\n1. Old PR\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n",
 			stackSection: "\n\n---\n## PR Stack\n\n1. New PR\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n",
-			isCurrent:    true,
 			wantContains: []string{"New PR"},
 			wantMissing:  []string{"Old PR"},
 		},
@@ -397,7 +507,6 @@ func TestUpdateBodyWithStack(t *testing.T) {
 			name:         "Replace stack section with CRLF line endings",
 			body:         "Description\r\n\r\n---\r\n## PR Stack\r\n\r\n1. Old PR\r\n\r\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\r\n",
 			stackSection: "\n\n---\n## PR Stack\n\n1. New PR\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n",
-			isCurrent:    true,
 			wantContains: []string{"New PR"},
 			wantMissing:  []string{"Old PR"},
 		},
@@ -405,7 +514,7 @@ func TestUpdateBodyWithStack(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := updateBodyWithStack(tt.body, tt.stackSection, tt.isCurrent)
+			result := updateBodyWithStack(tt.body, tt.stackSection)
 
 			for _, want := range tt.wantContains {
 				if !strings.Contains(result, want) {
@@ -417,6 +526,288 @@ func TestUpdateBodyWithStack(t *testing.T) {
 				if strings.Contains(result, notWant) {
 					t.Errorf("updateBodyWithStack() should not contain %q in:\n%s", notWant, result)
 				}
+			}
+		})
+	}
+}
+
+// TestUpdateBodyWithStack_CollapsesDuplicates guards against the PR-description
+// duplication bug: an older regex-based cleaner (pre-commit 5041f1a) matched
+// only ONE stack section per pass via non-greedy `.*?`. When two sections were
+// present it removed the first and re-appended a fresh one, so the second
+// (older) section survived and grew by one every push/sync. That is the state
+// many bodies are still in on GitHub.
+//
+// updateBodyWithStack must collapse ANY number of pre-existing sections down to
+// exactly one on the next update, regardless of how they got there.
+func TestUpdateBodyWithStack_CollapsesDuplicates(t *testing.T) {
+	freshSection := "\n\n---\n## PR Stack\n\n1. https://github.com/org/repo/pull/1\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n"
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "two identical stack sections back-to-back",
+			body: strings.TrimSpace("User description") +
+				"\n\n---\n## PR Stack\n\n1. #1\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n" +
+				"\n\n---\n## PR Stack\n\n1. #1\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n",
+		},
+		{
+			name: "three duplicated stack sections",
+			body: "User description" +
+				"\n\n---\n## PR Stack\n\n1. #1\n\n_footer_\n" +
+				"\n\n---\n## PR Stack\n\n1. #1\n\n_footer_\n" +
+				"\n\n---\n## PR Stack\n\n1. #1\n\n_footer_\n",
+		},
+		{
+			name: "duplicated sections with stale content (differ across dupes)",
+			body: "User description" +
+				"\n\n---\n## PR Stack\n\n1. Ancient PR\n\n_footer_\n" +
+				"\n\n---\n## PR Stack\n\n1. Slightly less ancient PR\n\n_footer_\n" +
+				"\n\n---\n## PR Stack\n\n1. Recent PR\n\n_footer_\n",
+		},
+		{
+			name: "duplicated sections with CRLF line endings from GitHub",
+			body: strings.ReplaceAll(
+				"User description"+
+					"\n\n---\n## PR Stack\n\n1. #1\n\n_footer_\n"+
+					"\n\n---\n## PR Stack\n\n1. #1\n\n_footer_\n",
+				"\n", "\r\n",
+			),
+		},
+		{
+			name: "duplicated sections with GitHub's trailing newline appended",
+			body: "User description" +
+				"\n\n---\n## PR Stack\n\n1. #1\n\n_footer_\n" +
+				"\n\n---\n## PR Stack\n\n1. #1\n\n_footer_\n" +
+				"\n",
+		},
+		{
+			name: "user content preserved across dedup",
+			body: "# Overview\n\nSome bullet points\n\n- one\n- two\n\n" +
+				"---\n## PR Stack\n\n1. #1\n\n_footer_\n" +
+				"\n---\n## PR Stack\n\n1. #1\n\n_footer_\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := updateBodyWithStack(tt.body, freshSection)
+
+			// After update there must be EXACTLY one "## PR Stack" heading.
+			// If dedup fails we get 2+ headings.
+			if got := strings.Count(result, "## PR Stack"); got != 1 {
+				t.Fatalf("expected exactly 1 stack section, got %d\nresult:\n%s", got, result)
+			}
+			// User content that came before the stack section must survive.
+			if !strings.Contains(result, "User description") &&
+				!strings.Contains(result, "# Overview") {
+				t.Errorf("user content was destroyed:\n%s", result)
+			}
+			// Applying the operation a second time must be a no-op (up to the
+			// bodyNeedsUpdate normalization).
+			second := updateBodyWithStack(result, freshSection)
+			if bodyNeedsUpdate(second, result) {
+				t.Errorf("updateBodyWithStack is not idempotent:\nfirst:\n%s\nsecond:\n%s", result, second)
+			}
+		})
+	}
+}
+
+// TestUpdateBodyWithStack_MixedMarkerVariants guards a subtle edge case in the
+// pre-fix cleaner: the loop tried the no-emoji marker first and only fell
+// through to the emoji marker if the no-emoji one wasn't present anywhere.
+// When BOTH variants existed with the emoji one earlier in the body, it
+// truncated at the later (no-emoji) marker and left the emoji section intact,
+// producing a duplicate on the next append. The fixed cleaner truncates at the
+// earliest occurrence across all known marker variants.
+func TestUpdateBodyWithStack_MixedMarkerVariants(t *testing.T) {
+	freshSection := "\n\n---\n## PR Stack\n\n1. #new\n\n_footer_\n"
+
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "emoji marker earlier than no-emoji marker",
+			body: "User description" +
+				"\n\n---\n## 📚 PR Stack\n\n1. #old-emoji\n\n_footer_\n" +
+				"\n\n---\n## PR Stack\n\n1. #old\n\n_footer_\n",
+		},
+		{
+			name: "no-emoji marker earlier than emoji marker",
+			body: "User description" +
+				"\n\n---\n## PR Stack\n\n1. #old\n\n_footer_\n" +
+				"\n\n---\n## 📚 PR Stack\n\n1. #old-emoji\n\n_footer_\n",
+		},
+		{
+			name: "only emoji marker present",
+			body: "User description" +
+				"\n\n---\n## 📚 PR Stack\n\n1. #old-emoji\n\n_footer_\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := updateBodyWithStack(tt.body, freshSection)
+
+			if got := strings.Count(result, "## PR Stack"); got != 1 {
+				t.Fatalf("expected exactly 1 PR Stack heading (no emoji), got %d\nresult:\n%s", got, result)
+			}
+			if strings.Contains(result, "📚") {
+				t.Errorf("emoji marker still present after dedup:\n%s", result)
+			}
+			if !strings.Contains(result, "#new") {
+				t.Errorf("fresh section content missing:\n%s", result)
+			}
+			if !strings.Contains(result, "User description") {
+				t.Errorf("user content was destroyed:\n%s", result)
+			}
+		})
+	}
+}
+
+// TestUpdateBodyWithStack_Idempotent asserts that applying updateBodyWithStack
+// N times to the same body (with the same generated section) produces a body
+// equivalent to applying it once. This is the property that stops the
+// duplication drift: every push/sync/pr-update call runs through this
+// function, so it MUST be idempotent even if bodyNeedsUpdate misfires.
+func TestUpdateBodyWithStack_Idempotent(t *testing.T) {
+	section := "\n\n---\n## PR Stack\n\n1. https://github.com/org/repo/pull/1\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n"
+
+	bodies := []string{
+		"",
+		"Just a description",
+		"Description\n\n---\n## PR Stack\n\n1. #1\n\n_footer_\n",
+		"Description\n\n---\n## PR Stack\n\n1. #1\n\n_footer_\n\n---\n## PR Stack\n\n1. #1\n\n_footer_\n",
+	}
+
+	for i, body := range bodies {
+		t.Run(fmt.Sprintf("body_%d", i), func(t *testing.T) {
+			first := updateBodyWithStack(body, section)
+			second := updateBodyWithStack(first, section)
+			third := updateBodyWithStack(second, section)
+
+			// The rendered body must stabilize after the first call.
+			if first != second || second != third {
+				t.Errorf("not idempotent\nfirst:\n%s\nsecond:\n%s\nthird:\n%s", first, second, third)
+			}
+			// Exactly one section, always.
+			for label, out := range map[string]string{"first": first, "second": second, "third": third} {
+				if got := strings.Count(out, "## PR Stack"); got != 1 {
+					t.Errorf("%s: expected 1 section, got %d\n%s", label, got, out)
+				}
+			}
+		})
+	}
+}
+
+// TestStripStackSections directly exercises the cleaner helper so a regression
+// there fails loudly independent of the surrounding updateBodyWithStack glue.
+func TestStripStackSections(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "empty body is unchanged",
+			body: "",
+			want: "",
+		},
+		{
+			name: "body with no marker is unchanged",
+			body: "Just a description\n\nwith paragraphs",
+			want: "Just a description\n\nwith paragraphs",
+		},
+		{
+			name: "single section truncated at its start",
+			body: "User\n\n---\n## PR Stack\n\n1. #1\n_footer_\n",
+			want: "User\n\n",
+		},
+		{
+			name: "three duplicate sections all removed",
+			body: "User" +
+				"\n\n---\n## PR Stack\n\n1. #1\n_footer_\n" +
+				"\n\n---\n## PR Stack\n\n1. #1\n_footer_\n" +
+				"\n\n---\n## PR Stack\n\n1. #1\n_footer_\n",
+			want: "User\n\n",
+		},
+		{
+			name: "emoji-first-then-no-emoji: emoji is earliest, truncate there",
+			body: "User" +
+				"\n\n---\n## 📚 PR Stack\n\n1. #old\n_footer_\n" +
+				"\n\n---\n## PR Stack\n\n1. #newer\n_footer_\n",
+			want: "User\n\n",
+		},
+		{
+			name: "no-emoji-first-then-emoji: no-emoji is earliest, truncate there",
+			body: "User" +
+				"\n\n---\n## PR Stack\n\n1. #old\n_footer_\n" +
+				"\n\n---\n## 📚 PR Stack\n\n1. #newer\n_footer_\n",
+			want: "User\n\n",
+		},
+		{
+			name: "only emoji section",
+			body: "User\n\n---\n## 📚 PR Stack\n\n1. #1\n_footer_\n",
+			want: "User\n\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := stripStackSections(tt.body); got != tt.want {
+				t.Errorf("stripStackSections() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestBodyNeedsUpdate guards against the PR-description churn bug: GitHub appends
+// a trailing newline (and may switch to \r\n) when it stores a body, so the body
+// we fetch back is never byte-for-byte equal to the one we generated. A naive
+// `newBody != pr.Body` check therefore rewrites every PR on every push/sync,
+// re-firing "edited" events across the whole stack.
+func TestBodyNeedsUpdate(t *testing.T) {
+	generated := "Description\n\n---\n## PR Stack\n\n1. PR #1\n\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n"
+
+	tests := []struct {
+		name        string
+		newBody     string
+		currentBody string
+		want        bool
+	}{
+		{
+			name:        "identical",
+			newBody:     generated,
+			currentBody: generated,
+			want:        false,
+		},
+		{
+			name:        "github appended trailing newline",
+			newBody:     generated,
+			currentBody: generated + "\n",
+			want:        false,
+		},
+		{
+			name:        "github returned CRLF and trailing newline",
+			newBody:     generated,
+			currentBody: strings.ReplaceAll(generated, "\n", "\r\n") + "\r\n",
+			want:        false,
+		},
+		{
+			name:        "content actually changed",
+			newBody:     generated,
+			currentBody: strings.Replace(generated, "PR #1", "PR #2", 1),
+			want:        true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := bodyNeedsUpdate(tt.newBody, tt.currentBody); got != tt.want {
+				t.Errorf("bodyNeedsUpdate() = %v, want %v", got, tt.want)
 			}
 		})
 	}

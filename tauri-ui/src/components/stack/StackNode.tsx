@@ -5,6 +5,7 @@ import { BranchStatusBadge } from "../branch/BranchStatusBadge";
 import { CIStatusBadge } from "../branch/CIStatusBadge";
 import { ReviewBadge } from "../branch/ReviewBadge";
 import { ContextMenu, useContextMenu, type ContextMenuItem } from "../ui/context-menu";
+import { RemoteTag } from "./RemoteTag";
 import type { StatusBranch } from "../../types/ezstack";
 
 const DND_MIME = "application/x-ezstack-branch";
@@ -158,6 +159,7 @@ export function StackNode({ branch, isSelected, onClick, actions }: StackNodePro
             {branch.is_current && (
               <span className="text-[9px] uppercase tracking-wider text-info font-semibold">current</span>
             )}
+            {branch.is_remote && <RemoteTag kind="branch" className="text-xs font-mono" />}
           </div>
           {branch.pr_number && (
             <span className="text-xs text-muted-foreground font-mono">#{branch.pr_number}</span>

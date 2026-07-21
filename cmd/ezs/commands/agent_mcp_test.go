@@ -10,8 +10,25 @@ import (
 )
 
 // matchingVersionStub is a shell ezs-mcp stub that reports the version the
-// running ezs binary expects — i.e. no skew, no reinstall.
+// running ezs binary expects — i.e. no skew, no reinstall. It uses the same
+// "ezstack-mcp version X.Y.Z" shape the real binary prints (see
+// cmd/ezs-mcp/main.go) so the version-parser path under test matches what
+// production sees, not a synthetic bare-semver output.
 func matchingVersionStub() string {
+	return `#!/bin/sh
+if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
+  echo "ezstack-mcp version ` + version.Version + `"
+  exit 0
+fi
+exit 0
+`
+}
+
+// matchingVersionStubLegacyBareFormat is a stub that emulates an older
+// ezs-mcp build which printed only the bare semver. parseMCPVersionOutput
+// must still recognize this format so users of pre-banner builds aren't
+// reinstalled-on-every-run when they upgrade ezs but not ezs-mcp.
+func matchingVersionStubLegacyBareFormat() string {
 	return `#!/bin/sh
 if [ "$1" = "--version" ] || [ "$1" = "-v" ]; then
   echo "` + version.Version + `"
@@ -22,6 +39,42 @@ exit 0
 }
 
 // ── Pure-function tests ────────────────────────────────────────────────────────
+
+// TestParseMCPVersionOutput pins the shapes parseMCPVersionOutput must accept.
+// This is the parser that, when broken, made `ezs agent` reinstall the MCP
+// binary on every single run — the production output `"ezstack-mcp version
+// X.Y.Z"` never equaled the bare `version.Version` constant. We pin both the
+// current banner shape AND the legacy bare-version shape (older ezs-mcp builds)
+// AND a future-tolerant shape with trailing platform metadata, so any one of
+// them changing the banner without updating the parser fails this test
+// instead of silently degrading every agent launch.
+func TestParseMCPVersionOutput(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"banner format (current production)", "ezstack-mcp version 4.8.3", "4.8.3"},
+		{"banner with trailing newline", "ezstack-mcp version 4.8.3\n", "4.8.3"},
+		{"bare semver (legacy ezs-mcp builds)", "4.8.3", "4.8.3"},
+		{"v-prefixed bare", "v4.8.3", "4.8.3"},
+		{"v-prefixed banner", "ezstack-mcp version v4.8.3", "4.8.3"},
+		{"banner with platform suffix (future-proof)", "ezstack-mcp version 4.8.3 (linux/amd64)", "4.8.3"},
+		{"prerelease suffix", "ezstack-mcp version 4.8.3-rc1", "4.8.3-rc1"},
+		{"build metadata", "ezstack-mcp version 4.8.3+abc1234", "4.8.3+abc1234"},
+		{"surrounding whitespace", "  ezstack-mcp version 4.8.3  \n", "4.8.3"},
+		{"empty output", "", ""},
+		{"non-semver garbage", "wat is this", ""},
+		{"two-part version is not semver", "ezstack-mcp version 4.8", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := parseMCPVersionOutput(c.in); got != c.want {
+				t.Errorf("parseMCPVersionOutput(%q) = %q, want %q", c.in, got, c.want)
+			}
+		})
+	}
+}
 
 func TestDocsReferenceFor(t *testing.T) {
 	if got := docsReferenceFor(true); got != mcpDocsStub {
@@ -365,6 +418,12 @@ exit 99
 // TestEnsureEzstackMCP_VersionMatchSkipsReinstall verifies that when the
 // installed ezs-mcp already reports the matching version, `go install` is
 // NOT invoked (no marker).
+//
+// Regression: matchingVersionStub now uses the real "ezstack-mcp version
+// X.Y.Z" banner shape, so this test exercises the production code path
+// end-to-end. Before the parser fix, the stub printed bare semver and this
+// test passed even though the real binary triggered a reinstall on every
+// `ezs agent` invocation.
 func TestEnsureEzstackMCP_VersionMatchSkipsReinstall(t *testing.T) {
 	dir := t.TempDir()
 	goMarker := filepath.Join(dir, "go_install_called.txt")
@@ -388,6 +447,37 @@ exit 0
 	if _, err := os.Stat(goMarker); err == nil {
 		body, _ := os.ReadFile(goMarker)
 		t.Errorf("matching version should NOT invoke `go install`, but saw:\n%s", body)
+	}
+}
+
+// TestEnsureEzstackMCP_LegacyBareFormatSkipsReinstall covers the second
+// shape parseMCPVersionOutput accepts: an older ezs-mcp build that prints
+// only the bare semver (no "ezstack-mcp version " prefix). Users on those
+// builds should not see a reinstall on every `ezs agent` either, as long
+// as the version matches.
+func TestEnsureEzstackMCP_LegacyBareFormatSkipsReinstall(t *testing.T) {
+	dir := t.TempDir()
+	goMarker := filepath.Join(dir, "go_install_called.txt")
+
+	writeStubBin(t, dir, "claude", `#!/bin/sh
+if [ "$1" = "mcp" ] && [ "$2" = "get" ] && [ "$3" = "ezstack" ]; then
+  exit 0
+fi
+exit 99
+`)
+	writeStubBin(t, dir, "ezs-mcp", matchingVersionStubLegacyBareFormat())
+	writeStubBin(t, dir, "go", `#!/bin/sh
+echo "$@" > "`+goMarker+`"
+exit 0
+`)
+	isolateStubPath(t, dir)
+
+	if got := ensureEzstackMCP("claude", false, false); !got {
+		t.Error("legacy bare-format matching-version case should return true")
+	}
+	if _, err := os.Stat(goMarker); err == nil {
+		body, _ := os.ReadFile(goMarker)
+		t.Errorf("legacy bare-format matching version should NOT invoke `go install`, but saw:\n%s", body)
 	}
 }
 

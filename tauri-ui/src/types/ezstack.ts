@@ -3,6 +3,10 @@ export interface Branch {
   parent: string;
   is_merged: boolean;
   is_current: boolean;
+  // True for pickup branches (`ezs new origin/<branch>`). Drives the
+  // `(remote)` tag in the tree so users can tell at a glance which
+  // branches belong to another contributor — bulk sync skips these by
+  // default, so the visual cue is load-bearing.
   is_remote?: boolean;
   pr_number?: number;
   pr_url?: string;
@@ -44,6 +48,8 @@ export interface StackRootInfo {
   root_base?: string;
   root_pr_number?: number;
   root_pr_url?: string;
+  // True when the stack root was registered by `ezs new -r` (the root is
+  // another contributor's branch). Drives the `(remote)` tag on the root.
   root_is_remote?: boolean;
   root_additions?: number;
   root_deletions?: number;

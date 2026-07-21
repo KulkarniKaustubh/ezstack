@@ -610,6 +610,8 @@
         <li><a href="#reviewing-a-remote-pr" class="toc-h3">Reviewing a Remote PR</a></li>
         <li><a href="#stacking-on-a-remote-pr" class="toc-h3">Stacking on a Remote PR</a></li>
         <li><a href="#adopting-an-existing-worktree-as-a-stack-root" class="toc-h3">Adopting an Existing Worktree as a Stack Root</a></li>
+        <li><a href="#inserting-a-branch-between-two-stacked-branches" class="toc-h3">Inserting a Branch Between Two Stacked Branches</a></li>
+        <li><a href="#swapping-a-branch-with-its-parent" class="toc-h3">Swapping a Branch With Its Parent</a></li>
         <li><a href="#splitting-a-single-large-worktree-into-a-stack--manually" class="toc-h3">Splitting a Single Large Worktree Into a Stack — Manually</a></li>
         <li><a href="#splitting-a-single-large-worktree-into-a-stack--with-ezs-agent-feature" class="toc-h3">Splitting a Single Large Worktree Into a Stack — With ezs agent feature</a></li>
         <li><a href="#ai-drafted-pr-title--body-for-a-single-branch---auto" class="toc-h3">AI-Drafted PR Title &amp; Body for a Single Branch (--auto)</a></li>
@@ -712,7 +714,7 @@
       (<code>gh</code>) for any PR-related commands.</p>
       <p>Verify the install:</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">--version</span>
-<span class="c-comment"># → ezstack version 4.8.1</span>
+<span class="c-comment"># → ezstack version 4.8.5</span>
 </code></pre>
       <h3 id="2-wire-up-shell-integration">2. Wire up shell integration</h3>
       <p>A handful of ezstack commands need to change your shell's working directory:
@@ -799,9 +801,9 @@
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">github_token</span> <span class="c-str">ghp_...</span>                <span class="c-comment"># optional; otherwise falls back to `gh auth`</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">set</span> <span class="c-str">agent_command</span> <span class="c-str">&#34;claude --dangerously-skip-permissions&#34;</span>
 </code></pre>
-      <p>Multi-word values (or any value starting with <code>-</code>) MUST be quoted so the
-      shell collapses them to a single argument — the last line above shows the
-      common case for <code>agent_command</code>.</p>
+      <p>Multi-word values (or any value starting with <code>-</code>) MUST be quoted so the shell
+      collapses them to a single argument — the last line above shows the common case
+      for <code>agent_command</code>.</p>
       <h3 id="4-create-a-worktree-from-an-existing-branch">4. Create a worktree from an existing branch</h3>
       <p>Most people install <code>ezs</code> while standing inside an active repo with a feature
       branch (or two) already in flight. The fastest way to start using ezstack is
@@ -820,16 +822,16 @@
       <code>useFromWorktree</code>):</p>
       <ol>
       <li>Calls <code>git worktree list --porcelain</code> to enumerate every worktree.</li>
-      <li>Shows a picker labelled <code>&lt;branch&gt; (&lt;path&gt;)</code>; you pick one and
-      confirm before anything is mutated.</li>
-      <li>Calls <code>mgr.RegisterExistingBranch(branch, path, base)</code> — writes the
-      branch into <code>~/.ezstack/stacks.json</code> with <code>parent=&lt;configured base branch&gt;</code>
-      and mints a fresh stack hash.</li>
-      <li>If a PR for the branch already exists on GitHub, hydrates the cached
-      PR number, URL, state, and review status on the first lookup.</li>
+      <li>Shows a picker labelled <code>&lt;branch&gt; (&lt;path&gt;)</code>; you pick one and confirm before
+      anything is mutated.</li>
+      <li>Calls <code>mgr.RegisterExistingBranch(branch, path, base)</code> — writes the branch
+      into <code>~/.ezstack/stacks.json</code> with <code>parent=&lt;configured base branch&gt;</code> and
+      mints a fresh stack hash.</li>
+      <li>If a PR for the branch already exists on GitHub, hydrates the cached PR
+      number, URL, state, and review status on the first lookup.</li>
       <li>Prompts for an optional stack name (Enter to skip).</li>
-      <li><code>cd</code>s your shell into the worktree, when <code>cd_after_new=true</code> and the
-      shell wrapper from step 2 is installed.</li>
+      <li><code>cd</code>s your shell into the worktree, when <code>cd_after_new=true</code> and the shell
+      wrapper from step 2 is installed.</li>
       </ol>
       <p><strong>b) You have a local branch but NO worktree yet.</strong> First materialize a
       worktree for it (one git command), then adopt it with the same flow:</p>
@@ -851,11 +853,11 @@
       <li>Runs <code>git worktree add &lt;base&gt;/&lt;dirified-branch-name&gt; &lt;branch&gt;</code> tracking
       <code>origin</code>.</li>
       <li>Mirrors initialized submodules from the main worktree (configurable).</li>
-      <li>Looks up the PR via <code>gh pr view --json</code> and registers the branch as a
-      stack root with <code>base = PR.base</code> (or <code>main</code>/<code>master</code> fallback).</li>
-      <li>For fork PRs: detects &quot;Allow edits from maintainers&quot; and your push
-      access; adds a fork remote when both are true, otherwise marks the branch
-      read-only so <code>ezs push</code> won't try to publish commits you can't land.</li>
+      <li>Looks up the PR via <code>gh pr view --json</code> and registers the branch as a stack
+      root with <code>base = PR.base</code> (or <code>main</code>/<code>master</code> fallback).</li>
+      <li>For fork PRs: detects &quot;Allow edits from maintainers&quot; and your push access;
+      adds a fork remote when both are true, otherwise marks the branch read-only
+      so <code>ezs push</code> won't try to publish commits you can't land.</li>
       </ol>
       <p>The branch shows up in <code>ezs ls</code> with a <code>(remote)</code> tag, and every ezs command
       works on it (sync, push, commit, etc.).</p>
@@ -874,15 +876,15 @@
       <p>What <code>ezs new feature-1</code> does (see <code>cmd/ezs/commands/new.go</code>):</p>
       <ol>
       <li>Reads <code>use_worktrees</code> / <code>worktree_base_dir</code> from the per-repo config.</li>
-      <li>Creates branch <code>feature-1</code> from the current branch (no implicit
-      <code>git fetch</code> — works off whatever your local <code>main</code> currently points at).</li>
-      <li>If <code>use_worktrees=true</code>: runs <code>git worktree add &lt;worktree_base_dir&gt;/feature-1 feature-1</code>.</li>
+      <li>Creates branch <code>feature-1</code> from the current branch (no implicit <code>git fetch</code>
+      — works off whatever your local <code>main</code> currently points at).</li>
+      <li>If <code>use_worktrees=true</code>: runs
+      <code>git worktree add &lt;worktree_base_dir&gt;/feature-1 feature-1</code>.</li>
       <li>Records the branch in <code>~/.ezstack/stacks.json</code> with
       <code>parent=&lt;your previous branch&gt;</code>.</li>
-      <li>If this is the first branch in a new stack, prompts you for a stack
-      name.</li>
-      <li>If <code>cd_after_new=true</code> and the shell wrapper is installed: <code>cd</code>s into
-      the worktree.</li>
+      <li>If this is the first branch in a new stack, prompts you for a stack name.</li>
+      <li>If <code>cd_after_new=true</code> and the shell wrapper is installed: <code>cd</code>s into the
+      worktree.</li>
       </ol>
       <p>Make some edits, then commit. <code>ezs commit</code> is a thin wrapper over <code>git commit</code>
       that also rebases child branches and offers to push for you.</p>
@@ -890,11 +892,11 @@
 </code></pre>
       <p>What <code>ezs commit</code> does (see <code>cmd/ezs/commands/commit.go</code>):</p>
       <ol>
-      <li>Runs <code>git commit -am &quot;...&quot;</code> interactively (your editor still works for
-      long messages — the <code>-m</code> here just bypasses it).</li>
+      <li>Runs <code>git commit -am &quot;...&quot;</code> interactively (your editor still works for long
+      messages — the <code>-m</code> here just bypasses it).</li>
       <li>If the branch already exists on the remote, prompts <code>Push to remote? [Y/n]</code>.
-      Answer <code>Y</code> to push or <code>n</code> to defer; <code>ezs amend</code> prompts for a <code>--force</code>
-      push instead.</li>
+      Answer <code>Y</code> to push or <code>n</code> to defer; <code>ezs amend</code> prompts for a <code>--force</code> push
+      instead.</li>
       <li>Looks up child branches in <code>stacks.json</code> and rebases (or merges, per
       <code>sync_strategy</code>) each child onto the new tip. On a brand-new leaf branch
       this is a no-op.</li>
@@ -911,12 +913,11 @@
       <ol>
       <li>Walks every branch in the current stack, root → leaf, skipping branches
       already marked merged.</li>
-      <li>For each branch: <code>git push -u &lt;remote&gt; &lt;branch&gt;</code> (plain push, sets
-      upstream).</li>
-      <li>Skips branches whose remote is &quot;no-push&quot; (fork PRs without
-      maintainer-push permission) with a warning.</li>
-      <li>Add <code>--force</code> (or <code>-f</code>) to switch to <code>git push -u --force-with-lease</code> —
-      what you want after rebases or amends.</li>
+      <li>For each branch: <code>git push -u &lt;remote&gt; &lt;branch&gt;</code> (plain push, sets upstream).</li>
+      <li>Skips branches whose remote is &quot;no-push&quot; (fork PRs without maintainer-push
+      permission) with a warning.</li>
+      <li>Add <code>--force</code> (or <code>-f</code>) to switch to <code>git push -u --force-with-lease</code> — what
+      you want after rebases or amends.</li>
       </ol>
       <p>Open a PR for each branch. The base branch ezstack passes to <code>gh pr create</code>
       is the branch's recorded <strong>parent</strong> in <code>stacks.json</code>, NOT <code>main</code>. So
@@ -940,10 +941,10 @@
 </code></pre>
       <p>What <code>ezs pr stack</code> does:</p>
       <ol>
-      <li>Calls <code>gh.UpdateStackDescription</code> for every PR in the stack
-      (see <code>cmd/ezs/commands/utils.go</code> and the GitHub client).</li>
-      <li>Rewrites each PR body so it contains a managed block listing every
-      branch in the stack, with the active branch marked.</li>
+      <li>Calls <code>gh.UpdateStackDescription</code> for every PR in the stack (see
+      <code>cmd/ezs/commands/utils.go</code> and the GitHub client).</li>
+      <li>Rewrites each PR body so it contains a managed block listing every branch
+      in the stack, with the active branch marked.</li>
       </ol>
       <h3 id="7-inspect-the-stack-any-time">7. Inspect the stack any time</h3>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">status</span>        <span class="c-comment"># current branch + its position in the stack + PR / CI status</span>
@@ -1030,10 +1031,9 @@
 
       <section class="docs-section" id="workflows" data-heading="Workflows">
       <h2 id="workflows">Workflows</h2>
-      <p>Real end-to-end flows. Each workflow shows the commands first, then a
-      step-by-step breakdown of what ezstack is doing to your git state. If you want
-      the full reference for any individual command, jump to the
-      <a href="#commands">Commands</a> section below.</p>
+      <p>Real end-to-end flows, annotated so you can see exactly what ezstack is doing to
+      your git state on every step. If you want the full reference for any individual
+      command, jump to the <a href="#commands">Commands</a> section below.</p>
       <h3 id="creating-a-stacked-pr">Creating a Stacked PR</h3>
       <p>The canonical flow: build two dependent branches, push them, open linked PRs.
       Every <code>ezs</code> line is a thin shell over git — the step-by-step list below the
@@ -1062,10 +1062,10 @@
       worktree at <code>&lt;worktree_base_dir&gt;/feature-1/</code> (when <code>use_worktrees=true</code>),
       records the branch in <code>~/.ezstack/stacks.json</code> with <code>parent=main</code>, and
       <code>cd</code>s your shell into the new worktree.</li>
-      <li><strong>Commit.</strong> <code>ezs commit -am</code> is equivalent to <code>git add -A &amp;&amp; git commit -m ...</code>
-      followed by an automatic <code>ezs sync --children</code> so descendants get rebased
-      onto the new tip. On a brand-new branch there are no children, so this is
-      just stage + commit.</li>
+      <li><strong>Commit.</strong> <code>ezs commit -am</code> is equivalent to
+      <code>git add -A &amp;&amp; git commit -m ...</code> followed by an automatic
+      <code>ezs sync --children</code> so descendants get rebased onto the new tip. On a
+      brand-new branch there are no children, so this is just stage + commit.</li>
       <li><strong>Stack a second branch on top.</strong> <code>ezs new feature-2 --parent feature-1</code>
       creates the branch pointing at <code>feature-1</code> (not <code>main</code>), creates a second
       worktree, records <code>parent=feature-1</code>, and <code>cd</code>s into it.</li>
@@ -1092,8 +1092,8 @@
       <li>For each descendant (<code>feature-2</code>, <code>feature-3</code>, ...) runs
       <code>git rebase --onto &lt;new feature-1 tip&gt; &lt;old feature-1 tip&gt; &lt;descendant&gt;</code>,
       so their worktrees now sit on top of the amended parent.</li>
-      <li>If the branch is already on the remote, auto-force-pushes the branch
-      and every descendant, so the open PRs update in one shot.</li>
+      <li>If the branch is already on the remote, auto-force-pushes the branch and
+      every descendant, so the open PRs update in one shot.</li>
       </ol>
       <h3 id="after-a-parent-is-merged">After a Parent is Merged</h3>
       <p>When an upstream PR (or a parent branch in the stack) lands on <code>main</code>, the
@@ -1103,16 +1103,15 @@
 </code></pre>
       <ol>
       <li>Fetches <code>origin/main</code>.</li>
-      <li>Detects that <code>feature-1</code> has been merged (matching commit on <code>main</code> OR
-      the PR's <code>mergedAt</code> field via <code>gh pr view --json</code>).</li>
+      <li>Detects that <code>feature-1</code> has been merged (matching commit on <code>main</code> OR the
+      PR's <code>mergedAt</code> field via <code>gh pr view --json</code>).</li>
       <li>Drops <code>feature-1</code> from the stack.</li>
       <li>Rebases <code>feature-2</code> onto <code>main</code>:
       <code>git rebase --onto main &lt;old feature-1&gt; feature-2</code>.</li>
       <li>Updates <code>stacks.json</code> so <code>feature-2</code>'s parent is now <code>main</code>.</li>
       <li>Deletes the merged local branch + worktree (unless you <code>cd</code>'d elsewhere).</li>
       </ol>
-      <p><strong>Case B: you want to merge from the CLI</strong> and keep the stack clean in one
-      go.</p>
+      <p><strong>Case B: you want to merge from the CLI</strong> and keep the stack clean in one go.</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">goto</span> <span class="c-str">feature-1</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">merge</span> <span class="c-flag">-m</span> <span class="c-str">squash</span>    <span class="c-comment"># shells out to `gh pr merge --squash`</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">goto</span> <span class="c-str">feature-2</span>
@@ -1140,8 +1139,8 @@
       <li>Runs <code>git fetch origin &lt;branch&gt;</code> (or the PR's head ref for fork PRs).</li>
       <li>Creates a local branch tracking that ref.</li>
       <li>Creates a worktree for it.</li>
-      <li>Looks up the PR via <code>gh pr view --json</code> and records it in
-      <code>stacks.json</code> with its base branch as the stack root.</li>
+      <li>Looks up the PR via <code>gh pr view --json</code> and records it in <code>stacks.json</code>
+      with its base branch as the stack root.</li>
       <li>Prints a summary panel (PR title, URL, state, review status, +/- diff).</li>
       </ol>
       <p>The branch now shows up in <code>ezs ls</code> with a <code>(remote)</code> tag, and every ezs
@@ -1149,8 +1148,8 @@
       branch in one call.</p>
       <p>For fork PRs, ezstack auto-detects maintainer-push capability:</p>
       <ul>
-      <li>If the PR has &quot;Allow edits from maintainers&quot; AND you have write access
-      to the fork → adds the fork as a git remote and pushes there.</li>
+      <li>If the PR has &quot;Allow edits from maintainers&quot; AND you have write access to
+      the fork → adds the fork as a git remote and pushes there.</li>
       <li>Otherwise → the branch is marked read-only so <code>ezs push</code> / <code>ezs sync</code>
       won't try to publish commits you can't land.</li>
       </ul>
@@ -1165,8 +1164,8 @@
       <li>Pick a local branch (or create one); it gets reparented onto the PR.</li>
       </ol>
       <p>Result in <code>stacks.json</code>:</p>
-      <pre><code>&lt;teammate-pr-branch&gt;      parent=main      (remote, read-only)
-  └── &lt;your-branch&gt;        parent=&lt;teammate-pr-branch&gt;
+      <pre><code>&lt;teammate-pr-branch&gt;      <span class="c-dim">parent=main      (remote, read-only)</span>
+  └── <span class="c-str">&lt;your-branch&gt;</span>        <span class="c-dim">parent=&lt;teammate-pr-branch&gt;</span>
 </code></pre>
       <p>Your branch is now rebased on top of their work, and <code>ezs sync --all</code> will
       keep it up to date as they push new commits.</p>
@@ -1183,18 +1182,18 @@
       <p>What <code>ezs new --from-worktree</code> does (see <code>cmd/ezs/commands/new.go</code>:
       <code>useFromWorktree</code> branch):</p>
       <ol>
-      <li>Calls <code>git worktree list --porcelain</code> to enumerate every worktree
-      attached to this repo.</li>
-      <li>Shows them in a picker labelled <code>&lt;branch&gt; (&lt;path&gt;)</code> and confirms
-      before mutating anything.</li>
-      <li>Calls <code>mgr.RegisterExistingBranch(branch, path, base)</code> — writes the
-      branch into <code>~/.ezstack/stacks.json</code> with <code>parent=&lt;configured base branch&gt;</code>
-      and mints a fresh stack hash.</li>
-      <li>If a PR already exists for the branch on GitHub, hydrates the cached
-      PR number, URL, state, and review status on the first lookup.</li>
+      <li>Calls <code>git worktree list --porcelain</code> to enumerate every worktree attached
+      to this repo.</li>
+      <li>Shows them in a picker labelled <code>&lt;branch&gt; (&lt;path&gt;)</code> and confirms before
+      mutating anything.</li>
+      <li>Calls <code>mgr.RegisterExistingBranch(branch, path, base)</code> — writes the branch
+      into <code>~/.ezstack/stacks.json</code> with <code>parent=&lt;configured base branch&gt;</code> and
+      mints a fresh stack hash.</li>
+      <li>If a PR already exists for the branch on GitHub, hydrates the cached PR
+      number, URL, state, and review status on the first lookup.</li>
       <li>Prompts for an optional stack name (Enter to skip).</li>
-      <li><code>cd</code>s your shell into the worktree, when <code>cd_after_new=true</code> and the
-      shell wrapper is installed.</li>
+      <li><code>cd</code>s your shell into the worktree, when <code>cd_after_new=true</code> and the shell
+      wrapper is installed.</li>
       </ol>
       <p>From here on, every <code>ezs</code> command works against that branch.</p>
       <p>Already have a tracked stack but a <em>separate</em> untracked worktree you want to
@@ -1209,6 +1208,69 @@
       <p><code>ezs stack</code> only updates the metadata — it doesn't rebase your commits onto the
       new parent. If you want the rebase too, use <code>ezs reparent</code> (see the
       <a href="#ezs-reparent"><code>ezs reparent</code></a> reference).</p>
+      <h3 id="inserting-a-branch-between-two-stacked-branches">Inserting a Branch Between Two Stacked Branches</h3>
+      <p>You're mid-review and realize a stack of <code>main → feature-1 → feature-2</code> should
+      have a small refactor or schema change between the two branches. ezstack can
+      splice a new branch into the middle without rebuilding the stack — <code>ezs new</code>
+      creates the leaf, then <code>ezs reparent</code> re-points the existing child at it.</p>
+      <pre><code><span class="c-comment"># Before:    main → feature-1 → feature-2</span>
+<span class="c-comment"># After:     main → feature-1 → refactor → feature-2</span>
+
+<span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">refactor</span> <span class="c-flag">--parent</span> <span class="c-str">feature-1</span>
+<span class="c-comment"># ... edit files in the refactor worktree ...</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">commit</span> <span class="c-flag">-am</span> <span class="c-str">&#34;Extract shared helper&#34;</span>
+
+<span class="c-cmd">ezs</span> <span class="c-flag">reparent</span> <span class="c-str">feature-2</span> <span class="c-str">refactor</span>
+</code></pre>
+      <p>Step by step:</p>
+      <ol>
+      <li><strong>Create the inserted branch as a leaf on the upper half.</strong> <code>ezs new refactor --parent feature-1</code> creates <code>refactor</code> pointing at the current tip of <code>feature-1</code>, materializes its own worktree, and records <code>parent=feature-1</code> in <code>stacks.json</code>. At this point the stack is <code>main → feature-1 → {refactor, feature-2}</code> — <code>refactor</code> is a sibling of <code>feature-2</code>, not yet between them.</li>
+      <li><strong>Commit the change you actually wanted to splice in.</strong> <code>ezs commit -am &quot;...&quot;</code> works exactly like in the canonical flow.</li>
+      <li><strong>Reparent the lower half onto the new branch.</strong> <code>ezs reparent feature-2 refactor</code> rewrites <code>stacks.json</code> so <code>feature-2</code>'s parent becomes <code>refactor</code>, then runs <code>git rebase --onto refactor &lt;old feature-1 tip&gt; feature-2</code>. Anything stacked under <code>feature-2</code> (<code>feature-3</code>, <code>feature-4</code>, …) rides along — the reparent operates on the whole subtree.</li>
+      <li><strong>PR base is updated automatically.</strong> If <code>feature-2</code> already has a PR, ezstack calls <code>gh pr edit --base refactor</code> so reviewers see only the diff against the new parent, then offers a force-push to publish the rebase.</li>
+      </ol>
+      <p>Notes:</p>
+      <ul>
+      <li>If you want the metadata update only (no rebase yet — for example because
+      the new branch isn't ready to share commits with <code>feature-2</code> yet), pass
+      <code>ezs reparent feature-2 refactor --no-rebase</code>. The two branches will diverge
+      on disk until you sync.</li>
+      <li><code>ezs stack</code> does the metadata-only insert as a one-liner: <code>ezs stack -b feature-2 -p refactor</code> — same effect as <code>--no-rebase</code>, no rebase or push offered.</li>
+      <li>Conflicts during the rebase are non-fatal: ezstack saves the new tracking metadata first, then drops you into the worktree with <code>git rebase --continue</code> instructions if the rebase trips. See <a href="#recovering-from-a-sync-conflict">Recovering from a Sync Conflict</a>.</li>
+      </ul>
+      <h3 id="swapping-a-branch-with-its-parent">Swapping a Branch With Its Parent</h3>
+      <p>You stacked <code>feature-2</code> on top of <code>feature-1</code>, then realized the dependency
+      should run the other way — <code>feature-1</code>'s changes actually need <code>feature-2</code>
+      underneath them. ezstack doesn't have a single <code>swap</code> command, but two
+      <code>ezs reparent</code> calls do it. The order matters because <code>ezs reparent</code> rejects
+      moves that would create a cycle (<code>internal/stack/stack.go</code>,
+      <code>wouldCreateCycle</code>), so you can't go straight from <code>feature-1 → feature-2</code> to
+      <code>feature-2 → feature-1</code> in one step — the child has to be detached first.</p>
+      <pre><code><span class="c-comment"># Before:    main → feature-1 → feature-2</span>
+<span class="c-comment"># After:     main → feature-2 → feature-1</span>
+
+<span class="c-cmd">ezs</span> <span class="c-flag">reparent</span> <span class="c-str">feature-2</span> <span class="c-str">main</span>      <span class="c-comment"># main → feature-1, main → feature-2 (siblings)</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">reparent</span> <span class="c-str">feature-1</span> <span class="c-str">feature-2</span> <span class="c-comment"># main → feature-2 → feature-1</span>
+</code></pre>
+      <p>Step by step:</p>
+      <ol>
+      <li><strong>Move the child up to be a sibling of its current parent.</strong> <code>ezs reparent feature-2 main</code> rewrites <code>feature-2</code>'s parent to <code>main</code> and runs <code>git rebase --onto main &lt;old feature-1 tip&gt; feature-2</code>. After this step both branches sit directly on <code>main</code>, which breaks the parent/child relationship the cycle check is worried about.</li>
+      <li><strong>Reparent the original parent onto the original child.</strong> <code>ezs reparent feature-1 feature-2</code> is now legal because <code>feature-1</code> is no longer an ancestor of <code>feature-2</code>. The rebase replays <code>feature-1</code>'s commits on top of <code>feature-2</code>.</li>
+      <li><strong>PR bases get rewritten automatically.</strong> Both PRs end up pointing at their new parents (<code>feature-2</code> → <code>main</code>, <code>feature-1</code> → <code>feature-2</code>). Each step offers a force-push so the GitHub diffs match the new bases. Use <code>ezs pr stack</code> afterwards to refresh the cross-link block in the PR bodies.</li>
+      </ol>
+      <p>Notes:</p>
+      <ul>
+      <li>If <code>feature-2</code> had its own children, they ride with it through step 1 and
+      end up <em>above</em> <code>feature-1</code> after step 2. That's usually what you want for a
+      swap; if not, reparent the unwanted descendants back onto <code>feature-1</code>
+      before step 2.</li>
+      <li>Add <code>--no-rebase</code> to either call if you only want the tracking metadata
+      flipped (no commit replay). Useful when you plan to rewrite history by hand
+      with <code>git rebase -i</code> afterwards.</li>
+      <li>The interactive parent picker (<code>ezs reparent</code> with no args) hides
+      descendants of the branch being moved, so it won't even offer the
+      one-shot swap — you have to do the two-step.</li>
+      </ul>
       <h3 id="splitting-a-single-large-worktree-into-a-stack--manually">Splitting a Single Large Worktree Into a Stack — Manually</h3>
       <p>Sometimes a feature branch grows into a 2,000-line monster before review even
       starts. ezstack doesn't care how a stack came to exist, so you can carve up an
@@ -1247,35 +1309,56 @@ BASE=$(git <span class="c-str">rev-parse</span> <span class="c-str">origin/main)
 </code></pre>
       <p>Step by step:</p>
       <ol>
-      <li><strong>Push to remote first.</strong> Splitting rewrites history locally; a stray
-      force-push could lose work without this safety backup.</li>
-      <li><strong>Snapshot the base SHA</strong> with <code>git rev-parse origin/main</code> so each new
-      stack branch can be anchored to a known-good commit.</li>
-      <li><strong>Pick a carve-up pattern.</strong> Pattern A — commit-by-commit, each existing
-      commit becomes its own stack branch (used in the example above; works
-      best when commits are already small and self-contained). Pattern B —
-      diff-by-feature, redistribute the diff into new branches by topic when
-      the existing commits are messy.</li>
-      <li><strong>Create the first stack branch on top of <code>main</code>.</strong> <code>ezs new part-1 --parent main</code>
-      gives the new stack a known-good base; <code>cd_after_new</code> moves you into
-      <code>&lt;worktree_base_dir&gt;/part-1</code>.</li>
-      <li><strong>Cherry-pick the relevant commits from <code>mega-feature</code> into
-      <code>part-1</code>'s worktree.</strong> Cherry-pick (rather than checkout) because the
-      worktree is already on its own branch.</li>
-      <li><strong>Stack <code>part-2</code> on top of <code>part-1</code>, repeat.</strong> <code>ezs new</code> chains the
-      parents automatically because <code>cd_after_new</code> put you on <code>part-1</code>.</li>
-      <li><strong>Repeat for as many slices as you need</strong> — <code>part-3</code>, <code>part-4</code>, etc.</li>
-      <li><strong>Verify the layout</strong> with <code>ezs ls</code>:
-      <pre><code>main
-└── part-1   PR—   +210 -12
-    └── part-2  PR—   +180 -9
-        └── part-3  PR—   +95 -3</code></pre></li>
-      <li><strong>Push the entire stack and open one PR per branch.</strong> <code>ezs pr create --stack</code>
-      makes a PR per branch and <code>ezs pr stack</code> cross-links them in the PR
-      descriptions.</li>
-      <li><strong>Retire the old monolith</strong> (optional) once the new stack is reviewable.
+      <li>
+      <p><strong>Push to remote first.</strong> Splitting rewrites history locally; a stray
+      force-push could lose work without this safety backup.</p>
+      </li>
+      <li>
+      <p><strong>Snapshot the base SHA</strong> with <code>git rev-parse origin/main</code> so each new
+      stack branch can be anchored to a known-good commit.</p>
+      </li>
+      <li>
+      <p><strong>Pick a carve-up pattern.</strong> Pattern A — commit-by-commit, each existing
+      commit becomes its own stack branch (used in the example above; works best
+      when commits are already small and self-contained). Pattern B —
+      diff-by-feature, redistribute the diff into new branches by topic when the
+      existing commits are messy.</p>
+      </li>
+      <li>
+      <p><strong>Create the first stack branch on top of <code>main</code>.</strong>
+      <code>ezs new part-1 --parent main</code> gives the new stack a known-good base;
+      <code>cd_after_new</code> moves you into <code>&lt;worktree_base_dir&gt;/part-1</code>.</p>
+      </li>
+      <li>
+      <p><strong>Cherry-pick the relevant commits from <code>mega-feature</code> into <code>part-1</code>'s
+      worktree.</strong> Cherry-pick (rather than checkout) because the worktree is
+      already on its own branch.</p>
+      </li>
+      <li>
+      <p><strong>Stack <code>part-2</code> on top of <code>part-1</code>, repeat.</strong> <code>ezs new</code> chains the parents
+      automatically because <code>cd_after_new</code> put you on <code>part-1</code>.</p>
+      </li>
+      <li>
+      <p><strong>Repeat for as many slices as you need</strong> — <code>part-3</code>, <code>part-4</code>, etc.</p>
+      </li>
+      <li>
+      <p><strong>Verify the layout</strong> with <code>ezs ls</code>:</p>
+      <pre><code><span class="c-cmd">main</span>
+└── <span class="c-str">part-1</span>   <span class="c-dim">PR—   +210 -12</span>
+    └── <span class="c-str">part-2</span>  <span class="c-dim">PR—   +180 -9</span>
+        └── <span class="c-str">part-3</span>  <span class="c-dim">PR—   +95 -3</span>
+</code></pre>
+      </li>
+      <li>
+      <p><strong>Push the entire stack and open one PR per branch.</strong>
+      <code>ezs pr create --stack</code> makes a PR per branch and <code>ezs pr stack</code>
+      cross-links them in the PR descriptions.</p>
+      </li>
+      <li>
+      <p><strong>Retire the old monolith</strong> (optional) once the new stack is reviewable.
       <code>ezs delete</code> if it was tracked by ezstack, plain <code>git branch -D</code> if it
-      wasn't, then <code>git push origin --delete</code> to clean up the remote.</li>
+      wasn't, then <code>git push origin --delete</code> to clean up the remote.</p>
+      </li>
       </ol>
       <p>Note: <code>git cherry-pick</code> runs inside whichever worktree your shell is in, so
       each <code>ezs new</code> step <em>must</em> leave you cd'd into the new branch's worktree (the
@@ -1291,12 +1374,12 @@ BASE=$(git <span class="c-str">rev-parse</span> <span class="c-str">origin/main)
 <span class="c-cmd">ezs</span> <span class="c-flag">stack</span> <span class="c-str">rename</span>
 
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">feature</span> <span class="c-str">&#34;$(cat &lt;&lt;&#39;EOF&#39;</span>
-<span class="c-str">split mega-feature into reviewable stacked branches: one per concern</span>
-<span class="c-str">(data model, business logic, API surface, tests).</span>
-<span class="c-str">Cherry-pick or move commits as needed; leave mega-feature as the parent</span>
-<span class="c-str">of the new branches and trim it once everything is moved.</span>
-<span class="c-str">EOF</span>
-<span class="c-str">)&#34;</span>
+<span class="c-cmd">split</span> <span class="c-str">mega-feature</span> <span class="c-str">into</span> <span class="c-str">reviewable</span> <span class="c-str">stacked</span> <span class="c-str">branches:</span> <span class="c-str">one</span> <span class="c-str">per</span> <span class="c-str">concern</span>
+(data <span class="c-str">model,</span> <span class="c-str">business</span> <span class="c-str">logic,</span> <span class="c-str">API</span> <span class="c-str">surface,</span> <span class="c-str">tests).</span>
+Cherry-pick <span class="c-flag">or</span> <span class="c-str">move</span> <span class="c-str">commits</span> <span class="c-str">as</span> <span class="c-str">needed;</span> <span class="c-str">leave</span> <span class="c-str">mega-feature</span> <span class="c-str">as</span> <span class="c-str">the</span> <span class="c-str">parent</span>
+<span class="c-cmd">of</span> <span class="c-flag">the</span> <span class="c-str">new</span> <span class="c-str">branches</span> <span class="c-str">and</span> <span class="c-str">trim</span> <span class="c-str">it</span> <span class="c-str">once</span> <span class="c-str">everything</span> <span class="c-str">is</span> <span class="c-str">moved.</span>
+<span class="c-cmd">EOF</span>
+)<span class="c-str">&#34;</span>
 
 <span class="c-cmd">ezs</span> <span class="c-flag">ls</span>                                <span class="c-comment"># in another terminal</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">status</span> <span class="c-flag">--watch</span>                    <span class="c-comment"># live PR/CI dashboard</span>
@@ -1314,10 +1397,10 @@ BASE=$(git <span class="c-str">rev-parse</span> <span class="c-str">origin/main)
       <li><strong>Optionally name the stack</strong> with <code>ezs stack rename</code> (interactive: pick
       the stack, type a name) so it's easy to find later.</li>
       <li><strong>Launch feature mode against THIS stack</strong> with <code>ezs agent feature &quot;...&quot;</code>
-      so the agent sees the existing branch as part of its scope. The
-      heredoc above is one safe way to keep a multi-line prompt readable; a
-      single quoted string works too. See <code>cmd/ezs/commands/agent.go</code>
-      (<code>agentFeature</code> runs against an <code>existingStack</code> when one is provided).</li>
+      so the agent sees the existing branch as part of its scope. The heredoc
+      above is one safe way to keep a multi-line prompt readable; a single
+      quoted string works too. See <code>cmd/ezs/commands/agent.go</code> (<code>agentFeature</code>
+      runs against an <code>existingStack</code> when one is provided).</li>
       <li><strong>Watch the agent work</strong> in a second terminal with <code>ezs ls</code> and
       <code>ezs status --watch</code>. The agent will propose a plan first; approve before
       it starts running <code>ezs new</code> / <code>ezs commit</code> / <code>git cherry-pick</code> calls.</li>
@@ -1330,10 +1413,10 @@ BASE=$(git <span class="c-str">rev-parse</span> <span class="c-str">origin/main)
       <li>Composes the shipped feature-mode prompt + your repo's
       <code>&lt;repo&gt;/.ezstack/agent-feature-prompt.md</code> (if any) +
       <code>~/.ezstack/agent-feature-prompt.md</code> (if any) + the current stack JSON.</li>
-      <li>When a stack is provided, swaps in the EXISTING-STACK instructions
-      (see <code>buildRenderedFeaturePrompt</code> in <code>cmd/ezs/commands/agent.go</code>): the
-      agent is told to use the existing branches as a starting point and to
-      add new ones on top.</li>
+      <li>When a stack is provided, swaps in the EXISTING-STACK instructions (see
+      <code>buildRenderedFeaturePrompt</code> in <code>cmd/ezs/commands/agent.go</code>): the agent is
+      told to use the existing branches as a starting point and to add new ones
+      on top.</li>
       <li>Spawns the configured <code>agent_command</code> (<code>claude</code> by default) inside the
       stack root's worktree, with a persistent session bound to the stack.
       Re-running <code>ezs agent</code> later resumes the same conversation.</li>
@@ -1359,20 +1442,20 @@ BASE=$(git <span class="c-str">rev-parse</span> <span class="c-str">origin/main)
       usual gating still happens — push, base validation, fork detection, stack
       description update.</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">goto</span> <span class="c-str">feature-2</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">create</span> <span class="c-flag">--auto</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">create</span> <span class="c-flag">--auto</span>       <span class="c-comment"># single branch, AI-drafted title and body</span>
 </code></pre>
       <p>What <code>ezs pr create --auto</code> does (see <code>cmd/ezs/commands/pr_auto.go</code>):</p>
       <ol>
       <li>Validates that the configured <code>agent_command</code> is a Claude-family CLI.
-      <code>--auto</code> currently only works with claude — the prompt expects JSON output
-      and other agents don't have a stable non-interactive contract.</li>
+      (<code>--auto</code> currently only works with <code>claude</code> — the prompt expects JSON
+      output and other agents don't have a stable non-interactive contract.)</li>
       <li>Captures <code>git diff &lt;parent&gt;..HEAD</code> for the branch (capped at 80 KB).</li>
       <li>Captures <code>git log --oneline &lt;parent&gt;..HEAD</code> for the commits.</li>
       <li>Reads the repo's pull-request template from
-      <code>.github/pull_request_template.md</code>, <code>PULL_REQUEST_TEMPLATE.md</code>,
-      <code>docs/pull_request_template.md</code>, or repo-root variants.</li>
-      <li>Wraps everything in a hardened prompt — every untrusted span is wrapped
-      in <code>&lt;data&gt;</code> tags so the agent can't be diff-injected — and shells out to
+      <code>.github/pull_request_template.md</code> / <code>PULL_REQUEST_TEMPLATE.md</code> /
+      <code>docs/pull_request_template.md</code> (or repo-root variants).</li>
+      <li>Wraps everything in a hardened prompt (every untrusted span is wrapped in
+      <code>&lt;data&gt;</code> tags so the agent can't be diff-injected) and shells out to
       <code>claude --print --output-format json --append-system-prompt …</code>. A 5-minute
       timeout caps the call.</li>
       <li>Parses the JSON <code>{title, body}</code> and feeds it into the regular PR create
@@ -1385,13 +1468,11 @@ BASE=$(git <span class="c-str">rev-parse</span> <span class="c-str">origin/main)
       <p>Roll back when you don't like the result:</p>
       <pre><code><span class="c-cmd">gh</span> <span class="c-flag">pr</span> <span class="c-str">view</span> <span class="c-flag">--web</span>                       <span class="c-comment"># eyeball it</span>
 <span class="c-cmd">gh</span> <span class="c-flag">pr</span> <span class="c-str">edit</span> <span class="c-str">&lt;num&gt;</span> <span class="c-flag">--title</span> <span class="c-str">&#34;...&#34;</span> <span class="c-flag">--body</span> <span class="c-str">&#34;...&#34;</span>
-
 <span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">unlink</span>                          <span class="c-comment"># drop the cached PR association</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">create</span> <span class="c-flag">--auto</span>                   <span class="c-comment"># regenerate from scratch</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">create</span> <span class="c-flag">--auto</span>                   <span class="c-comment"># regenerate</span>
 </code></pre>
-      <p>The first two lines edit the existing PR in place. The bottom two recreate
-      it from scratch with a fresh prompt context — useful after squashing more
-      commits in.</p>
+      <p>The last two lines recreate the PR from scratch with a different prompt
+      context — useful after squashing more commits in, for example.</p>
       <h3 id="ai-drafted-prs-across-the-whole-stack">AI-Drafted PRs Across the Whole Stack</h3>
       <p><code>--auto</code> composes with <code>--stack</code> (and <code>--draft-all</code>). Use this on a freshly
       pushed stack so every branch gets a populated description in one shot.</p>
@@ -1401,21 +1482,25 @@ BASE=$(git <span class="c-str">rev-parse</span> <span class="c-str">origin/main)
 </code></pre>
       <p>Step by step:</p>
       <ol>
-      <li><strong>Push every branch in the current stack.</strong></li>
+      <li><strong>Push every branch in the current stack</strong> with <code>ezs push --stack</code>.</li>
       <li><strong>Create a real PR per branch, AI-drafted title + body for each.</strong>
-      <code>ezs pr create --stack --auto</code> walks the stack root → leaf; for each branch
+      <code>ezs pr create --stack --auto</code> (see <code>cmd/ezs/commands/pr.go</code>:
+      <code>prCreateAllForceAI</code>) walks every branch root → leaf. For each branch
       without a live PR it runs the same diff/commits/template flow as
-      single-branch <code>--auto</code>, then <code>gh pr create --base &lt;parent&gt; --head &lt;branch&gt; --title &quot;...&quot; --body &quot;...&quot;</code>.
-      Branches that already have a non-merged PR are skipped (pass <code>--force</code> to
-      override per branch). See <code>cmd/ezs/commands/pr.go</code>: <code>prCreateAllForceAI</code>.</li>
+      single-branch <code>--auto</code>, then
+      <code>gh pr create --base &lt;parent&gt; --head &lt;branch&gt; --title &quot;...&quot; --body &quot;...&quot;</code>.
+      Branches that already have a non-merged PR are skipped (use <code>--force</code> to
+      override per-branch).</li>
       <li><strong>Cross-link them</strong> with <code>ezs pr stack</code> so reviewers can navigate.</li>
       </ol>
-      <p>Two cheaper variants if you want draft PRs across the stack:</p>
-      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">create</span> <span class="c-flag">--draft-all</span> <span class="c-flag">--auto</span>     <span class="c-comment"># draft PRs, AI-drafted bodies</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-flag">--draft-all</span>                   <span class="c-comment"># draft PRs, branch-name titles, no AI</span>
+      <p>Variants:</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">create</span> <span class="c-flag">--draft-all</span> <span class="c-flag">--auto</span>    <span class="c-comment"># every branch = DRAFT PR, AI-drafted body</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-flag">--draft-all</span>                  <span class="c-comment"># every branch = draft PR, branch-name title, NO AI</span>
 </code></pre>
-      <p>The second form is cheapest — no agent dependency, just one <code>gh pr create --draft</code>
-      per branch.</p>
+      <p>The first variant is the same flow but emits drafts (see
+      <code>cmd/ezs/commands/pr.go</code>: <code>--draft-all</code> + <code>--auto</code>). The second is cheaper and
+      faster — no agent dependency, just <code>gh pr create --draft</code> per branch with the
+      branch name as the title.</p>
       <p>A few practical notes:</p>
       <ul>
       <li><code>--auto</code> requires the configured <code>agent_command</code> to resolve to a Claude
@@ -1441,29 +1526,28 @@ BASE=$(git <span class="c-str">rev-parse</span> <span class="c-str">origin/main)
 
 $EDITOR <span class="c-str">src/auth.go</span>                   <span class="c-comment"># fix conflict markers</span>
 <span class="c-cmd">git</span> <span class="c-flag">add</span> <span class="c-str">src/auth.go</span>
-<span class="c-cmd">git</span> <span class="c-flag">rebase</span> <span class="c-flag">--continue</span>
+<span class="c-cmd">git</span> <span class="c-flag">rebase</span> <span class="c-flag">--continue</span>                 <span class="c-comment"># advance the rebase one commit</span>
 
 <span class="c-cmd">ezs</span> <span class="c-flag">sync</span> <span class="c-flag">--continue</span>
 </code></pre>
       <p>Step by step:</p>
       <ol>
-      <li><strong>Try to sync.</strong> <code>ezs sync --stack</code> stops mid-rebase on the conflicting
-      branch and exits with code <code>3</code>.</li>
-      <li><strong>Resolve the conflict</strong> in the worktree git stopped in. Edit the file,
-      <code>git add</code> it, <code>git rebase --continue</code> to advance the rebase one commit.</li>
-      <li><strong>Tell ezs to finish the cascade.</strong> Once <code>git rebase</code> reports no more
-      conflicts, <code>ezs sync --continue</code> replays the descendant subtree using the
-      pre-sync SHAs snapshotted in <code>stacks.json</code> before the conflict, force-pushes
-      any branches that were already on the remote, and runs the <code>post-sync</code>
-      hook. Honors the same scope flags as the original call (<code>-s</code>, <code>-a</code>, <code>-c</code>,
-      <code>-b</code>, <code>&lt;hash-prefix&gt;</code>) — re-add them if the original call was narrower
-      than &quot;everything&quot;.</li>
+      <li><strong>Try to sync.</strong> <code>ezs sync --stack</code> rebases each branch onto its parent.
+      If a hunk conflicts it stops mid-rebase and exits with code <code>3</code>.</li>
+      <li><strong>Resolve the conflict in the worktree git stopped in.</strong> Edit, <code>git add</code>,
+      <code>git rebase --continue</code> until the rebase finishes (no more conflicts).</li>
+      <li><strong>Tell ezs to finish the cascade</strong> with <code>ezs sync --continue</code>. It replays
+      the descendant subtree using the pre-sync SHAs it snapshotted in
+      <code>stacks.json</code> before the conflict, picks up where the original sync left
+      off, honors the same scope flags as the original call (<code>-s</code>, <code>-a</code>, <code>-c</code>,
+      <code>-b</code>, <code>&lt;hash-prefix&gt;</code> — re-add them if the original was scoped narrower
+      than &quot;everything&quot;), force-pushes any branches that were already on the
+      remote, and runs the post-sync hook to mark the sync complete.</li>
       </ol>
       <p>If you want to bail out instead of resolving:</p>
       <pre><code><span class="c-cmd">git</span> <span class="c-flag">rebase</span> <span class="c-flag">--abort</span>                    <span class="c-comment"># back out the rebase you were in</span>
 </code></pre>
-      <p><code>ezs sync</code> exited cleanly with code 3 already, so there's nothing else to
-      do.</p>
+      <p><code>ezs sync</code> exited cleanly with code <code>3</code> already; nothing else to do.</p>
       <p>Notes:</p>
       <ul>
       <li><code>git rerere</code> is auto-enabled on the repo on first sync, so resolving a
@@ -1479,25 +1563,25 @@ $EDITOR <span class="c-str">src/auth.go</span>                   <span class="c-
       land as a single squashed commit:</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">sync</span> <span class="c-flag">--stack</span> <span class="c-flag">--squash</span>
 </code></pre>
-      <p>What <code>--squash</code> does:</p>
-      <ol>
+      <p>What <code>ezs sync --stack --squash</code> does:</p>
+      <ul>
       <li>Walks each branch in the stack with ≥2 commits since its parent.</li>
       <li>Collapses those commits into one before rebasing onto the parent.</li>
-      <li>Leaves branches that are already a single commit untouched.</li>
-      <li>Auto-force-pushes any branch that was already on the remote (the
-      squash rewrites history, so a regular push would be rejected).</li>
-      </ol>
+      <li>Branches that are already a single commit are left untouched.</li>
+      <li>Auto-force-pushes any branch that was already on the remote (the squash
+      rewrites history, so a regular push would be rejected).</li>
+      </ul>
       <p>Pair with <code>ezs pr update</code> to push the collapsed history and keep PR bases /
       descriptions in sync:</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">update</span> <span class="c-flag">--branch</span> <span class="c-str">part-1</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">update</span> <span class="c-flag">--branch</span> <span class="c-str">part-2</span>
-
-<span class="c-cmd">ezs</span> <span class="c-flag">sync</span> <span class="c-flag">--stack</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">ezs</span> <span class="c-str">pr</span> <span class="c-str">stack</span>      <span class="c-comment"># or, for the whole stack</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">sync</span> <span class="c-flag">--stack</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">ezs</span> <span class="c-str">pr</span> <span class="c-str">stack</span>    <span class="c-comment"># or, for the whole stack</span>
 </code></pre>
       <h3 id="pre-push-validation-as-a-hard-requirement---verify">Pre-Push Validation as a Hard Requirement (<code>--verify</code>)</h3>
       <p>Want to enforce that every push is gated by tests, lints, or a security check
       — not just <em>if</em> the hook happens to be installed? Use <code>--verify</code> to require
       the hook.</p>
+      <p>First, install the hook once:</p>
       <pre><code><span class="c-cmd">mkdir</span> <span class="c-flag">-p</span> <span class="c-str">~/.ezstack/hooks</span>
 <span class="c-cmd">cat</span> <span class="c-str">&gt;</span> <span class="c-str">~/.ezstack/hooks/pre-push</span> <span class="c-str">&lt;&lt;</span><span class="c-str">&#39;SH&#39;</span>
 <span class="c-comment">#!/usr/bin/env bash</span>
@@ -1516,20 +1600,14 @@ $EDITOR <span class="c-str">src/auth.go</span>                   <span class="c-
 golangci-lint <span class="c-flag">run</span>
 <span class="c-cmd">SH</span>
 <span class="c-cmd">chmod</span> <span class="c-str">+x</span> <span class="c-str">~/.ezstack/hooks/pre-push</span>
-
-<span class="c-cmd">ezs</span> <span class="c-flag">push</span> <span class="c-flag">--stack</span> <span class="c-flag">--verify</span>
 </code></pre>
-      <p>Step by step:</p>
-      <ol>
-      <li><strong>Install the hook once.</strong> The heredoc writes a bash script to
-      <code>~/.ezstack/hooks/pre-push</code> that runs <code>go test</code> and <code>golangci-lint</code> on
-      every push, and short-circuits when an <code>ezs agent --no-push</code> session set
-      <code>EZS_AGENT_NO_PUSH=1</code>. <code>chmod +x</code> makes it executable.</li>
-      <li><strong>Push with <code>--verify</code>.</strong> Without <code>--verify</code> the hook runs if installed
-      and is otherwise a no-op. With <code>--verify</code>, <code>ezs</code> aborts when the hook is
-      missing, not executable, or exits non-zero — useful in CI and shared dev
-      hosts.</li>
-      </ol>
+      <p>Then push with <code>--verify</code> so a missing or non-executable hook is a hard error:</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">push</span> <span class="c-flag">--stack</span> <span class="c-flag">--verify</span>
+</code></pre>
+      <p><code>--verify</code> makes a missing/non-executable hook a hard error: without it the
+      hook runs if installed and is a no-op otherwise; with it ezs aborts when the
+      hook is missing, not executable, or exits non-zero — useful in CI and shared
+      dev hosts.</p>
       <p>Available hook environment variables: <code>EZS_HOOK</code>, <code>EZS_REPO_ROOT</code>,
       <code>EZS_BRANCH</code>, <code>EZS_STACK_HASH</code>, <code>EZS_STACK_NAME</code>, plus <code>EZS_AGENT_NO_PUSH=1</code>
       when the push originates from an agent session launched with <code>--no-push</code>. See
@@ -1538,10 +1616,10 @@ golangci-lint <span class="c-flag">run</span>
       <p>Stack-status with a refresh loop is the closest ezs gets to a TUI. Useful when
       you've just pushed a multi-branch stack and want to watch CI light up branch
       by branch.</p>
-      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">status</span> <span class="c-flag">--watch</span>                          <span class="c-comment"># default: every 5s</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">status</span> <span class="c-flag">--watch</span> <span class="c-str">10</span>                       <span class="c-comment"># custom interval, space-separated</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">status</span> <span class="c-flag">--watch=10</span>                       <span class="c-comment"># or =-separated</span>
-<span class="c-cmd">ezs</span> <span class="c-flag">status</span> <span class="c-flag">--branch</span> <span class="c-str">feature-1</span> <span class="c-flag">--watch</span>      <span class="c-comment"># a different stack</span>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">status</span> <span class="c-flag">--watch</span>                       <span class="c-comment"># default: re-render every 5 seconds</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">status</span> <span class="c-flag">--watch</span> <span class="c-str">10</span>                    <span class="c-comment"># custom interval (space- or =-separated)</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">status</span> <span class="c-flag">--watch=10</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">status</span> <span class="c-flag">--branch</span> <span class="c-str">feature-1</span> <span class="c-flag">--watch</span>    <span class="c-comment"># scope: specific branch&#39;s stack</span>
 </code></pre>
       <p>The interval is clamped to a 2-second minimum so we don't hammer <code>gh</code>.</p>
       <p>Caveats: watch mode requires a TTY (it clears the screen on each refresh) and
@@ -1551,30 +1629,28 @@ golangci-lint <span class="c-flag">run</span>
       once:</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">doctor</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">import</span> <span class="c-str">~/Dropbox/ezs-backup.json</span>
-
 <span class="c-cmd">cd</span> <span class="c-str">~/code/my-project</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">config</span>
 <span class="c-cmd">echo</span> <span class="c-str">&#39;eval &#34;$(ezs --shell-init)&#34;&#39;</span> <span class="c-str">&gt;&gt;</span> <span class="c-str">~/.zshrc</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">exec</span> <span class="c-str">zsh</span>
 </code></pre>
       <p>Step by step:</p>
       <ol>
-      <li><strong>Sanity-check tooling.</strong> <code>ezs doctor</code> doesn't require being inside a
-      git repo. It reports <code>git</code>/<code>gh</code>/<code>fzf</code> presence, versions, config-dir state,
-      and per-repo worktree base directory health. Exit 0 means you're good;
+      <li><strong>Sanity-check tooling</strong> with <code>ezs doctor</code> (doesn't require being inside a
+      git repo). It reports git/gh/fzf presence, versions, config dir state, and
+      per-repo worktree base directory health. Exit <code>0</code> means you're good;
       non-zero with a one-line summary otherwise.</li>
-      <li><strong>Restore your global config from a backup</strong> if you have one. Per-machine
+      <li><strong>Restore your global config</strong> from a backup if you have one. Per-machine
       <code>github_token</code> is preserved across imports — exporting redacts it,
       importing skips the redaction sentinel — so round-trips are safe.</li>
-      <li><strong>Per-repo wizard.</strong> Run <code>ezs config</code> inside each repo you want ezs
-      to manage.</li>
-      <li><strong>Wire up the shell wrapper</strong> so <code>cd</code>-on-new and tab completion work.</li>
+      <li><strong>Run the per-repo wizard</strong> inside each repo you want ezs to manage.</li>
+      <li><strong>Wire up the shell wrapper</strong> so cd-on-new and tab completion work.</li>
       </ol>
       <p>For the corresponding <em>backup</em> flow before you wipe a machine:</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">config</span> <span class="c-str">export</span> <span class="c-str">~/Dropbox/ezs-backup.json</span>
 </code></pre>
-      <p>The exported file is written with mode <code>0600</code>, and <code>github_token</code> is
-      replaced with the literal sentinel <code>&lt;redacted-by-ezs-export&gt;</code> — so the
-      file is safe to share, commit, or sync to untrusted storage.</p>
+      <p>The export is mode <code>0600</code> with <code>github_token</code> replaced by the literal sentinel
+      <code>&lt;redacted-by-ezs-export&gt;</code>, so the file is safe to share / commit / sync to
+      untrusted storage.</p>
       <h3 id="resetting-a-stale-pr-association--unlink-then-create-or-refresh">Resetting a Stale PR Association — <code>unlink</code>, then <code>create</code> or <code>refresh</code></h3>
       <p>ezstack caches per-branch PR metadata (<code>pr_url</code>, <code>pr_state</code>, <code>is_merged</code>) in
       <code>~/.ezstack/stacks.json</code>. When that cache and the live state on GitHub
@@ -1586,39 +1662,40 @@ golangci-lint <span class="c-flag">run</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">unlink</span> <span class="c-flag">--all</span>                    <span class="c-comment"># every branch in the current stack</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">unlink</span> <span class="c-flag">--all</span> <span class="c-flag">-y</span>                 <span class="c-comment"># skip the confirmation prompt</span>
 </code></pre>
-      <p><code>pr unlink</code> drops the cached link — it does NOT touch GitHub, it only
-      mutates <code>stacks.json</code> (clears <code>pr_url</code>, <code>pr_state</code>, <code>is_merged</code>; see
-      <code>cmd/ezs/commands/pr.go</code>: <code>prUnlink</code>).</p>
+      <p><code>ezs pr unlink</code> (see <code>cmd/ezs/commands/pr.go</code>: <code>prUnlink</code>) drops the cached
+      link by clearing <code>pr_url</code>, <code>pr_state</code>, and <code>is_merged</code> in <code>stacks.json</code>. It
+      does NOT touch GitHub.</p>
       <p>From here you have two paths back to a healthy cache, depending on whether
       you want to <strong>start over with a brand-new PR</strong> or <strong>re-discover an existing
       PR that's still live on GitHub</strong>:</p>
-      <p><strong>Path A: start over.</strong> <code>ezs</code> opens a brand-new PR for the branch and
-      writes the new <code>pr_url</code> into <code>stacks.json</code>. Use this when the prior PR was
-      closed, replaced, or you just want to &quot;burn it down and start fresh&quot;.</p>
+      <p><strong>Path A: start over.</strong> ezs opens a brand-new PR for the branch and writes the
+      new <code>pr_url</code> into <code>stacks.json</code>. Use this when the prior PR was closed,
+      replaced, or just &quot;burn it down and start fresh&quot;.</p>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">create</span> <span class="c-flag">-t</span> <span class="c-str">&#34;Part 2 (v2): wire it up&#34;</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">create</span> <span class="c-flag">--auto</span>                   <span class="c-comment"># AI-drafted title + body</span>
 </code></pre>
-      <p>After <code>unlink</code> the cache is empty, so <code>pr create</code> has no existing-PR guard
-      to trip and proceeds straight to <code>gh pr create --base &lt;parent&gt; --head &lt;branch&gt;</code>
-      (<code>cmd/ezs/commands/pr.go</code>: <code>prCreate</code>).</p>
-      <p><strong>Path B: re-discover the existing PR.</strong> If a PR for the branch still
-      exists on GitHub, <code>pr refresh</code> queries GitHub by branch name, repopulates
-      the cache, and restores the link without opening a new PR.</p>
+      <p>After <code>unlink</code> the cache is empty, so <code>pr create</code> has no existing-PR guard to
+      trip and proceeds straight to <code>gh pr create --base &lt;parent&gt; --head &lt;branch&gt;</code>
+      (see <code>cmd/ezs/commands/pr.go</code>: <code>prCreate</code>).</p>
+      <p><strong>Path B: re-discover the existing PR.</strong> If a PR for the branch still exists
+      on GitHub, <code>pr refresh</code> queries GitHub by branch name, repopulates the cache,
+      and restores the link without opening a new PR.</p>
+      <blockquote>
+      <p><strong>Important:</strong> <code>pr refresh</code> requires a non-empty cache to operate on — after
+      a hard <code>pr unlink</code> (which clears both <code>pr_number</code> and <code>pr_url</code>), refresh
+      exits with <code>&quot;Branch '...' has no cached PR association.&quot;</code> For Path B you
+      typically want to skip the unlink and just run refresh on the still-linked
+      branch:</p>
+      </blockquote>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">refresh</span>                         <span class="c-comment"># current branch</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">refresh</span> <span class="c-flag">--branch</span> <span class="c-str">feature-2</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">pr</span> <span class="c-str">refresh</span> <span class="c-flag">--stack</span>                 <span class="c-comment"># parallel refresh across the stack</span>
 </code></pre>
-      <p><strong>Important:</strong> <code>pr refresh</code> requires a non-empty cache to operate on.
-      After a hard <code>pr unlink</code> (which clears both <code>pr_number</code> and <code>pr_url</code>),
-      refresh exits with <code>Branch '...' has no cached PR association.</code> For Path B
-      you typically want to skip the unlink and just run refresh on the
-      still-linked branch.</p>
-      <p>For each targeted branch, <code>ezs</code> calls <code>gh.GetPR(&lt;cached number&gt;)</code>; on a
-      stale or 404 number it falls back to <code>gh.GetPRByBranch(&lt;branch name&gt;)</code>.
-      Whatever it finds (live PR, merged PR, closed PR, no PR) is written back
-      into the cache. See <code>fetchLivePR</code> + <code>applyPRRefresh</code> in
-      <code>cmd/ezs/commands/utils.go</code>. This is the &quot;GitHub UI moved underneath me&quot;
-      recovery path.</p>
+      <p>For each targeted branch, ezs calls <code>gh.GetPR(&lt;cached number&gt;)</code>; on a stale
+      or 404 number it falls back to <code>gh.GetPRByBranch(&lt;branch name&gt;)</code>. Whatever it
+      finds (live PR, merged PR, closed PR, no PR) is written back into the cache
+      (see <code>fetchLivePR</code> + <code>applyPRRefresh</code> in <code>cmd/ezs/commands/utils.go</code>). This is
+      the &quot;GitHub UI moved underneath me&quot; recovery path.</p>
       <p>Mental model: <code>pr unlink</code> is the <em>forget</em> primitive, <code>pr create</code> is the <em>make</em>
       primitive, and <code>pr refresh</code> is the <em>re-discover and reconcile</em> primitive. Run
       <code>pr refresh</code> first if you want to keep an existing PR; only <code>pr unlink</code> if
@@ -1627,23 +1704,20 @@ golangci-lint <span class="c-flag">run</span>
       <p>If every new worktree needs the same <code>.envrc</code>, IDE settings, or scaffold
       files, drop them into <code>~/.ezstack/templates/&lt;name&gt;/</code> once and use the
       <code>--template</code> flag to overlay them on every new worktree.</p>
+      <p>Author a template once:</p>
       <pre><code><span class="c-cmd">mkdir</span> <span class="c-flag">-p</span> <span class="c-str">~/.ezstack/templates/go-service</span>
 <span class="c-cmd">cp</span> <span class="c-str">.envrc</span> <span class="c-str">~/.ezstack/templates/go-service/</span>
 <span class="c-cmd">cp</span> <span class="c-flag">-r</span> <span class="c-str">.vscode</span> <span class="c-str">~/.ezstack/templates/go-service/</span>
-
-<span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">feature-x</span> <span class="c-flag">--template</span> <span class="c-str">go-service</span>
 </code></pre>
-      <p>Step by step:</p>
-      <ol>
-      <li><strong>Author a template once</strong> by creating <code>~/.ezstack/templates/&lt;name&gt;/</code> and
-      dropping the files you want overlayed into it.</li>
-      <li><strong>Create a worktree from the template.</strong> The overlay is applied AFTER
-      the worktree is created — existing files are overwritten, new directories
-      created, and file modes (including the executable bit) preserved.</li>
-      </ol>
-      <p>The overlay aborts on symlinks at the template root, any source or
-      destination path that escapes the worktree (ezs validates symlinks and
-      <code>..</code> components inside the template), or any failure mid-copy. Partial
+      <p>Then create a worktree from the template:</p>
+      <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">new</span> <span class="c-str">feature-x</span> <span class="c-flag">--template</span> <span class="c-str">go-service</span>
+</code></pre>
+      <p>The overlay is applied AFTER the worktree is created — existing files are
+      overwritten, new dirs created, file modes (including the executable bit)
+      preserved.</p>
+      <p>Safety: the overlay aborts on symlinks at the template root, any
+      source/destination path that escapes the worktree (ezs validates symlinks
+      and <code>..</code> components inside the template), and any failure mid-copy. Partial
       overlays are never left behind.</p>
       <p>Templates compose with everything else — <code>--from-worktree</code>, <code>--from-remote</code>,
       <code>--parent</code>, etc. all work alongside <code>--template</code>.</p>
@@ -1656,12 +1730,14 @@ golangci-lint <span class="c-flag">run</span>
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">[options]</span> <span class="c-str">[--</span> <span class="c-str">&lt;agent-args&gt;]</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">feature</span> <span class="c-str">&#34;description&#34;</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">ls</span> <span class="c-str">[filter]</span> <span class="c-str">[--json]</span>
+<span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">rm</span> <span class="c-str">&lt;filter&gt;</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">agent</span> <span class="c-str">prompt</span> <span class="c-str">&lt;flag&gt;</span> <span class="c-str">&lt;work|feature&gt;</span>
 
 Modes:
     (default)   <span class="c-dim">Work session — agent scoped to a stack with full context</span>
     <span class="c-cmd">feature</span>     <span class="c-dim">Feature builder — agent breaks a feature into stacked branches</span>
     <span class="c-cmd">ls</span> <span class="c-str">(list)</span>   <span class="c-dim">List the AI sessions ezs has bound to stacks/branches in this repo</span>
+    <span class="c-cmd">rm</span> <span class="c-str">(remove)</span> <span class="c-str">Forget</span> <span class="c-str">a</span> <span class="c-str">tracked</span> <span class="c-str">session</span> <span class="c-str">binding</span> <span class="c-str">(stack,</span> <span class="c-str">branch,</span> <span class="c-str">or</span> <span class="c-str">all)</span>
     <span class="c-cmd">prompt</span>      <span class="c-dim">View or edit the prompt templates used by the agent</span>
 
 Options:
@@ -1727,7 +1803,17 @@ Options:
       <li><code>-s</code> / <code>--stack</code> — show only sessions bound to the user's current stack (both stack-scoped and branch-scoped sessions in that stack). Errors when the cwd isn't on a stack branch.</li>
       <li><code>--feature</code> — show only sessions created via <code>ezs agent feature</code>. The <code>mode</code> field on each session row distinguishes work-mode (<code>&quot;work&quot;</code>) from feature-mode (<code>&quot;feature&quot;</code>); legacy entries written before mode tracking surface as <code>&quot;work&quot;</code>.</li>
       </ul>
-      <p><code>agent ls</code> is intentionally scoped to the current repo only. Sessions from other ezstack-tracked repos in <code>~/.ezstack/stacks.json</code> are not surfaced — there's no cross-repo listing flag, by design, because surfacing unrelated sessions creates more confusion than it resolves. Only ezstack-minted sessions (display name prefixed with <code>_ezstack-</code>) are listed — freestanding <code>claude</code> sessions you started by hand are not.</p>
+      <p><code>agent ls</code> is intentionally scoped to the current repo only. Sessions from other ezstack-tracked repos in <code>~/.ezstack/stacks.json</code> are not surfaced — there's no cross-repo listing flag, by design, because surfacing unrelated sessions creates more confusion than it resolves. Only ezstack-bound sessions are listed — freestanding <code>claude</code> sessions you started by hand are not.</p>
+      <h4 id="forgetting-a-session-binding">Forgetting a session binding</h4>
+      <p><code>ezs agent rm &lt;filter&gt;</code> (alias <code>ezs agent remove</code>) clears ezs's stored pointer to the AI session for the chosen scope. The next <code>ezs agent</code> run against that scope mints a fresh UUID instead of resuming. The agent's own conversation history (claude's session journal, etc.) is not touched — only ezs forgets the pointer. Use <code>ezs agent ls</code> to grab the UUID first if you want to resume manually later (<code>ezs agent -- --resume &lt;uuid&gt;</code>).</p>
+      <p>Filters mirror <code>ezs agent ls</code> and are mutually exclusive — exactly one is required:</p>
+      <ul>
+      <li><code>-b</code> / <code>--branch</code> — forget the session bound to the current branch. Errors if no session is bound there.</li>
+      <li><code>-s</code> / <code>--stack</code> — forget the session bound to the current stack. Errors if no session is bound there.</li>
+      <li><code>--all</code> — forget every session in the current repo (stack + branch). Asks for confirmation since it touches multiple bindings at once; <code>-y</code> / <code>ui.YesMode</code> bypasses the prompt.</li>
+      </ul>
+      <p>The bare <code>ezs agent rm</code> errors out with guidance — silently picking a default would risk wiping the wrong session.</p>
+      <p><strong>Display names follow <code>/rename</code>.</strong> The <code>display_name</code> column is read live from the agent's session journal, so renaming a session inside Claude (<code>/rename my-name</code>) is reflected in <code>agent ls</code> on the next run. Fresh sessions and non-claude agents fall back to the deterministic <code>_ezstack-&lt;identifier&gt;</code> label. The rename also survives subsequent <code>ezs agent</code> resumes — ezs picks up the latest name from the journal and re-asserts it via <code>claude --name</code>, so your rename doesn't get clobbered the next time you launch.</p>
       <p><strong><code>--preset &lt;name&gt;</code>.</strong> Looks up <code>~/.ezstack/agent-presets/&lt;name&gt;.md</code> and appends it to the end of the fully composed prompt under a <code>## Preset: &lt;name&gt;</code> header. Use presets for reusable persona / review-style overlays without having to edit the work/feature prompt files.</p>
       <p><strong><code>--save-prompt &lt;file&gt;</code>.</strong> Writes the fully composed prompt (after all three layers and any <code>--preset</code>) to <code>&lt;file&gt;</code>. Most useful with <code>--dry-run</code> to inspect exactly what the agent would see without spawning it.</p>
       <h4 id="automatic-mcp-integration-claude-code">Automatic MCP integration (Claude Code)</h4>
@@ -2172,8 +2258,12 @@ Options:
     <span class="c-flag">--dry-run</span>              <span class="c-dim">Preview what would be synced without making changes</span>
     <span class="c-flag">--no-autostash</span>         <span class="c-dim">Don&#39;t stash uncommitted changes before rebase (autostash is on by default)</span>
     <span class="c-flag">--json</span>                 <span class="c-dim">Output dry-run results as JSON (requires --dry-run)</span>
+    <span class="c-flag">--include-remote-worktrees</span>   <span class="c-dim">Include pickup branches (`ezs new origin/&lt;branch&gt;` / `-r`) in</span>
+                                 <span class="c-cmd">bulk</span> <span class="c-str">sync.</span> <span class="c-str">Excluded</span> <span class="c-str">by</span> <span class="c-str">default</span> <span class="c-str">to</span> <span class="c-str">avoid</span> <span class="c-str">rewriting</span> <span class="c-str">another</span>
+                                 <span class="c-cmd">contributor</span><span class="c-str">&#39;s history.</span>
 </code></pre>
       <p><strong><code>--stats</code>.</strong> Prints a post-sync summary listing, for each branch in the synced set, the number of commits ahead of its parent after the sync completes. The summary is registered so it runs after the <code>post-sync</code> hook fires (via LIFO-ordered defers), so the numbers you see reflect the final state on disk.</p>
+      <p><strong><code>--include-remote-worktrees</code>.</strong> Pickup branches — created by <code>ezs new origin/&lt;branch&gt;</code> or <code>ezs new -r</code> — belong to another contributor. Bulk sync (<code>ezs sync -a</code> / <code>-s</code> / interactive auto-sync) skips them by default: rebasing rewrites their history, and a follow-up force-push would clobber the contributor's work. Pass <code>--include-remote-worktrees</code> to opt in (e.g., to fast-forward your local copy of the remote branch when you do own the underlying repo). Per-branch sync (<code>-b &lt;name&gt;</code> / <code>-c</code>) is unaffected — those forms are explicit about which branch to touch.</p>
       <p><strong><code>--squash</code>.</strong> Before rebasing each child onto its parent, collapses the child's commits into a single commit. Only branches with ≥2 commits since their parent are affected; branches that are already a single commit are left alone. Because <code>--squash</code> rewrites history, any already-pushed branch will need <code>git push --force-with-lease</code> afterward — ezstack prints a warning reminding you of this up front.</p>
       <p><strong>Hooks.</strong> <code>ezs sync</code> runs <code>~/.ezstack/hooks/pre-sync</code> before the sync (aborting on non-zero exit) and <code>~/.ezstack/hooks/post-sync</code> after (warning only). See the <a href="#hooks">Hooks</a> section below.</p>
       <p><strong>Picking up collaborator commits.</strong> Before rebasing each branch onto its parent, sync also fast-forwards the local branch to <code>origin/&lt;branch&gt;</code> when a teammate has pushed new commits there. Strict fast-forward only — if your local has unpushed commits <em>and</em> the remote has commits you don't, sync prints a <code>diverged</code> note and skips the pull (auto-pulling could re-introduce pre-rebase parent commits when the local was just ezstack-rebased). Run <code>git pull --rebase</code> in the worktree yourself in that case.</p>
@@ -2382,16 +2472,9 @@ Options:
       <li><code>ezs commit</code> / <code>ezs push</code> have no dry-run mode of their own, so their hook behaviour is unconditional.</li>
       </ul>
       <h3 id="hook-recipes">Hook recipes</h3>
-      <p>Real-world examples that lean on the <code>EZS_*</code> env or events with no
-      git-hook equivalent. Each recipe is a complete file you can drop into
-      <code>~/.ezstack/hooks/&lt;name&gt;</code> and <code>chmod +x</code>.</p>
-      <h4 id="hook-recipe-submodule-sync">Sync submodule pointers after a rebase</h4>
-      <p><code>ezs new</code> mirrors initialized submodules into a freshly created
-      worktree, but <code>ezs sync</code> does not run <code>git submodule update</code> after
-      rebasing — so a rebase that bumps a submodule SHA leaves the working copy
-      stale. A <code>post-sync</code> hook keeps them aligned, and skips uninitialized
-      submodules so it works in monorepos where developers only init the subset
-      they care about.</p>
+      <p>Real-world examples that lean on the <code>EZS_*</code> env or events with no git-hook equivalent. Each recipe is a complete file you can drop into <code>~/.ezstack/hooks/&lt;name&gt;</code> and <code>chmod +x</code>.</p>
+      <h4 id="sync-submodule-pointers-after-a-rebase">Sync submodule pointers after a rebase</h4>
+      <p><code>ezs new</code> mirrors initialized submodules into a freshly created worktree, but <code>ezs sync</code> does not run <code>git submodule update</code> after rebasing — so a rebase that bumps a submodule SHA leaves the working copy stale. A <code>post-sync</code> hook keeps them aligned, and skips uninitialized submodules so it works in monorepos where developers only init the subset they care about.</p>
       <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
 <span class="c-comment"># ~/.ezstack/hooks/post-sync</span>
 <span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
@@ -2399,18 +2482,15 @@ Options:
 
 <span class="c-comment"># `git submodule status` prefixes uninitialized entries with `-`; skip those</span>
 <span class="c-comment"># and only update what the user has already opted into.</span>
-inited=$(git <span class="c-str">submodule</span> <span class="c-str">status</span> <span class="c-flag">--recursive</span> <span class="c-str">\</span>
-  <span class="c-str">|</span> awk <span class="c-str">&#39;$0 !~ /^-/ {print $2}&#39;</span><span class="c-str">)</span>
+inited=$(git <span class="c-flag">submodule</span> <span class="c-str">status</span> <span class="c-flag">--recursive</span> <span class="c-str">\</span>
+  | <span class="c-flag">awk</span> <span class="c-str">&#39;$0 !~ /^-/ {print $2}&#39;</span><span class="c-str">)</span>
 
-<span class="c-cmd">[</span> <span class="c-flag">-z</span> <span class="c-str">&#34;$inited&#34;</span> <span class="c-str">]</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">exit</span> <span class="c-str">0</span>
+[ <span class="c-flag">-z</span> <span class="c-str">&#34;$inited&#34;</span> <span class="c-str">]</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">exit</span> <span class="c-str">0</span>
 
 <span class="c-comment"># shellcheck disable=SC2086</span>
 <span class="c-cmd">git</span> <span class="c-flag">submodule</span> <span class="c-str">update</span> <span class="c-flag">--init</span> <span class="c-flag">--recursive</span> <span class="c-flag">--</span> <span class="c-str">$inited</span>
 </code></pre>
-      <p>The hook fires once at the end of the cascade (not per branch), and
-      <code>post-sync</code> is warning-only — a flaky submodule remote will print a
-      warning but won't fail the sync. Pair with a <code>pre-sync</code> that refuses to
-      start when submodules have uncommitted changes:</p>
+      <p>The hook fires once at the end of the cascade (not per branch), and <code>post-sync</code> is warning-only — a flaky submodule remote will print a warning but won't fail the sync. Pair with a <code>pre-sync</code> that refuses to start when submodules have uncommitted changes:</p>
       <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
 <span class="c-comment"># ~/.ezstack/hooks/pre-sync</span>
 <span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
@@ -2421,10 +2501,8 @@ inited=$(git <span class="c-str">submodule</span> <span class="c-str">status</sp
   <span class="c-cmd">exit</span> <span class="c-str">1</span>
 <span class="c-cmd">fi</span>
 </code></pre>
-      <h4 id="hook-recipe-agent-skip">Skip slow checks when an agent is driving</h4>
-      <p><code>ezs agent --no-push</code> exposes <code>EZS_AGENT_NO_PUSH=1</code> to the spawned agent
-      and any nested <code>ezs</code> calls. Use it to keep the full test suite gating
-      human pushes while letting the agent iterate fast:</p>
+      <h4 id="skip-slow-checks-when-an-agent-is-driving">Skip slow checks when an agent is driving</h4>
+      <p><code>ezs agent --no-push</code> exposes <code>EZS_AGENT_NO_PUSH=1</code> to the spawned agent and any nested <code>ezs</code> calls. Use it to keep the full test suite gating human pushes while letting the agent iterate fast:</p>
       <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
 <span class="c-comment"># ~/.ezstack/hooks/pre-push</span>
 <span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
@@ -2438,13 +2516,9 @@ inited=$(git <span class="c-str">submodule</span> <span class="c-str">status</sp
 <span class="c-cmd">go</span> <span class="c-flag">test</span> <span class="c-str">./...</span>
 golangci-lint <span class="c-flag">run</span>
 </code></pre>
-      <p>Combine with <code>ezs push --verify</code> on shared dev hosts and CI to make the
-      hook mandatory: a missing or non-executable
-      <code>~/.ezstack/hooks/pre-push</code> is then a hard error, not a no-op.</p>
-      <h4 id="hook-recipe-per-stack">Per-stack policy</h4>
-      <p><code>EZS_STACK_NAME</code> lets a single hook file route to different rules per
-      stack. Use it to gate release stacks more strictly than wip stacks, or to
-      enable submodule sync only where it matters:</p>
+      <p>Combine with <code>ezs push --verify</code> on shared dev hosts and CI to make the hook mandatory: a missing or non-executable <code>~/.ezstack/hooks/pre-push</code> is then a hard error, not a no-op.</p>
+      <h4 id="per-stack-policy">Per-stack policy</h4>
+      <p><code>EZS_STACK_NAME</code> lets a single hook file route to different rules per stack. Use it to gate release stacks more strictly than wip stacks, or to enable submodule sync only where it matters:</p>
       <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
 <span class="c-comment"># ~/.ezstack/hooks/pre-push</span>
 <span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
@@ -2454,12 +2528,12 @@ golangci-lint <span class="c-flag">run</span>
   release-*)
     <span class="c-cmd">go</span> <span class="c-flag">test</span> <span class="c-str">./...</span>
     golangci-lint <span class="c-flag">run</span>
-    gitleaks <span class="c-flag">protect</span> <span class="c-flag">--staged</span>
+    <span class="c-cmd">gitleaks</span> <span class="c-flag">protect</span> <span class="c-flag">--staged</span>
     ;;
   wip-*|spike-*)
     <span class="c-cmd">go</span> <span class="c-flag">vet</span> <span class="c-str">./...</span>
     ;;
-  <span class="c-str">&#34;&#34;</span>)
+  <span class="c-str">&#34;&#34;</span><span class="c-str">)</span>
     <span class="c-comment"># Branch isn&#39;t part of a named stack — minimal gate.</span>
     <span class="c-cmd">go</span> <span class="c-flag">vet</span> <span class="c-str">./...</span>
     ;;
@@ -2468,19 +2542,15 @@ golangci-lint <span class="c-flag">run</span>
     ;;
 <span class="c-cmd">esac</span>
 </code></pre>
-      <p>The hook fires per branch on stack-wide pushes (<code>ezs push --stack</code>), so
-      <code>EZS_BRANCH</code> and <code>EZS_STACK_HASH</code> are also available if you want
-      per-branch policy inside a stack.</p>
-      <h4 id="hook-recipe-stash">Snapshot dirty state across a sync</h4>
-      <p><code>pre-sync</code> aborts the sync; <code>post-sync</code> warns only. Combined, they
-      bracket the cascade and let you stash uncommitted work safely without ezs's
-      autostash:</p>
+      <p>The hook fires per branch on stack-wide pushes (<code>ezs push --stack</code>), so <code>EZS_BRANCH</code> and <code>EZS_STACK_HASH</code> are also available if you want per-branch policy inside a stack.</p>
+      <h4 id="snapshot-dirty-state-across-a-sync">Snapshot dirty state across a sync</h4>
+      <p><code>pre-sync</code> aborts the sync; <code>post-sync</code> warns only. Combined, they bracket the cascade and let you stash uncommitted work safely without ezs's autostash:</p>
       <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
 <span class="c-comment"># ~/.ezstack/hooks/pre-sync</span>
 <span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
 <span class="c-cmd">cd</span> <span class="c-str">&#34;$EZS_REPO_ROOT&#34;</span>
 
-<span class="c-cmd">if</span> <span class="c-str">!</span> <span class="c-str">git</span> <span class="c-str">diff</span> <span class="c-flag">--quiet</span> <span class="c-str">||</span> <span class="c-str">!</span> <span class="c-str">git</span> <span class="c-str">diff</span> <span class="c-flag">--cached</span> <span class="c-flag">--quiet</span><span class="c-str">;</span> <span class="c-str">then</span>
+<span class="c-cmd">if</span> <span class="c-str">!</span> <span class="c-str">git</span> <span class="c-str">diff</span> <span class="c-flag">--quiet</span> <span class="c-str">||</span> <span class="c-str">!</span> <span class="c-str">git</span> <span class="c-str">diff</span> <span class="c-flag">--cached</span> <span class="c-flag">--quiet;</span> <span class="c-str">then</span>
   stash_msg=<span class="c-str">&#34;ezs-sync-snapshot $(date -u +%FT%TZ) $EZS_BRANCH&#34;</span>
   <span class="c-cmd">git</span> <span class="c-flag">stash</span> <span class="c-str">push</span> <span class="c-flag">-u</span> <span class="c-flag">-m</span> <span class="c-str">&#34;$stash_msg&#34;</span>
   <span class="c-cmd">echo</span> <span class="c-str">&#34;$stash_msg&#34;</span> <span class="c-str">&gt;</span> <span class="c-str">&#34;$EZS_REPO_ROOT/.git/ezs-sync-stash&#34;</span>
@@ -2492,21 +2562,18 @@ golangci-lint <span class="c-flag">run</span>
 <span class="c-cmd">cd</span> <span class="c-str">&#34;$EZS_REPO_ROOT&#34;</span>
 
 marker=<span class="c-str">&#34;$EZS_REPO_ROOT/.git/ezs-sync-stash&#34;</span>
-<span class="c-cmd">[</span> <span class="c-flag">-f</span> <span class="c-str">&#34;$marker&#34;</span> <span class="c-str">]</span> <span class="c-str">||</span> <span class="c-str">exit</span> <span class="c-str">0</span>
+[ <span class="c-flag">-f</span> <span class="c-str">&#34;$marker&#34;</span> <span class="c-str">]</span> <span class="c-str">||</span> <span class="c-str">exit</span> <span class="c-str">0</span>
 
 stash_msg=$(cat <span class="c-str">&#34;$marker&#34;</span><span class="c-str">)</span>
 <span class="c-cmd">rm</span> <span class="c-flag">-f</span> <span class="c-str">&#34;$marker&#34;</span>
 
 <span class="c-comment"># Find the stash by message; pop it if found.</span>
-ref=$(git <span class="c-str">stash</span> <span class="c-str">list</span> <span class="c-str">|</span> awk <span class="c-flag">-F:</span> <span class="c-flag">-v</span> msg=<span class="c-str">&#34;$stash_msg&#34;</span> <span class="c-str">&#39;$0 ~ msg {print $1; exit}&#39;</span><span class="c-str">)</span>
-<span class="c-cmd">[</span> <span class="c-flag">-n</span> <span class="c-str">&#34;$ref&#34;</span> <span class="c-str">]</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">git</span> <span class="c-str">stash</span> <span class="c-str">pop</span> <span class="c-str">&#34;$ref&#34;</span>
+ref=$(git <span class="c-flag">stash</span> <span class="c-str">list</span> <span class="c-str">|</span> <span class="c-str">awk</span> <span class="c-flag">-F:</span> <span class="c-flag">-v</span> <span class="c-str">msg=</span><span class="c-str">&#34;$stash_msg&#34;</span> <span class="c-str">&#39;$0 ~ msg {print $1; exit}&#39;</span><span class="c-str">)</span>
+[ <span class="c-flag">-n</span> <span class="c-str">&#34;$ref&#34;</span> <span class="c-str">]</span> <span class="c-str">&amp;&amp;</span> <span class="c-str">git</span> <span class="c-str">stash</span> <span class="c-str">pop</span> <span class="c-str">&#34;$ref&#34;</span>
 </code></pre>
-      <p>Why a hook and not ezs's built-in autostash: the hook persists across
-      <code>ezs sync --continue</code>, includes the stack name in the stash message, and
-      keeps the marker on a per-worktree basis (<code>.git/</code> is worktree-local).</p>
-      <h4 id="hook-recipe-open-pr">Open the PR in your browser after push</h4>
-      <p>A <code>post-push</code> one-liner that turns &quot;I just pushed&quot; into &quot;the PR is on
-      screen&quot;:</p>
+      <p>Why a hook and not ezs's built-in autostash: the hook persists across <code>ezs sync --continue</code>, includes the stack name in the stash message, and keeps the marker on a per-worktree basis (<code>.git/</code> is worktree-local).</p>
+      <h4 id="open-the-pr-in-your-browser-after-push">Open the PR in your browser after push</h4>
+      <p>A <code>post-push</code> one-liner that turns &quot;I just pushed&quot; into &quot;the PR is on screen&quot;:</p>
       <pre><code><span class="c-comment">#!/usr/bin/env bash</span>
 <span class="c-comment"># ~/.ezstack/hooks/post-push</span>
 <span class="c-cmd">set</span> <span class="c-flag">-euo</span> <span class="c-str">pipefail</span>
@@ -2515,8 +2582,7 @@ ref=$(git <span class="c-str">stash</span> <span class="c-str">list</span> <span
 <span class="c-comment"># `gh pr view --web` no-ops cleanly when the branch has no PR yet.</span>
 <span class="c-cmd">gh</span> <span class="c-flag">pr</span> <span class="c-str">view</span> <span class="c-flag">--web</span> <span class="c-str">&#34;$EZS_BRANCH&#34;</span> <span class="c-str">2&gt;/dev/null</span> <span class="c-str">||</span> <span class="c-str">true</span>
 </code></pre>
-      <p><code>post-push</code> is warning-only, so a missing <code>gh</code> (or no PR for the branch)
-      won't fail the command.</p>
+      <p><code>post-push</code> is warning-only, so a missing <code>gh</code> (or no PR for the branch) won't fail the command.</p>
       </section>
 
       <section class="docs-section" id="discoverability" data-heading="Discoverability">
@@ -2812,14 +2878,14 @@ ref=$(git <span class="c-str">stash</span> <span class="c-str">list</span> <span
       <code>~/.ezstack/stacks.json</code> changes.</p>
       <p><strong>Install</strong></p>
       <pre><code><span class="c-comment"># Pre-built (from the Releases page)</span>
-<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.8.1.vsix</span>
+<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.8.5.vsix</span>
 
 <span class="c-comment"># From source</span>
 <span class="c-cmd">cd</span> <span class="c-str">vscode-extension</span>
 <span class="c-cmd">npm</span> <span class="c-flag">install</span>
 <span class="c-cmd">npm</span> <span class="c-flag">run</span> <span class="c-str">compile</span>
 <span class="c-cmd">npx</span> <span class="c-flag">vsce</span> <span class="c-str">package</span>
-<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.8.1.vsix</span>
+<span class="c-cmd">code</span> <span class="c-flag">--install-extension</span> <span class="c-str">ezstack-4.8.5.vsix</span>
 </code></pre>
       <p><strong>Commands</strong> are available under the <code>ezstack:</code> prefix in the command palette
       (<code>Cmd+Shift+P</code>):</p>
@@ -3161,7 +3227,7 @@ ref=$(git <span class="c-str">stash</span> <span class="c-str">list</span> <span
       <div class="footer-inner">
         <div class="footer-brand">
           <span class="footer-name">ezstack</span>
-          <span class="footer-meta">MIT License · v4.8.1</span>
+          <span class="footer-meta">MIT License · v4.8.5</span>
         </div>
         <div class="footer-links">
           <a href="https://github.com/KulkarniKaustubh/ezstack" target="_blank" rel="noopener">GitHub</a>

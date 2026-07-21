@@ -85,12 +85,53 @@ func TestSessionDisplayName(t *testing.T) {
 	}
 }
 
+func TestOneShotFeatureLabel(t *testing.T) {
+	cases := []struct {
+		desc string
+		uuid string
+		want string
+	}{
+		// Typical: short description plus 6-char UUID suffix.
+		{"Add user auth with JWT", "7a3b9f12-4567-89ab-cdef-1234567890ab", "add-user-auth-with-jwt-7a3b9f"},
+		// Empty description falls back to suffix only.
+		{"", "abcdef0123456789", "abcdef"},
+		// Pure-symbol description sanitizes to nothing → suffix only.
+		{"!!!", "abcdef0123456789", "abcdef"},
+		// Long description gets truncated at 32 sanitized chars before the suffix joins.
+		{"This is a very long description that goes on and on", "abcdef0123456789",
+			"this-is-a-very-long-description-abcdef"},
+		// Empty UUID degrades gracefully to description only.
+		{"feature x", "", "feature-x"},
+	}
+	for _, c := range cases {
+		if got := oneShotFeatureLabel(c.desc, c.uuid); got != c.want {
+			t.Errorf("oneShotFeatureLabel(%q, %q) = %q, want %q", c.desc, c.uuid, got, c.want)
+		}
+	}
+}
+
+// TestResolveFeatureSession_OneShotLabelEmbedsDescription pins the bug fix for
+// parallel feature sessions: two `ezs agent feature` runs with different
+// descriptions must produce distinct display labels even when no stack is bound.
+func TestResolveFeatureSession_OneShotLabelEmbedsDescription(t *testing.T) {
+	withStubSessionID(t, "abcdef1234567890")
+
+	plan := resolveFeatureSession("/repo", "claude", nil, false, "Add user authentication")
+	if plan == nil || plan.injection == nil {
+		t.Fatal("expected non-nil plan")
+	}
+	wantLabel := "_ezstack-feature-add-user-authentication-abcdef"
+	if !containsString(plan.injection.Args, wantLabel) {
+		t.Errorf("expected display label %q in args; got %v", wantLabel, plan.injection.Args)
+	}
+}
+
 // ── buildAgentSessionArgs (claude family) ──────────────────────────────────────
 
 func TestBuildAgentSessionArgs_ClaudeFreshWhenNoStored(t *testing.T) {
 	withStubSessionID(t, "stub-uuid-1")
 
-	inj := buildAgentSessionArgs("claude", "", "_ezstack-foo", false)
+	inj := buildAgentSessionArgs("claude", "", "_ezstack-foo", false, config.AgentSessionWorkMode)
 
 	if !inj.Fresh {
 		t.Error("expected Fresh=true when no stored session ID")
@@ -110,7 +151,7 @@ func TestBuildAgentSessionArgs_ClaudeFreshWhenNoStored(t *testing.T) {
 func TestBuildAgentSessionArgs_ClaudeResumeWhenStored(t *testing.T) {
 	withStubSessionID(t, "should-not-be-used")
 
-	inj := buildAgentSessionArgs("claude", "existing-id", "_ezstack-bar", false)
+	inj := buildAgentSessionArgs("claude", "existing-id", "_ezstack-bar", false, config.AgentSessionWorkMode)
 
 	if inj.Fresh {
 		t.Error("expected Fresh=false when reusing stored session")
@@ -130,7 +171,7 @@ func TestBuildAgentSessionArgs_ClaudeResumeWhenStored(t *testing.T) {
 func TestBuildAgentSessionArgs_ClaudeForceFreshIgnoresStored(t *testing.T) {
 	withStubSessionID(t, "fresh-uuid")
 
-	inj := buildAgentSessionArgs("claude", "existing-id", "_ezstack-baz", true)
+	inj := buildAgentSessionArgs("claude", "existing-id", "_ezstack-baz", true, config.AgentSessionWorkMode)
 
 	if !inj.Fresh {
 		t.Error("--no-resume must override a stored session ID")
@@ -153,7 +194,7 @@ func TestBuildAgentSessionArgs_ClaudeForceFreshIgnoresStored(t *testing.T) {
 func TestBuildAgentSessionArgs_NonClaudeFreshOmitsArgs(t *testing.T) {
 	withStubSessionID(t, "uuid-non-claude-fresh")
 
-	inj := buildAgentSessionArgs("aider --model gpt-4", "", "_ezstack-foo", false)
+	inj := buildAgentSessionArgs("aider --model gpt-4", "", "_ezstack-foo", false, config.AgentSessionWorkMode)
 
 	if !inj.Fresh {
 		t.Error("expected Fresh=true with no stored ID")
@@ -172,7 +213,7 @@ func TestBuildAgentSessionArgs_NonClaudeFreshOmitsArgs(t *testing.T) {
 func TestBuildAgentSessionArgs_NonClaudeResumeOmitsArgs(t *testing.T) {
 	withStubSessionID(t, "should-not-be-used")
 
-	inj := buildAgentSessionArgs("aider", "stored-id", "_ezstack-bar", false)
+	inj := buildAgentSessionArgs("aider", "stored-id", "_ezstack-bar", false, config.AgentSessionWorkMode)
 
 	if inj.Fresh {
 		t.Error("expected Fresh=false when reusing stored ID")
@@ -191,7 +232,7 @@ func TestBuildAgentSessionArgs_NonClaudeResumeOmitsArgs(t *testing.T) {
 func TestBuildAgentSessionArgs_NonClaudeForceFreshMintsNew(t *testing.T) {
 	withStubSessionID(t, "minted-fresh")
 
-	inj := buildAgentSessionArgs("cursor", "stored-id", "_ezstack-baz", true)
+	inj := buildAgentSessionArgs("cursor", "stored-id", "_ezstack-baz", true, config.AgentSessionWorkMode)
 
 	if !inj.Fresh {
 		t.Error("--no-resume must mint a new ID for non-claude too")
@@ -213,7 +254,7 @@ func TestBuildAgentSessionArgs_NonClaudeForceFreshMintsNew(t *testing.T) {
 func TestResolveFeatureSession_OneShotMintsUUID(t *testing.T) {
 	withStubSessionID(t, "feature-oneshot-uuid")
 
-	plan := resolveFeatureSession("/repo", "claude", nil, false)
+	plan := resolveFeatureSession("/repo", "claude", nil, false, "build a thing")
 	if plan == nil || plan.injection == nil {
 		t.Fatal("expected non-nil plan for feature one-shot mode")
 	}
@@ -233,7 +274,7 @@ func TestResolveFeatureSession_OneShotMintsUUID(t *testing.T) {
 func TestResolveFeatureSession_OneShotNonClaudeOmitsArgs(t *testing.T) {
 	withStubSessionID(t, "non-claude-oneshot")
 
-	plan := resolveFeatureSession("/repo", "aider", nil, false)
+	plan := resolveFeatureSession("/repo", "aider", nil, false, "build a thing")
 	if plan == nil || plan.injection == nil {
 		t.Fatal("expected non-nil plan for feature one-shot mode (non-claude)")
 	}
@@ -249,7 +290,7 @@ func TestResolveFeatureSession_ExistingStackResumes(t *testing.T) {
 	withStubSessionID(t, "should-not-be-used")
 	stack := &config.Stack{Hash: "abc1234", Name: "my-feature", AgentSessionID: "stored-feature-id"}
 
-	plan := resolveFeatureSession("/repo", "claude", stack, false)
+	plan := resolveFeatureSession("/repo", "claude", stack, false, "")
 	if plan == nil || plan.injection == nil {
 		t.Fatal("expected non-nil plan for existing-stack feature mode")
 	}
@@ -270,12 +311,99 @@ func TestResolveFeatureSession_ExistingStackForceFreshMints(t *testing.T) {
 	withStubSessionID(t, "minted-fresh-feature")
 	stack := &config.Stack{Hash: "abc1234", Name: "my-feature", AgentSessionID: "stored-feature-id"}
 
-	plan := resolveFeatureSession("/repo", "claude", stack, true)
+	plan := resolveFeatureSession("/repo", "claude", stack, true, "")
 	if !plan.injection.Fresh {
 		t.Error("--no-resume must mint a new ID even for existing-stack feature")
 	}
 	if plan.injection.SessionID != "minted-fresh-feature" {
 		t.Errorf("SessionID = %q, want minted-fresh-feature", plan.injection.SessionID)
+	}
+}
+
+// ── sticky-rename: resume path honors /rename done inside Claude ──────────
+//
+// When a user runs `/rename foo` inside Claude, the latest agent-name event
+// in the session journal is "foo". On the next `ezs agent`, the resume args
+// must pass `--name foo` (not the deterministic `_ezstack-<id>` label) so
+// the rename survives the relaunch instead of being clobbered. Fresh
+// launches and --no-resume keep the deterministic label.
+
+func TestResolveWorkSession_ResumePrefersLiveRename(t *testing.T) {
+	root := withClaudeProjectsDir(t)
+	storedID := "stack-uuid"
+	writeJSONL(t, root, "-Users-test-repo", storedID, []string{
+		nameEvent(storedID, "_ezstack-launch-label"),
+		nameEvent(storedID, "renamed-by-user"),
+	})
+	stack := &config.Stack{Hash: "abc1234", Name: "my-stack", AgentSessionID: storedID}
+
+	plan := resolveWorkSession("/repo", "claude", stack, "", false, false)
+	if plan == nil || plan.injection == nil {
+		t.Fatal("expected non-nil plan")
+	}
+	if plan.injection.Fresh {
+		t.Error("resuming with stored ID must not be Fresh")
+	}
+	if !containsString(plan.injection.Args, "renamed-by-user") {
+		t.Errorf("expected resume to carry user's rename; got args=%v", plan.injection.Args)
+	}
+	if containsString(plan.injection.Args, "_ezstack-my-stack") {
+		t.Errorf("rename should override deterministic label; got args=%v", plan.injection.Args)
+	}
+}
+
+func TestResolveWorkSession_ResumeNoLiveNameKeepsFallback(t *testing.T) {
+	// Resume against a stored ID whose journal has no agent-name event
+	// (e.g. corrupted/truncated file): we must fall back to the
+	// deterministic label rather than emit `--name ""`.
+	root := withClaudeProjectsDir(t)
+	storedID := "stack-uuid-no-name"
+	writeJSONL(t, root, "-Users-test-repo", storedID, []string{
+		`{"type":"user","message":"hi"}`,
+	})
+	stack := &config.Stack{Hash: "abc1234", Name: "my-stack", AgentSessionID: storedID}
+
+	plan := resolveWorkSession("/repo", "claude", stack, "", false, false)
+	if !containsString(plan.injection.Args, "_ezstack-my-stack") {
+		t.Errorf("expected fallback label '_ezstack-my-stack' in args; got %v", plan.injection.Args)
+	}
+}
+
+func TestResolveWorkSession_ForceFreshIgnoresLiveRename(t *testing.T) {
+	// --no-resume mints a new UUID — any rename on the *previous* session
+	// belongs to that prior conversation and must not leak into the fresh
+	// one.
+	root := withClaudeProjectsDir(t)
+	storedID := "stack-uuid"
+	writeJSONL(t, root, "-Users-test-repo", storedID, []string{
+		nameEvent(storedID, "old-rename"),
+	})
+	withStubSessionID(t, "minted-fresh-uuid")
+	stack := &config.Stack{Hash: "abc1234", Name: "my-stack", AgentSessionID: storedID}
+
+	plan := resolveWorkSession("/repo", "claude", stack, "", false, true)
+	if !plan.injection.Fresh {
+		t.Error("forceFresh must mint fresh")
+	}
+	if !containsString(plan.injection.Args, "_ezstack-my-stack") {
+		t.Errorf("forceFresh must use deterministic label; got args=%v", plan.injection.Args)
+	}
+	if containsString(plan.injection.Args, "old-rename") {
+		t.Errorf("forceFresh must not surface prior rename; got args=%v", plan.injection.Args)
+	}
+}
+
+func TestResolveFeatureSession_ResumePrefersLiveRename(t *testing.T) {
+	root := withClaudeProjectsDir(t)
+	storedID := "stored-feature-id"
+	writeJSONL(t, root, "-Users-test-repo", storedID, []string{
+		nameEvent(storedID, "feature-renamed"),
+	})
+	stack := &config.Stack{Hash: "abc1234", Name: "my-feature", AgentSessionID: storedID}
+
+	plan := resolveFeatureSession("/repo", "claude", stack, false, "")
+	if !containsString(plan.injection.Args, "feature-renamed") {
+		t.Errorf("expected feature resume to carry user's rename; got %v", plan.injection.Args)
 	}
 }
 
@@ -311,11 +439,15 @@ func TestSplitAgentExtras(t *testing.T) {
 func TestAgentProcessEnv_InjectsSessionID(t *testing.T) {
 	parent := []string{"PATH=/usr/bin", "HOME=/home/test"}
 
-	got := agentProcessEnv(parent, false, "abc-123")
+	got := agentProcessEnv(parent, false, "abc-123", config.AgentSessionFeatureMode)
 
 	wantPair := agentSessionIDEnv + "=abc-123"
 	if !containsString(got, wantPair) {
 		t.Errorf("agent env missing %s; got %v", wantPair, got)
+	}
+	wantMode := agentSessionModeEnv + "=" + config.AgentSessionFeatureMode
+	if !containsString(got, wantMode) {
+		t.Errorf("agent env missing %s; got %v", wantMode, got)
 	}
 }
 
@@ -323,13 +455,17 @@ func TestAgentProcessEnv_StripsInheritedSessionWhenEmpty(t *testing.T) {
 	parent := []string{
 		"PATH=/usr/bin",
 		agentSessionIDEnv + "=stale-id-from-outer-agent",
+		agentSessionModeEnv + "=feature",
 	}
 
-	got := agentProcessEnv(parent, false, "")
+	got := agentProcessEnv(parent, false, "", "")
 
 	for _, kv := range got {
 		if strings.HasPrefix(kv, agentSessionIDEnv+"=") {
 			t.Errorf("expected stale %s to be stripped when sessionID is empty; got %v", agentSessionIDEnv, got)
+		}
+		if strings.HasPrefix(kv, agentSessionModeEnv+"=") {
+			t.Errorf("expected stale %s to be stripped when sessionID is empty; got %v", agentSessionModeEnv, got)
 		}
 	}
 }
@@ -338,11 +474,13 @@ func TestAgentProcessEnv_DeduplicatesSessionID(t *testing.T) {
 	parent := []string{
 		"PATH=/usr/bin",
 		agentSessionIDEnv + "=stale",
+		agentSessionModeEnv + "=work",
 	}
 
-	got := agentProcessEnv(parent, false, "fresh")
+	got := agentProcessEnv(parent, false, "fresh", config.AgentSessionFeatureMode)
 
 	count := 0
+	modeCount := 0
 	for _, kv := range got {
 		if strings.HasPrefix(kv, agentSessionIDEnv+"=") {
 			count++
@@ -350,9 +488,18 @@ func TestAgentProcessEnv_DeduplicatesSessionID(t *testing.T) {
 				t.Errorf("expected session ID = fresh, got %q", kv)
 			}
 		}
+		if strings.HasPrefix(kv, agentSessionModeEnv+"=") {
+			modeCount++
+			if kv != agentSessionModeEnv+"="+config.AgentSessionFeatureMode {
+				t.Errorf("expected mode = %s, got %q", config.AgentSessionFeatureMode, kv)
+			}
+		}
 	}
 	if count != 1 {
 		t.Errorf("expected exactly one %s entry, got %d", agentSessionIDEnv, count)
+	}
+	if modeCount != 1 {
+		t.Errorf("expected exactly one %s entry, got %d", agentSessionModeEnv, modeCount)
 	}
 }
 

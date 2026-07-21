@@ -482,9 +482,16 @@ export function registerCommands(
           vscode.window.showInformationMessage("No current branch found in any stack.");
           return;
         }
+        // Match the CLI's effective-tree walk (cmd/ezs/commands/navigate.go):
+        // a merged direct child has had its worktree deleted by
+        // MarkBranchMerged, so `revealInExplorer` would point at a path that
+        // no longer exists. Filtering them out matches `ezs navigate down`
+        // and keeps `up`/`down` in sync between client and CLI. Walking
+        // through merged ancestors for "up" is already handled by walkTree
+        // re-pointing Branch.Parent to the nearest non-merged ancestor.
         const children = stacks
           .flatMap((s) => s.branches)
-          .filter((b) => b.parent === current.name);
+          .filter((b) => b.parent === current.name && !b.is_merged);
         if (children.length === 0) {
           vscode.window.showInformationMessage("Already at the bottom of the stack.");
           return;

@@ -1969,3 +1969,163 @@ func TestRebaseChildren_HealsConfigDriftWithRealWorktree(t *testing.T) {
 		t.Errorf("p.txt missing in c's worktree after RebaseChildren — rebase didn't apply: %v", err)
 	}
 }
+
+// TestSyncSpecificStacks_SkipsRemoteByDefault locks the contract that bulk
+// sync (`ezs sync -a` / `-s`) leaves pickup branches alone. Pickup branches
+// belong to another contributor — rebasing them rewrites their history, and
+// a follow-up force-push would clobber their work. The user has to opt in
+// via --include-remote-worktrees (SyncCallbacks.IncludeRemoteWorktrees=true)
+// before sync touches them.
+//
+// Detection follows the same rule so `--dry-run` doesn't promise to sync
+// branches that the actual sync would skip.
+func TestSyncSpecificStacks_SkipsRemoteByDefault(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	// Mine: a regular user branch.
+	if _, err := mgr.CreateBranch("mine", "main", filepath.Join(worktreeBaseDir, "mine"), ""); err != nil {
+		t.Fatalf("CreateBranch mine: %v", err)
+	}
+	minePath := filepath.Join(worktreeBaseDir, "mine")
+	if err := os.WriteFile(filepath.Join(minePath, "mine.txt"), []byte("a\n"), 0644); err != nil {
+		t.Fatalf("write mine.txt: %v", err)
+	}
+	exec.Command("git", "-C", minePath, "add", ".").Run()
+	exec.Command("git", "-C", minePath, "commit", "-m", "mine work").Run()
+
+	// Pickup: a sibling user branch promoted to "remote".
+	mgr, _ = NewManager(repoDir)
+	if _, err := mgr.CreateBranch("pickup", "main", filepath.Join(worktreeBaseDir, "pickup"), ""); err != nil {
+		t.Fatalf("CreateBranch pickup: %v", err)
+	}
+	pickupPath := filepath.Join(worktreeBaseDir, "pickup")
+	if err := os.WriteFile(filepath.Join(pickupPath, "pickup.txt"), []byte("b\n"), 0644); err != nil {
+		t.Fatalf("write pickup.txt: %v", err)
+	}
+	exec.Command("git", "-C", pickupPath, "add", ".").Run()
+	exec.Command("git", "-C", pickupPath, "commit", "-m", "pickup work").Run()
+	if err := mgr.MarkBranchRemote("pickup", "", "origin"); err != nil {
+		t.Fatalf("MarkBranchRemote: %v", err)
+	}
+
+	// Move main forward so both branches *would* be behind and need a sync.
+	if err := os.WriteFile(filepath.Join(repoDir, "main.txt"), []byte("c\n"), 0644); err != nil {
+		t.Fatalf("write main.txt: %v", err)
+	}
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "main work").Run()
+
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-q", "-u", "origin", "main").Run()
+	exec.Command("git", "-C", repoDir, "push", "-q", "-u", "origin", "pickup").Run()
+
+	mgr, _ = NewManager(repoDir)
+	stacks := mgr.ListStacks()
+
+	// Default: detection skips the pickup branch.
+	syncNeeded, err := mgr.DetectSyncNeededForStacks(nil, stacks, false)
+	if err != nil {
+		t.Fatalf("DetectSyncNeededForStacks: %v", err)
+	}
+	for _, info := range syncNeeded {
+		if info.Branch == "pickup" {
+			t.Errorf("default DetectSyncNeededForStacks listed pickup branch %q — should be skipped without --include-remote-worktrees", info.Branch)
+		}
+	}
+	sawMine := false
+	for _, info := range syncNeeded {
+		if info.Branch == "mine" {
+			sawMine = true
+		}
+	}
+	if !sawMine {
+		t.Errorf("default DetectSyncNeededForStacks dropped the user's own branch %q (expected it to need sync)", "mine")
+	}
+
+	// Default: sync skips the pickup branch.
+	results, err := mgr.SyncSpecificStacks(stacks, nil, &SyncCallbacks{Autostash: false, UseMerge: false})
+	if err != nil {
+		t.Fatalf("SyncSpecificStacks default: %v", err)
+	}
+	for _, r := range results {
+		if r.Branch == "pickup" {
+			t.Errorf("default SyncSpecificStacks rebased pickup branch — must skip without --include-remote-worktrees")
+		}
+	}
+
+	// Opt-in: detection includes the pickup branch.
+	syncNeeded, err = mgr.DetectSyncNeededForStacks(nil, stacks, true)
+	if err != nil {
+		t.Fatalf("DetectSyncNeededForStacks(includeRemote=true): %v", err)
+	}
+	sawPickup := false
+	for _, info := range syncNeeded {
+		if info.Branch == "pickup" {
+			sawPickup = true
+		}
+	}
+	if !sawPickup {
+		t.Errorf("DetectSyncNeededForStacks(includeRemote=true) did not list pickup branch — opt-in flag should bring it back")
+	}
+}
+
+// TestDetectSyncNeededForBranch_DoesNotSkipRemote pins the per-branch contract
+// that complements TestSyncSpecificStacks_SkipsRemoteByDefault: when the user
+// explicitly names a remote-only (pickup) branch via `ezs sync --branch <pickup>`,
+// detection MUST report it. Bulk detection skips IsRemote=true by default;
+// per-branch detection has no such filter because the branch is the user's
+// explicit ask, not a default sweep. The dry-run path must mirror this so
+// `ezs sync --branch <pickup> --dry-run` doesn't promise "no sync needed"
+// while the execute path actually rebases.
+func TestDetectSyncNeededForBranch_DoesNotSkipRemote(t *testing.T) {
+	repoDir, worktreeBaseDir, cleanup := setupSyncTestEnv(t)
+	defer cleanup()
+
+	mgr, _ := NewManager(repoDir)
+	if _, err := mgr.CreateBranch("pickup", "main", filepath.Join(worktreeBaseDir, "pickup"), ""); err != nil {
+		t.Fatalf("CreateBranch pickup: %v", err)
+	}
+	pickupPath := filepath.Join(worktreeBaseDir, "pickup")
+	if err := os.WriteFile(filepath.Join(pickupPath, "pickup.txt"), []byte("b\n"), 0644); err != nil {
+		t.Fatalf("write pickup.txt: %v", err)
+	}
+	exec.Command("git", "-C", pickupPath, "add", ".").Run()
+	exec.Command("git", "-C", pickupPath, "commit", "-m", "pickup work").Run()
+	if err := mgr.MarkBranchRemote("pickup", "", "origin"); err != nil {
+		t.Fatalf("MarkBranchRemote: %v", err)
+	}
+
+	// Move main forward so pickup is behind and would need a sync.
+	if err := os.WriteFile(filepath.Join(repoDir, "main.txt"), []byte("c\n"), 0644); err != nil {
+		t.Fatalf("write main.txt: %v", err)
+	}
+	exec.Command("git", "-C", repoDir, "add", ".").Run()
+	exec.Command("git", "-C", repoDir, "commit", "-m", "main work").Run()
+
+	bareDir := filepath.Join(filepath.Dir(repoDir), "bare.git")
+	exec.Command("git", "init", "--bare", "-b", "main", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "remote", "add", "origin", bareDir).Run()
+	exec.Command("git", "-C", repoDir, "push", "-q", "-u", "origin", "main").Run()
+	exec.Command("git", "-C", repoDir, "push", "-q", "-u", "origin", "pickup").Run()
+
+	mgr, _ = NewManager(repoDir)
+
+	// Per-branch detection MUST report the pickup as needing sync. The bulk
+	// path with includeRemote=false would drop it (verified by the sibling
+	// test); the per-branch path has no such filter because the user named
+	// the branch directly.
+	info := mgr.DetectSyncNeededForBranch("pickup", nil)
+	if info == nil {
+		t.Fatalf("DetectSyncNeededForBranch(\"pickup\")=nil — per-branch path must NOT silently skip IsRemote=true")
+	}
+	if !info.NeedsSync {
+		t.Errorf("DetectSyncNeededForBranch(\"pickup\").NeedsSync=false — pickup is behind main, should report needing sync")
+	}
+	if info.Branch != "pickup" {
+		t.Errorf("DetectSyncNeededForBranch(\"pickup\").Branch = %q, want %q", info.Branch, "pickup")
+	}
+}

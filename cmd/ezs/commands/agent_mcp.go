@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
@@ -118,8 +119,16 @@ func runGoInstall(target string) error {
 	return cmd.Run()
 }
 
-// readMCPBinaryVersion runs `ezs-mcp --version` and returns the printed
-// version string, or "" if the binary doesn't support --version or fails.
+// readMCPBinaryVersion runs `ezs-mcp --version` and returns the parsed
+// semver string (no leading "v"), or "" if the binary doesn't support
+// --version, fails, or prints output we can't parse.
+//
+// `ezs-mcp --version` prints `"ezstack-mcp version X.Y.Z"` (matching the
+// `ezs --version` shape so the VS Code extension can parse both with the
+// same regex). Returning the raw stdout would never equal `version.Version`
+// (just `"X.Y.Z"`), causing ensureMCPBinary to reinstall on every `ezs
+// agent` run. Older ezs-mcp builds printed only `"X.Y.Z"`; this parser
+// handles both shapes.
 func readMCPBinaryVersion() string {
 	cmd := exec.Command("ezs-mcp", "--version")
 	var out bytes.Buffer
@@ -128,7 +137,24 @@ func readMCPBinaryVersion() string {
 	if err := cmd.Run(); err != nil {
 		return ""
 	}
-	return strings.TrimSpace(out.String())
+	return parseMCPVersionOutput(out.String())
+}
+
+// mcpVersionTokenRe matches a semver triple, optionally prefixed with "v",
+// with optional prerelease/build-metadata suffix. Used to pluck the version
+// out of arbitrary version-banner shapes (e.g. "ezstack-mcp version X.Y.Z",
+// "X.Y.Z", or even a future "ezstack-mcp version X.Y.Z (linux/amd64)").
+var mcpVersionTokenRe = regexp.MustCompile(`v?(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?)`)
+
+// parseMCPVersionOutput extracts the semver triple from `ezs-mcp --version`
+// stdout. Returns "" when no semver-shaped token is present. Extracted from
+// readMCPBinaryVersion so it can be tested without exec'ing a real binary.
+func parseMCPVersionOutput(s string) string {
+	m := mcpVersionTokenRe.FindStringSubmatch(strings.TrimSpace(s))
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 // ensureMCPRegistered checks whether the ezstack MCP is registered with

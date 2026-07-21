@@ -174,7 +174,7 @@ func TestListTools_Registered(t *testing.T) {
 		"ezstack_doctor":        false,
 		"ezstack_sync":          true,
 		"ezstack_push":          true,
-		"ezstack_pr_create":     false,
+		"ezstack_pr_create":     true,
 		"ezstack_pr_draft_all":  false,
 		"ezstack_pr_stack":      false,
 		"ezstack_pr_merge":      true,
