@@ -129,7 +129,39 @@ ezs config set agent_command aider                 # switch the agent CLI
 ezs config set default_base_branch master          # override the global default base
 ezs config set github_token ghp_...                # optional; otherwise falls back to `gh auth`
 ezs config set agent_command "claude --dangerously-skip-permissions"
+ezs config set use_gh_stack true                   # delegate rebase/sync/push/PRs to `gh stack`
 ```
+
+### gh-stack backend (`use_gh_stack`)
+
+With `use_gh_stack` enabled (per-repo, default off), ezstack delegates the
+_mechanical_ stack operations to the [`gh stack`](https://github.com/github/gh-stack)
+CLI extension while keeping everything that makes ezstack ezstack:
+
+| Owned by ezstack (unchanged) | Delegated to `gh stack` |
+| --- | --- |
+| Worktree-per-branch layout, `ezs new`, navigation, `list`/`log` | Cascading rebase, `sync`, `push` |
+| Tree-shaped stack model, agent sessions, AI PR generation, fork handling | PR stack linking + PR-body navigation section (`ezs pr stack`) |
+
+**Requirements:** `gh extension install github/gh-stack`. Enabling the flag is
+refused if the extension is not installed, and a stale flag falls back to the
+built-in engine with a warning.
+
+**How the mix works.** gh-stack cascades a rebase by checking each branch out in
+one working directory, which collides with ezstack's per-branch worktrees
+(`git` refuses a branch checked out in two worktrees). ezstack resolves this by
+temporarily detaching the affected worktrees, driving the gh-stack op in the
+main worktree, then re-attaching each worktree to its (now-rebased) branch — so
+your worktrees survive the operation untouched. A reconciler projects ezstack's
+stack into gh-stack's linear model (`init` for a new stack, `add` to grow one).
+
+**Scope.** The standard whole-stack sync (`ezs sync`, `-s`, `-a`, or a hash
+prefix) and stack push (`ezs push -s`) route through gh-stack. Specialized modes
+— `--dry-run`, `-c/--current`, `-b/--branch`, `-p/--parent`, `-C/--children`,
+`--squash`, `--merge`, and `--continue` — remain on the built-in engine. Note
+gh-stack enforces one-branch-one-stack, so a genuinely _branching_ tree (a
+parent with two tracked children) is flattened into a single linear gh-stack
+stack; linear stacks reconcile exactly.
 
 Multi-word values (or any value starting with `-`) MUST be quoted so the shell
 collapses them to a single argument — the last line above shows the common case

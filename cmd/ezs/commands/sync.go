@@ -200,6 +200,26 @@ func Sync(args []string) error {
 		return fmt.Errorf("--json requires --dry-run")
 	}
 
+	// gh-stack backend: route the standard whole-stack cascade (default, -s,
+	// -a, or a positional hash) through `gh stack rebase`+`push`, wrapped in
+	// the worktree detach/re-attach choreography. Specialized modes fall
+	// through to the built-in engine below, which still owns them entirely:
+	// --dry-run (read-only preview), -c/--current, -b/--branch, -p/--parent,
+	// -C/--children, --squash, and merge strategy. Fires the same pre/post-sync
+	// hooks so hook-based workflows are unaffected by the backend choice.
+	if !dryRun && !useMerge && !*squashFlag && !*currentFlag &&
+		*branchFlag == "" && !*parentFlag && !*childrenFlag && ghStackEnabled(g) {
+		if hookErr := hooks.Run("pre-sync", hookCtx); hookErr != nil {
+			return hookErr
+		}
+		defer func() {
+			if hookErr := hooks.Run("post-sync", hookCtx); hookErr != nil {
+				ui.Warn(hookErr.Error())
+			}
+		}()
+		return syncViaGHStackDispatch(g, mgr, *allFlag, fs.Args())
+	}
+
 	// Dry-run must be side-effect free: no hooks fire, no squash runs.
 	// Everything below up through --squash is gated on !dryRun.
 	if !dryRun {

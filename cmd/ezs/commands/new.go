@@ -389,6 +389,8 @@ func New(args []string) error {
 
 		ui.Success(fmt.Sprintf("Created branch '%s' with worktree at '%s'", branch.Name, branch.WorktreePath))
 
+		reconcileGHStackForBranch(g, mgr, branch.Name)
+
 		if isNewStack {
 			// promptStackName must precede adoption: the rename writes via
 			// `mgr` while adoption writes via a fresh manager, and the
@@ -418,6 +420,8 @@ func New(args []string) error {
 		}
 
 		ui.Success(fmt.Sprintf("Created branch '%s'", branch.Name))
+
+		reconcileGHStackForBranch(g, mgr, branch.Name)
 
 		if isNewStack {
 			// See worktree branch above for ordering rationale.

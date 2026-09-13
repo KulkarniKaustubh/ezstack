@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ghstack"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/github"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
@@ -1251,6 +1252,27 @@ func prStack(args []string) error {
 	ui.Info(fmt.Sprintf("Will update stack descriptions in %d PR(s)", prCount))
 	if !ui.ConfirmTUI("Update all PR stack descriptions") {
 		ui.Warn("Cancelled")
+		return nil
+	}
+
+	// gh-stack backend: hand ownership of the stack linking + PR-body
+	// navigation section to `gh stack submit`, which links the stack's open
+	// PRs on GitHub and maintains their stack sections. ezstack still owns
+	// individual PR creation (with AI/fork handling) via `ezs pr create`; this
+	// only updates the cross-PR linkage, replacing ezstack's own
+	// generateStackSection rendering when the backend is enabled.
+	if ghStackEnabled(g) {
+		repoPath := getMainWorktreePath(g)
+		if _, err := ghstack.Reconcile(repoPath, currentStack); err != nil {
+			return err
+		}
+		ghc := ghstack.New(repoPath)
+		if err := ghstack.WithDetachedWorktrees(repoPath, stackBranchNames(currentStack), func() error {
+			return ghc.Submit(ghstack.SubmitOptions{Auto: true, Open: true})
+		}); err != nil {
+			return fmt.Errorf("gh stack submit: %w", err)
+		}
+		ui.Success("Stack linked and descriptions updated via gh stack")
 		return nil
 	}
 

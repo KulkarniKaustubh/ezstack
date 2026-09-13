@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ghstack"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/helpers"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
@@ -34,6 +35,7 @@ func printConfigUsage() {
     init_submodules       Mirror initialized submodules into new worktrees (true/false, per-repo)
     sync_strategy         Sync method: "rebase" or "merge" (per-repo)
     agent_command         AI agent CLI command (default: "claude", per-repo)
+    use_gh_stack          Delegate rebase/sync/push/PRs to gh stack (true/false, per-repo)
 
 %sOPTIONS%s
     -h, --help    Show this help message
@@ -221,8 +223,24 @@ func configSet(key, value string) error {
 		repoCfg.AgentCommand = value
 		cfg.SetRepoConfig(repoPath, repoCfg)
 		ui.Info(fmt.Sprintf("Setting agent_command for repo: %s", repoPath))
+	case "use_gh_stack":
+		repoPath, err := getCurrentRepoPath()
+		if err != nil {
+			return fmt.Errorf("use_gh_stack is a per-repo setting: %w", err)
+		}
+		boolVal := value == "true" || value == "1" || value == "yes"
+		if boolVal && !ghstack.Installed() {
+			return fmt.Errorf("cannot enable use_gh_stack: the `gh stack` extension is not installed.\nInstall it with: gh extension install github/gh-stack")
+		}
+		repoCfg := cfg.GetRepoConfig(repoPath)
+		if repoCfg == nil {
+			repoCfg = &config.RepoConfig{}
+		}
+		repoCfg.UseGHStack = &boolVal
+		cfg.SetRepoConfig(repoPath, repoCfg)
+		ui.Info(fmt.Sprintf("Setting use_gh_stack for repo: %s", repoPath))
 	default:
-		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, init_submodules, sync_strategy, agent_command", key)
+		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, init_submodules, sync_strategy, agent_command, use_gh_stack", key)
 	}
 
 	if err := cfg.Save(); err != nil {
@@ -292,6 +310,11 @@ func configShow() error {
 				fmt.Fprintf(os.Stderr, "  sync_strategy: %s\n", repoCfg.SyncStrategy)
 			} else {
 				fmt.Fprintf(os.Stderr, "  sync_strategy: rebase (default)\n")
+			}
+			if repoCfg.UseGHStack != nil {
+				fmt.Fprintf(os.Stderr, "  use_gh_stack: %v\n", *repoCfg.UseGHStack)
+			} else {
+				fmt.Fprintf(os.Stderr, "  use_gh_stack: false (default)\n")
 			}
 			if repoCfg.AgentCommand != "" {
 				fmt.Fprintf(os.Stderr, "  agent_command: %s\n", repoCfg.AgentCommand)

@@ -69,6 +69,14 @@ type RepoConfig struct {
 	InitSubmodules      *bool  `json:"init_submodules,omitempty"` // Mirror main worktree's initialized submodules into new worktrees (default: true)
 	SyncStrategy        string `json:"sync_strategy,omitempty"`   // "rebase" (default) or "merge"
 	AgentCommand        string `json:"agent_command,omitempty"`   // AI agent CLI command (default: "claude")
+	// UseGHStack routes the mechanical stack operations (cascading rebase,
+	// sync, push, and PR create/link) through the `gh stack` CLI extension
+	// instead of ezstack's built-in engine. ezstack still owns worktrees, the
+	// tree-shaped stack model, agent sessions, AI PR generation, and fork
+	// handling; gh-stack is driven as the execution backend and kept in sync
+	// via the tree->linear reconciler. Default (nil / false) keeps the
+	// built-in engine so existing users are unaffected until they opt in.
+	UseGHStack *bool `json:"use_gh_stack,omitempty"`
 }
 
 // GetAgentCommand returns the configured agent command, defaulting to "claude".
@@ -129,6 +137,15 @@ func (c *Config) GetUseWorktrees(repoPath string) bool {
 		return *repoCfg.UseWorktrees
 	}
 	return true
+}
+
+// GetUseGHStack returns whether stack operations should be delegated to the
+// `gh stack` CLI backend for this repo (default: false). See RepoConfig.UseGHStack.
+func (c *Config) GetUseGHStack(repoPath string) bool {
+	if repoCfg := c.GetRepoConfig(repoPath); repoCfg != nil && repoCfg.UseGHStack != nil {
+		return *repoCfg.UseGHStack
+	}
+	return false
 }
 
 // GetInitSubmodules returns whether to mirror the main worktree's initialized

@@ -117,6 +117,14 @@ func Push(args []string) error {
 		return err
 	}
 
+	// gh-stack backend: `gh stack push` pushes the whole stack atomically with
+	// --force-with-lease. It doesn't model ezstack's fork/--all-remotes fan-out,
+	// so only the plain single-remote stack push is routed here; --all-remotes
+	// falls through to the built-in per-branch push.
+	if !*allRemotesFlag && ghStackEnabled(g) {
+		return pushStackViaGHStack(g, getMainWorktreePath(g), currentStack)
+	}
+
 	return pushStack(g, mgr, currentStack, *force, *allRemotesFlag)
 }
 
