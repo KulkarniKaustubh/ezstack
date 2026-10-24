@@ -37,7 +37,7 @@ func Reconcile(repoDir string, stacks []*config.Stack, forget ...string) ([]Chai
 	var chains []Chain
 	err = updateCatalog(commonDir, func(cat *Catalog) (bool, error) {
 		chains = Chains(stacks, cat)
-		next, changed := Project(cat, chains, stacks, managed, repoGit{dir: repoDir})
+		next, changed := Project(cat, chains, stacks, managed, newRepoGit(repoDir))
 		*cat = *next
 		return changed, nil
 	})
@@ -123,10 +123,16 @@ func RecordedBase(repoDir, branch string) string {
 	return ""
 }
 
-// repoGit implements Git with plain git subprocesses.
-type repoGit struct{ dir string }
+// repoGit implements Git with plain git subprocesses. Branch heads are read
+// once with a single for-each-ref.
+type repoGit struct {
+	dir   string
+	heads map[string]string
+}
 
-func (r repoGit) git(args ...string) string {
+func newRepoGit(dir string) *repoGit { return &repoGit{dir: dir} }
+
+func (r *repoGit) git(args ...string) string {
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.dir
 	var out bytes.Buffer
@@ -137,17 +143,25 @@ func (r repoGit) git(args ...string) string {
 	return strings.TrimSpace(out.String())
 }
 
-func (r repoGit) Head(branch string) string {
-	return r.git("rev-parse", "--verify", "--quiet", "refs/heads/"+branch)
+func (r *repoGit) Head(branch string) string {
+	if r.heads == nil {
+		r.heads = map[string]string{}
+		for _, line := range strings.Split(r.git("for-each-ref", "--format=%(objectname) %(refname:strip=2)", "refs/heads"), "\n") {
+			if sha, name, ok := strings.Cut(line, " "); ok {
+				r.heads[name] = sha
+			}
+		}
+	}
+	return r.heads[branch]
 }
 
-func (r repoGit) IsAncestor(commit, branch string) bool {
+func (r *repoGit) IsAncestor(commit, branch string) bool {
 	cmd := exec.Command("git", "merge-base", "--is-ancestor", commit, "refs/heads/"+branch)
 	cmd.Dir = r.dir
 	return cmd.Run() == nil
 }
 
-func (r repoGit) MergeBase(parent, branch string) string {
+func (r *repoGit) MergeBase(parent, branch string) string {
 	if r.Head(branch) == "" {
 		return ""
 	}

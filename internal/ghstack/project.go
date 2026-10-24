@@ -114,9 +114,11 @@ func Chains(stacks []*config.Stack, old *Catalog) []Chain {
 	}
 
 	sorted := dependencyOrder(stacks)
+	prefixes := rootPrefixes(sorted)
 
 	var chains []Chain
 	for _, s := range sorted {
+		pre := prefixes[s]
 		info := map[string]*config.Branch{}
 		for _, b := range s.Branches {
 			info[b.Name] = b
@@ -193,7 +195,14 @@ func Chains(stacks []*config.Stack, old *Catalog) []Chain {
 			}
 		}
 		for _, k := range sortedKeys(s.Tree) {
-			chains = append(chains, Chain{StackHash: s.Hash, Trunk: s.Root, Merged: map[string]bool{}})
+			c := Chain{StackHash: s.Hash, Trunk: pre.trunk, Merged: map[string]bool{},
+				Branches: append([]string(nil), pre.layers...), Shared: len(pre.layers)}
+			for _, l := range pre.layers {
+				if pre.merged[l] {
+					c.Merged[l] = true
+				}
+			}
+			chains = append(chains, c)
 			walk(len(chains)-1, k, s.Tree[k])
 		}
 	}
@@ -204,6 +213,68 @@ func Chains(stacks []*config.Stack, old *Catalog) []Chain {
 		if len(c.Own()) > 0 {
 			out = append(out, c)
 		}
+	}
+	return out
+}
+
+// rootPrefix is what a stack's chains start with: for a stack rooted on
+// another stack's branch X, the layers from that stack's trunk down to X
+// (shared with that stack's chains) and that trunk; otherwise nothing and the
+// stack's own root. Rooting the chain at the real trunk, with X as a shared
+// layer, keeps X's children moving with --onto when X is rewritten — with X
+// as the trunk, gh-stack would plain-rebase them and replay X's old commits.
+type rootPrefix struct {
+	trunk  string
+	layers []string
+	merged map[string]bool
+}
+
+func rootPrefixes(stacks []*config.Stack) map[*config.Stack]rootPrefix {
+	owner := map[string]*config.Stack{}
+	branch := map[string]*config.Branch{}
+	for _, s := range stacks {
+		for _, b := range s.Branches {
+			owner[b.Name] = s
+			branch[b.Name] = b
+		}
+	}
+	out := map[*config.Stack]rootPrefix{}
+	var resolve func(s *config.Stack, seen map[*config.Stack]bool) rootPrefix
+	resolve = func(s *config.Stack, seen map[*config.Stack]bool) rootPrefix {
+		if p, ok := out[s]; ok {
+			return p
+		}
+		p := rootPrefix{trunk: s.Root, merged: map[string]bool{}}
+		if dep := owner[s.Root]; dep != nil && dep != s && !seen[s] {
+			seen[s] = true
+			base := resolve(dep, seen)
+			p.trunk = base.trunk
+			p.layers = append(p.layers, base.layers...)
+			for k, v := range base.merged {
+				p.merged[k] = v
+			}
+			// Path from dep's root down to s.Root, via tree parents.
+			var path []string
+			for name := s.Root; name != "" && name != dep.Root; {
+				b := branch[name]
+				if b == nil {
+					break
+				}
+				if !(b.IsMerged && b.PRNumber == 0) {
+					path = append([]string{name}, path...)
+				}
+				if b.IsMerged {
+					p.merged[name] = true
+				}
+				name = b.BaseBranch
+			}
+			p.layers = append(p.layers, path...)
+		}
+		out[s] = p
+		return p
+	}
+	for _, s := range stacks {
+		resolve(s, map[*config.Stack]bool{})
 	}
 	return out
 }
@@ -244,8 +315,7 @@ func dependencyOrder(stacks []*config.Stack) []*config.Stack {
 // Project rewrites old so its ezstack-managed stacks match chains, returning
 // the new catalog and whether anything changed. `managed` names every branch
 // ezstack owns (plus any it just stopped tracking); other catalog stacks —
-// ones built with gh-stack directly — are left untouched unless they
-// reference a branch that no longer exists.
+// ones built with gh-stack directly — are left untouched.
 //
 // Per layer it preserves gh-stack's recorded PR ref and `base` SHA for as
 // long as that base is still in the branch's history. gh-stack only consults
@@ -276,13 +346,9 @@ func Project(old *Catalog, chains []Chain, stacks []*config.Stack, managed map[s
 	var kept []Stack
 	var oldManaged []Stack
 	for _, s := range old.Stacks {
-		// A stack is ezstack's when it holds an ezstack branch, or when one
-		// of its unmerged layers no longer exists — what a branch deleted or
-		// renamed through ezstack leaves behind (gh-stack can't operate on
-		// such a stack either, so dropping it loses nothing).
 		isManaged := false
 		for _, b := range s.Branches {
-			if managed[b.Branch] || (!b.IsMerged() && g.Head(b.Branch) == "") {
+			if managed[b.Branch] {
 				isManaged = true
 				break
 			}
@@ -357,16 +423,16 @@ func Project(old *Catalog, chains []Chain, stacks []*config.Stack, managed map[s
 // own layers (ties: first), so a stack keeps its GitHub stack id/number
 // across reshapes. Returns -1 when nothing overlaps.
 func matchOldStack(old []Stack, c Chain, used map[int]bool) int {
+	own := map[string]bool{}
+	for _, b := range c.Own() {
+		own[b] = true
+	}
 	best, bestScore := -1, 0
 	for i, s := range old {
 		if used[i] {
 			continue
 		}
 		score := 0
-		own := map[string]bool{}
-		for _, b := range c.Own() {
-			own[b] = true
-		}
 		for _, b := range s.Branches {
 			if own[b.Branch] {
 				score++

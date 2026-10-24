@@ -104,7 +104,7 @@ func TestRestackSteps(t *testing.T) {
 	}{
 		{"whole stack", modeStacks, "", []string{"c@origin", "b2@origin"}},
 		{"current, unique anchor", modeCurrent, "b1", []string{"b1@origin down"}},
-		{"current, fork point restacks its chain", modeCurrent, "a", []string{"c@origin"}},
+		{"current, fork point restacks all its subtrees", modeCurrent, "a", []string{"c@origin", "b2@origin"}},
 		// Children: only what is above the branch, never the branch itself.
 		{"children of the fork point cover every subtree", modeChildren, "a", []string{"b1@origin up notrunk", "b2@origin up notrunk"}},
 		{"children of a mid-chain branch", modeChildren, "b1", []string{"c@origin up notrunk"}},

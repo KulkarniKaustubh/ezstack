@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // ErrPRNotFound is returned by GetPRByBranch when GitHub has no PR for the
@@ -21,6 +22,31 @@ var ErrPRNotFound = errors.New("no pull request found")
 type Client struct {
 	owner string
 	repo  string
+	prs   *prCache // nil unless WithPRCache was used
+}
+
+// prCache memoizes GetPR for one command run (see WithPRCache).
+type prCache struct {
+	mu sync.Mutex
+	m  map[int]PR
+}
+
+// WithPRCache returns a copy of c whose GetPR results are reused for the
+// rest of the command, so a sync that consults the same PRs several times
+// (merged detection, base retargeting, cleanup) hits GitHub once per PR.
+// Edits made through the copy invalidate the affected entry.
+func (c *Client) WithPRCache() *Client {
+	cp := *c
+	cp.prs = &prCache{m: map[int]PR{}}
+	return &cp
+}
+
+func (c *Client) forgetPR(number int) {
+	if c.prs != nil {
+		c.prs.mu.Lock()
+		delete(c.prs.m, number)
+		c.prs.mu.Unlock()
+	}
 }
 
 // gitHubURLRe matches a github.com URL in the common forms ezstack sees:
@@ -175,6 +201,14 @@ func (c *Client) getPRByHeadBranch(branch string) (*PR, error) {
 
 // GetPR gets a PR by number
 func (c *Client) GetPR(number int) (*PR, error) {
+	if c.prs != nil {
+		c.prs.mu.Lock()
+		pr, ok := c.prs.m[number]
+		c.prs.mu.Unlock()
+		if ok {
+			return &pr, nil
+		}
+	}
 	output, err := c.runGH("pr", "view", fmt.Sprintf("%d", number),
 		"--json", "number,url,title,body,state,baseRefName,headRefName,mergedAt,mergeable,isDraft,reviewDecision")
 	if err != nil {
@@ -187,6 +221,11 @@ func (c *Client) GetPR(number int) (*PR, error) {
 	}
 	// Set Merged based on whether mergedAt is present
 	pr.Merged = pr.MergedAt != ""
+	if c.prs != nil {
+		c.prs.mu.Lock()
+		c.prs.m[number] = pr
+		c.prs.mu.Unlock()
+	}
 	return &pr, nil
 }
 
@@ -347,18 +386,21 @@ func (c *Client) GetPRChecks(number int) (*CheckStatus, error) {
 
 // UpdatePR updates a PR's body
 func (c *Client) UpdatePR(number int, body string) error {
+	defer c.forgetPR(number)
 	_, err := c.runGH("pr", "edit", fmt.Sprintf("%d", number), "--body", body)
 	return err
 }
 
 // UpdatePRBase updates a PR's base branch
 func (c *Client) UpdatePRBase(number int, base string) error {
+	defer c.forgetPR(number)
 	_, err := c.runGH("pr", "edit", fmt.Sprintf("%d", number), "--base", base)
 	return err
 }
 
 // MergePR merges a pull request using the specified method (merge, squash, rebase)
 func (c *Client) MergePR(number int, method string, deleteRemoteBranch bool) error {
+	defer c.forgetPR(number)
 	args := []string{"pr", "merge", fmt.Sprintf("%d", number), "--" + method}
 	if deleteRemoteBranch {
 		args = append(args, "--delete-branch")
@@ -369,12 +411,14 @@ func (c *Client) MergePR(number int, method string, deleteRemoteBranch bool) err
 
 // SetPRDraft marks a PR as draft
 func (c *Client) SetPRDraft(number int) error {
+	defer c.forgetPR(number)
 	_, err := c.runGH("pr", "ready", fmt.Sprintf("%d", number), "--undo")
 	return err
 }
 
 // SetPRReady marks a draft PR as ready for review
 func (c *Client) SetPRReady(number int) error {
+	defer c.forgetPR(number)
 	_, err := c.runGH("pr", "ready", fmt.Sprintf("%d", number))
 	return err
 }

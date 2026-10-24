@@ -631,7 +631,7 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_reparent",
-			mcp.WithDescription("Move a branch to a new parent in the stack and restack its commits (and every branch above it) onto the new parent with gh stack rebase. On conflict, resolve and call ezstack_sync with resume=true."),
+			mcp.WithDescription("Move a branch to a new parent in the stack and restack its commits (and every branch above it) onto the new parent with gh stack rebase. A conflict while moving the branch itself is a plain git rebase: resolve, git add, run `git rebase --continue` in its worktree, then ezstack_sync with children=true from it. A conflict restacking the branches above it: resolve, git add, then ezstack_sync with resume=true."),
 			mcp.WithString("branch",
 				mcp.Description("Branch to reparent"),
 				mcp.Required(),

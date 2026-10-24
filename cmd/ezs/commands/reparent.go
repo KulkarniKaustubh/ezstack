@@ -38,8 +38,11 @@ func Reparent(args []string) error {
     2. Add a standalone worktree/branch to an existing stack
     3. Split a stack by reparenting branches to different parents
 
-    If the restack conflicts, the reparent is still recorded: resolve the
-    conflict, then run "ezs sync --continue" (or "ezs sync --abort").
+    Either way a conflict leaves the reparent recorded. Moving the branch
+    itself is one "git rebase --onto": resolve, git add, run
+    "git rebase --continue" in its worktree, then "ezs sync -C". A conflict
+    restacking the branches above it pauses the gh stack cascade: resolve,
+    git add, then "ezs sync --continue" (or "ezs sync --abort").
 
 %sEXAMPLES%s
     ezs reparent                        Interactive mode
@@ -351,6 +354,9 @@ func doReparentCore(mgr *stack.Manager, branchName, newParent string, restack bo
 		p := newPusher(g, mgr, pushAsk, chains)
 		p.onlyPublished = true
 		p.limitTo(branchName)
+		if c, ok := ghstack.ChainFor(chains, branchName); ok {
+			integrateRemoteCommits(g, mgr, append([]ghstack.Chain{c}, stepChains(steps)...), p)
+		}
 		if err := runRestack(g, mgr, steps, p); err != nil {
 			if errors.Is(err, errSyncConflict) {
 				savePausedScope(mgr, target)

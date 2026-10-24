@@ -1322,7 +1322,7 @@
 </code></pre>
       <p>Step by step:</p>
       <ol>
-      <li><strong>Move the child up to be a sibling of its current parent.</strong> <code>ezs reparent feature-2 main</code> rewrites <code>feature-2</code>'s parent to <code>main</code> and has gh stack run <code>git rebase --onto main &lt;old feature-1 tip&gt; feature-2</code>. After this step both branches sit directly on <code>main</code>, which breaks the parent/child relationship the cycle check is worried about.</li>
+      <li><strong>Move the child up to be a sibling of its current parent.</strong> <code>ezs reparent feature-2 main</code> rewrites <code>feature-2</code>'s parent to <code>main</code> and runs <code>git rebase --onto main &lt;old feature-1 tip&gt; feature-2</code> in <code>feature-2</code>'s worktree (a conflict here is resolved with <code>git rebase --continue</code> in that worktree, then <code>ezs sync -C</code>). After this step both branches sit directly on <code>main</code>, which breaks the parent/child relationship the cycle check is worried about.</li>
       <li><strong>Reparent the original parent onto the original child.</strong> <code>ezs reparent feature-1 feature-2</code> is now legal because <code>feature-1</code> is no longer an ancestor of <code>feature-2</code>. The rebase replays <code>feature-1</code>'s commits on top of <code>feature-2</code>.</li>
       <li><strong>PR bases get rewritten automatically.</strong> Both PRs end up pointing at their new parents (<code>feature-2</code> → <code>main</code>, <code>feature-1</code> → <code>feature-2</code>). Each step offers a force-push so the GitHub diffs match the new bases, and relinks the GitHub stack once the branches are pushed (or run <code>ezs pr stack</code> afterwards).</li>
       </ol>
@@ -2011,7 +2011,7 @@ Options:
       <pre><code><span class="c-cmd">ezs</span> <span class="c-flag">commit</span> <span class="c-str">[git-commit-options]</span> <span class="c-str">[--push</span> <span class="c-str">[--push-children]</span> <span class="c-str">|</span> <span class="c-flag">--no-push]</span>
 <span class="c-cmd">ezs</span> <span class="c-flag">amend</span> <span class="c-str">[git-commit-options]</span> <span class="c-str">[--push</span> <span class="c-str">[--push-children]</span> <span class="c-str">|</span> <span class="c-flag">--no-push]</span>
 </code></pre>
-      <p>All other arguments are passed through to <code>git commit</code>. After committing, any child branches in the stack (including every subtree of a branch with several children) are restacked onto the updated branch with <code>gh stack rebase</code> (inter-branch only — the trunk isn't fetched). A conflict pauses the restack exactly like a sync; finish it with <code>ezs sync --continue</code> (or <code>ezs sync --abort</code>).</p>
+      <p>All other arguments are passed through to <code>git commit</code>. After committing, any child branches in the stack (including every subtree of a branch with several children) are restacked onto the updated branch with <code>gh stack rebase</code> (inter-branch only — the trunk isn't fetched). A conflict pauses the restack exactly like a sync and the command exits with code <code>3</code> (the commit itself is kept); finish it with <code>ezs sync --continue</code> (or <code>ezs sync --abort</code>).</p>
       <table>
       <thead>
       <tr>
@@ -2321,8 +2321,11 @@ Options:
       stack branches are routinely rebased). Branches already up to date with their
       remote are skipped. When branches of one chain push to different fork
       remotes, each is pushed on its own to its remote. Branches pushed for the
-      first time get an upstream set. Pickup branches (another contributor's) are
-      skipped with a note — push one explicitly with <code>ezs push -b &lt;branch&gt;</code>.</p>
+      first time get an upstream set. Before pushing, commits someone else pushed
+      are protected: a branch strictly behind its remote is fast-forwarded, and a
+      branch whose remote has commits it never had (the remote tip isn't in the
+      local branch's reflog — the <code>--force-if-includes</code> rule) is held back. <code>-f</code>
+      pushes held branches anyway.</p>
       <p>Each branch pushes to its configured remote — <code>origin</code> by default, or the fork remote for fork-based PR branches. Branches marked as read-only (fork PRs where you don't have push access) are skipped with a warning.</p>
       <p><strong>Hooks.</strong> <code>ezs push</code> runs <code>~/.ezstack/hooks/pre-push</code> before the push (aborting on non-zero exit) and <code>~/.ezstack/hooks/post-push</code> after (warning on non-zero exit, but never failing the command). See the <a href="#hooks">Hooks</a> section for the environment contract.</p>
       <p><strong><code>--verify</code>.</strong> Promotes the <code>pre-push</code> hook from optional (&quot;run if present&quot;) to required (&quot;must be installed and must pass&quot;). Without <code>--verify</code>, a missing hook is simply a no-op; with <code>--verify</code>, ezstack fails fast if the hook file is absent or not executable. Useful in CI or shared dev machines where push-time validation is a hard requirement.</p>
@@ -2410,8 +2413,8 @@ Options:
       that holds it</em>. Branches whose PR was merged (squash merges included) are
       skipped and their children moved <code>--onto</code> the next live ancestor, so only
       the children's own commits are replayed.</li>
-      <li><strong>Push</strong> each chain right after it is restacked, with <code>--force-with-lease</code>.
-      Asks once per run (auto-yes under <code>-y</code> and MCP); <code>--no-push</code> (or an
+      <li><strong>Push</strong> the rebased branches once every chain is restacked, with <code>--force-with-lease</code>.
+      Asks once per run (auto-yes under <code>-y</code>; MCP clients are asked); <code>--no-push</code> (or an
       <code>ezs agent --no-push</code> session) keeps everything local. Branches whose fork
       doesn't allow maintainer pushes are skipped.</li>
       <li><strong>Clean up</strong> merged branches: offers to delete their worktrees and local
@@ -2427,13 +2430,18 @@ Options:
       when the parent is the base branch); <code>-C</code> rebases the current branch's
       descendants onto it; <code>-b &lt;name&gt;</code> restacks the named branch's chains (its
       parent chain plus every subtree above it). When the anchor branch has several
-      children, <code>-c</code> restacks its whole chain, because gh stack can't anchor on a
-      branch that belongs to several of its stacks.</p>
-      <p><strong>Collaborator commits.</strong> Before restacking (<code>-s</code>, <code>-a</code>, <code>&lt;hash-prefix&gt;</code>),
-      sync fetches each branch's remote and fast-forwards any branch that is
-      strictly behind it, so commits a teammate pushed are kept. A branch that has
-      diverged from its remote (both sides have commits) is restacked but not
-      pushed — run <code>git pull --rebase</code> in its worktree to integrate first.</p>
+      children, <code>-c</code> restacks all of its subtrees, because gh stack can't anchor
+      on a branch that belongs to several of its stacks. A branch-scoped sync only
+      pushes what it restacked (<code>-C</code>: the descendants; <code>-c</code>: the branch and the
+      branches below it).</p>
+      <p><strong>Collaborator commits.</strong> Before restacking, sync fetches each affected
+      branch's remote and fast-forwards any branch that is strictly behind it, so
+      commits a teammate pushed are kept. A branch whose remote has commits the
+      local branch never had (the remote tip isn't reachable from the branch's
+      reflog) is restacked but not pushed — run <code>git pull --rebase</code> in its
+      worktree to integrate first. Branches that differ from their remote only
+      because you rebased them are pushed normally. If a remote can't be fetched,
+      its branches aren't pushed that run.</p>
       <p><strong>Conflicts.</strong> A conflict pauses the cascade in the conflicted worktree and
       exits with code <code>3</code>. Resolve, <code>git add</code>, then <code>ezs sync --continue</code> (from any
       worktree); <code>ezs sync --abort</code> restores every branch of the paused cascade.

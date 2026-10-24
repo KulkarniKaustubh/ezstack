@@ -31,22 +31,62 @@ func requireGHStack() error {
 }
 
 // reconcileGHStack projects every stack of mgr's repository into the gh-stack
-// catalog and returns the resulting chains (parent chains first). forget names
+// catalog and returns the resulting chains (in tree order). forget names
 // branches that were just removed from ezstack's model.
 func reconcileGHStack(mgr *stack.Manager, forget ...string) ([]ghstack.Chain, error) {
-	chains, err := ghstack.Reconcile(mgr.GetRepoDir(), mgr.ListStacks(), forget...)
+	return reconcileGHStackMerged(mgr, nil, forget...)
+}
+
+// reconcileGHStackMerged is reconcileGHStack with extra branches treated as
+// merged (PRs found merged on GitHub this run) without recording that in
+// ezstack's model — the user hasn't confirmed their cleanup yet.
+func reconcileGHStackMerged(mgr *stack.Manager, merged map[string]bool, forget ...string) ([]ghstack.Chain, error) {
+	chains, err := ghstack.Reconcile(mgr.GetRepoDir(), withMergedHints(mgr.ListStacks(), merged), forget...)
 	if errors.Is(err, ghstack.ErrRebasePaused) {
 		return nil, ui.NewExitError(ui.ExitConflict, "%s", err.Error())
 	}
 	return chains, err
 }
 
+// withMergedHints returns stacks with the named branches marked merged, on
+// copies, leaving the manager's model untouched.
+func withMergedHints(stacks []*config.Stack, merged map[string]bool) []*config.Stack {
+	if len(merged) == 0 {
+		return stacks
+	}
+	out := make([]*config.Stack, len(stacks))
+	for i, s := range stacks {
+		hit := false
+		for _, b := range s.Branches {
+			if merged[b.Name] && !b.IsMerged {
+				hit = true
+				break
+			}
+		}
+		if !hit {
+			out[i] = s
+			continue
+		}
+		cp := *s
+		cp.Branches = make([]*config.Branch, len(s.Branches))
+		for j, b := range s.Branches {
+			bc := *b
+			if merged[b.Name] {
+				bc.IsMerged = true
+			}
+			cp.Branches[j] = &bc
+		}
+		out[i] = &cp
+	}
+	return out
+}
+
 // refreshGHStack is the best-effort reconcile run after structural changes
-// (new, reparent, merged cleanup) so the catalog — which `gh stack` commands
-// run by hand also read — never lags ezstack's model. Removed branches need
-// no hint: Reconcile drops catalog stacks that reference a missing branch.
-// It never fails the calling command: the next sync reconciles again and
-// reports real problems.
+// (new, reparent, merged cleanup, and — via stack.BranchesRemoved — any
+// branch removal, passed as forget) so the catalog, which `gh stack`
+// commands run by hand also read, never lags ezstack's model. It never fails
+// the calling command: the next sync reconciles again and reports real
+// problems.
 func refreshGHStack(mgr *stack.Manager, forget ...string) {
 	if ghstack.Check() != nil {
 		return
@@ -55,6 +95,12 @@ func refreshGHStack(mgr *stack.Manager, forget ...string) {
 		!errors.Is(err, ghstack.ErrRebasePaused) {
 		ui.Warn(fmt.Sprintf("Could not update gh stack tracking: %v", err))
 	}
+}
+
+func init() {
+	// Whatever removes branches from ezstack's model, gh-stack's catalog
+	// forgets them too.
+	stack.BranchesRemoved = func(m *stack.Manager, names []string) { refreshGHStack(m, names...) }
 }
 
 // restackStep is one `gh stack rebase` invocation over a chain.
@@ -69,9 +115,8 @@ func wholeChainSteps(g *git.Git, mgr *stack.Manager, targets, all []ghstack.Chai
 	steps := make([]restackStep, 0, len(targets))
 	for _, c := range targets {
 		anchor := chainAnchor(all, c)
-		if anchor == "" {
-			continue // every active layer is shared: another chain restacks it
-		}
+		// anchor == "": every active layer is shared, so the chains through
+		// it restack them; the step only pushes (runRestack skips the rebase).
 		steps = append(steps, restackStep{chain: c, opts: ghstack.RebaseOptions{
 			Branch: anchor,
 			Remote: trunkRemote(g, mgr, c),
@@ -141,7 +186,7 @@ type pushPolicy int
 
 const (
 	pushNever pushPolicy = iota
-	pushAsk              // confirm once (auto-yes under -y / MCP)
+	pushAsk              // confirm once (auto-yes under -y)
 	pushAlways
 )
 
@@ -168,6 +213,8 @@ type pusher struct {
 	hold map[string]bool
 	// noted records pickup branches already reported as skipped.
 	noted map[string]bool
+	// pushed counts branches pushed this run.
+	pushed int
 }
 
 // limitTo restricts the pusher to branch and its descendants.
@@ -211,7 +258,7 @@ func (p *pusher) pushChain(c ghstack.Chain) error {
 					p.noted = map[string]bool{}
 				}
 				p.noted[b] = true
-				ui.Info(fmt.Sprintf("Not pushing pickup branch '%s' (another contributor's; use --include-remote-worktrees or ezs push -b %s)", b, b))
+				ui.Info(fmt.Sprintf("Not pushing pickup branch '%s' (another contributor's; push it with: ezs push -b %s)", b, b))
 			}
 			partial = true
 			continue
@@ -265,10 +312,15 @@ func (p *pusher) pushChain(c ghstack.Chain) error {
 			}
 		}
 		if dir := checkedOutDir(p.g, unique); dir != "" {
-			if err := ghstack.New(p.mgr.GetRepoDir()).Push(dir, targets[0].remote); err != nil {
+			err := ghstack.New(p.mgr.GetRepoDir()).Push(dir, targets[0].remote)
+			if err == nil {
+				p.pushed += len(targets)
+				return nil
+			}
+			if !errors.Is(err, ghstack.ErrNotInStack) {
 				return fmt.Errorf("push %s: %w", strings.Join(c.Own(), ", "), err)
 			}
-			return nil
+			// gh-stack doesn't track the chain (yet): push branch by branch.
 		}
 	}
 	// Otherwise push the branches one by one.
@@ -278,7 +330,9 @@ func (p *pusher) pushChain(c ghstack.Chain) error {
 		if err := p.g.PushBranch(t.branch, true, t.remote); err != nil {
 			ui.Warn(fmt.Sprintf("Push failed for %s: %v", t.branch, err))
 			failed = append(failed, t.branch)
+			continue
 		}
+		p.pushed++
 	}
 	if len(failed) > 0 {
 		return fmt.Errorf("push failed for: %s", strings.Join(failed, ", "))
@@ -298,45 +352,57 @@ func ensureUpstream(g *git.Git, branch, remote string) {
 	}
 }
 
-// integrateRemoteCommits brings commits others pushed to a branch's remote
-// into the local branch before it is rebased (a strict fast-forward), and
-// holds back from pushing any branch whose remote has commits the local
-// branch lacks but can't fast-forward to — force-pushing it would erase them.
+// integrateRemoteCommits protects commits other people pushed to a branch's
+// remote before the branch is rebased and force-pushed:
+//
+//   - a branch strictly behind its remote is fast-forwarded to it;
+//   - a branch whose remote tip it never had (the tip isn't reachable from
+//     any entry of the local branch's reflog — the check behind
+//     `git push --force-if-includes`) is held back from pushing, since a
+//     lease against the fetched ref would erase those commits. A branch that
+//     merely differs because it was rebased locally still has the old remote
+//     tip in its reflog and is pushed normally;
+//   - if a remote can't be fetched, its branches are held too (the lease
+//     would be checked against a stale ref).
 func integrateRemoteCommits(g *git.Git, mgr *stack.Manager, chains []ghstack.Chain, p *pusher) {
 	type item struct{ branch, remote string }
 	var items []item
+	seen := map[string]bool{}
+	fetchFailed := map[string]bool{}
 	fetched := map[string]bool{}
 	for _, c := range chains {
 		for _, b := range c.Own() {
 			br := mgr.GetBranch(b)
-			if br == nil || !br.CanPush() {
+			if br == nil || !br.CanPush() || seen[b] {
 				continue
 			}
+			seen[b] = true
 			r := br.EffectiveRemote()
 			if !fetched[r] {
 				fetched[r] = true
 				if _, err := g.RunCapture("fetch", "--quiet", r); err != nil {
 					ui.Warn(fmt.Sprintf("Could not fetch %s: %v — not pushing its branches this run (a stale lease could overwrite others' commits)", r, err))
+					fetchFailed[r] = true
 				}
 			}
 			items = append(items, item{b, r})
 		}
 	}
-	wts, _ := g.ListWorktrees()
-	dirOf := map[string]string{}
-	for _, w := range wts {
-		if w.Branch != "" {
-			dirOf[w.Branch] = w.Path
-		}
-	}
+	dirOf := worktreeDirs(g)
 	hold := func(b, why string) {
 		if p.hold == nil {
 			p.hold = map[string]bool{}
 		}
 		p.hold[b] = true
-		ui.Info(fmt.Sprintf("Not pushing %s: %s", b, why))
+		if why != "" {
+			ui.Info(fmt.Sprintf("Not pushing %s: %s", b, why))
+		}
 	}
 	for _, it := range items {
+		if fetchFailed[it.remote] {
+			hold(it.branch, "")
+			continue
+		}
 		ref := "refs/remotes/" + it.remote + "/" + it.branch
 		if !g.RefExists(ref) {
 			continue
@@ -346,7 +412,9 @@ func integrateRemoteCommits(g *git.Git, mgr *stack.Manager, chains []ghstack.Cha
 			continue
 		}
 		if ahead > 0 {
-			hold(it.branch, fmt.Sprintf("it diverged from %s/%s (%d ahead, %d behind). Run `git pull --rebase` in its worktree to integrate.", it.remote, it.branch, ahead, behind))
+			if !remoteTipIntegrated(g, it.branch, ref) {
+				hold(it.branch, fmt.Sprintf("%s/%s has commits this branch never had (someone else pushed). Integrate them first: `git pull --rebase` in its worktree.", it.remote, it.branch))
+			}
 			continue
 		}
 		if dir := dirOf[it.branch]; dir != "" {
@@ -360,7 +428,7 @@ func integrateRemoteCommits(g *git.Git, mgr *stack.Manager, chains []ghstack.Cha
 				continue
 			}
 		} else {
-			local, _ := g.RunCapture("rev-parse", "refs/heads/"+it.branch)
+			local, _ := g.GetBranchCommit(it.branch)
 			remote, _ := g.RunCapture("rev-parse", ref)
 			if _, err := g.RunCapture("update-ref", "refs/heads/"+it.branch, remote, local); err != nil {
 				hold(it.branch, fmt.Sprintf("could not fast-forward to %s/%s: %v", it.remote, it.branch, err))
@@ -369,6 +437,42 @@ func integrateRemoteCommits(g *git.Git, mgr *stack.Manager, chains []ghstack.Cha
 		}
 		ui.Success(fmt.Sprintf("Fast-forwarded %s to %s/%s (%d new commit(s))", it.branch, it.remote, it.branch, behind))
 	}
+}
+
+// remoteTipIntegrated reports whether remoteRef's tip is reachable from some
+// entry of branch's reflog, i.e. the local branch once contained it (the
+// condition `git push --force-if-includes` enforces).
+func remoteTipIntegrated(g *git.Git, branch, remoteRef string) bool {
+	tip, err := g.RunCapture("rev-parse", remoteRef)
+	if err != nil || tip == "" {
+		return false
+	}
+	out, err := g.RunCapture("reflog", "show", "--format=%H", "-n", "200", "refs/heads/"+branch)
+	if err != nil {
+		return false
+	}
+	for _, sha := range strings.Fields(out) {
+		if sha == tip {
+			return true
+		}
+		if ok, _ := g.IsAncestor(tip, sha); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// worktreeDirs maps each checked-out branch to its worktree.
+func worktreeDirs(g *git.Git) map[string]string {
+	dirs := map[string]string{}
+	if wts, err := g.ListWorktrees(); err == nil {
+		for _, w := range wts {
+			if w.Branch != "" {
+				dirs[w.Branch] = w.Path
+			}
+		}
+	}
+	return dirs
 }
 
 // branchDiffersFromRemote reports whether branch needs pushing to remote
@@ -385,58 +489,27 @@ func branchDiffersFromRemote(g *git.Git, branch, remote string) bool {
 // checkedOutDir returns a worktree that has one of branches checked out
 // (preferring the last, i.e. the top of the chain), or "".
 func checkedOutDir(g *git.Git, branches []string) string {
-	wts, err := g.ListWorktrees()
-	if err != nil {
-		return ""
-	}
-	byBranch := map[string]string{}
-	for _, w := range wts {
-		if w.Branch != "" {
-			byBranch[w.Branch] = w.Path
-		}
-	}
+	dirs := worktreeDirs(g)
 	for i := len(branches) - 1; i >= 0; i-- {
-		if dir, ok := byBranch[branches[i]]; ok {
+		if dir, ok := dirs[branches[i]]; ok {
 			return dir
 		}
 	}
 	return ""
 }
 
-// runRestack executes steps in order (parent chains first), pushing each
-// chain after it is rebased so the chains nested under it see the new tip.
+// runRestack rebases every step in order, then pushes each step's chain.
+// A step without a branch only pushes (its layers are restacked through
+// other chains).
 func runRestack(g *git.Git, mgr *stack.Manager, steps []restackStep, p *pusher) error {
 	client := ghstack.New(mgr.GetRepoDir())
 	for _, s := range steps {
-		// Pickup branches belong to another contributor and aren't rebased
-		// unless asked. At the bottom of a chain, --no-trunk leaves it alone
-		// and restacks what's above it; higher up, the chain is restacked
-		// only below it.
+		if s.opts.Branch == "" {
+			continue // push-only
+		}
 		if !p.includeRemote {
-			active := s.chain.Active()
-			for i, name := range active {
-				b := mgr.GetBranch(name)
-				if b == nil || !b.IsRemote {
-					continue
-				}
-				if i == 0 {
-					if !s.opts.NoTrunk {
-						ui.Info(fmt.Sprintf("Leaving pickup branch '%s' as-is (use --include-remote-worktrees to rebase it)", name))
-						s.opts.NoTrunk = true
-					}
-					continue
-				}
-				below := active[i-1]
-				if !ghstack.Unique(p.chains, below) {
-					ui.Warn(fmt.Sprintf("Skipping %s: it contains pickup branch '%s' (use --include-remote-worktrees to rebase it)", describeChain(s.chain), name))
-					s.opts.Branch = ""
-				} else {
-					ui.Info(fmt.Sprintf("Restacking only below pickup branch '%s' (use --include-remote-worktrees to rebase it)", name))
-					s.opts.Branch, s.opts.Downstack, s.opts.Upstack = below, true, false
-				}
-				break
-			}
-			if s.opts.Branch == "" {
+			var ok bool
+			if s.opts, ok = avoidPickups(mgr, p.chains, s); !ok {
 				continue
 			}
 		}
@@ -449,11 +522,65 @@ func runRestack(g *git.Git, mgr *stack.Manager, steps []restackStep, p *pusher) 
 		if err := client.Rebase(s.opts); err != nil {
 			return restackError(err)
 		}
+	}
+	for _, s := range steps {
 		if err := p.pushChain(s.chain); err != nil {
 			ui.Warn(err.Error())
 		}
 	}
 	return nil
+}
+
+// avoidPickups narrows a step so it doesn't rebase a pickup branch (another
+// contributor's PR branch, IsRemote) — only --include-remote-worktrees may.
+// It works on the range of active layers the step would rewrite: a pickup at
+// the bottom is kept by --no-trunk; one at the start of an --upstack range
+// is skipped by starting above it; one inside the range ends the range just
+// below it. ok is false when nothing of the step survives.
+func avoidPickups(mgr *stack.Manager, chains []ghstack.Chain, s restackStep) (ghstack.RebaseOptions, bool) {
+	o := s.opts
+	active := s.chain.Active()
+	anchor := indexOf(active, o.Branch)
+	if anchor < 0 {
+		return o, true
+	}
+	start, end := 0, anchor // whole chain / --downstack
+	if o.Upstack {
+		start, end = anchor, len(active)-1
+	}
+	if o.NoTrunk && start == 0 {
+		start = 1
+	}
+	isPickup := func(i int) bool { b := mgr.GetBranch(active[i]); return b != nil && b.IsRemote }
+	if isPickup(0) && start == 0 {
+		ui.Info(fmt.Sprintf("Leaving pickup branch '%s' as-is (use --include-remote-worktrees to rebase it)", active[0]))
+		o.NoTrunk, start = true, 1
+	}
+	for i := start; i <= end; i++ {
+		if !isPickup(i) {
+			continue
+		}
+		note := fmt.Sprintf("pickup branch '%s' (use --include-remote-worktrees to rebase it)", active[i])
+		if i == start && o.Upstack {
+			// Restack what's above it onto it instead.
+			if i+1 > end || !ghstack.Unique(chains, active[i+1]) {
+				ui.Info("Leaving " + note)
+				return o, false
+			}
+			ui.Info("Restacking above " + note)
+			o.Branch, o.NoTrunk = active[i+1], true
+			start = i + 1
+			continue
+		}
+		if i-1 < start || !ghstack.Unique(chains, active[i-1]) {
+			ui.Warn(fmt.Sprintf("Skipping %s: it contains %s", describeChain(s.chain), note))
+			return o, false
+		}
+		ui.Info("Restacking only below " + note)
+		o.Branch, o.Upstack, o.Downstack = active[i-1], false, true
+		break
+	}
+	return o, true
 }
 
 // trunkDiverged reports whether a chain's trunk is an ezstack branch (the

@@ -355,3 +355,44 @@ func TestReconcile_LeavesUnmanagedStacks(t *testing.T) {
 		t.Fatalf("stacks = %v, want [mine x]", names)
 	}
 }
+
+// TestRebase_StackRootedOnStackBranch: a stack rooted on another stack's
+// branch x is projected with x as a shared layer above the real trunk, so
+// after x is amended its child moves with --onto (own commit only) instead
+// of a plain rebase that would replay x's old commit.
+func TestRebase_StackRootedOnStackBranch(t *testing.T) {
+	f := newFixture(t)
+	f.branch("x", "main")
+	f.branch("y", "x")
+	s1 := stackOf("main", config.BranchTree{"x": {}})
+	s1.Hash = "s1aaaaa"
+	s2 := &config.Stack{Hash: "s2bbbbb", Root: "x", Tree: config.BranchTree{"y": {}},
+		Branches: []*config.Branch{{Name: "y", Parent: "x", BaseBranch: "x"}}}
+	s1.Branches[0].BaseBranch = "main"
+	chains, err := Reconcile(f.repo, []*config.Stack{s2, s1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chains) != 2 || chains[1].Trunk != "main" || strings.Join(chains[1].Branches, ",") != "x,y" || chains[1].Shared != 1 {
+		t.Fatalf("chains = %+v", chains)
+	}
+
+	if err := os.WriteFile(filepath.Join(f.wt("x"), "x.txt"), []byte("x amended\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitT(t, f.wt("x"), "commit", "-q", "-a", "--amend", "-m", "x amended")
+	// s1's chain [x] has no layer of its own that gh-stack can address (x
+	// is also in s2's chain); restacking s2's chain covers it.
+	if Unique(chains, chains[0].Top()) {
+		t.Fatal("x should be shared")
+	}
+	if err := f.client().Rebase(RebaseOptions{Branch: chains[1].Top(), Remote: "origin"}); err != nil {
+		t.Fatalf("Rebase: %v", err)
+	}
+	if !f.isAncestor("x", "y") {
+		t.Fatal("y not restacked onto amended x")
+	}
+	if n := gitT(t, f.repo, "rev-list", "--count", "x..y"); n != "1" {
+		t.Fatalf("y has %s commits over x, want 1 (old x replayed?)", n)
+	}
+}

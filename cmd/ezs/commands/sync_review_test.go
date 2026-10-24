@@ -148,11 +148,9 @@ func TestWholeChainSteps_MergedFirstChildUniqueAnchors(t *testing.T) {
 	addBranch(t, mgr, "b1", "a")
 	addBranch(t, mgr, "b2", "a")
 	addBranch(t, mgr, "b3", "a")
-	if err := mgr.FlagBranchesMerged([]string{"b1"}); err != nil {
-		t.Fatal(err)
-	}
 	sc := mgr.GetStackConfig()
 	sc.Cache.GetBranchCache("b1").PRUrl = "https://github.com/o/r/pull/3"
+	sc.Cache.GetBranchCache("b1").IsMerged = true
 	if err := sc.Save(repoDir); err != nil {
 		t.Fatal(err)
 	}

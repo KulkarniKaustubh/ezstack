@@ -513,3 +513,26 @@ func TestPRForkInfo_Struct(t *testing.T) {
 		t.Error("IsFork should be true")
 	}
 }
+
+// TestPRCache: with WithPRCache, GetPR serves cached entries without calling
+// gh, edits invalidate them, and the original client stays uncached.
+func TestPRCache(t *testing.T) {
+	base := &Client{owner: "o", repo: "r"}
+	c := base.WithPRCache()
+	if base.prs != nil {
+		t.Fatal("WithPRCache must not mutate the receiver")
+	}
+	c.prs.m[7] = PR{Number: 7, Title: "cached"}
+	pr, err := c.GetPR(7)
+	if err != nil || pr.Title != "cached" {
+		t.Fatalf("GetPR(7) = %+v, %v; want cached entry", pr, err)
+	}
+	pr.Title = "mutated"
+	if again, _ := c.GetPR(7); again.Title != "cached" {
+		t.Fatal("cache entry aliased by the returned PR")
+	}
+	c.forgetPR(7)
+	if _, ok := c.prs.m[7]; ok {
+		t.Fatal("forgetPR did not invalidate")
+	}
+}

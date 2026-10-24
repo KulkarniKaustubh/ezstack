@@ -292,16 +292,25 @@ func (c *Client) Link(prNumbers []int, base, remote string) error {
 // ── Installation / version gate ───────────────────────────────────────────────
 
 var (
-	checkOnce sync.Once
-	checkErr  error
+	checkMu sync.Mutex
+	checkOK bool
 )
 
-// Check verifies gh-stack is installed and at least MinVersion. The result is
+// Check verifies gh-stack is installed and at least MinVersion. Success is
 // cached for the life of the process — the probe spawns `gh`, and ezstack may
-// call into gh-stack several times per command.
+// call into gh-stack several times per command — but failures are not, so a
+// long-lived process (the MCP server) notices an install or upgrade.
 func Check() error {
-	checkOnce.Do(func() { checkErr = probe() })
-	return checkErr
+	checkMu.Lock()
+	defer checkMu.Unlock()
+	if checkOK {
+		return nil
+	}
+	if err := probe(); err != nil {
+		return err
+	}
+	checkOK = true
+	return nil
 }
 
 func probe() error {

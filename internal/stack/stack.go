@@ -11,6 +11,17 @@ import (
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 )
 
+// BranchesRemoved, when set, is called after the manager drops branches from
+// its model (delete, untrack, stack delete, orphan or rename cleanup). The
+// commands layer uses it to make gh-stack forget them.
+var BranchesRemoved func(m *Manager, names []string)
+
+func (m *Manager) notifyRemoved(names ...string) {
+	if BranchesRemoved != nil && len(names) > 0 {
+		BranchesRemoved(m, names)
+	}
+}
+
 // Manager handles stack operations
 type Manager struct {
 	git            *git.Git
@@ -690,7 +701,7 @@ func (m *Manager) DeleteBranch(branchName string, force bool) error {
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
 		return fmt.Errorf("failed to save stack config: %w", err)
 	}
-
+	m.notifyRemoved(branchName)
 	return nil
 }
 
@@ -730,7 +741,7 @@ func (m *Manager) UntrackBranch(branchName string) error {
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
 		return fmt.Errorf("failed to save stack config: %w", err)
 	}
-
+	m.notifyRemoved(branchName)
 	return nil
 }
 
@@ -1142,7 +1153,11 @@ func (m *Manager) RemoveOrphanedBranches(branchNames []string) error {
 		}
 	}
 
-	return m.stackConfig.Save(m.repoDir)
+	if err := m.stackConfig.Save(m.repoDir); err != nil {
+		return err
+	}
+	m.notifyRemoved(branchNames...)
+	return nil
 }
 
 // RenamedBranchInfo contains info about a branch that was renamed outside of ezstack
@@ -1275,7 +1290,15 @@ func (m *Manager) ApplyBranchRenames(renames []RenamedBranchInfo) error {
 		}
 	}
 
-	return m.stackConfig.Save(m.repoDir)
+	if err := m.stackConfig.Save(m.repoDir); err != nil {
+		return err
+	}
+	old := make([]string, 0, len(renames))
+	for _, r := range renames {
+		old = append(old, r.OldName)
+	}
+	m.notifyRemoved(old...)
+	return nil
 }
 
 // MissingWorktreeInfo contains info about a branch whose worktree was removed
@@ -1342,7 +1365,15 @@ func (m *Manager) HandleMissingWorktrees(branches []MissingWorktreeInfo) error {
 		}
 	}
 
-	return m.stackConfig.Save(m.repoDir)
+	if err := m.stackConfig.Save(m.repoDir); err != nil {
+		return err
+	}
+	removed := make([]string, 0, len(branches))
+	for _, info := range branches {
+		removed = append(removed, info.BranchName)
+	}
+	m.notifyRemoved(removed...)
+	return nil
 }
 
 // AddWorktreeToStack adds an unregistered worktree to a stack with the specified parent
@@ -1472,7 +1503,15 @@ func (m *Manager) DeleteStack(stackHash string) (bool, error) {
 	// Remove the stack
 	delete(m.stackConfig.Stacks, stackHash)
 
-	return needsCd, m.stackConfig.Save(m.repoDir)
+	if err := m.stackConfig.Save(m.repoDir); err != nil {
+		return needsCd, err
+	}
+	removed := make([]string, 0, len(stack.Branches))
+	for _, b := range stack.Branches {
+		removed = append(removed, b.Name)
+	}
+	m.notifyRemoved(removed...)
+	return needsCd, nil
 }
 
 // MarkBranchMerged marks a branch as merged - deletes worktree and git branch but keeps metadata in config
@@ -1542,30 +1581,6 @@ func (m *Manager) MarkBranchMerged(branchName string) error {
 	}
 
 	return nil
-}
-
-// FlagBranchesMerged records that the given branches' PRs were merged,
-// without touching their worktrees or git branches (MarkBranchMerged does the
-// cleanup). Sync flags merged PRs before restacking so the gh-stack
-// projection drops their commits even when gh-stack can't reach GitHub.
-func (m *Manager) FlagBranchesMerged(names []string) error {
-	if len(names) == 0 {
-		return nil
-	}
-	cache := m.stackConfig.Cache
-	for _, name := range names {
-		bc := cache.GetBranchCache(name)
-		if bc == nil {
-			bc = &config.BranchCache{}
-		}
-		bc.IsMerged = true
-		bc.PRState = "MERGED"
-		cache.SetBranchCache(name, bc)
-	}
-	for _, stack := range m.stackConfig.Stacks {
-		stack.PopulateBranchesWithCache(cache)
-	}
-	return m.stackConfig.Save(m.repoDir)
 }
 
 // MarkBranchRemote marks a branch as belonging to another contributor.

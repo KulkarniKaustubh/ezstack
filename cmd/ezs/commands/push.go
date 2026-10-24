@@ -25,7 +25,8 @@ func Push(args []string) error {
     ezs push [options]
 
 %sOPTIONS%s
-    -s, --stack          Push all branches in the current stack (gh stack push, --force-with-lease)
+    -s, --stack          Push all branches in the current stack (gh stack push, --force-with-lease;
+                         branches whose remote has commits they never had are held back unless -f)
     -b, --branch <name>  Push a specific branch by name
     -f, --force          Force push
     --verify             Require ~/.ezstack/hooks/pre-push to exist and pass
@@ -123,12 +124,15 @@ func Push(args []string) error {
 	if *allRemotesFlag {
 		return pushStack(g, mgr, currentStack, *force, true)
 	}
-	return pushStackChains(g, mgr, currentStack)
+	return pushStackChains(g, mgr, currentStack, *force)
 }
 
 // pushStackChains pushes a stack through gh-stack, one chain at a time, with
-// --force-with-lease (stack branches are routinely rebased).
-func pushStackChains(g *git.Git, mgr *stack.Manager, s *config.Stack) error {
+// --force-with-lease (stack branches are routinely rebased). Commits someone
+// else pushed are protected first: branches behind their remote are
+// fast-forwarded, and a branch whose remote has commits it never had is held
+// back unless force is set.
+func pushStackChains(g *git.Git, mgr *stack.Manager, s *config.Stack, force bool) error {
 	if err := requireGHStack(); err != nil {
 		return err
 	}
@@ -136,9 +140,15 @@ func pushStackChains(g *git.Git, mgr *stack.Manager, s *config.Stack) error {
 	if err != nil {
 		return err
 	}
+	mine := chainsForStacks(chains, []*config.Stack{s})
 	p := newPusher(g, mgr, pushAlways, chains)
+	p.includeRemote = true // an explicit stack push includes pickup branches
+	integrateRemoteCommits(g, mgr, mine, p)
+	if force {
+		p.hold = nil
+	}
 	var errs []string
-	for _, c := range chainsForStacks(chains, []*config.Stack{s}) {
+	for _, c := range mine {
 		if err := p.pushChain(c); err != nil {
 			errs = append(errs, err.Error())
 		}
@@ -146,7 +156,14 @@ func pushStackChains(g *git.Git, mgr *stack.Manager, s *config.Stack) error {
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
-	ui.Success(fmt.Sprintf("Pushed stack %s", s.DisplayName()))
+	switch {
+	case p.pushed > 0:
+		ui.Success(fmt.Sprintf("Pushed %d branch(es) of stack %s", p.pushed, s.DisplayName()))
+	case len(p.hold) > 0:
+		return fmt.Errorf("nothing pushed: held branches need integrating first (or pass -f to overwrite)")
+	default:
+		ui.Success(fmt.Sprintf("Stack %s is already up to date on its remotes", s.DisplayName()))
+	}
 	return nil
 }
 

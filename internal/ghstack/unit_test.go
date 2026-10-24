@@ -152,12 +152,12 @@ func TestChains(t *testing.T) {
 			want: []string{"s1:main|a,b1"},
 		},
 		{
-			name: "stack rooted on another stack's branch comes after it",
+			name: "stack rooted on another stack's branch comes after it, rooted at its trunk",
 			stacks: []*config.Stack{
 				tree("aa", "z", config.BranchTree{"q": {}}, nil),
 				tree("zz", "main", config.BranchTree{"z": {}}, nil),
 			},
-			want: []string{"zz:main|z", "aa:z|q"},
+			want: []string{"zz:main|z", "aa:main|(z),q"},
 		},
 		{
 			name: "stacks ordered by hash; root carried as trunk",
@@ -295,7 +295,7 @@ func TestProject_MergedAndForgotten(t *testing.T) {
 	old := &Catalog{Stacks: []Stack{
 		{Trunk: BranchRef{Branch: "main"}, Branches: []BranchRef{{Branch: "a", Base: "M"}, {Branch: "b", Base: "Atip"}}},
 		{Trunk: BranchRef{Branch: "main"}, Branches: []BranchRef{{Branch: "gone"}}},  // forgotten
-		{Trunk: BranchRef{Branch: "main"}, Branches: []BranchRef{{Branch: "ghost"}}}, // branch no longer exists
+		{Trunk: BranchRef{Branch: "main"}, Branches: []BranchRef{{Branch: "ghost"}}}, // user's stack, branch gone: still theirs
 		{Trunk: BranchRef{Branch: "main"}, Branches: []BranchRef{{Branch: "keep"}}},  // user's own stack
 	}}
 	s := tree("s1", "main", config.BranchTree{"a": {"b": {}}}, []string{"a"})
@@ -307,10 +307,10 @@ func TestProject_MergedAndForgotten(t *testing.T) {
 	for _, st := range next.Stacks {
 		names = append(names, strings.Join(st.BranchNames(), ","))
 	}
-	if !reflect.DeepEqual(names, []string{"keep", "a,b"}) {
-		t.Fatalf("stacks = %v, want [keep a,b]", names)
+	if !reflect.DeepEqual(names, []string{"ghost", "keep", "a,b"}) {
+		t.Fatalf("stacks = %v, want [ghost keep a,b]", names)
 	}
-	ab := next.Stacks[1]
+	ab := next.Stacks[2]
 	if pr := ab.Branches[0].PullRequest; pr == nil || !pr.Merged {
 		t.Errorf("merged layer not flagged: %+v", ab.Branches[0])
 	}

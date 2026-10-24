@@ -766,7 +766,7 @@ ezs reparent feature-1 feature-2 # main → feature-2 → feature-1
 
 Step by step:
 
-1. **Move the child up to be a sibling of its current parent.** `ezs reparent feature-2 main` rewrites `feature-2`'s parent to `main` and has gh stack run `git rebase --onto main <old feature-1 tip> feature-2`. After this step both branches sit directly on `main`, which breaks the parent/child relationship the cycle check is worried about.
+1. **Move the child up to be a sibling of its current parent.** `ezs reparent feature-2 main` rewrites `feature-2`'s parent to `main` and runs `git rebase --onto main <old feature-1 tip> feature-2` in `feature-2`'s worktree (a conflict here is resolved with `git rebase --continue` in that worktree, then `ezs sync -C`). After this step both branches sit directly on `main`, which breaks the parent/child relationship the cycle check is worried about.
 2. **Reparent the original parent onto the original child.** `ezs reparent feature-1 feature-2` is now legal because `feature-1` is no longer an ancestor of `feature-2`. The rebase replays `feature-1`'s commits on top of `feature-2`.
 3. **PR bases get rewritten automatically.** Both PRs end up pointing at their new parents (`feature-2` → `main`, `feature-1` → `feature-2`). Each step offers a force-push so the GitHub diffs match the new bases, and relinks the GitHub stack once the branches are pushed (or run `ezs pr stack` afterwards).
 
@@ -1521,7 +1521,7 @@ ezs commit [git-commit-options] [--push [--push-children] | --no-push]
 ezs amend [git-commit-options] [--push [--push-children] | --no-push]
 ```
 
-All other arguments are passed through to `git commit`. After committing, any child branches in the stack (including every subtree of a branch with several children) are restacked onto the updated branch with `gh stack rebase` (inter-branch only — the trunk isn't fetched). A conflict pauses the restack exactly like a sync; finish it with `ezs sync --continue` (or `ezs sync --abort`).
+All other arguments are passed through to `git commit`. After committing, any child branches in the stack (including every subtree of a branch with several children) are restacked onto the updated branch with `gh stack rebase` (inter-branch only — the trunk isn't fetched). A conflict pauses the restack exactly like a sync and the command exits with code `3` (the commit itself is kept); finish it with `ezs sync --continue` (or `ezs sync --abort`).
 
 | Flag | Effect |
 |---|---|
@@ -1911,8 +1911,11 @@ every non-merged branch with `--force-with-lease` (`--force` is implied —
 stack branches are routinely rebased). Branches already up to date with their
 remote are skipped. When branches of one chain push to different fork
 remotes, each is pushed on its own to its remote. Branches pushed for the
-first time get an upstream set. Pickup branches (another contributor's) are
-skipped with a note — push one explicitly with `ezs push -b <branch>`.
+first time get an upstream set. Before pushing, commits someone else pushed
+are protected: a branch strictly behind its remote is fast-forwarded, and a
+branch whose remote has commits it never had (the remote tip isn't in the
+local branch's reflog — the `--force-if-includes` rule) is held back. `-f`
+pushes held branches anyway.
 
 Each branch pushes to its configured remote — `origin` by default, or the fork remote for fork-based PR branches. Branches marked as read-only (fork PRs where you don't have push access) are skipped with a warning.
 
@@ -2034,8 +2037,8 @@ passing its hash prefix (minimum 3 characters).
    that holds it*. Branches whose PR was merged (squash merges included) are
    skipped and their children moved `--onto` the next live ancestor, so only
    the children's own commits are replayed.
-3. **Push** each chain right after it is restacked, with `--force-with-lease`.
-   Asks once per run (auto-yes under `-y` and MCP); `--no-push` (or an
+3. **Push** the rebased branches once every chain is restacked, with `--force-with-lease`.
+   Asks once per run (auto-yes under `-y`; MCP clients are asked); `--no-push` (or an
    `ezs agent --no-push` session) keeps everything local. Branches whose fork
    doesn't allow maintainer pushes are skipped.
 4. **Clean up** merged branches: offers to delete their worktrees and local
@@ -2051,14 +2054,19 @@ with one `git rebase --onto` (no trunk fetch, children untouched — use `-s`
 when the parent is the base branch); `-C` rebases the current branch's
 descendants onto it; `-b <name>` restacks the named branch's chains (its
 parent chain plus every subtree above it). When the anchor branch has several
-children, `-c` restacks its whole chain, because gh stack can't anchor on a
-branch that belongs to several of its stacks.
+children, `-c` restacks all of its subtrees, because gh stack can't anchor
+on a branch that belongs to several of its stacks. A branch-scoped sync only
+pushes what it restacked (`-C`: the descendants; `-c`: the branch and the
+branches below it).
 
-**Collaborator commits.** Before restacking (`-s`, `-a`, `<hash-prefix>`),
-sync fetches each branch's remote and fast-forwards any branch that is
-strictly behind it, so commits a teammate pushed are kept. A branch that has
-diverged from its remote (both sides have commits) is restacked but not
-pushed — run `git pull --rebase` in its worktree to integrate first.
+**Collaborator commits.** Before restacking, sync fetches each affected
+branch's remote and fast-forwards any branch that is strictly behind it, so
+commits a teammate pushed are kept. A branch whose remote has commits the
+local branch never had (the remote tip isn't reachable from the branch's
+reflog) is restacked but not pushed — run `git pull --rebase` in its
+worktree to integrate first. Branches that differ from their remote only
+because you rebased them are pushed normally. If a remote can't be fetched,
+its branches aren't pushed that run.
 
 **Conflicts.** A conflict pauses the cascade in the conflicted worktree and
 exits with code `3`. Resolve, `git add`, then `ezs sync --continue` (from any

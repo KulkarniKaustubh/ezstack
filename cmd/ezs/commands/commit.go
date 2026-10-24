@@ -314,10 +314,18 @@ func commitInternal(args []string, amend bool) error {
 	p.onlyPublished = true
 	p.limitTo(stackBranch.Name)
 
+	if pushChildren {
+		// About to force-push children: protect commits others pushed.
+		integrateRemoteCommits(g, mgr, stepChains(steps), p)
+	}
+
 	ui.Info(fmt.Sprintf("Restacking %d child branch(es)...", len(children)))
 	if err := runRestack(g, mgr, steps, p); err != nil {
 		if errors.Is(err, errSyncConflict) {
+			// The commit itself succeeded, but a restack is now paused and
+			// blocks further syncs: report it like sync does (exit 3).
 			savePausedScope(mgr, &syncTarget{mode: modeChildren, branch: stackBranch, stacks: []*config.Stack{mgr.GetStackForBranch(stackBranch.Name)}})
+			return err
 		}
 		ui.Warn(err.Error())
 		return nil

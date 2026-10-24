@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"sync"
 
@@ -447,8 +446,10 @@ func restackSteps(g *git.Git, mgr *stack.Manager, chains []ghstack.Chain, t *syn
 	switch t.mode {
 	case modeCurrent:
 		if !ghstack.Unique(chains, name) {
-			ui.Info(fmt.Sprintf("'%s' has several child branches; restacking its whole chain", name))
-			return wholeChainSteps(g, mgr, []ghstack.Chain{c}, chains), nil
+			// gh-stack can't anchor on a fork point; restack every chain
+			// through it so no subtree is left on its old tip.
+			ui.Info(fmt.Sprintf("'%s' has several child branches; restacking all of its subtrees", name))
+			return wholeChainSteps(g, mgr, append([]ghstack.Chain{c}, others...), chains), nil
 		}
 		return []restackStep{{c, ghstack.RebaseOptions{Branch: name, Remote: trunkRemote(g, mgr, c), Downstack: true}}}, nil
 
@@ -494,13 +495,25 @@ func upstackStep(g *git.Git, mgr *stack.Manager, chains []ghstack.Chain, c ghsta
 func moveOntoParent(mgr *stack.Manager, branch, oldParent, newParent string) error {
 	repo := git.New(mgr.GetRepoDir())
 	newRef := parentTipRef(repo, mgr, newParent)
-	oldBase := ghstack.RecordedBase(mgr.GetRepoDir(), branch)
-	if ok, _ := repo.IsAncestor(oldBase, "refs/heads/"+branch); oldBase == "" || !ok {
-		from := oldParent
-		if from == "" { // a standalone branch joining a stack
-			from = newParent
+	// The branch's own commits start after: the old parent's tip when the
+	// branch contains it; else the recorded base (the old parent tip it was
+	// last stacked on — the parent has since been rewritten or merged); else
+	// the fork point. Same order gh-stack itself uses.
+	from := oldParent
+	if from == "" { // a standalone branch joining a stack
+		from = newParent
+	}
+	oldTip := parentTipRef(repo, mgr, from)
+	var oldBase string
+	if ok, _ := repo.IsAncestor(oldTip, "refs/heads/"+branch); ok {
+		oldBase, _ = repo.RunCapture("rev-parse", oldTip)
+	} else if rb := ghstack.RecordedBase(mgr.GetRepoDir(), branch); rb != "" {
+		if ok, _ := repo.IsAncestor(rb, "refs/heads/"+branch); ok {
+			oldBase = rb
 		}
-		oldBase, _ = repo.RunCapture("merge-base", "refs/heads/"+branch, parentTipRef(repo, mgr, from))
+	}
+	if oldBase == "" {
+		oldBase, _ = repo.RunCapture("merge-base", "refs/heads/"+branch, oldTip)
 	}
 	if oldBase == "" {
 		return fmt.Errorf("cannot find where '%s' forked from '%s'", branch, oldParent)
@@ -549,12 +562,17 @@ func indexOf(list []string, s string) int {
 func runSync(g *git.Git, mgr *stack.Manager, t *syncTarget, opts syncOptions) error {
 	cwd, _ := os.Getwd()
 	gh, _ := newGitHubClient(g)
+	if gh != nil {
+		gh = gh.WithPRCache() // detection, cleanup and PR refresh share lookups
+	}
 
-	// Find merged PRs before restacking: the cleanup list must be computed
-	// before branches are flagged (flagged branches are cleaned silently),
-	// and flagging them lets the projection drop their commits even when
-	// gh-stack can't fetch PR state itself.
+	// Find merged PRs before restacking. The cleanup list is computed first
+	// and the merged set is only a hint to the gh-stack projection (so it
+	// drops their commits even when gh-stack can't see PR state itself);
+	// nothing is marked merged in ezstack's model until the user confirms
+	// the cleanup.
 	var merged []stack.MergedBranchInfo
+	var mergedPRs map[string]bool
 	if gh != nil {
 		if opts.deleteLocal {
 			var err error
@@ -562,12 +580,10 @@ func runSync(g *git.Git, mgr *stack.Manager, t *syncTarget, opts syncOptions) er
 				ui.Warn(fmt.Sprintf("Could not check for merged branches: %v", err))
 			}
 		}
-		if err := mgr.FlagBranchesMerged(mergedPRBranches(gh, t.stacks)); err != nil {
-			ui.Warn(fmt.Sprintf("Could not record merged branches: %v", err))
-		}
+		mergedPRs = mergedPRBranches(gh, t.stacks)
 	}
 
-	chains, err := reconcileGHStack(mgr)
+	chains, err := reconcileGHStackMerged(mgr, mergedPRs)
 	if err != nil {
 		return err
 	}
@@ -575,6 +591,9 @@ func runSync(g *git.Git, mgr *stack.Manager, t *syncTarget, opts syncOptions) er
 	p.includeRemote = opts.includeRemote
 
 	if t.mode == modeParent {
+		if c, ok := ghstack.ChainFor(chains, t.branch.Name); ok {
+			integrateRemoteCommits(g, mgr, []ghstack.Chain{c}, p)
+		}
 		if err := syncOntoParent(g, mgr, t.branch, p, chains); err != nil {
 			return err
 		}
@@ -584,9 +603,8 @@ func runSync(g *git.Git, mgr *stack.Manager, t *syncTarget, opts syncOptions) er
 			return err
 		}
 		if len(steps) > 0 {
-			if t.mode == modeStacks {
-				integrateRemoteCommits(g, mgr, chainsForStacks(chains, t.stacks), p)
-			}
+			limitPushes(mgr, p, t)
+			integrateRemoteCommits(g, mgr, stepChains(steps), p)
 			if err := runRestack(g, mgr, steps, p); err != nil {
 				if errors.Is(err, errSyncConflict) {
 					savePausedScope(mgr, t)
@@ -616,13 +634,42 @@ func runSync(g *git.Git, mgr *stack.Manager, t *syncTarget, opts syncOptions) er
 	return nil
 }
 
-// mergedPRBranches returns the not-yet-flagged branches of stacks whose PRs
-// are merged on GitHub. PR lookups run in parallel.
-func mergedPRBranches(gh *github.Client, stacks []*config.Stack) []string {
+// limitPushes restricts a branch-scoped sync to pushing what it restacked:
+// -C the branch's descendants, -c the branch and the branches below it.
+func limitPushes(mgr *stack.Manager, p *pusher, t *syncTarget) {
+	switch t.mode {
+	case modeChildren:
+		p.only = map[string]bool{}
+		for _, d := range mgr.GetDescendants(t.branch.Name) {
+			p.only[d.Name] = true
+		}
+	case modeCurrent:
+		p.only = map[string]bool{}
+		for b := t.branch; b != nil; b = mgr.GetBranch(b.Parent) {
+			if p.only[b.Name] {
+				break
+			}
+			p.only[b.Name] = true
+		}
+	}
+}
+
+// stepChains returns the distinct chains of steps.
+func stepChains(steps []restackStep) []ghstack.Chain {
+	var out []ghstack.Chain
+	for _, s := range steps {
+		out = append(out, s.chain)
+	}
+	return out
+}
+
+// mergedPRBranches returns the branches of stacks, not yet marked merged,
+// whose PRs are merged on GitHub. PR lookups run in parallel.
+func mergedPRBranches(gh *github.Client, stacks []*config.Stack) map[string]bool {
 	var (
 		mu  sync.Mutex
 		wg  sync.WaitGroup
-		out []string
+		out = map[string]bool{}
 	)
 	sem := make(chan struct{}, 10)
 	for _, s := range stacks {
@@ -637,14 +684,13 @@ func mergedPRBranches(gh *github.Client, stacks []*config.Stack) []string {
 				defer func() { <-sem }()
 				if pr, err := gh.GetPR(number); err == nil && pr.Merged {
 					mu.Lock()
-					out = append(out, name)
+					out[name] = true
 					mu.Unlock()
 				}
 			}(b.Name, b.PRNumber)
 		}
 	}
 	wg.Wait()
-	sort.Strings(out)
 	return out
 }
 
