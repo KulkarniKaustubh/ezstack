@@ -250,6 +250,13 @@ jobs:
     runs-on: ubuntu-latest
     needs: publish
     if: ${{ !contains(github.ref_name, '-') }}
+    # Serialize pushes to main. A tag push can trigger this workflow twice
+    # (v4.8.5 did); two parallel bumps race and the loser's push is rejected.
+    # Queued, the second run checks out the already-bumped main and exits
+    # via "Nothing to commit".
+    concurrency:
+      group: release-bump-version
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
