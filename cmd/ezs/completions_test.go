@@ -113,7 +113,7 @@ func TestPrintCompletions_ConfigSetKeys(t *testing.T) {
 	for _, want := range []string{
 		"worktree_base_dir", "default_base_branch", "github_token",
 		"cd_after_new", "use_worktrees", "init_submodules",
-		"sync_strategy", "agent_command",
+		"agent_command",
 	} {
 		if !contains(got, want) {
 			t.Errorf("missing config key %q in %v", want, got)

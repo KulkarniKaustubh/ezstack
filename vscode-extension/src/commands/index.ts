@@ -394,8 +394,8 @@ export function registerCommands(
   context.subscriptions.push(
     vscode.commands.registerCommand("ezstack.prStack", () =>
       runWithFeedback(
-        "Updating stack info in PRs...",
-        "Stack info updated in PRs.",
+        "Linking stack PRs on GitHub...",
+        "Stack PRs linked on GitHub.",
         () => cli.prStack(),
       ),
     ),

@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
@@ -24,7 +25,7 @@ func Push(args []string) error {
     ezs push [options]
 
 %sOPTIONS%s
-    -s, --stack          Push all branches in the current stack
+    -s, --stack          Push all branches in the current stack (gh stack push, --force-with-lease)
     -b, --branch <name>  Push a specific branch by name
     -f, --force          Force push
     --verify             Require ~/.ezstack/hooks/pre-push to exist and pass
@@ -117,15 +118,36 @@ func Push(args []string) error {
 		return err
 	}
 
-	// gh-stack backend: `gh stack push` pushes the whole stack atomically with
-	// --force-with-lease. It doesn't model ezstack's fork/--all-remotes fan-out,
-	// so only the plain single-remote stack push is routed here; --all-remotes
-	// falls through to the built-in per-branch push.
-	if !*allRemotesFlag && ghStackEnabled(g) {
-		return pushStackViaGHStack(g, getMainWorktreePath(g), currentStack)
+	// --all-remotes fans every branch out to origin AND its fork remote,
+	// which `gh stack push` (one remote per stack) can't express.
+	if *allRemotesFlag {
+		return pushStack(g, mgr, currentStack, *force, true)
 	}
+	return pushStackChains(g, mgr, currentStack)
+}
 
-	return pushStack(g, mgr, currentStack, *force, *allRemotesFlag)
+// pushStackChains pushes a stack through gh-stack, one chain at a time, with
+// --force-with-lease (stack branches are routinely rebased).
+func pushStackChains(g *git.Git, mgr *stack.Manager, s *config.Stack) error {
+	if err := requireGHStack(); err != nil {
+		return err
+	}
+	chains, err := reconcileGHStack(mgr)
+	if err != nil {
+		return err
+	}
+	p := newPusher(g, mgr, pushAlways, chains)
+	var errs []string
+	for _, c := range chainsForStacks(chains, []*config.Stack{s}) {
+		if err := p.pushChain(c); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("%s", strings.Join(errs, "; "))
+	}
+	ui.Success(fmt.Sprintf("Pushed stack %s", s.DisplayName()))
+	return nil
 }
 
 // pushToRemotes runs fn against each remote in order. Failures on earlier

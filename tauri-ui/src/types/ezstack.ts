@@ -65,7 +65,6 @@ export interface RepoConfig {
   repo_path: string;
   worktree_base_dir: string;
   default_base_branch?: string;
-  sync_strategy?: string;
 }
 
 export interface CommandResult {

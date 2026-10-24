@@ -3,12 +3,14 @@ package commands
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ghstack"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/github"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/hooks"
@@ -239,20 +241,15 @@ func applyPRRefresh(cacheDir string, branch *config.Branch, pr *github.PR, fetch
 	return pr, nil
 }
 
-// updateStackDescriptions updates PR descriptions for all PRs in the given stack.
-func updateStackDescriptions(gh *github.Client, s *config.Stack, activeBranch string) error {
-	ui.Info("Updating PR stack descriptions...")
-	return gh.UpdateStackDescription(s, activeBranch)
-}
-
-// updatePRMetadata updates base branches and stack descriptions for all PRs in the stack.
-// Called after pushes and stack mutations to keep PR metadata in sync.
-// All GitHub API calls are parallelized to avoid serial latency.
-func updatePRMetadata(gh *github.Client, s *config.Stack, currentBranch *config.Branch) {
-	// Collect branches with PRs
+// updatePRMetadata brings a stack's PRs in line with the stack model:
+// retargets each open PR's base to its branch's parent, removes the PR-body
+// stack section older ezstack releases wrote, and links the PRs into GitHub
+// stacks with `gh stack link` (GitHub renders stack navigation natively).
+// Called after pushes and stack mutations. GitHub reads run in parallel.
+func updatePRMetadata(gh *github.Client, mgr *stack.Manager, s *config.Stack) {
 	var prBranches []*config.Branch
 	for _, b := range s.Branches {
-		if b.PRNumber > 0 {
+		if b.PRNumber > 0 && !b.IsMerged {
 			prBranches = append(prBranches, b)
 		}
 	}
@@ -260,12 +257,10 @@ func updatePRMetadata(gh *github.Client, s *config.Stack, currentBranch *config.
 		return
 	}
 
-	// Fetch all PR data in parallel
 	prMap := make(map[int]*github.PR) // PR number -> PR data
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 10)
-
 	for _, b := range prBranches {
 		wg.Add(1)
 		go func(branch *config.Branch) {
@@ -282,225 +277,62 @@ func updatePRMetadata(gh *github.Client, s *config.Stack, currentBranch *config.
 	}
 	wg.Wait()
 
-	// Update base branches where needed
+	open := map[string]int{} // branch -> open PR number
 	for _, b := range prBranches {
 		pr := prMap[b.PRNumber]
 		if pr == nil || pr.State == "CLOSED" || pr.Merged {
 			continue
 		}
+		open[b.Name] = b.PRNumber
 		if pr.Base != b.Parent {
 			if err := gh.UpdatePRBase(b.PRNumber, b.Parent); err != nil {
 				ui.Warn(fmt.Sprintf("Failed to update base branch for PR #%d: %v", b.PRNumber, err))
 			}
 		}
+		if err := gh.RemoveLegacyStackSection(pr); err != nil {
+			ui.Warn(fmt.Sprintf("Failed to clean up PR #%d description: %v", b.PRNumber, err))
+		}
 	}
-
-	// Update stack descriptions, passing pre-fetched PR data to avoid re-fetching
-	activeName := ""
-	if currentBranch != nil {
-		activeName = currentBranch.Name
-	}
-	if err := gh.UpdateStackDescriptionCached(s, activeName, prMap); err != nil {
-		ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
-	}
+	linkStackPRs(mgr, s, open)
 }
 
-// OfferForcePush prompts the user to force push a branch with --force-with-lease.
-// remote specifies which git remote to push to (empty defaults to "origin").
-// Returns true if push was successful, false otherwise.
-func OfferForcePush(branchName, worktreePath, remote string) bool {
-	if remote == config.RemoteNoPush {
-		ui.Warn(fmt.Sprintf("Skipping push for %s (fork does not allow maintainer push)", branchName))
-		return true // Don't block sync continuation
+// linkStackPRs links each chain's own open PRs into a GitHub stack based on
+// the chain's fork point. Only the contiguous run of PRs from the bottom is
+// linked: linking around a branch without a PR would make GitHub chain the
+// PRs above it onto the wrong base.
+func linkStackPRs(mgr *stack.Manager, s *config.Stack, open map[string]int) {
+	if ghstack.Check() != nil {
+		return
 	}
-	if remote == "" {
-		remote = "origin"
-	}
-	g := git.New(worktreePath)
-
-	needsPush, err := g.IsLocalAheadOfRemote(branchName, remote)
+	chains, err := ghstack.PlanChains(mgr.GetRepoDir(), mgr.ListStacks())
 	if err != nil {
-		ui.Warn(fmt.Sprintf("Could not check if push is needed: %v", err))
-		needsPush = true
+		return
 	}
-
-	if !needsPush {
-		return true
-	}
-
-	fmt.Fprintln(os.Stderr)
-	ui.Warn("Force push required to update remote branch")
-	if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
-		ui.Info("Pushing...")
-		// PushBranch explicitly names the branch — never trust CurrentBranch()
-		// of worktreePath, which can be main if we're pushing from the main
-		// repo dir after a syncViaCheckout restored HEAD.
-		if err := g.PushBranch(branchName, true, remote); err != nil {
-			ui.Error(fmt.Sprintf("Push failed: %v. Check your network connection and remote access", err))
-			return false
-		}
-		ui.Success("Pushed successfully")
-		return true
-	}
-
-	return false
-}
-
-// OfferForcePushMultiple prompts the user to force push multiple branches.
-// getBranchRemote returns the git remote for a given branch (empty defaults to "origin").
-// Returns the number of successfully pushed branches.
-func OfferForcePushMultiple(branches []string, getBranchWorktree func(string) string, getBranchRemote func(string) string) int {
-	if len(branches) == 0 {
-		return 0
-	}
-
-	fmt.Fprintln(os.Stderr)
-	ui.Warn("Force push required to update remote branches")
-
-	pushed := 0
-	for _, branchName := range branches {
-		worktreePath := getBranchWorktree(branchName)
-		if worktreePath == "" {
-			continue
-		}
-
-		remote := ""
-		if getBranchRemote != nil {
-			remote = getBranchRemote(branchName)
-		}
-		if remote == config.RemoteNoPush {
-			ui.Warn(fmt.Sprintf("Skipping push for %s (fork does not allow maintainer push)", branchName))
-			continue
-		}
-		if remote == "" {
-			remote = "origin"
-		}
-
-		g := git.New(worktreePath)
-		needsPush, err := g.IsLocalAheadOfRemote(branchName, remote)
-		if err == nil && !needsPush {
-			continue
-		}
-
-		if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
-			ui.Info(fmt.Sprintf("Pushing %s...", branchName))
-			if err := g.PushBranch(branchName, true, remote); err != nil {
-				ui.Error(fmt.Sprintf("Push failed for %s: %v. Check remote access or try: git push --force-with-lease", branchName, err))
-			} else {
-				ui.Success(fmt.Sprintf("Pushed %s successfully", branchName))
-				pushed++
+	client := ghstack.New(mgr.GetRepoDir())
+	g := git.New(mgr.GetRepoDir())
+	for _, c := range chainsForStacks(chains, []*config.Stack{s}) {
+		var prs []int
+		for _, b := range c.Own() {
+			n, ok := open[b]
+			if !ok {
+				break
 			}
+			prs = append(prs, n)
 		}
-	}
-
-	return pushed
-}
-
-// OfferPush prompts the user to push a branch (regular push, not force).
-// remote specifies which git remote to push to (empty defaults to "origin").
-// Used after merge operations where history is not rewritten.
-// Returns true if push was successful or not needed, false if declined.
-func OfferPush(branchName, worktreePath, remote string) bool {
-	if remote == config.RemoteNoPush {
-		ui.Warn(fmt.Sprintf("Skipping push for %s (fork does not allow maintainer push)", branchName))
-		return true // Don't block sync continuation
-	}
-	if remote == "" {
-		remote = "origin"
-	}
-	g := git.New(worktreePath)
-
-	needsPush, err := g.IsLocalAheadOfRemote(branchName, remote)
-	if err != nil {
-		ui.Warn(fmt.Sprintf("Could not check if push is needed: %v", err))
-		needsPush = true
-	}
-
-	if !needsPush {
-		return true
-	}
-
-	fmt.Fprintln(os.Stderr)
-	if ui.ConfirmTUI(fmt.Sprintf("Push %s to %s", branchName, remote)) {
-		ui.Info("Pushing...")
-		// PushBranch explicitly names the branch — never trust CurrentBranch()
-		// of worktreePath, which can be main if we're pushing from the main
-		// repo dir after a syncViaCheckout restored HEAD.
-		if err := g.PushBranch(branchName, false, remote); err != nil {
-			// If regular push fails (e.g., diverged history from prior rebase), offer force push
-			ui.Warn(fmt.Sprintf("Push failed: %v", err))
-			if ui.ConfirmTUI(fmt.Sprintf("Force push %s (--force-with-lease) to %s", branchName, remote)) {
-				if err := g.PushBranch(branchName, true, remote); err != nil {
-					ui.Error(fmt.Sprintf("Force push failed: %v", err))
-					return false
-				}
-				ui.Success("Pushed successfully")
-				return true
-			}
-			return false
-		}
-		ui.Success("Pushed successfully")
-		return true
-	}
-
-	return false
-}
-
-// OfferPushMultiple prompts the user to push multiple branches (regular push, not force).
-// getBranchRemote returns the git remote for a given branch (empty defaults to "origin").
-// Used after merge operations where history is not rewritten.
-// Returns the number of successfully pushed branches.
-func OfferPushMultiple(branches []string, getBranchWorktree func(string) string, getBranchRemote func(string) string) int {
-	if len(branches) == 0 {
-		return 0
-	}
-
-	fmt.Fprintln(os.Stderr)
-
-	pushed := 0
-	for _, branchName := range branches {
-		worktreePath := getBranchWorktree(branchName)
-		if worktreePath == "" {
+		if len(prs) < 2 {
 			continue
 		}
-
-		remote := ""
-		if getBranchRemote != nil {
-			remote = getBranchRemote(branchName)
-		}
-		if remote == config.RemoteNoPush {
-			ui.Warn(fmt.Sprintf("Skipping push for %s (fork does not allow maintainer push)", branchName))
-			continue
-		}
-		if remote == "" {
-			remote = "origin"
-		}
-
-		g := git.New(worktreePath)
-		needsPush, err := g.IsLocalAheadOfRemote(branchName, remote)
-		if err == nil && !needsPush {
-			continue
-		}
-
-		if ui.ConfirmTUI(fmt.Sprintf("Push %s to %s", branchName, remote)) {
-			ui.Info(fmt.Sprintf("Pushing %s...", branchName))
-			if err := g.PushBranch(branchName, false, remote); err != nil {
-				// Fall back to force push if regular push fails
-				ui.Warn(fmt.Sprintf("Push failed: %v. Trying force push...", err))
-				if err := g.PushBranch(branchName, true, remote); err != nil {
-					ui.Error(fmt.Sprintf("Force push failed for %s: %v", branchName, err))
-				} else {
-					ui.Success(fmt.Sprintf("Pushed %s successfully (force)", branchName))
-					pushed++
-				}
-			} else {
-				ui.Success(fmt.Sprintf("Pushed %s successfully", branchName))
-				pushed++
-			}
+		err := client.WithOutput(io.Discard).Link(prs, c.Base(), defaultRemote(g))
+		switch {
+		case err == nil:
+			ui.Success(fmt.Sprintf("Linked %d PRs into a GitHub stack (%s)", len(prs), describeChain(c)))
+		case errors.Is(err, ghstack.ErrStacksUnavailable):
+			ui.Info("GitHub stacked PRs aren't enabled for this repository; skipping stack links")
+			return
+		default:
+			ui.Warn(fmt.Sprintf("Could not link PRs %v into a GitHub stack: %v", prs, err))
 		}
 	}
-
-	return pushed
 }
 
 // getMainWorktreePath returns the main worktree path, falling back to cwd.
@@ -1165,14 +997,14 @@ func ResolveBranchRemote(g *git.Git, mgr *stack.Manager, branchName string) stri
 // commandExamples maps a command name to a list of example invocations with descriptions.
 var commandExamples = map[string][][2]string{
 	"commit": {
-		{"ezs commit -m \"Add feature\"", "Commit staged changes and auto-sync children"},
+		{"ezs commit -m \"Add feature\"", "Commit staged changes and auto-restack children"},
 		{"ezs commit -a -m \"Fix typo\"", "Stage tracked changes and commit"},
 		{"ezs commit --amend --no-edit", "Amend last commit without editing message"},
 	},
 	"sync": {
 		{"ezs sync", "Interactive sync of current stack"},
 		{"ezs sync -a", "Auto-sync ALL stacks"},
-		{"ezs sync --stats", "Show summary of commits rebased per child"},
+		{"ezs sync --stats", "Show commits-per-branch summary after syncing"},
 		{"ezs sync --squash", "Squash each child's commits into one during sync"},
 		{"ezs sync --dry-run", "Preview sync without making changes"},
 	},
@@ -1222,7 +1054,7 @@ var commandExamples = map[string][][2]string{
 	},
 	"config": {
 		{"ezs config show", "Show current configuration"},
-		{"ezs config set sync_strategy merge", "Set the sync strategy for this repo"},
+		{"ezs config set agent_command aider", "Use a different AI agent CLI for this repo"},
 		{"ezs config export ~/ezs-backup.json", "Backup the global config to a file"},
 		{"ezs config import ~/ezs-backup.json", "Restore config from a backup file"},
 	},

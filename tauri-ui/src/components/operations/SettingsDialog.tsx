@@ -104,12 +104,6 @@ export function SettingsDialog({ open, onOpenChange, repos, selectedRepoPath }: 
                   <span className="text-muted-foreground">Worktree dir</span>
                   <span className="font-mono text-xs truncate max-w-[250px]">{currentRepo.worktree_base_dir || "—"}</span>
                 </div>
-                {currentRepo.sync_strategy && (
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Sync strategy</span>
-                    <span>{currentRepo.sync_strategy}</span>
-                  </div>
-                )}
               </div>
             </div>
           )}

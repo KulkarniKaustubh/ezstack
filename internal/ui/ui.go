@@ -572,12 +572,6 @@ func truncateBranchName(name string, maxWidth int) string {
 	return runewidth.Truncate(name, maxWidth, "...")
 }
 
-// sortBranchesTopologically sorts branches so parents come before children
-// This ensures the display shows the correct parent -> child order
-func sortBranchesTopologically(branches []*config.Branch) []*config.Branch {
-	return config.SortBranchesTopologically(branches)
-}
-
 // fzfPRText returns the PR label for fzf preview (uses cached PRState)
 func fzfPRText(b *config.Branch) string {
 	if b.PRNumber == 0 {

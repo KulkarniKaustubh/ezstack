@@ -83,7 +83,7 @@ func TestCompletions_ConfigSetKeys(t *testing.T) {
 	for _, want := range []string{
 		"worktree_base_dir", "default_base_branch", "github_token",
 		"cd_after_new", "use_worktrees", "init_submodules",
-		"sync_strategy", "agent_command",
+		"agent_command",
 	} {
 		if !itestContains(got, want) {
 			t.Errorf("config set key %q missing in %v", want, got)

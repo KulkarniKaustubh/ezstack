@@ -20,6 +20,24 @@ get_next_pr_number() {
     echo "$num"
 }
 
+# `gh stack` (the github/gh-stack extension) is ezstack's rebase/push engine
+# and works purely locally for everything the itests exercise, so forward it
+# to the real gh recorded at setup (STUB_GH_REAL). `gh stack link` talks to the
+# GitHub stacks API, which this stub has no notion of: record the call and
+# succeed, so tests can assert which PRs ezs linked without any network.
+if [ "${1:-}" = "stack" ]; then
+    if [ "${2:-}" = "link" ]; then
+        shift 2
+        echo "$*" >> "$STATE_DIR/stack_links"
+        exit 0
+    fi
+    if [ -z "${STUB_GH_REAL:-}" ]; then
+        echo "stub gh: STUB_GH_REAL not set; cannot run gh stack" >&2
+        exit 1
+    fi
+    exec "$STUB_GH_REAL" "$@"
+fi
+
 COMMAND="${1:-}"
 SUBCOMMAND="${2:-}"
 shift 2 2>/dev/null || true

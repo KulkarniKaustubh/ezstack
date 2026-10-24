@@ -10,7 +10,7 @@
 
 **Table of Contents**
 
-[Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [Commands](#commands) · [Workflows](#workflows) · [Editor & Desktop Integrations](#editor--desktop-integrations)
+[Overview](#overview) · [Installation](#installation) · [Configuration](#configuration) · [How ezstack uses gh stack](#how-ezstack-uses-gh-stack) · [Commands](#commands) · [Workflows](#workflows) · [Editor & Desktop Integrations](#editor--desktop-integrations)
 
 **Commands:** [agent](#ezs-agent) · [commit/amend](#ezs-commit--ezs-amend) · [config](#ezs-config) · [delete](#ezs-delete) · [diff](#ezs-diff) · [doctor](#ezs-doctor) · [down/up](#ezs-down--ezs-up) · [goto](#ezs-goto) · [list](#ezs-list) · [log](#ezs-log) · [menu](#ezs-menu) · [new](#ezs-new) · [pr](#ezs-pr) · [push](#ezs-push) · [reparent](#ezs-reparent) · [stack](#ezs-stack) · [status](#ezs-status) · [sync](#ezs-sync) · [unstack](#ezs-unstack) · [upgrade](#ezs-upgrade)
 
@@ -31,6 +31,9 @@ ezstack is a CLI tool for managing stacked pull requests. It supports two workfl
 - **Worktree** — A separate working directory for each branch (optional)
 - **Sync** — Rebase branches when parents are merged or updated
 - **Auto-restack** — `ezs commit` and `ezs amend` automatically rebase children
+- **Engine** — every rebase, stack push, and PR-stack link is executed by
+  [`gh stack`](https://github.com/github/gh-stack) (required, >= 0.2.0); see
+  [How ezstack uses gh stack](#how-ezstack-uses-gh-stack)
 
 ---
 
@@ -109,8 +112,7 @@ The wizard asks these prompts, in order:
 | 1 | Use git worktrees for new branches (recommended) | `use_worktrees` (per-repo) | **yes** | Required for `ezs agent`. Strongly recommended; enables parallel work across the stack. |
 | 2 | Worktree base directory (where new worktrees will be created) | `worktree_base_dir` (per-repo) | `<parent-of-repo>/<repo-name>_worktrees` | Only asked if you said yes to step 1. Must be **outside** the repo itself — the wizard re-prompts if you point it inside. |
 | 3 | Auto-cd into new worktrees after creation | `cd_after_new` (per-repo) | **yes** | Only effective if the shell wrapper from step 2 is installed. |
-| 4 | Select your sync strategy | `sync_strategy` (per-repo) | **`merge`** | The wizard explicitly recommends `merge` because `rebase` rewrites history and forces a force-push on every sync. The two options shown are `merge` and `rebase`. |
-| 5 | AI agent CLI command (used by `ezs agent`) | `agent_command` (per-repo) | **`claude`** | The literal command name `ezs agent` will exec inside a worktree. Set to `aider`, `cursor-agent`, `codex`, etc. if you want a different CLI. |
+| 4 | AI agent CLI command (used by `ezs agent`) | `agent_command` (per-repo) | **`claude`** | The literal command name `ezs agent` will exec inside a worktree. Set to `aider`, `cursor-agent`, `codex`, etc. if you want a different CLI. |
 
 The wizard does **not** prompt for the base branch name. `default_base_branch`
 is a global setting that defaults to the literal string `"main"` if unset
@@ -124,44 +126,11 @@ ezs config show                                    # dump global + active-repo c
 ezs config set use_worktrees true                  # toggle worktree mode
 ezs config set worktree_base_dir ~/code/wt         # move the worktree root
 ezs config set cd_after_new true                   # toggle auto-cd
-ezs config set sync_strategy rebase                # switch to rebase-based sync
 ezs config set agent_command aider                 # switch the agent CLI
 ezs config set default_base_branch master          # override the global default base
 ezs config set github_token ghp_...                # optional; otherwise falls back to `gh auth`
 ezs config set agent_command "claude --dangerously-skip-permissions"
-ezs config set use_gh_stack true                   # delegate rebase/sync/push/PRs to `gh stack`
 ```
-
-### gh-stack backend (`use_gh_stack`)
-
-With `use_gh_stack` enabled (per-repo, default off), ezstack delegates the
-_mechanical_ stack operations to the [`gh stack`](https://github.com/github/gh-stack)
-CLI extension while keeping everything that makes ezstack ezstack:
-
-| Owned by ezstack (unchanged) | Delegated to `gh stack` |
-| --- | --- |
-| Worktree-per-branch layout, `ezs new`, navigation, `list`/`log` | Cascading rebase, `sync`, `push` |
-| Tree-shaped stack model, agent sessions, AI PR generation, fork handling | PR stack linking + PR-body navigation section (`ezs pr stack`) |
-
-**Requirements:** `gh extension install github/gh-stack`. Enabling the flag is
-refused if the extension is not installed, and a stale flag falls back to the
-built-in engine with a warning.
-
-**How the mix works.** gh-stack cascades a rebase by checking each branch out in
-one working directory, which collides with ezstack's per-branch worktrees
-(`git` refuses a branch checked out in two worktrees). ezstack resolves this by
-temporarily detaching the affected worktrees, driving the gh-stack op in the
-main worktree, then re-attaching each worktree to its (now-rebased) branch — so
-your worktrees survive the operation untouched. A reconciler projects ezstack's
-stack into gh-stack's linear model (`init` for a new stack, `add` to grow one).
-
-**Scope.** The standard whole-stack sync (`ezs sync`, `-s`, `-a`, or a hash
-prefix) and stack push (`ezs push -s`) route through gh-stack. Specialized modes
-— `--dry-run`, `-c/--current`, `-b/--branch`, `-p/--parent`, `-C/--children`,
-`--squash`, `--merge`, and `--continue` — remain on the built-in engine. Note
-gh-stack enforces one-branch-one-stack, so a genuinely _branching_ tree (a
-parent with two tracked children) is flattened into a single linear gh-stack
-stack; linear stacks reconcile exactly.
 
 Multi-word values (or any value starting with `-`) MUST be quoted so the shell
 collapses them to a single argument — the last line above shows the common case
@@ -283,9 +252,8 @@ What `ezs commit` does (see `cmd/ezs/commands/commit.go`):
 2. If the branch already exists on the remote, prompts `Push to remote? [Y/n]`.
    Answer `Y` to push or `n` to defer; `ezs amend` prompts for a `--force` push
    instead.
-3. Looks up child branches in `stacks.json` and rebases (or merges, per
-   `sync_strategy`) each child onto the new tip. On a brand-new leaf branch
-   this is a no-op.
+3. Looks up child branches in `stacks.json` and restacks them onto the new
+   tip with `gh stack rebase`. On a brand-new leaf branch this is a no-op.
 
 Stack a second branch on top:
 
@@ -303,13 +271,17 @@ ezs push --stack
 
 What `ezs push --stack` does (see `cmd/ezs/commands/push.go`):
 
-1. Walks every branch in the current stack, root → leaf, skipping branches
-   already marked merged.
-2. For each branch: `git push -u <remote> <branch>` (plain push, sets upstream).
+1. Projects the stack into gh stack (see
+   [How ezstack uses gh stack](#how-ezstack-uses-gh-stack)).
+2. Runs `gh stack push --remote <remote>` for each chain of the stack, which
+   pushes every non-merged branch with `--force-with-lease` (stack branches
+   are routinely rebased, so a lease-protected force push is always right).
+   Branches already up to date with their remote are skipped.
 3. Skips branches whose remote is "no-push" (fork PRs without maintainer-push
-   permission) with a warning.
-4. Add `--force` (or `-f`) to switch to `git push -u --force-with-lease` — what
-   you want after rebases or amends.
+   permission) with a warning; branches on different fork remotes are pushed
+   one by one to their own remote.
+4. `--all-remotes` instead fans every branch out to `origin` **and** its fork
+   remote with plain `git push` (add `--force` for `--force-with-lease`).
 
 Open a PR for each branch. The base branch ezstack passes to `gh pr create`
 is the branch's recorded **parent** in `stacks.json`, NOT `main`. So
@@ -330,8 +302,9 @@ What `ezs pr create` does:
 2. Records the PR number back into `stacks.json`.
 3. Add `-d` / `--draft` to open as a draft.
 
-Now inject stack-navigation links into every PR description so reviewers can
-hop around the stack:
+`ezs pr create` already linked the PRs into a GitHub stacked PR as soon as
+the stack had two of them. To (re)link explicitly — e.g. after creating PRs
+with plain `gh pr create`:
 
 ```bash
 ezs pr stack
@@ -339,10 +312,11 @@ ezs pr stack
 
 What `ezs pr stack` does:
 
-1. Calls `gh.UpdateStackDescription` for every PR in the stack (see
-   `cmd/ezs/commands/utils.go` and the GitHub client).
-2. Rewrites each PR body so it contains a managed block listing every branch
-   in the stack, with the active branch marked.
+1. Retargets each open PR's base to its branch's parent.
+2. Runs `gh stack link <pr> <pr> ...` per chain, so GitHub renders the stack
+   navigation natively on every PR (no text is written into PR bodies).
+3. Removes the "PR Stack" section that older ezstack versions appended to PR
+   descriptions, if present.
 
 ### 7. Inspect the stack any time
 
@@ -365,9 +339,11 @@ every flag on every subcommand.
 **Prerequisites**
 
 - Go 1.25+
-- Git 2.20+
+- Git 2.36+
 - [fzf](https://github.com/junegunn/fzf) — interactive selection
 - [GitHub CLI](https://cli.github.com/) (`gh`) — PR operations
+- [gh stack](https://github.com/github/gh-stack) 0.2.0+ — the rebase/push/stack-link engine:
+  `gh extension install github/gh-stack`
 
 **Homebrew (macOS/Linux)**
 
@@ -430,7 +406,7 @@ Run `ezs config` in your repository to configure:
 - **Worktree base directory** — Where branch worktrees will be created
 - **Main branch name** — Usually `main` or `master`
 - **Auto-cd** — Whether to cd into new worktrees after creation (default: yes)
-- **Sync strategy** — Whether to use `rebase` (default) or `merge` when syncing branches
+- **Agent command** — The AI agent CLI `ezs agent` runs (default: `claude`)
 
 Configuration is stored in `~/.ezstack/config.json`.
 
@@ -441,7 +417,7 @@ ezs config set <key> <value>    Set a configuration value
 ezs config show                 Show current configuration
 ```
 
-**Available keys:** `worktree_base_dir`, `default_base_branch`, `cd_after_new`, `use_worktrees`, `sync_strategy`, `init_submodules`
+**Available keys:** `worktree_base_dir`, `default_base_branch`, `github_token`, `cd_after_new`, `use_worktrees`, `init_submodules`, `agent_command`
 
 - `init_submodules` (per-repo, default `true`): when creating a new worktree, mirror the same set of initialized submodules that are active in the main worktree. Useful for monorepos (e.g. SONiC) where developers only init the submodules they actively work on. Overridable per-invocation with `ezs new --init-submodules` / `--no-init-submodules`.
 
@@ -458,6 +434,55 @@ These flags work with any command and can appear in any position:
 ```
 
 `ezs --info` prints ezstack version, `go`/`git`/`gh`/`fzf` versions, the config directory path, whether `config.json` is present and loads cleanly, the number of configured repos, and the default base branch. It's safe to paste into bug reports — no secrets are included.
+
+---
+
+## How ezstack uses gh stack
+
+ezstack drives [`gh stack`](https://github.com/github/gh-stack) — GitHub's
+stacked-PR CLI extension — for every rebase, stack push, and PR-stack link.
+ezstack keeps owning everything around that: worktrees, the tree-shaped stack
+model in `~/.ezstack/stacks.json`, navigation, agent sessions, AI-drafted PRs,
+fork handling, and merged-branch cleanup.
+
+**Requirements**
+
+- `gh stack` **0.2.0 or newer** (the first release that rebases each branch in
+  the worktree that holds it): `gh extension install github/gh-stack`, or
+  `gh extension upgrade stack`.
+- git **2.36+** (required by gh stack's worktree support).
+- `ezs doctor` and every rebasing command fail fast with install/upgrade
+  instructions when gh stack is missing or too old.
+
+**How stacks map.** gh stack models strictly linear stacks; ezstack stacks are
+trees. Before each operation ezstack rewrites gh stack's tracking file
+(`<git-common-dir>/gh-stack`) so it mirrors `stacks.json`: every root→leaf path
+of a stack becomes one gh stack stack. Where a branch has several children,
+each extra path repeats the shared ancestors (the fork point appears in every
+path below it); gh stack rebases those as no-ops and moves each child with
+`--onto` from its recorded base, so rewriting a fork point (amend, squash,
+rebase) restacks every subtree correctly. Merged branches stay in place,
+flagged merged, so their commits are dropped rather than replayed. Stacks you
+create with `gh stack` directly (with no ezstack branch in them) are left
+alone.
+
+| Operation | Executed by |
+|---|---|
+| `ezs sync` (all modes), auto-restack after `ezs commit` / `ezs amend`, `ezs reparent` | `gh stack rebase` (`--continue` / `--abort` for recovery) |
+| `ezs push --stack` | `gh stack push` (per-branch `git push` for mixed fork remotes) |
+| PR stack navigation (`ezs pr stack`, and after `pr create` / `pr update` / `sync` / `reparent`) | `gh stack link` → GitHub native stacked PRs |
+
+**Native stacked PRs.** Stack navigation is GitHub's own stacked-PR UI; ezstack
+no longer writes a "PR Stack" list into PR descriptions, and strips the one
+older versions added. On repositories where stacked PRs aren't available,
+linking is skipped with a note and PRs still get correct base branches.
+
+**Migrating from older ezstack.** Nothing to do beyond installing gh stack: the
+first sync projects existing stacks automatically. `sync_strategy` and
+`use_gh_stack` are ignored if present in `config.json` (and `ezs config set`
+rejects them); `ezs sync --merge/--rebase/--no-autostash` and
+`ezs commit|amend|reparent --merge/--rebase` were removed. Merge-based syncing
+is no longer available — gh stack only rebases.
 
 ---
 
@@ -500,22 +525,21 @@ Step by step:
    records the branch in `~/.ezstack/stacks.json` with `parent=main`, and
    `cd`s your shell into the new worktree.
 2. **Commit.** `ezs commit -am` is equivalent to
-   `git add -A && git commit -m ...` followed by an automatic
-   `ezs sync --children` so descendants get rebased onto the new tip. On a
-   brand-new branch there are no children, so this is just stage + commit.
+   `git add -A && git commit -m ...` followed by an automatic restack of the
+   descendants onto the new tip (`gh stack rebase`, like `ezs sync --children`).
+   On a brand-new branch there are no children, so this is just stage + commit.
 3. **Stack a second branch on top.** `ezs new feature-2 --parent feature-1`
    creates the branch pointing at `feature-1` (not `main`), creates a second
    worktree, records `parent=feature-1`, and `cd`s into it.
-4. **Push the whole stack.** `ezs push --stack` walks root → leaf and runs
-   `git push --force-with-lease origin <branch>` for each, setting upstream
-   on the first push.
+4. **Push the whole stack.** `ezs push --stack` runs `gh stack push`, which
+   pushes every branch of the stack with `--force-with-lease`.
 5. **Open a pull request for each branch.** The base of each PR is the
    *parent* branch recorded in `stacks.json`, not `main` — so `feature-2`'s
    PR targets `feature-1` and only shows the `feature-2` diff.
-6. **Cross-link the PRs.** `ezs pr stack` fetches each PR body via
-   `gh pr view`, injects a managed block listing every branch in the stack
-   with links and ✅ / 🔵 markers for merged / current, then pushes the
-   updated bodies back with `gh pr edit`.
+6. **Cross-link the PRs.** `ezs pr stack` retargets each PR's base to its
+   parent and links the PRs into a GitHub stacked PR with `gh stack link`;
+   GitHub then shows stack navigation on every PR. (`ezs pr create` does this
+   automatically once a stack has two PRs.)
 
 ### Committing into the middle of an existing stack
 
@@ -530,11 +554,13 @@ ezs commit -am "Address review comment on part 1"
 What `ezs commit` does under the hood:
 
 1. `git add -A && git commit -m "..."`.
-2. For each descendant (`feature-2`, `feature-3`, ...) runs
-   `git rebase --onto <new feature-1 tip> <old feature-1 tip> <descendant>`,
-   so their worktrees now sit on top of the amended parent.
-3. If the branch is already on the remote, auto-force-pushes the branch and
-   every descendant, so the open PRs update in one shot.
+2. Runs `gh stack rebase` over the descendants (`feature-2`, `feature-3`, ...)
+   without touching the trunk. gh stack moves each descendant with
+   `git rebase --onto <new parent tip> <old parent tip>` inside the
+   descendant's own worktree, so their worktrees now sit on top of the new
+   parent.
+3. Offers to push the branch (and, with `--push-children`, the descendants
+   that already exist on the remote) so the open PRs update in one shot.
 
 ### After a Parent is Merged
 
@@ -547,14 +573,17 @@ descendants need to be re-rooted. `ezs sync` does the surgery.
 ezs sync --all
 ```
 
-1. Fetches `origin/main`.
-2. Detects that `feature-1` has been merged (matching commit on `main` OR the
-   PR's `mergedAt` field via `gh pr view --json`).
-3. Drops `feature-1` from the stack.
-4. Rebases `feature-2` onto `main`:
-   `git rebase --onto main <old feature-1> feature-2`.
-5. Updates `stacks.json` so `feature-2`'s parent is now `main`.
-6. Deletes the merged local branch + worktree (unless you `cd`'d elsewhere).
+1. `gh stack rebase` fetches `origin/main` and refreshes each PR's state from
+   GitHub.
+2. Sees that `feature-1`'s PR was merged and skips it.
+3. Rebases `feature-2` onto `main` with
+   `git rebase --onto main <old feature-1 tip> feature-2`, so only
+   `feature-2`'s own commits are replayed (squash merges included).
+4. Pushes the rebased branches (`--force-with-lease`; asks once, `-y` skips
+   the prompt, `--no-push` keeps them local).
+5. Offers to delete the merged local branch + worktree; `stacks.json` keeps the
+   merged branch as metadata so `ezs list` can still show it.
+6. Retargets `feature-2`'s PR base to `main` and relinks the GitHub stack.
 
 **Case B: you want to merge from the CLI** and keep the stack clean in one go.
 
@@ -705,8 +734,8 @@ Step by step:
 
 1. **Create the inserted branch as a leaf on the upper half.** `ezs new refactor --parent feature-1` creates `refactor` pointing at the current tip of `feature-1`, materializes its own worktree, and records `parent=feature-1` in `stacks.json`. At this point the stack is `main → feature-1 → {refactor, feature-2}` — `refactor` is a sibling of `feature-2`, not yet between them.
 2. **Commit the change you actually wanted to splice in.** `ezs commit -am "..."` works exactly like in the canonical flow.
-3. **Reparent the lower half onto the new branch.** `ezs reparent feature-2 refactor` rewrites `stacks.json` so `feature-2`'s parent becomes `refactor`, then runs `git rebase --onto refactor <old feature-1 tip> feature-2`. Anything stacked under `feature-2` (`feature-3`, `feature-4`, …) rides along — the reparent operates on the whole subtree.
-4. **PR base is updated automatically.** If `feature-2` already has a PR, ezstack calls `gh pr edit --base refactor` so reviewers see only the diff against the new parent, then offers a force-push to publish the rebase.
+3. **Reparent the lower half onto the new branch.** `ezs reparent feature-2 refactor` rewrites `stacks.json` so `feature-2`'s parent becomes `refactor`, then has `gh stack rebase` move `feature-2`'s own commits (`--onto refactor <old feature-1 tip>`). Anything stacked under `feature-2` (`feature-3`, `feature-4`, …) rides along — the reparent restacks the whole subtree.
+4. **Publish and retarget.** ezstack offers a force-push of the rebased branches that already exist on the remote. Once they are pushed it retargets `feature-2`'s PR base to `refactor` (so reviewers see only the diff against the new parent) and relinks the GitHub stack. If you decline the push, run `ezs push` and then `ezs pr update` later.
 
 Notes:
 
@@ -715,7 +744,7 @@ Notes:
   `ezs reparent feature-2 refactor --no-rebase`. The two branches will diverge
   on disk until you sync.
 - `ezs stack` does the metadata-only insert as a one-liner: `ezs stack -b feature-2 -p refactor` — same effect as `--no-rebase`, no rebase or push offered.
-- Conflicts during the rebase are non-fatal: ezstack saves the new tracking metadata first, then drops you into the worktree with `git rebase --continue` instructions if the rebase trips. See [Recovering from a Sync Conflict](#recovering-from-a-sync-conflict).
+- Conflicts are non-fatal: ezstack saves the new tracking metadata first. A conflict while moving the branch itself stops in its worktree — resolve, `git add`, run `git rebase --continue` there, then `ezs sync -C` to restack its children. A conflict while restacking the children pauses the gh stack cascade — resolve, `git add`, and run `ezs sync --continue` (or `ezs sync --abort`). See [Recovering from a Sync Conflict](#recovering-from-a-sync-conflict).
 
 ### Swapping a Branch With Its Parent
 
@@ -737,9 +766,9 @@ ezs reparent feature-1 feature-2 # main → feature-2 → feature-1
 
 Step by step:
 
-1. **Move the child up to be a sibling of its current parent.** `ezs reparent feature-2 main` rewrites `feature-2`'s parent to `main` and runs `git rebase --onto main <old feature-1 tip> feature-2`. After this step both branches sit directly on `main`, which breaks the parent/child relationship the cycle check is worried about.
+1. **Move the child up to be a sibling of its current parent.** `ezs reparent feature-2 main` rewrites `feature-2`'s parent to `main` and has gh stack run `git rebase --onto main <old feature-1 tip> feature-2`. After this step both branches sit directly on `main`, which breaks the parent/child relationship the cycle check is worried about.
 2. **Reparent the original parent onto the original child.** `ezs reparent feature-1 feature-2` is now legal because `feature-1` is no longer an ancestor of `feature-2`. The rebase replays `feature-1`'s commits on top of `feature-2`.
-3. **PR bases get rewritten automatically.** Both PRs end up pointing at their new parents (`feature-2` → `main`, `feature-1` → `feature-2`). Each step offers a force-push so the GitHub diffs match the new bases. Use `ezs pr stack` afterwards to refresh the cross-link block in the PR bodies.
+3. **PR bases get rewritten automatically.** Both PRs end up pointing at their new parents (`feature-2` → `main`, `feature-1` → `feature-2`). Each step offers a force-push so the GitHub diffs match the new bases, and relinks the GitHub stack once the branches are pushed (or run `ezs pr stack` afterwards).
 
 Notes:
 
@@ -824,8 +853,8 @@ Step by step:
    ```
 
 9. **Push the entire stack and open one PR per branch.**
-   `ezs pr create --stack` makes a PR per branch and `ezs pr stack`
-   cross-links them in the PR descriptions.
+   `ezs pr create --stack` makes a PR per branch and links them into a
+   GitHub stacked PR (`ezs pr stack` re-links them if needed).
 10. **Retire the old monolith** (optional) once the new stack is reviewable.
     `ezs delete` if it was tracked by ezstack, plain `git branch -D` if it
     wasn't, then `git push origin --delete` to clean up the remote.
@@ -881,7 +910,7 @@ Step by step:
    it starts running `ezs new` / `ezs commit` / `git cherry-pick` calls.
 5. **When the agent is done, push and open PRs as usual.**
    `ezs pr create --stack --auto` will AI-draft titles and bodies for every
-   PR (see "AI-drafted PRs" below), then `ezs pr stack` cross-links them.
+   PR (see "AI-drafted PRs" below) and link them into a GitHub stacked PR.
 
 What `ezs agent feature` does:
 
@@ -981,7 +1010,8 @@ Step by step:
    `gh pr create --base <parent> --head <branch> --title "..." --body "..."`.
    Branches that already have a non-merged PR are skipped (use `--force` to
    override per-branch).
-3. **Cross-link them** with `ezs pr stack` so reviewers can navigate.
+3. **Link them** into a GitHub stacked PR (done automatically once two PRs
+   exist; `ezs pr stack` re-links) so reviewers can navigate.
 
 Variants:
 
@@ -1011,50 +1041,52 @@ A few practical notes:
 
 ### Recovering from a Sync Conflict
 
-`ezs sync` rebases each branch onto its parent. When a hunk conflicts, git
-stops mid-rebase and ezstack returns exit code `3` (rebase conflict). The
-recovery flow is the same as a stock git rebase, with a single ezs follow-up
-to re-cascade the rest of the stack.
+`ezs sync` restacks branches with `gh stack rebase`, one branch at a time,
+each in the worktree that holds it. When a hunk conflicts, gh stack pauses
+the whole cascade in that worktree, records where it stopped (a recovery
+file in the repository's git dir), and ezstack exits with code `3`.
 
 ```bash
 ezs sync --stack
-# →  CONFLICT (content): Merge conflict in src/auth.go
+# →  ⚠ Rebasing feature-2 onto feature-1 — conflict
+# →  Conflict worktree: ~/code/my-project_worktrees/feature-2
 # →  exits with code 3.
 
+cd ~/code/my-project_worktrees/feature-2
 $EDITOR src/auth.go                   # fix conflict markers
-git add src/auth.go
-git rebase --continue                 # advance the rebase one commit
+git add src/auth.go                   # stage — don't run `git rebase --continue` yourself
 
 ezs sync --continue
 ```
 
 Step by step:
 
-1. **Try to sync.** `ezs sync --stack` rebases each branch onto its parent.
-   If a hunk conflicts it stops mid-rebase and exits with code `3`.
-2. **Resolve the conflict in the worktree git stopped in.** Edit, `git add`,
-   `git rebase --continue` until the rebase finishes (no more conflicts).
-3. **Tell ezs to finish the cascade** with `ezs sync --continue`. It replays
-   the descendant subtree using the pre-sync SHAs it snapshotted in
-   `stacks.json` before the conflict, picks up where the original sync left
-   off, honors the same scope flags as the original call (`-s`, `-a`, `-c`,
-   `-b`, `<hash-prefix>` — re-add them if the original was scoped narrower
-   than "everything"), force-pushes any branches that were already on the
-   remote, and runs the post-sync hook to mark the sync complete.
+1. **Try to sync.** If a hunk conflicts, the cascade pauses mid-rebase in the
+   named worktree and `ezs sync` exits with code `3`. Branches already rebased
+   stay rebased; branches after the conflict are untouched.
+2. **Resolve the conflict in that worktree** and stage the files with
+   `git add`.
+3. **Finish with `ezs sync --continue`** (from any worktree). It runs
+   `gh stack rebase --continue`, which completes the paused rebase and the rest
+   of that chain, then finishes the operation that paused, with the same scope
+   (ezstack remembers it — a `-s` sync, a `-C`, or the child restack of an
+   `ezs commit`/`ezs reparent`; pass `-s`, `-a`, `-c`, `-b` or `<hash-prefix>`
+   to override) so the remaining chains are restacked, rebased branches are
+   pushed, merged branches are cleaned up, and PRs are relinked.
+   A new conflict just repeats steps 2–3. The post-sync hook runs when the
+   sync completes; the pre-sync hook and `--squash` are not re-run.
 
 If you want to bail out instead of resolving:
 
 ```bash
-git rebase --abort                    # back out the rebase you were in
+ezs sync --abort                      # restores EVERY branch of the paused cascade
 ```
-
-`ezs sync` exited cleanly with code `3` already; nothing else to do.
 
 Notes:
 
-- `git rerere` is auto-enabled on the repo on first sync, so resolving a
-  conflict once teaches git to replay it across siblings — useful when the
-  same hunk recurs in every child branch.
+- While a cascade is paused, other stack-changing ezs commands refuse to run
+  (they would rewrite gh stack's tracking under it) and tell you to continue
+  or abort first.
 - A second `ezs sync` invocation while one is already running fails fast
   with "another `ezs sync` is already running" (an exclusive flock on
   `~/.ezstack/stacks.json.sync.lock`). If you accidentally Ctrl-C'd a sync,
@@ -1071,19 +1103,21 @@ ezs sync --stack --squash
 
 What `ezs sync --stack --squash` does:
 
-- Walks each branch in the stack with ≥2 commits since its parent.
-- Collapses those commits into one before rebasing onto the parent.
+- Walks each branch in the stack (parents first) with ≥2 commits since its
+  fork point from its parent.
+- Collapses those commits into one, then the sync restacks each squashed
+  branch onto its (possibly also squashed) parent.
 - Branches that are already a single commit are left untouched.
-- Auto-force-pushes any branch that was already on the remote (the squash
-  rewrites history, so a regular push would be rejected).
+- Pushes the rewritten branches with `--force-with-lease` like any other
+  sync (asks once; `--no-push` keeps them local).
 
-Pair with `ezs pr update` to push the collapsed history and keep PR bases /
-descriptions in sync:
+The sync's own push and PR-refresh steps publish the collapsed history and
+keep PR bases and the GitHub stack link in sync. If you squashed with
+`--no-push`, publish later per branch or for the whole stack:
 
 ```bash
 ezs pr update --branch part-1
-ezs pr update --branch part-2
-ezs sync --stack && ezs pr stack    # or, for the whole stack
+ezs push --stack && ezs pr stack    # or, for the whole stack
 ```
 
 ### Pre-Push Validation as a Hard Requirement (`--verify`)
@@ -1480,18 +1514,24 @@ ezs config set agent_command "aider --model gpt-4"
 
 ### `ezs commit` / `ezs amend`
 
-Wrap `git commit` / `git commit --amend` and auto-sync child branches. Aliases: `ci`
+Wrap `git commit` / `git commit --amend` and auto-restack child branches. Aliases: `ci`
 
 ```
-ezs commit [git-commit-options] [--merge|--rebase]
-ezs amend [git-commit-options] [--merge|--rebase]
+ezs commit [git-commit-options] [--push [--push-children] | --no-push]
+ezs amend [git-commit-options] [--push [--push-children] | --no-push]
 ```
 
-All arguments are passed through to `git commit`. After committing, any child branches in the stack are automatically synced onto the updated branch.
+All other arguments are passed through to `git commit`. After committing, any child branches in the stack (including every subtree of a branch with several children) are restacked onto the updated branch with `gh stack rebase` (inter-branch only — the trunk isn't fetched). A conflict pauses the restack exactly like a sync; finish it with `ezs sync --continue` (or `ezs sync --abort`).
 
-Uses the configured `sync_strategy` (default: rebase) for child syncing. Use `--merge` or `--rebase` to override.
+| Flag | Effect |
+|---|---|
+| `--push` | Push the current branch without prompting (`amend` force-pushes with lease) |
+| `--push-children` | Also push the restacked children that already exist on the remote (implies `--push`) |
+| `--no-push` | Don't push and don't prompt |
 
-**Hooks.** `ezs commit` runs `~/.ezstack/hooks/pre-commit` before the commit (aborting on non-zero exit) and `~/.ezstack/hooks/post-commit` after the commit and the auto-restack complete (warning only). See the [Hooks](#hooks) section below.
+The `--merge` / `--rebase` flags were removed: children are always rebased.
+
+**Hooks.** `ezs commit` runs `~/.ezstack/hooks/pre-commit` before the commit (aborting on non-zero exit) and `~/.ezstack/hooks/post-commit` right after the commit, before the push prompt and the auto-restack (warning only). See the [Hooks](#hooks) section below.
 
 ---
 
@@ -1535,8 +1575,13 @@ ezs config import ~/ezs-backup.json
 | `default_base_branch` | Default base branch | e.g. `main`, `master` |
 | `cd_after_new` | Auto-cd to new worktree | `true` / `false` (per-repo) |
 | `use_worktrees` | Use git worktrees for new branches (required for `ezs agent`) | `true` / `false` (per-repo) |
-| `sync_strategy` | Sync method for rebase/merge | `rebase` / `merge` (per-repo) |
+| `init_submodules` | Mirror the main worktree's initialized submodules into new worktrees | `true` / `false` (per-repo) |
+| `agent_command` | AI agent CLI that `ezs agent` runs | Command string (per-repo) |
 | `github_token` | GitHub token for API access | Token string |
+
+`sync_strategy` and `use_gh_stack` were removed: syncs always rebase, and
+gh stack is always the engine. Setting either now fails with an explanatory
+error; values left in an existing `config.json` are ignored.
 
 ---
 
@@ -1742,9 +1787,9 @@ Subcommands:
     draft     Toggle PR between draft and ready
     merge     Merge a pull request
     refresh   Reconcile cached PR state from GitHub
-    stack     Update all PR descriptions with stack info
+    stack     Link the stack's PRs into a GitHub stacked PR
     unlink    Clear cached PR association for a branch
-    update    Push changes and update PR metadata (base branch, descriptions)
+    update    Push changes and update PR metadata (base branch, stack link)
 
 Top-level flags:
     --draft-all    Create draft PRs for every branch in the current stack that
@@ -1777,7 +1822,7 @@ Options:
 
 **`--force`.** Bypasses the existing-PR guard. When the cached PR has been merged or closed, this is a no-op (the cached terminal state already lets create proceed). When the cached PR is still live on GitHub, a warning is printed and a new PR is created — the existing PR stays open and GitHub may reject the new PR as a duplicate. `--force` does not prompt, so scripts can pass it without holding stdin open.
 
-**`--auto` (alias `--ai`).** Hands the branch's diff, commit messages, and the repo's `pull_request_template.md` to the configured AI agent (`agent_command`) and asks it to fill in `{title, body}`. The result is fed into the regular create flow, so all the usual gating still happens — push, base validation, fork detection, stack-description update. Combine with `-s` / `--stack` to draft a body for every branch in the stack in one go. `-t` / `-b` always win over the AI's output for the field they specify, so you can pin a title and let the AI handle just the body (or vice versa). `--auto` currently requires a Claude-family agent because that's the only CLI ezs can drive non-interactively with predictable JSON output; passing `--cmd` to point at a different binary will be rejected with a clear error. The PR template's location is the standard set GitHub looks at: `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `docs/pull_request_template.md`, and the repo-root variants.
+**`--auto` (alias `--ai`).** Hands the branch's diff, commit messages, and the repo's `pull_request_template.md` to the configured AI agent (`agent_command`) and asks it to fill in `{title, body}`. The result is fed into the regular create flow, so all the usual gating still happens — push, base validation, fork detection, GitHub stack linking. Combine with `-s` / `--stack` to draft a body for every branch in the stack in one go. `-t` / `-b` always win over the AI's output for the field they specify, so you can pin a title and let the AI handle just the body (or vice versa). `--auto` currently requires a Claude-family agent because that's the only CLI ezs can drive non-interactively with predictable JSON output; passing `--cmd` to point at a different binary will be rejected with a clear error. The PR template's location is the standard set GitHub looks at: `.github/pull_request_template.md`, `.github/PULL_REQUEST_TEMPLATE.md`, `docs/pull_request_template.md`, and the repo-root variants.
 
 #### `ezs pr draft`
 
@@ -1804,7 +1849,20 @@ Options:
 
 #### `ezs pr stack`
 
-Update all PR descriptions in the stack with navigation links.
+Retarget each open PR's base to its parent branch and link the stack's PRs
+into a [GitHub stacked PR](https://gh.io/stacks) with `gh stack link` — one
+GitHub stack per root→leaf chain, so GitHub shows stack navigation on every
+PR. Only the contiguous run of PRs from the bottom of a chain is linked (a
+branch without a PR would otherwise get skipped over). Never creates PRs,
+pushes, or changes draft state. If stacked PRs aren't enabled for the
+repository, linking is skipped with a note.
+
+Older ezstack versions wrote a "PR Stack" section into each PR description;
+`ezs pr stack` (and every other command that refreshes PR metadata — `sync`,
+`pr create`, `pr update`, `reparent`) removes it.
+
+`ezs pr create` links automatically once a chain has two PRs, so you only
+need `ezs pr stack` after creating PRs outside ezstack or to repair links.
 
 ```
 Options:
@@ -1824,7 +1882,7 @@ Options:
 
 #### `ezs pr update`
 
-Reconciles cached PR state from GitHub, then pushes code changes and updates the PR base branch and stack descriptions to match the current stack structure. If the PR has been merged or closed externally, refuses to push and reports the new state.
+Reconciles cached PR state from GitHub, then pushes code changes, retargets the PR base branch, and relinks the GitHub stacked PR to match the current stack structure. If the PR has been merged or closed externally, refuses to push and reports the new state.
 
 ```
 Options:
@@ -1841,12 +1899,20 @@ Push current branch or entire stack to remote.
 ezs push [options]
 
 Options:
-    -s, --stack          Push all branches in the current stack
+    -s, --stack          Push all branches in the current stack (gh stack push, --force-with-lease)
     -b, --branch <name>  Push a specific branch by name
     -f, --force          Force push
     --verify             Require ~/.ezstack/hooks/pre-push to exist and pass
     --all-remotes        Push to origin and the configured fork remote
 ```
+
+**`--stack`** runs `gh stack push` for each chain of the stack, which pushes
+every non-merged branch with `--force-with-lease` (`--force` is implied —
+stack branches are routinely rebased). Branches already up to date with their
+remote are skipped. When branches of one chain push to different fork
+remotes, each is pushed on its own to its remote. Branches pushed for the
+first time get an upstream set. Pickup branches (another contributor's) are
+skipped with a note — push one explicitly with `ezs push -b <branch>`.
 
 Each branch pushes to its configured remote — `origin` by default, or the fork remote for fork-based PR branches. Branches marked as read-only (fork PRs where you don't have push access) are skipped with a warning.
 
@@ -1860,7 +1926,7 @@ Each branch pushes to its configured remote — `origin` by default, or the fork
 
 ### `ezs reparent`
 
-Change the parent of a branch and sync commits onto the new parent. Aliases: `rp`
+Change the parent of a branch and restack its commits onto the new parent. Aliases: `rp`
 
 ```
 ezs reparent [branch] [new-parent] [options]
@@ -1868,11 +1934,21 @@ ezs reparent [branch] [new-parent] [options]
 Options:
     -b, --branch <name>     Branch to reparent
     -p, --parent <name>     New parent branch
-    --merge                 Use git merge instead of git rebase
-    --rebase                Use git rebase (overrides sync_strategy config)
+    --no-rebase             Update tracking only, skip the restack
 ```
 
-Uses the configured `sync_strategy` (default: rebase). If the sync conflicts, the reparent metadata is still updated and you can resolve conflicts manually.
+The new parent is recorded first. The branch's own commits are then moved
+with a single `git rebase --onto <new parent> <old base>` in its worktree
+(gh stack can't express a one-branch move onto the base branch or onto an
+ancestor), and `gh stack rebase` restacks every branch above it. Rebased
+branches that already exist on the remote are offered a force-push; once
+pushed, PR bases are retargeted and the GitHub stacks relinked. A conflict
+moving the branch stops in its worktree (resolve, `git add`,
+`git rebase --continue`, then `ezs sync -C`); a conflict restacking the
+children pauses the cascade (resolve, `git add`, `ezs sync --continue` or
+`ezs sync --abort`). Either way the reparent is still recorded.
+
+The `--merge` / `--rebase` flags were removed: reparent always rebases.
 
 ---
 
@@ -1912,52 +1988,101 @@ Options:
 
 ### `ezs sync`
 
-Sync stack with remote. Handles rebasing onto updated parents, cleaning up merged branches, and force pushing after rebase.
+Sync stack with remote via gh stack: restack, push, clean up merged branches, and relink PRs.
+
+Every branch is rebased onto its updated parent with `gh stack rebase`, the
+rebased branches are pushed, merged branches are cleaned up, and PR bases and
+GitHub stack links are refreshed. See
+[How ezstack uses gh stack](#how-ezstack-uses-gh-stack) for the engine.
 
 ```
 ezs sync [options]
 ezs sync <hash-prefix>
 
 Options:
-    -s, --stack            Sync current stack (auto-detect what needs syncing)
+    -s, --stack            Sync current stack
     -a, --all              Sync ALL stacks
-    -c, --current          Sync current branch only (auto-detect what it needs)
+    -c, --current          Sync current branch only (rebase it and the branches below it)
     -b, --branch <name>    Sync a specific branch by name (rebase onto parent + cascade to children)
-    -p, --parent           Rebase current branch onto its parent
+    -p, --parent           Rebase current branch onto its parent (no trunk update)
     -C, --children         Rebase child branches onto current branch
-    --continue             Continue after resolving conflicts (completes rebase/merge, pushes, then re-syncs the entire descendant subtree). Honors -s, -a, -c, -b, and positional <hash-prefix> to limit the scope.
-    --merge                Use git merge instead of git rebase
-    --rebase               Use git rebase (overrides sync_strategy config)
+    --continue             Continue a sync that stopped on a conflict, then finish syncing. Honors -s, -a, -c, -b, and positional <hash-prefix> to limit the scope.
+    --abort                Abort a sync that stopped on a conflict and restore every branch
+    --no-push              Rebase only; don't push rebased branches
     --stats                Print a commits-per-branch summary after syncing
     --squash               Squash each child's commits into one before rebasing onto parent
     --no-delete-local      Don't delete local branches after their PRs are merged
+    --include-remote-worktrees   Also rebase and push pickup branches
+                                 (`ezs new origin/<branch>` / `-r`). Left as-is
+                                 by default so another contributor's history is
+                                 never rewritten.
     --dry-run              Preview what would be synced without making changes
-    --no-autostash         Don't stash uncommitted changes before rebase (autostash is on by default)
     --json                 Output dry-run results as JSON (requires --dry-run)
-    --include-remote-worktrees   Include pickup branches (`ezs new origin/<branch>` / `-r`) in
-                                 bulk sync. Excluded by default to avoid rewriting another
-                                 contributor's history.
 ```
+
+Without flags, `ezs sync` shows an interactive menu (current stack, all
+stacks, current branch only, onto parent, children); from outside a stack it
+offers "all stacks" or a stack picker. You can sync a specific stack by
+passing its hash prefix (minimum 3 characters).
+
+**What a sync does.**
+
+1. **Project** the repository's stacks into gh stack's tracking (no git
+   changes).
+2. **Restack** each chain with `gh stack rebase`: fetch the stack's base
+   branch, then rebase every branch onto its updated parent *in the worktree
+   that holds it*. Branches whose PR was merged (squash merges included) are
+   skipped and their children moved `--onto` the next live ancestor, so only
+   the children's own commits are replayed.
+3. **Push** each chain right after it is restacked, with `--force-with-lease`.
+   Asks once per run (auto-yes under `-y` and MCP); `--no-push` (or an
+   `ezs agent --no-push` session) keeps everything local. Branches whose fork
+   doesn't allow maintainer pushes are skipped.
+4. **Clean up** merged branches: offers to delete their worktrees and local
+   branches (`--no-delete-local` skips this), and removes fully merged stacks.
+5. **Refresh PRs**: retarget each open PR's base to its parent and relink the
+   GitHub stacked PRs (`gh stack link`), removing any legacy "PR Stack"
+   description section.
+
+**Modes.** `-s`, `-a`, and `<hash-prefix>` restack every chain of the selected
+stacks. `-c` rebases the current branch and the branches below it (trunk
+included); `-p` moves just the current branch's own commits onto its parent
+with one `git rebase --onto` (no trunk fetch, children untouched — use `-s`
+when the parent is the base branch); `-C` rebases the current branch's
+descendants onto it; `-b <name>` restacks the named branch's chains (its
+parent chain plus every subtree above it). When the anchor branch has several
+children, `-c` restacks its whole chain, because gh stack can't anchor on a
+branch that belongs to several of its stacks.
+
+**Collaborator commits.** Before restacking (`-s`, `-a`, `<hash-prefix>`),
+sync fetches each branch's remote and fast-forwards any branch that is
+strictly behind it, so commits a teammate pushed are kept. A branch that has
+diverged from its remote (both sides have commits) is restacked but not
+pushed — run `git pull --rebase` in its worktree to integrate first.
+
+**Conflicts.** A conflict pauses the cascade in the conflicted worktree and
+exits with code `3`. Resolve, `git add`, then `ezs sync --continue` (from any
+worktree); `ezs sync --abort` restores every branch of the paused cascade.
+See [Recovering from a Sync Conflict](#recovering-from-a-sync-conflict).
+
+**Dirty worktrees.** gh stack refuses to start if any worktree it would
+rewrite has uncommitted changes or an unfinished git operation — commit or
+stash first. (The old `--no-autostash` flag is gone: nothing is ever
+auto-stashed.)
 
 **`--stats`.** Prints a post-sync summary listing, for each branch in the synced set, the number of commits ahead of its parent after the sync completes. The summary is registered so it runs after the `post-sync` hook fires (via LIFO-ordered defers), so the numbers you see reflect the final state on disk.
 
-**`--include-remote-worktrees`.** Pickup branches — created by `ezs new origin/<branch>` or `ezs new -r` — belong to another contributor. Bulk sync (`ezs sync -a` / `-s` / interactive auto-sync) skips them by default: rebasing rewrites their history, and a follow-up force-push would clobber the contributor's work. Pass `--include-remote-worktrees` to opt in (e.g., to fast-forward your local copy of the remote branch when you do own the underlying repo). Per-branch sync (`-b <name>` / `-c`) is unaffected — those forms are explicit about which branch to touch.
+**`--include-remote-worktrees`.** Pickup branches — created by `ezs new origin/<branch>` or `ezs new -r` — belong to another contributor. By default sync leaves them as they are: a chain that starts at a pickup branch is restacked without rebasing that branch onto the base branch, and pickup branches are never pushed. Pass `--include-remote-worktrees` to opt in to rebasing and pushing them (e.g. when you do own the underlying branch). A pickup branch in the middle of a chain stops the restack just below it.
 
-**`--squash`.** Before rebasing each child onto its parent, collapses the child's commits into a single commit. Only branches with ≥2 commits since their parent are affected; branches that are already a single commit are left alone. Because `--squash` rewrites history, any already-pushed branch will need `git push --force-with-lease` afterward — ezstack prints a warning reminding you of this up front.
+**`--squash`.** Before restacking, collapses each branch's commits (since its fork point from its parent) into a single commit, parents first. Only branches with ≥2 such commits are affected. Because `--squash` rewrites history, already-pushed branches are force-pushed (with lease) by the sync's push step — ezstack prints a warning up front.
 
-**Hooks.** `ezs sync` runs `~/.ezstack/hooks/pre-sync` before the sync (aborting on non-zero exit) and `~/.ezstack/hooks/post-sync` after (warning only). See the [Hooks](#hooks) section below.
+**`--dry-run` / `--json`.** Read-only preview (fetches remotes, never runs hooks or touches branches or gh stack tracking). Without a scope flag it previews the current stack (all stacks from outside one). `--json` prints `[{"branch", "needs_sync", "merged_parent"?, "behind_parent"?, "behind_by"?, "stack_root"}]` to stdout.
 
-**Picking up collaborator commits.** Before rebasing each branch onto its parent, sync also fast-forwards the local branch to `origin/<branch>` when a teammate has pushed new commits there. Strict fast-forward only — if your local has unpushed commits *and* the remote has commits you don't, sync prints a `diverged` note and skips the pull (auto-pulling could re-introduce pre-rebase parent commits when the local was just ezstack-rebased). Run `git pull --rebase` in the worktree yourself in that case.
+**Hooks.** `ezs sync` runs `~/.ezstack/hooks/pre-sync` before the sync (aborting on non-zero exit) and `~/.ezstack/hooks/post-sync` after (warning only). `--continue` fires only `post-sync`. See the [Hooks](#hooks) section below.
 
-**Cascading conflicts.** When the parent of a stacked chain conflicts with the new base, only the parent's rebase hits the conflict — children get rebased with `git rebase --onto newParent oldParentSHA`, replaying just their own commits. The pre-rebase SHA of every selected branch is snapshotted into `~/.ezstack/stacks.json` (field `pre_sync_commit`) before any rewriting starts, so a later `ezs sync --continue` (a separate process) can use it. `git rerere` is also auto-enabled on the repo on first sync as a safety net for hunks that recur across siblings.
+**Concurrent syncs.** A non-blocking exclusive lock on `~/.ezstack/stacks.json.sync.lock` prevents two `ezs sync` invocations (including `--continue`) from racing. A second invocation while one is already running fails fast with "another `ezs sync` is already running". `--dry-run` skips the lock since it's read-only.
 
-**Concurrent syncs.** A non-blocking exclusive lock on `~/.ezstack/stacks.json.sync.lock` prevents two `ezs sync` invocations (including `--continue`) from racing on snapshot reads/writes or PR-metadata updates. A second invocation while one is already running fails fast with "another `ezs sync` is already running". Backed by `flock` on Unix and `LockFileEx` on Windows. `--dry-run` skips the lock since it's read-only.
-
-By default, sync uses git rebase. Use `--merge` to use git merge instead, which preserves commit history and avoids force pushes. The default strategy can be set per-repo with `ezs config set sync_strategy merge`. Use `--rebase` or `--merge` to override the configured strategy for a single run.
-
-You can sync a specific stack by passing its hash prefix (minimum 3 characters).
-
-**Fork branches:** After syncing, each branch is pushed to its configured remote. For fork-based PR branches, this is the fork's remote (not `origin`). If you don't have push access to the fork, the push step is skipped automatically — the local rebase/merge still happens so your working copy stays up to date.
+**Removed flags.** `--merge` / `--rebase` (and the `sync_strategy` config key) — gh stack only rebases; repos that had `sync_strategy=merge` get a one-time warning on their next sync. `--no-autostash` — see "Dirty worktrees" above.
 
 ---
 
@@ -2021,7 +2146,7 @@ stderr.
 | 0  | Success |
 | 1  | General error |
 | 2  | Usage / argument error |
-| 3  | Rebase conflict |
+| 3  | Rebase conflict (resolve, `git add`, then `ezs sync --continue` / `--abort`) |
 | 4  | Not in a git repository |
 | 5  | Not in a stack |
 | 6  | GitHub authentication required |
@@ -2184,7 +2309,7 @@ The hook fires per branch on stack-wide pushes (`ezs push --stack`), so `EZS_BRA
 
 #### Snapshot dirty state across a sync
 
-`pre-sync` aborts the sync; `post-sync` warns only. Combined, they bracket the cascade and let you stash uncommitted work safely without ezs's autostash:
+`pre-sync` aborts the sync; `post-sync` warns only. gh stack refuses to rebase a worktree with uncommitted changes, so if you routinely sync with work in progress, bracket the cascade with a stash:
 
 ```bash
 #!/usr/bin/env bash
@@ -2216,7 +2341,7 @@ ref=$(git stash list | awk -F: -v msg="$stash_msg" '$0 ~ msg {print $1; exit}')
 [ -n "$ref" ] && git stash pop "$ref"
 ```
 
-Why a hook and not ezs's built-in autostash: the hook persists across `ezs sync --continue`, includes the stack name in the stash message, and keeps the marker on a per-worktree basis (`.git/` is worktree-local).
+The hooks run in the worktree you invoked `ezs sync` from, so this only covers that worktree; other dirty worktrees in the stack still block the sync. The marker survives a conflict, and `ezs sync --continue` fires `post-sync` to pop the stash once the sync completes.
 
 #### Open the PR in your browser after push
 
@@ -2352,7 +2477,7 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 | `ezstack_goto` | &mdash; | Switch to a branch. `branch` (required). |
 | `ezstack_new` | &mdash; | Create a new branch. `name` (required), `parent`. |
 | `ezstack_delete` | destructive | Delete a branch and its worktree. `branch` (required). |
-| `ezstack_reparent` | &mdash; | Move a branch to a new parent. `branch` and `new_parent` (both required). |
+| `ezstack_reparent` | &mdash; | Move a branch to a new parent and restack it (and everything above it) with gh stack. `branch` and `new_parent` (both required). |
 | `ezstack_stack` | &mdash; | Add a standalone branch to a stack. `branch` (required), `parent` or `base`. |
 | `ezstack_unstack` | &mdash; | Remove a branch from ezstack tracking (leaves the git branch/worktree intact). `branch` (required). |
 
@@ -2360,9 +2485,9 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 
 | Tool | Annotation | Description |
 |---|---|---|
-| `ezstack_commit` | destructive | Commit staged (or all) changes and auto-sync children. `message` (required), `all`, `merge`, `rebase`. Auto-pushes if the branch is already on the remote. |
-| `ezstack_amend` | destructive | Amend the last commit and auto-sync children. Optional `message` (otherwise `--no-edit`), `all`, `merge`, `rebase`. Force-pushes if the branch is already on the remote. |
-| `ezstack_sync` | destructive | Rebase (or merge) branches with their base. `stack`, `all`, `current`, `parent`, `children`, `merge`, `dry_run`, `resume` (maps to `--continue`). |
+| `ezstack_commit` | destructive | Commit staged (or all) changes and auto-restack children. `message` (required), `all`. Auto-pushes if the branch is already on the remote. |
+| `ezstack_amend` | destructive | Amend the last commit and auto-restack children. Optional `message` (otherwise `--no-edit`), `all`. Force-pushes if the branch is already on the remote. |
+| `ezstack_sync` | destructive | Restack branches onto their updated parents with gh stack, push them, clean up merged branches, relink PRs. `stack`, `all`, `current`, `branch`, `parent`, `children`, `squash`, `stats`, `no_delete_local`, `no_push`, `dry_run`, `resume` (maps to `--continue`), `abort` (maps to `--abort`). |
 | `ezstack_push` | destructive | Push current branch or entire stack. `branch`, `stack`, `force`. |
 
 **Pull requests**
@@ -2370,18 +2495,18 @@ claude mcp add ezstack-foo -- ezs-mcp --repo /abs/path/to/foo
 | Tool | Annotation | Description |
 |---|---|---|
 | `ezstack_pr_create` | &mdash; | Create a pull request. `branch`, `title`, `draft`, `auto` (delegate title/body drafting to the configured `agent_command`; combine with `stack=true` to draft for every branch in the stack). |
-| `ezstack_pr_update` | destructive | Push the latest commits and refresh the PR base branch / stack description. `branch`. |
+| `ezstack_pr_update` | destructive | Push the latest commits, retarget the PR base branch, and relink the GitHub stack. `branch`. |
 | `ezstack_pr_merge` | destructive | Merge the pull request for a branch. `branch`, `method`. |
 | `ezstack_pr_draft` | &mdash; | Toggle a PR between draft and ready-for-review. `branch`. |
 | `ezstack_pr_draft_all` | &mdash; | Create draft PRs for every branch in the current stack that doesn't already have one. Branches with an existing PR are left alone (use `ezstack_pr_draft` to toggle an existing PR's draft state). |
-| `ezstack_pr_stack` | &mdash; | Update every PR description in the stack with navigation links. `branch`. |
+| `ezstack_pr_stack` | &mdash; | Retarget PR bases and link the stack's PRs into a GitHub stacked PR (`gh stack link`). `branch`. |
 | `ezstack_pr_refresh` | &mdash; | Reconcile the local PR cache from GitHub (use after PRs are merged/closed/re-targeted via the GitHub UI). `branch` or `stack` (mutually exclusive); omit both for the current branch. |
 
 **Configuration**
 
 | Tool | Annotation | Description |
 |---|---|---|
-| `ezstack_config_set` | &mdash; | Set a config value. `key` and `value` (both required). Valid keys: `worktree_base_dir`, `default_base_branch`, `github_token`, `cd_after_new`, `use_worktrees`, `sync_strategy`, `agent_command`. |
+| `ezstack_config_set` | &mdash; | Set a config value. `key` and `value` (both required). Valid keys: `worktree_base_dir`, `default_base_branch`, `github_token`, `cd_after_new`, `use_worktrees`, `init_submodules`, `agent_command`. |
 | `ezstack_config_export` | &mdash; | Export the global ezstack config (excluding the per-machine `github_token`) to a file. Safe to share — no secrets included. `file` (required). |
 | `ezstack_config_import` | destructive | Replace the global ezstack config with the contents of `<file>`. Validated against the schema before being applied; the existing local `github_token` is preserved. `file` (required). |
 
@@ -2692,18 +2817,18 @@ command shown here is invented; if you can't find what you need below, the
 - **My PR cache is stale because the PR was merged / closed / re-targeted via
   the GitHub UI.** → `ezs pr refresh` re-discovers and re-syncs the cache
   without making a new PR.
-- **I want to update an open PR's base branch and stack-navigation links
+- **I want to update an open PR's base branch and GitHub stack link
   after re-parenting.** → [`ezs pr update`](#ezs-pr-update), or
-  `ezs pr stack` to update only the stack-description block.
+  `ezs pr stack` to only retarget bases and relink (no push).
 
 **Commits, sync, and push**
 
 - **I made a fix on a branch in the middle of my stack — I don't want
-  descendants left behind on the old SHA.** → [Committing into the middle of an existing stack](#committing-into-the-middle-of-an-existing-stack). `ezs commit -am "..."` auto-rebases descendants and force-pushes them.
+  descendants left behind on the old SHA.** → [Committing into the middle of an existing stack](#committing-into-the-middle-of-an-existing-stack). `ezs commit -am "..."` auto-rebases descendants (`--push --push-children` also force-pushes them).
 - **A parent branch was merged on GitHub and the rest of my stack needs to
   re-root.** → [After a Parent is Merged](#after-a-parent-is-merged).
   `ezs sync --all` does the surgery.
-- **My `ezs sync` hit a rebase conflict.** → [Recovering from a Sync Conflict](#recovering-from-a-sync-conflict). Resolve it, `git rebase --continue`, then `ezs sync --continue` to finish the cascade.
+- **My `ezs sync` hit a rebase conflict.** → [Recovering from a Sync Conflict](#recovering-from-a-sync-conflict). Resolve it, `git add`, then `ezs sync --continue` to finish the cascade (or `ezs sync --abort`).
 - **I want each branch in my stack to land as a single commit.** →
   [Squash-Merging Children Into Their Parent Before PR](#squash-merging-children-into-their-parent-before-pr). `ezs sync --stack --squash`.
 - **I want pushes to be gated by tests / lints / a custom check.** →

@@ -103,7 +103,7 @@ func TestStackBranch(t *testing.T) {
 	}
 
 	// Add it to a stack using ReparentBranch (which is what Stack command uses)
-	_, err := mgr.ReparentBranch("manual-branch", "main", false)
+	_, err := mgr.ReparentBranch("manual-branch", "main")
 	if err != nil {
 		t.Fatalf("ReparentBranch failed: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestStackBranchToExistingStack(t *testing.T) {
 
 	// Add it as a child of feature-a
 	mgr, _ := stack.NewManager(env.RepoDir)
-	_, err := mgr.ReparentBranch("feature-b", "feature-a", false)
+	_, err := mgr.ReparentBranch("feature-b", "feature-a")
 	if err != nil {
 		t.Fatalf("ReparentBranch failed: %v", err)
 	}

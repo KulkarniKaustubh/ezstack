@@ -67,16 +67,10 @@ type RepoConfig struct {
 	UseWorktrees        *bool  `json:"use_worktrees,omitempty"`
 	AutoDraftWipCommits *bool  `json:"auto_draft_wip_commits,omitempty"`
 	InitSubmodules      *bool  `json:"init_submodules,omitempty"` // Mirror main worktree's initialized submodules into new worktrees (default: true)
-	SyncStrategy        string `json:"sync_strategy,omitempty"`   // "rebase" (default) or "merge"
 	AgentCommand        string `json:"agent_command,omitempty"`   // AI agent CLI command (default: "claude")
-	// UseGHStack routes the mechanical stack operations (cascading rebase,
-	// sync, push, and PR create/link) through the `gh stack` CLI extension
-	// instead of ezstack's built-in engine. ezstack still owns worktrees, the
-	// tree-shaped stack model, agent sessions, AI PR generation, and fork
-	// handling; gh-stack is driven as the execution backend and kept in sync
-	// via the tree->linear reconciler. Default (nil / false) keeps the
-	// built-in engine so existing users are unaffected until they opt in.
-	UseGHStack *bool `json:"use_gh_stack,omitempty"`
+	// LegacySyncStrategy is the removed sync_strategy key, read only so
+	// `ezs sync` can tell users who chose "merge" that syncs now rebase.
+	LegacySyncStrategy string `json:"sync_strategy,omitempty"`
 }
 
 // GetAgentCommand returns the configured agent command, defaulting to "claude".
@@ -139,15 +133,6 @@ func (c *Config) GetUseWorktrees(repoPath string) bool {
 	return true
 }
 
-// GetUseGHStack returns whether stack operations should be delegated to the
-// `gh stack` CLI backend for this repo (default: false). See RepoConfig.UseGHStack.
-func (c *Config) GetUseGHStack(repoPath string) bool {
-	if repoCfg := c.GetRepoConfig(repoPath); repoCfg != nil && repoCfg.UseGHStack != nil {
-		return *repoCfg.UseGHStack
-	}
-	return false
-}
-
 // GetInitSubmodules returns whether to mirror the main worktree's initialized
 // submodules into newly created worktrees (default: true).
 func (c *Config) GetInitSubmodules(repoPath string) bool {
@@ -155,14 +140,6 @@ func (c *Config) GetInitSubmodules(repoPath string) bool {
 		return *repoCfg.InitSubmodules
 	}
 	return true
-}
-
-// GetSyncStrategy returns the sync strategy for a repo ("rebase" or "merge", default "rebase")
-func (c *Config) GetSyncStrategy(repoPath string) string {
-	if repoCfg := c.GetRepoConfig(repoPath); repoCfg != nil && repoCfg.SyncStrategy != "" {
-		return repoCfg.SyncStrategy
-	}
-	return "rebase"
 }
 
 // BranchTree is a recursive map representing the stack hierarchy
@@ -285,19 +262,6 @@ type BranchCache struct {
 	IsMerged     bool   `json:"is_merged,omitempty"`
 	IsRemote     bool   `json:"is_remote,omitempty"`
 	Remote       string `json:"remote,omitempty"` // git remote to push to (e.g. fork remote); defaults to "origin"
-	// PreSyncCommit is the SHA the branch pointed at before the current sync run
-	// began rewriting it. Used as the `oldBase` for `git rebase --onto newParent
-	// oldBase` so children of a freshly-rebased parent don't replay the parent's
-	// commits and re-encounter conflicts that were already resolved upstream.
-	// Persisted across process boundaries so `ezs sync --continue` (a separate
-	// invocation) can use it. Cleared when the branch's sync completes cleanly;
-	// left set while a rebase/merge is in progress.
-	PreSyncCommit string `json:"pre_sync_commit,omitempty"`
-	// PreSyncCommitAt is the Unix epoch second at which PreSyncCommit was last
-	// recorded. Used by stale-snapshot cleanup to age out snapshots from prior
-	// runs that no longer have a worktree to introspect — without this, a
-	// crashed checkout-based sync would leave its snapshot in cache forever.
-	PreSyncCommitAt int64 `json:"pre_sync_commit_at,omitempty"`
 	// AgentSessionID is the UUID of the AI agent session bound to this branch
 	// in branch-scoped (`ezs agent --branch`) mode. Used to resume the same
 	// session on subsequent `ezs agent` runs against this branch.
@@ -2140,85 +2104,4 @@ func (s *Stack) addSubtreeUnderParent(tree BranchTree, branchName string, subtre
 		}
 	}
 	return false
-}
-
-// SortBranchesTopologically sorts branches so parents come before children
-// This ensures the display shows the correct parent -> child order
-// IMPORTANT: When a parent branch is merged and its children are reparented to main,
-// the merged branch should still appear in its original position (before its former children).
-// We use BaseBranch to detect the original parent-child relationships.
-func SortBranchesTopologically(branches []*Branch) []*Branch {
-	if len(branches) <= 1 {
-		return branches
-	}
-
-	branchMap := make(map[string]*Branch)
-	for _, b := range branches {
-		branchMap[b.Name] = b
-	}
-
-	// Build children map using both current Parent and original BaseBranch so that
-	// reparented (merged) branches stay in their original display position.
-	children := make(map[string][]*Branch)
-	var roots []*Branch
-
-	for _, b := range branches {
-		_, parentInStack := branchMap[b.Parent]
-		_, baseInStack := branchMap[b.BaseBranch]
-
-		if parentInStack {
-			children[b.Parent] = append(children[b.Parent], b)
-		} else if baseInStack && b.BaseBranch != b.Parent {
-			// Branch was reparented; keep it under the original parent for display.
-			children[b.BaseBranch] = append(children[b.BaseBranch], b)
-		} else {
-			roots = append(roots, b)
-		}
-	}
-
-	originalIndex := make(map[string]int)
-	for i, b := range branches {
-		originalIndex[b.Name] = i
-	}
-
-	sortByOriginalIndex := func(slice []*Branch) {
-		for i := 0; i < len(slice)-1; i++ {
-			for j := i + 1; j < len(slice); j++ {
-				if originalIndex[slice[i].Name] > originalIndex[slice[j].Name] {
-					slice[i], slice[j] = slice[j], slice[i]
-				}
-			}
-		}
-	}
-	sortByOriginalIndex(roots)
-	for parent := range children {
-		sortByOriginalIndex(children[parent])
-	}
-
-	// BFS
-	var sorted []*Branch
-	queue := roots
-	for len(queue) > 0 {
-		current := queue[0]
-		queue = queue[1:]
-		sorted = append(sorted, current)
-		for _, child := range children[current.Name] {
-			queue = append(queue, child)
-		}
-	}
-
-	// Safety net: append any branches missed due to unexpected graph structure.
-	if len(sorted) < len(branches) {
-		inSorted := make(map[string]bool)
-		for _, b := range sorted {
-			inSorted[b.Name] = true
-		}
-		for _, b := range branches {
-			if !inSorted[b.Name] {
-				sorted = append(sorted, b)
-			}
-		}
-	}
-
-	return sorted
 }

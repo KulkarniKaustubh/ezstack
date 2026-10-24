@@ -106,7 +106,7 @@
       },
       {
         "command": "ezstack.prStack",
-        "title": "Update Stack Info in PRs",
+        "title": "Link Stack PRs on GitHub",
         "category": "ezstack"
       },
       {

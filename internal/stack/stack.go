@@ -23,59 +23,6 @@ type Manager struct {
 	rerereEnabled  bool            // whether ensureRerereEnabled has run for this Manager
 }
 
-// Fetch runs git fetch once per Manager lifetime. Subsequent calls are no-ops.
-func (m *Manager) Fetch() error {
-	if m.fetched {
-		return nil
-	}
-	if err := m.git.Fetch(); err != nil {
-		return fmt.Errorf("failed to fetch: %w", err)
-	}
-	m.fetched = true
-	return nil
-}
-
-// ensureRerereEnabled wires `rerere.enabled` and `rerere.autoupdate` into
-// the repo's local git config at most once per Manager lifetime. The
-// underlying `git.EnableRerere` is itself idempotent and respects an
-// explicit user `false`, but it forks two `git config` processes per call;
-// caching here avoids repeating that on every sync entry point
-// (syncStackInternal, SyncBranch, RebaseChildren, etc.).
-//
-// Best-effort: errors from the underlying git config writes are
-// intentionally swallowed because rerere is a safety-net optimization,
-// not a correctness requirement — sync proceeds either way.
-func (m *Manager) ensureRerereEnabled() {
-	if m.rerereEnabled {
-		return
-	}
-	_ = git.EnableRerere(m.repoDir)
-	m.rerereEnabled = true
-}
-
-// FetchRemote fetches a specific named remote (e.g. a fork) once per Manager
-// lifetime. Used by integrateRemoteForBranch when a branch's configured
-// remote isn't `origin` — `Fetch()` only handles origin to avoid hanging on
-// unreachable remotes by default. Best-effort: failures are returned but the
-// caller typically logs and proceeds, since a stale ref is better than a
-// failed sync.
-func (m *Manager) FetchRemote(remote string) error {
-	if remote == "" || remote == "origin" {
-		return m.Fetch()
-	}
-	if m.fetchedRemotes == nil {
-		m.fetchedRemotes = map[string]bool{}
-	}
-	if m.fetchedRemotes[remote] {
-		return nil
-	}
-	if err := m.git.FetchRemote(remote); err != nil {
-		return fmt.Errorf("failed to fetch %s: %w", remote, err)
-	}
-	m.fetchedRemotes[remote] = true
-	return nil
-}
-
 // NewManager creates a new stack manager and reconciles config with git state.
 // Use this for commands that mutate state (new, delete, sync, reparent, stack, etc.).
 func NewManager(repoDir string) (*Manager, error) {
@@ -789,9 +736,7 @@ func (m *Manager) UntrackBranch(branchName string) error {
 
 // ReparentResult holds the result of a reparent operation
 type ReparentResult struct {
-	Branch      *config.Branch
-	HasConflict bool   // true if rebase had conflicts (config was still saved)
-	ConflictDir string // worktree path where conflicts need to be resolved
+	Branch *config.Branch
 }
 
 // ReparentBranch changes the parent of a branch to a new parent
@@ -799,10 +744,9 @@ type ReparentResult struct {
 // 1. Branch is already in a stack - just update parent pointer
 // 2. Branch is standalone (not in any stack) - add it to the new parent's stack
 // 3. New parent is in a different stack - merge stacks or move branch
-// If doRebase is true, performs git rebase --onto to move commits.
-// Config changes are always saved first. If rebase has conflicts, the result
-// will have HasConflict=true but the branch will still be returned (config is updated).
-func (m *Manager) ReparentBranch(branchName, newParentName string, doRebase bool, useMerge ...bool) (*ReparentResult, error) {
+// Only the stack model changes; moving the commits is gh-stack's job (the
+// caller restacks after the catalog is reconciled).
+func (m *Manager) ReparentBranch(branchName, newParentName string) (*ReparentResult, error) {
 	if branchName == newParentName {
 		return nil, fmt.Errorf("cannot stack a branch on itself")
 	}
@@ -810,24 +754,20 @@ func (m *Manager) ReparentBranch(branchName, newParentName string, doRebase bool
 		return nil, fmt.Errorf("new parent '%s' does not exist", newParentName)
 	}
 
-	merge := len(useMerge) > 0 && useMerge[0]
-
 	// Check if branch is already registered in a stack
 	existingBranch := m.GetBranch(branchName)
 
 	if existingBranch != nil {
 		// Branch is already in a stack - update its parent
-		return m.reparentExistingBranch(existingBranch, newParentName, doRebase, merge)
+		return m.reparentExistingBranch(existingBranch, newParentName)
 	}
 
 	// Branch is not in any stack - need to add it
-	return m.addBranchWithParent(branchName, newParentName, doRebase, merge)
+	return m.addBranchWithParent(branchName, newParentName)
 }
 
 // reparentExistingBranch handles reparenting a branch that's already in a stack.
-// Config changes are saved first, then rebase is attempted if requested.
-func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName string, doRebase bool, useMerge bool) (*ReparentResult, error) {
-	oldParent := branch.Parent
+func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName string) (*ReparentResult, error) {
 	oldStackKey := m.findStackForBranch(branch.Name)
 	newParentStackKey := m.findStackForBranch(newParentName)
 
@@ -838,7 +778,7 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 
 	cache := m.stackConfig.Cache
 
-	// Handle stack reorganization using tree methods — BEFORE rebase
+	// Handle stack reorganization using tree methods
 	oldStack := m.stackConfig.Stacks[oldStackKey]
 	if oldStack == nil {
 		return nil, fmt.Errorf("branch '%s' not found in any stack", branch.Name)
@@ -884,73 +824,14 @@ func (m *Manager) reparentExistingBranch(branch *config.Branch, newParentName st
 		oldStack.PopulateBranchesWithCache(cache)
 	}
 
-	// Save the config before attempting rebase
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
 		return nil, fmt.Errorf("failed to save stack config: %w", err)
 	}
-
-	result := &ReparentResult{Branch: m.GetBranch(branch.Name)}
-
-	// Perform git rebase/merge if requested (after config is saved)
-	if doRebase {
-		newParentRef := m.getParentRef(newParentName)
-		workDir := branch.WorktreePath
-		if workDir == "" {
-			workDir = m.repoDir
-		}
-
-		if branch.WorktreePath != "" {
-			g := git.New(branch.WorktreePath)
-			if useMerge {
-				syncResult := g.MergeNonInteractive(newParentRef)
-				if syncResult.HasConflict {
-					result.HasConflict = true
-					result.ConflictDir = branch.WorktreePath
-				} else if syncResult.Error != nil {
-					return result, fmt.Errorf("merge failed: %w", syncResult.Error)
-				}
-			} else {
-				oldParentRef := m.getParentRef(oldParent)
-				mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
-				if err != nil {
-					mergeBase = oldParentRef
-				}
-				rebaseResult := g.RebaseOntoNonInteractive(newParentRef, mergeBase)
-				if rebaseResult.HasConflict {
-					result.HasConflict = true
-					result.ConflictDir = branch.WorktreePath
-				} else if rebaseResult.Error != nil {
-					return result, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
-				}
-			}
-		} else {
-			// No worktree — use checkout-based sync in the main repo
-			syncResult := syncViaCheckout(m.git, branch.Name, func(g *git.Git) git.RebaseResult {
-				if useMerge {
-					return g.MergeNonInteractive(newParentRef)
-				}
-				oldParentRef := m.getParentRef(oldParent)
-				mergeBase, err := m.git.GetMergeBase(branch.Name, oldParentRef)
-				if err != nil {
-					mergeBase = oldParentRef
-				}
-				return g.RebaseOntoNonInteractive(newParentRef, mergeBase)
-			})
-			if syncResult.HasConflict {
-				result.HasConflict = true
-				result.ConflictDir = workDir
-			} else if syncResult.Error != nil {
-				return result, fmt.Errorf("sync failed: %w", syncResult.Error)
-			}
-		}
-	}
-
-	return result, nil
+	return &ReparentResult{Branch: m.GetBranch(branch.Name)}, nil
 }
 
 // addBranchWithParent adds a standalone git branch to a stack with the specified parent.
-// Config changes are saved first, then rebase is attempted if requested.
-func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase bool, useMerge bool) (*ReparentResult, error) {
+func (m *Manager) addBranchWithParent(branchName, newParentName string) (*ReparentResult, error) {
 	// Check if the git branch exists
 	if !m.git.BranchExists(branchName) {
 		return nil, fmt.Errorf("git branch '%s' does not exist", branchName)
@@ -1000,54 +881,10 @@ func (m *Manager) addBranchWithParent(branchName, newParentName string, doRebase
 	// Repopulate branches from tree with cache
 	targetStack.PopulateBranchesWithCache(cache)
 
-	// Save config BEFORE attempting rebase
 	if err := m.stackConfig.Save(m.repoDir); err != nil {
 		return nil, fmt.Errorf("failed to save stack config: %w", err)
 	}
-
-	result := &ReparentResult{Branch: m.GetBranch(branchName)}
-
-	// Perform git rebase/merge if requested (after config is saved)
-	if doRebase {
-		newParentRef := m.getParentRef(newParentName)
-
-		if worktreePath != "" {
-			g := git.New(worktreePath)
-			if useMerge {
-				syncResult := g.MergeNonInteractive(newParentRef)
-				if syncResult.HasConflict {
-					result.HasConflict = true
-					result.ConflictDir = worktreePath
-				} else if syncResult.Error != nil {
-					return result, fmt.Errorf("merge failed: %w", syncResult.Error)
-				}
-			} else {
-				rebaseResult := g.RebaseNonInteractive(newParentRef)
-				if rebaseResult.HasConflict {
-					result.HasConflict = true
-					result.ConflictDir = worktreePath
-				} else if rebaseResult.Error != nil {
-					return result, fmt.Errorf("rebase failed: %w", rebaseResult.Error)
-				}
-			}
-		} else {
-			// No worktree — use checkout-based sync in the main repo
-			syncResult := syncViaCheckout(m.git, branchName, func(g *git.Git) git.RebaseResult {
-				if useMerge {
-					return g.MergeNonInteractive(newParentRef)
-				}
-				return g.RebaseNonInteractive(newParentRef)
-			})
-			if syncResult.HasConflict {
-				result.HasConflict = true
-				result.ConflictDir = m.repoDir
-			} else if syncResult.Error != nil {
-				return result, fmt.Errorf("sync failed: %w", syncResult.Error)
-			}
-		}
-	}
-
-	return result, nil
+	return &ReparentResult{Branch: m.GetBranch(branchName)}, nil
 }
 
 // wouldCreateCycle checks if reparenting branchName to newParentName would create a cycle
@@ -1380,10 +1217,6 @@ func mergeBranchCaches(old, new *config.BranchCache) *config.BranchCache {
 	if out.Remote == "" && new.Remote != "" {
 		out.Remote = new.Remote
 	}
-	if out.PreSyncCommit == "" && new.PreSyncCommit != "" {
-		out.PreSyncCommit = new.PreSyncCommit
-		out.PreSyncCommitAt = new.PreSyncCommitAt
-	}
 	return &out
 }
 
@@ -1406,7 +1239,7 @@ func (m *Manager) ApplyBranchRenames(renames []RenamedBranchInfo) error {
 			//
 			// Collision policy (when `newName` already has a cache entry):
 			//   - If `oldCache` carries data the new entry doesn't (PRUrl,
-			//     PRState, IsMerged, Remote, PreSyncCommit), prefer `oldCache`
+			//     PRState, IsMerged, Remote), prefer `oldCache`
 			//     and merge any non-empty new-entry fields into it. The old
 			//     entry is the authoritative one — rename targets the same
 			//     branch, and the new-name entry is typically a stub auto-
@@ -1709,6 +1542,30 @@ func (m *Manager) MarkBranchMerged(branchName string) error {
 	}
 
 	return nil
+}
+
+// FlagBranchesMerged records that the given branches' PRs were merged,
+// without touching their worktrees or git branches (MarkBranchMerged does the
+// cleanup). Sync flags merged PRs before restacking so the gh-stack
+// projection drops their commits even when gh-stack can't reach GitHub.
+func (m *Manager) FlagBranchesMerged(names []string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	cache := m.stackConfig.Cache
+	for _, name := range names {
+		bc := cache.GetBranchCache(name)
+		if bc == nil {
+			bc = &config.BranchCache{}
+		}
+		bc.IsMerged = true
+		bc.PRState = "MERGED"
+		cache.SetBranchCache(name, bc)
+	}
+	for _, stack := range m.stackConfig.Stacks {
+		stack.PopulateBranchesWithCache(cache)
+	}
+	return m.stackConfig.Save(m.repoDir)
 }
 
 // MarkBranchRemote marks a branch as belonging to another contributor.

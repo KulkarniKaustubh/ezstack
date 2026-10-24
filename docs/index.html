@@ -264,7 +264,7 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="1.05" y1="12" x2="7" y2="12"/><line x1="17.01" y1="12" x2="22.96" y2="12"/></svg>
           </div>
           <h3>Full PR Lifecycle</h3>
-          <p>Create, update, merge, and toggle draft status from the CLI. Stack descriptions update across all PRs with <code>ezs pr stack</code>.</p>
+          <p>Create, update, merge, and toggle draft status from the CLI. PRs are linked into GitHub native stacked PRs with <code>ezs pr stack</code>.</p>
         </div>
         <div class="feature-card" data-animate>
           <div class="feature-icon">
@@ -285,7 +285,7 @@
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           </div>
           <h3>Smart Conflict Handling</h3>
-          <p>Rebase conflicts pause with clear recovery instructions. <code>ezs sync --continue</code> honors the same scope flags as <code>sync</code> and re-syncs the entire descendant subtree from the resolved branch. Sync also fast-forwards each local to <code>origin/&lt;branch&gt;</code> first, so collaborator commits get picked up automatically. Autostash and <code>--dry-run</code> included.</p>
+          <p>Restacks run through <a href="https://github.com/github/gh-stack">gh stack</a>, each branch in its own worktree. Conflicts pause in the conflicted worktree: resolve, <code>git add</code>, then <code>ezs sync --continue</code> (same scope flags as <code>sync</code>) or <code>ezs sync --abort</code>. <code>--dry-run</code> included.</p>
         </div>
         <div class="feature-card" data-animate>
           <div class="feature-icon">
@@ -380,7 +380,7 @@
         <div class="step" data-animate>
           <div class="step-number">3</div>
           <h3>Ship with confidence</h3>
-          <p>Create PRs, sync the stack, merge &mdash; all from the CLI. Stack descriptions auto-update.</p>
+          <p>Create PRs, sync the stack, merge &mdash; all from the CLI. PRs are linked as GitHub stacked PRs automatically.</p>
           <div class="step-code">
             <pre><code><span class="c-prompt">$</span> <span class="c-cmd">ezs pr create</span> <span class="c-flag">-t</span> <span class="c-str">"Add auth service"</span>
 <span class="c-dim">https://github.com/you/repo/pull/42</span>
@@ -491,7 +491,7 @@
                 <tr><td class="cmd-name"><code>stack</code></td><td>Add an untracked branch/worktree to an existing stack, start a new stack, or rename a stack.</td></tr>
                 <tr><td class="cmd-name"><code>unstack</code></td><td>Remove a branch from stack tracking without deleting the git branch or worktree.</td></tr>
                 <tr><td class="cmd-name"><code>delete</code> <span class="cmd-alias">del, rm</span></td><td>Delete a branch and its worktree.</td></tr>
-                <tr><td class="cmd-name"><code>reparent</code> <span class="cmd-alias">rp</span></td><td>Change the parent of a branch and sync commits onto the new parent.</td></tr>
+                <tr><td class="cmd-name"><code>reparent</code> <span class="cmd-alias">rp</span></td><td>Change the parent of a branch and restack its commits onto the new parent.</td></tr>
               </tbody>
             </table>
           </div>
@@ -523,7 +523,7 @@
           <div class="accordion-body">
             <table class="cmd-table">
               <tbody>
-                <tr><td class="cmd-name"><code>sync</code></td><td>Sync stack with remote.</td></tr>
+                <tr><td class="cmd-name"><code>sync</code></td><td>Sync stack with remote via gh stack: restack, push, clean up merged branches, and relink PRs.</td></tr>
                 <tr><td class="cmd-name"><code>commit</code> <span class="cmd-alias">ci</span></td><td>Commit and auto-sync child branches</td></tr>
                 <tr><td class="cmd-name"><code>amend</code></td><td>Amend last commit and auto-sync children</td></tr>
                 <tr><td class="cmd-name"><code>push</code></td><td>Push current branch or entire stack to remote.</td></tr>

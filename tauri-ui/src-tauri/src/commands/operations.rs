@@ -394,29 +394,7 @@ pub fn doctor(
     run_ezs_auto(conn.as_ref(), &repo_path, &["doctor"])
 }
 
-/// Sync strategy override for commit / amend. Mirrors the CLI's
-/// `--merge` / `--rebase` flags; `Default` leaves it to the configured
-/// `sync_strategy`.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum SyncStrategy {
-    #[default]
-    Default,
-    Merge,
-    Rebase,
-}
-
-impl SyncStrategy {
-    fn flag(self) -> Option<&'static str> {
-        match self {
-            SyncStrategy::Default => None,
-            SyncStrategy::Merge => Some("--merge"),
-            SyncStrategy::Rebase => Some("--rebase"),
-        }
-    }
-}
-
-/// Commit and auto-sync child branches.
+/// Commit and auto-restack child branches (gh stack rebase).
 ///
 /// `--no-push` is passed unconditionally so the desktop app surface
 /// never blocks on the CLI's interactive push prompt — push is its own
@@ -428,20 +406,16 @@ pub fn commit(
     repo_path: String,
     message: String,
     all: Option<bool>,
-    strategy: Option<SyncStrategy>,
 ) -> Result<CommandResult, String> {
     let conn = locked_conn(&state)?;
     let mut args: Vec<&str> = vec!["-y", "commit", "-m", &message, "--no-push"];
     if all.unwrap_or(false) {
         args.push("-a");
     }
-    if let Some(flag) = strategy.unwrap_or_default().flag() {
-        args.push(flag);
-    }
     run_ezs_auto(conn.as_ref(), &repo_path, &args)
 }
 
-/// Amend the last commit and auto-sync children.
+/// Amend the last commit and auto-restack children.
 ///
 /// When `message` is `None` the existing message is preserved via
 /// `--no-edit` (no editor launch — the desktop surface has no place
@@ -453,7 +427,6 @@ pub fn amend(
     repo_path: String,
     message: Option<String>,
     all: Option<bool>,
-    strategy: Option<SyncStrategy>,
 ) -> Result<CommandResult, String> {
     let conn = locked_conn(&state)?;
     let mut args: Vec<String> =
@@ -467,9 +440,6 @@ pub fn amend(
     }
     if all.unwrap_or(false) {
         args.push("-a".into());
-    }
-    if let Some(flag) = strategy.unwrap_or_default().flag() {
-        args.push(flag.into());
     }
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
     run_ezs_auto(conn.as_ref(), &repo_path, &arg_refs)

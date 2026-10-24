@@ -31,7 +31,6 @@ var configKeys = []string{
 	"cd_after_new",
 	"use_worktrees",
 	"init_submodules",
-	"sync_strategy",
 	"agent_command",
 }
 
@@ -55,8 +54,8 @@ var configKeys = []string{
 // and confuse users who tab-complete to a flag the binary then rejects.
 var commandFlags = map[string][]string{
 	"agent":    {"--cmd", "--stack", "-s", "--branch", "-b", "--dry-run", "--save-prompt", "--no-push", "--preset", "--no-mcp", "--no-resume", "--help", "-h"},
-	"amend":    {"--merge", "--rebase", "--push", "--push-children", "--no-push", "--help", "-h"},
-	"commit":   {"--merge", "--rebase", "--push", "--push-children", "--no-push", "--help", "-h"},
+	"amend":    {"--push", "--push-children", "--no-push", "--help", "-h"},
+	"commit":   {"--push", "--push-children", "--no-push", "--help", "-h"},
 	"config":   {"--help", "-h"},
 	"delete":   {"--force", "-f", "--stack", "-s", "--cascade", "--help", "-h"},
 	"diff":     {"--branch", "-b", "--stat", "--json", "--help", "-h"},
@@ -68,10 +67,10 @@ var commandFlags = map[string][]string{
 	"new":      {"--parent", "-p", "--worktree", "-w", "--template", "--cd", "-c", "--no-cd", "-C", "--init-submodules", "-s", "--no-init-submodules", "-S", "--from-worktree", "-f", "--from-remote", "-r", "--help", "-h"},
 	"pr":       {"--draft-all", "--help", "-h"},
 	"push":     {"--stack", "-s", "--branch", "-b", "--force", "-f", "--verify", "--all-remotes", "--help", "-h"},
-	"reparent": {"--branch", "-b", "--parent", "-p", "--merge", "--rebase", "--no-rebase", "--help", "-h"},
+	"reparent": {"--branch", "-b", "--parent", "-p", "--no-rebase", "--help", "-h"},
 	"stack":    {"--branch", "-b", "--parent", "-p", "--base", "-B", "--help", "-h"},
 	"status":   {"--all", "-a", "--branch", "-b", "--debug", "-d", "--json", "--watch", "--help", "-h"},
-	"sync":     {"--stats", "--squash", "--stack", "-s", "--all", "-a", "--current", "-c", "--branch", "-b", "--parent", "-p", "--children", "-C", "--merge", "--rebase", "--no-delete-local", "--dry-run", "--continue", "--no-autostash", "--json", "--include-remote-worktrees", "--help", "-h"},
+	"sync":     {"--stats", "--squash", "--stack", "-s", "--all", "-a", "--current", "-c", "--branch", "-b", "--parent", "-p", "--children", "-C", "--no-delete-local", "--dry-run", "--continue", "--abort", "--no-push", "--json", "--include-remote-worktrees", "--help", "-h"},
 	"unstack":  {"--branch", "-b", "--help", "-h"},
 	"up":       {"--help", "-h"},
 	"upgrade":  {"--check", "--version", "--force", "--no-mcp", "--yes", "-y", "--help", "-h"},

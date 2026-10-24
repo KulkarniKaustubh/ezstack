@@ -549,7 +549,7 @@ func TestManager_ReparentBranch_SameStack(t *testing.T) {
 
 	// Reparent feature-c to feature-a (skipping feature-b)
 	mgr, _ = NewManager(repoDir)
-	result, err := mgr.ReparentBranch("feature-c", "feature-a", false)
+	result, err := mgr.ReparentBranch("feature-c", "feature-a")
 	if err != nil {
 		t.Fatalf("ReparentBranch() error = %v", err)
 	}
@@ -580,7 +580,7 @@ func TestManager_ReparentBranch_ToMain(t *testing.T) {
 
 	// Reparent feature-b to main
 	mgr, _ = NewManager(repoDir)
-	result, err := mgr.ReparentBranch("feature-b", "main", false)
+	result, err := mgr.ReparentBranch("feature-b", "main")
 	if err != nil {
 		t.Fatalf("ReparentBranch() error = %v", err)
 	}
@@ -607,7 +607,7 @@ func TestManager_ReparentBranch_CycleDetection(t *testing.T) {
 
 	// Try to reparent feature-a to feature-c (would create cycle)
 	mgr, _ = NewManager(repoDir)
-	_, err := mgr.ReparentBranch("feature-a", "feature-c", false)
+	_, err := mgr.ReparentBranch("feature-a", "feature-c")
 	if err == nil {
 		t.Error("ReparentBranch() should fail when creating a cycle")
 	}
@@ -625,7 +625,7 @@ func TestManager_ReparentBranch_NonExistentParent(t *testing.T) {
 	mgr.CreateBranch("feature-a", "main", "", "")
 
 	mgr, _ = NewManager(repoDir)
-	_, err := mgr.ReparentBranch("feature-a", "nonexistent", false)
+	_, err := mgr.ReparentBranch("feature-a", "nonexistent")
 	if err == nil {
 		t.Error("ReparentBranch() should fail for non-existent parent")
 	}
@@ -1127,7 +1127,7 @@ func TestManager_ReparentBranch_ToNonMainRoot(t *testing.T) {
 
 	// Reparent feature-a from main to develop
 	mgr, _ = NewManager(repoDir)
-	result, err := mgr.ReparentBranch("feature-a", "develop", false)
+	result, err := mgr.ReparentBranch("feature-a", "develop")
 	if err != nil {
 		t.Fatalf("ReparentBranch() error = %v", err)
 	}
@@ -1164,7 +1164,7 @@ func TestManager_ReparentBranch_CrossStack_NonMainRoot(t *testing.T) {
 
 	// Reparent feature-a to feature-b (cross-stack)
 	mgr, _ = NewManager(repoDir)
-	result, err := mgr.ReparentBranch("feature-a", "feature-b", false)
+	result, err := mgr.ReparentBranch("feature-a", "feature-b")
 	if err != nil {
 		t.Fatalf("ReparentBranch() error = %v", err)
 	}
@@ -1198,7 +1198,7 @@ func TestManager_AddBranchWithParent_NonMainRoot(t *testing.T) {
 
 	// Add standalone to develop — should create a new stack with root=develop
 	mgr, _ := NewManager(repoDir)
-	result, err := mgr.ReparentBranch("standalone", "develop", false)
+	result, err := mgr.ReparentBranch("standalone", "develop")
 	if err != nil {
 		t.Fatalf("ReparentBranch() error = %v", err)
 	}
@@ -1231,33 +1231,12 @@ func TestManager_CycleDetection_NonMainRoot(t *testing.T) {
 
 	// Try to reparent feature-a to feature-b (cycle)
 	mgr, _ = NewManager(repoDir)
-	_, err := mgr.ReparentBranch("feature-a", "feature-b", false)
+	_, err := mgr.ReparentBranch("feature-a", "feature-b")
 	if err == nil {
 		t.Error("ReparentBranch() should fail when creating a cycle")
 	}
 	if !strings.Contains(err.Error(), "circular") {
 		t.Errorf("Error should mention circular dependency, got: %v", err)
-	}
-}
-
-// TestManager_GetParentRef tests the getParentRef helper
-func TestManager_GetParentRef(t *testing.T) {
-	repoDir, _, cleanup := setupTestEnv(t)
-	defer cleanup()
-
-	mgr, _ := NewManager(repoDir)
-	mgr.CreateBranch("feature-a", "main", "", "")
-
-	mgr, _ = NewManager(repoDir)
-
-	ref := mgr.getParentRef("feature-a")
-	if ref != "feature-a" {
-		t.Errorf("getParentRef('feature-a') = %q, want %q", ref, "feature-a")
-	}
-
-	ref = mgr.getParentRef("main")
-	if ref != "main" {
-		t.Errorf("getParentRef('main') = %q, want %q", ref, "main")
 	}
 }
 
@@ -1336,7 +1315,7 @@ func TestManager_ReparentBranch_SelfReference(t *testing.T) {
 	createGitBranch(t, dir, "feature-a")
 
 	// Try to reparent a branch to itself
-	_, err = mgr.ReparentBranch("feature-a", "feature-a", false)
+	_, err = mgr.ReparentBranch("feature-a", "feature-a")
 	if err == nil {
 		t.Fatal("ReparentBranch() should error when branch == parent")
 	}
@@ -1345,131 +1324,9 @@ func TestManager_ReparentBranch_SelfReference(t *testing.T) {
 	}
 }
 
-// TestManager_ReparentBranch_ConflictSavesConfig tests that reparent saves config even when rebase conflicts occur
-func TestManager_ReparentBranch_ConflictSavesConfig(t *testing.T) {
-	repoDir, worktreeBaseDir, cleanup := setupTestEnv(t)
-	defer cleanup()
-
-	// Create stack: main -> feature-a with a commit modifying a file
-	mgr, _ := NewManager(repoDir)
-	_, err := mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"), "")
-	if err != nil {
-		t.Fatalf("CreateBranch feature-a failed: %v", err)
-	}
-
-	// Add a commit to feature-a that modifies conflict.txt
-	featureAPath := filepath.Join(worktreeBaseDir, "feature-a")
-	os.WriteFile(filepath.Join(featureAPath, "conflict.txt"), []byte("feature-a version\n"), 0644)
-	exec.Command("git", "-C", featureAPath, "add", ".").Run()
-	exec.Command("git", "-C", featureAPath, "commit", "-m", "feature-a: add conflict.txt").Run()
-
-	// Create feature-b from feature-a with its own commit
-	mgr, _ = NewManager(repoDir)
-	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"), "")
-	if err != nil {
-		t.Fatalf("CreateBranch feature-b failed: %v", err)
-	}
-
-	featureBPath := filepath.Join(worktreeBaseDir, "feature-b")
-	os.WriteFile(filepath.Join(featureBPath, "b-file.txt"), []byte("feature-b content\n"), 0644)
-	exec.Command("git", "-C", featureBPath, "add", ".").Run()
-	exec.Command("git", "-C", featureBPath, "commit", "-m", "feature-b: add b-file.txt").Run()
-
-	// Create a divergent branch "develop" from main with conflicting content
-	exec.Command("git", "-C", repoDir, "branch", "develop").Run()
-	developPath := filepath.Join(worktreeBaseDir, "develop")
-	exec.Command("git", "-C", repoDir, "worktree", "add", developPath, "develop").Run()
-	os.WriteFile(filepath.Join(developPath, "conflict.txt"), []byte("develop version - different!\n"), 0644)
-	exec.Command("git", "-C", developPath, "add", ".").Run()
-	exec.Command("git", "-C", developPath, "commit", "-m", "develop: add conflict.txt").Run()
-
-	// Reparent feature-a from main to develop WITH rebase — should conflict on conflict.txt
-	mgr, _ = NewManager(repoDir)
-	result, err := mgr.ReparentBranch("feature-a", "develop", true)
-	if err != nil {
-		t.Fatalf("ReparentBranch() should not return error on conflict, got: %v", err)
-	}
-
-	// Verify conflict was reported
-	if !result.HasConflict {
-		t.Error("result.HasConflict should be true")
-	}
-	if result.ConflictDir != featureAPath {
-		t.Errorf("result.ConflictDir = %q, want %q", result.ConflictDir, featureAPath)
-	}
-
-	// Verify config was saved despite conflict — branch should have new parent
-	if result.Branch == nil {
-		t.Fatal("result.Branch should not be nil")
-	}
-	if result.Branch.Parent != "develop" {
-		t.Errorf("result.Branch.Parent = %q, want %q", result.Branch.Parent, "develop")
-	}
-
-	// Reload from disk to verify config was persisted
-	mgr, _ = NewManager(repoDir)
-	branch := mgr.GetBranch("feature-a")
-	if branch == nil {
-		t.Fatal("feature-a should exist in config after conflict reparent")
-	}
-	if branch.Parent != "develop" {
-		t.Errorf("After reload, branch.Parent = %q, want %q", branch.Parent, "develop")
-	}
-
-	// Abort the rebase so cleanup can remove the worktree
-	exec.Command("git", "-C", featureAPath, "rebase", "--abort").Run()
-}
-
-// TestManager_ReparentBranch_NoConflictReturnsCleanResult tests successful rebase sets HasConflict=false
-func TestManager_ReparentBranch_NoConflictReturnsCleanResult(t *testing.T) {
-	repoDir, worktreeBaseDir, cleanup := setupTestEnv(t)
-	defer cleanup()
-
-	// Create stack: main -> feature-a
-	mgr, _ := NewManager(repoDir)
-	_, err := mgr.CreateBranch("feature-a", "main", filepath.Join(worktreeBaseDir, "feature-a"), "")
-	if err != nil {
-		t.Fatalf("CreateBranch feature-a failed: %v", err)
-	}
-
-	// Add a non-conflicting commit to feature-a
-	featureAPath := filepath.Join(worktreeBaseDir, "feature-a")
-	os.WriteFile(filepath.Join(featureAPath, "feature-a.txt"), []byte("feature-a content\n"), 0644)
-	exec.Command("git", "-C", featureAPath, "add", ".").Run()
-	exec.Command("git", "-C", featureAPath, "commit", "-m", "feature-a: add file").Run()
-
-	// Create feature-b from feature-a
-	mgr, _ = NewManager(repoDir)
-	_, err = mgr.CreateBranch("feature-b", "feature-a", filepath.Join(worktreeBaseDir, "feature-b"), "")
-	if err != nil {
-		t.Fatalf("CreateBranch feature-b failed: %v", err)
-	}
-
-	featureBPath := filepath.Join(worktreeBaseDir, "feature-b")
-	os.WriteFile(filepath.Join(featureBPath, "feature-b.txt"), []byte("feature-b content\n"), 0644)
-	exec.Command("git", "-C", featureBPath, "add", ".").Run()
-	exec.Command("git", "-C", featureBPath, "commit", "-m", "feature-b: add file").Run()
-
-	// Reparent feature-b from feature-a to main WITH rebase — should not conflict
-	mgr, _ = NewManager(repoDir)
-	result, err := mgr.ReparentBranch("feature-b", "main", true)
-	if err != nil {
-		t.Fatalf("ReparentBranch() error = %v", err)
-	}
-
-	if result.HasConflict {
-		t.Error("result.HasConflict should be false for clean rebase")
-	}
-	if result.ConflictDir != "" {
-		t.Errorf("result.ConflictDir should be empty, got %q", result.ConflictDir)
-	}
-	if result.Branch.Parent != "main" {
-		t.Errorf("result.Branch.Parent = %q, want %q", result.Branch.Parent, "main")
-	}
-}
-
-// TestManager_ReparentBranch_AddStandaloneBranchWithConflict tests adding a standalone branch with conflicting rebase
-func TestManager_ReparentBranch_AddStandaloneBranchWithConflict(t *testing.T) {
+// TestManager_ReparentBranch_MetadataOnly adds a standalone branch under a
+// tracked parent without rebasing it.
+func TestManager_ReparentBranch_MetadataOnly(t *testing.T) {
 	repoDir, worktreeBaseDir, cleanup := setupTestEnv(t)
 	defer cleanup()
 
@@ -1493,33 +1350,31 @@ func TestManager_ReparentBranch_AddStandaloneBranchWithConflict(t *testing.T) {
 	exec.Command("git", "-C", featureAPath, "add", ".").Run()
 	exec.Command("git", "-C", featureAPath, "commit", "-m", "feature-a: add shared.txt").Run()
 
-	// Add standalone to stack with parent feature-a WITH rebase — should conflict
+	// Reparenting only records the new parent; moving commits is gh-stack's
+	// job (the caller restacks), so history must be untouched even though
+	// the two branches would conflict.
+	before, _ := exec.Command("git", "-C", repoDir, "rev-parse", "standalone").Output()
 	mgr, _ = NewManager(repoDir)
-	result, err := mgr.ReparentBranch("standalone", "feature-a", true)
+	result, err := mgr.ReparentBranch("standalone", "feature-a")
 	if err != nil {
-		t.Fatalf("ReparentBranch() should not return error on conflict, got: %v", err)
+		t.Fatalf("ReparentBranch() error = %v", err)
+	}
+	if result.Branch == nil || result.Branch.Parent != "feature-a" {
+		t.Fatalf("result.Branch = %+v, want parent feature-a", result.Branch)
+	}
+	after, _ := exec.Command("git", "-C", repoDir, "rev-parse", "standalone").Output()
+	if string(before) != string(after) {
+		t.Errorf("ReparentBranch rewrote history: %s -> %s", before, after)
+	}
+	if out, _ := exec.Command("git", "-C", standalonePath, "status", "--porcelain").Output(); len(out) != 0 {
+		t.Errorf("worktree left dirty: %s", out)
 	}
 
-	// Verify conflict was reported but config was saved
-	if !result.HasConflict {
-		t.Error("result.HasConflict should be true")
-	}
-	if result.ConflictDir != standalonePath {
-		t.Errorf("result.ConflictDir = %q, want %q", result.ConflictDir, standalonePath)
-	}
-
-	// Verify branch was added to config despite conflict
 	mgr, _ = NewManager(repoDir)
 	branch := mgr.GetBranch("standalone")
-	if branch == nil {
-		t.Fatal("standalone should be in config after conflict reparent")
+	if branch == nil || branch.Parent != "feature-a" {
+		t.Fatalf("standalone not saved under feature-a: %+v", branch)
 	}
-	if branch.Parent != "feature-a" {
-		t.Errorf("branch.Parent = %q, want %q", branch.Parent, "feature-a")
-	}
-
-	// Abort the rebase so cleanup can remove the worktree
-	exec.Command("git", "-C", standalonePath, "rebase", "--abort").Run()
 }
 
 func TestManager_SetStackName(t *testing.T) {

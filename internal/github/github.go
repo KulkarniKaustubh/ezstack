@@ -9,8 +9,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
 )
 
 // ErrPRNotFound is returned by GetPRByBranch when GitHub has no PR for the
@@ -466,135 +464,24 @@ func (c *Client) runGH(args ...string) (string, error) {
 	return stdout.String(), nil
 }
 
-// UpdateStackDescription updates PR descriptions with stack info.
-func (c *Client) UpdateStackDescription(stack *config.Stack, currentBranch string) error {
-	prCount := stackPRCount(stack)
-
-	for _, branch := range stack.Branches {
-		if branch.PRNumber == 0 {
-			continue
-		}
-
-		// Fetch current PR body to update it
-		pr, err := c.GetPR(branch.PRNumber)
-		if err != nil {
-			continue
-		}
-
-		newBody := stackDescriptionBody(stack, branch.Name, pr.Body, prCount)
-		if bodyNeedsUpdate(newBody, pr.Body) {
-			if err := c.UpdatePR(branch.PRNumber, newBody); err != nil {
-				return fmt.Errorf("failed to update PR #%d: %w", branch.PRNumber, err)
-			}
-		}
+// RemoveLegacyStackSection strips the "PR Stack" section that ezstack
+// releases before gh-stack support appended to PR bodies. Stack navigation is
+// now GitHub's native stacked-PR UI (linked via `gh stack link`), so a
+// leftover section would be stale and duplicated. No-op when absent.
+func (c *Client) RemoveLegacyStackSection(pr *PR) error {
+	cleaned, changed := withoutLegacyStackSection(pr.Body)
+	if !changed {
+		return nil
 	}
-
-	return nil
+	return c.UpdatePR(pr.Number, cleaned)
 }
 
-// UpdateStackDescriptionCached updates PR descriptions using pre-fetched PR data to avoid extra API calls.
-func (c *Client) UpdateStackDescriptionCached(stack *config.Stack, currentBranch string, prMap map[int]*PR) error {
-	prCount := stackPRCount(stack)
-
-	for _, branch := range stack.Branches {
-		if branch.PRNumber == 0 {
-			continue
-		}
-
-		// Use pre-fetched PR data instead of making another API call
-		pr := prMap[branch.PRNumber]
-		if pr == nil {
-			continue
-		}
-
-		newBody := stackDescriptionBody(stack, branch.Name, pr.Body, prCount)
-		if bodyNeedsUpdate(newBody, pr.Body) {
-			if err := c.UpdatePR(branch.PRNumber, newBody); err != nil {
-				return fmt.Errorf("failed to update PR #%d: %w", branch.PRNumber, err)
-			}
-		}
-	}
-
-	return nil
-}
-
-// stackPRCount counts how many PRs are in the stack, including the root PR if present.
-func stackPRCount(stack *config.Stack) int {
-	count := 0
-	if stack.RootPRNumber > 0 {
-		count++
-	}
-	for _, branch := range stack.Branches {
-		if branch.PRNumber > 0 {
-			count++
-		}
-	}
-	return count
-}
-
-// stackDescriptionBody renders what a PR's body should look like given the current
-// stack membership. A stack section is only appended when there are 2+ PRs in the
-// stack; below that threshold any previously-appended section is stripped rather
-// than left in place, since a lone remaining PR still carrying a stale multi-PR
-// stack list (e.g. after siblings were merged/unstacked) is itself a bug — see
-// stripStackSections.
-func stackDescriptionBody(stack *config.Stack, branchName, currentBody string, prCount int) string {
-	if prCount < 2 {
-		return strings.TrimSpace(stripStackSections(normalizeBody(currentBody)))
-	}
-	stackSection := generateStackSection(stack, branchName)
-	return updateBodyWithStack(currentBody, stackSection)
-}
-
-func generateStackSection(stack *config.Stack, currentPRBranch string) string {
-	var sb strings.Builder
-	sb.WriteString("\n\n---\n## PR Stack\n\n")
-
-	num := 1
-
-	// Include root PR first if present (e.g., remote base branch PR)
-	if stack.RootPRNumber > 0 {
-		if stack.RootPRUrl != "" {
-			sb.WriteString(fmt.Sprintf("%d. %s (base)\n", num, stack.RootPRUrl))
-		} else {
-			sb.WriteString(fmt.Sprintf("%d. #%d (base)\n", num, stack.RootPRNumber))
-		}
-		num++
-	}
-
-	// Sort branches topologically (parent -> child order)
-	sortedBranches := config.SortBranchesTopologically(stack.Branches)
-
-	for _, branch := range sortedBranches {
-		// Skip branches that don't have a PR yet
-		if branch.PRNumber == 0 && branch.PRUrl == "" {
-			continue
-		}
-
-		// Use markdown list format - GitHub unfurls PR URLs in lists to show title
-		suffix := ""
-		if branch.Name == currentPRBranch {
-			suffix = " ← **This PR**"
-		}
-
-		if branch.PRUrl != "" {
-			sb.WriteString(fmt.Sprintf("%d. %s%s\n", num, branch.PRUrl, suffix))
-		} else {
-			sb.WriteString(fmt.Sprintf("%d. #%d%s\n", num, branch.PRNumber, suffix))
-		}
-		num++
-	}
-	sb.WriteString("\n_This stack was created by [ezstack](https://github.com/KulkarniKaustubh/ezstack)_\n")
-
-	return sb.String()
-}
-
-func updateBodyWithStack(body, stackSection string) string {
-	body = normalizeBody(body)
-	body = stripStackSections(body)
-
-	// Add new stack section
-	return strings.TrimSpace(body) + stackSection
+// withoutLegacyStackSection returns body with every legacy stack section
+// removed, and whether that differs meaningfully from body (line endings and
+// GitHub's trailing newline don't count, so clean bodies are never rewritten).
+func withoutLegacyStackSection(body string) (string, bool) {
+	cleaned := strings.TrimSpace(stripStackSections(normalizeBody(body)))
+	return cleaned, bodyNeedsUpdate(cleaned, body)
 }
 
 // stackSectionMarkers are every known form of the "---\n## ... PR Stack" heading
@@ -614,7 +501,7 @@ var stackSectionMarkers = []string{
 // section from body. Because the section is always appended at the end,
 // truncating at the earliest occurrence of any known marker also drops
 // every later duplicate section — so N sections collapse down to zero on
-// a single call. Callers append exactly one fresh section afterwards.
+// a single call.
 //
 // The earliest-across-all-markers scan (rather than picking the first
 // marker in a fixed order) is what makes this dedup work when a body has

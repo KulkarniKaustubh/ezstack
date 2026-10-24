@@ -19,9 +19,11 @@ A CLI tool for managing stacked pull requests using git worktrees. Create branch
 
 ## Requirements
 
-- [Git](https://git-scm.com/) 2.20+
+- [Git](https://git-scm.com/) 2.36+
 - [fzf](https://github.com/junegunn/fzf) for interactive selection
 - [GitHub CLI](https://cli.github.com/) (`gh`) for PR operations
+- [gh stack](https://github.com/github/gh-stack) 0.2.0+ — ezstack's rebase/push/stacked-PR engine:
+  `gh extension install github/gh-stack`
 
 ## Installation
 
@@ -207,22 +209,9 @@ ezstack supports both worktree-based and checkout-based workflows:
 
 Configure with `ezs config set use_worktrees true/false`.
 
-### Sync Strategy
+### Sync engine (gh stack)
 
-By default, ezstack uses `git rebase` to sync branches. You can switch to `git merge` per-repo:
-
-```bash
-ezs config set sync_strategy merge
-```
-
-Or override per-command with `--merge` / `--rebase` flags:
-
-```bash
-ezs sync -a --merge       # merge just this once
-ezs commit -m "fix" --rebase  # rebase children even if config says merge
-```
-
-The `--merge` and `--rebase` flags work with `sync`, `commit`, `amend`, and `reparent`.
+Every rebase, stack push, and PR-stack link is executed by [`gh stack`](https://github.com/github/gh-stack), GitHub's stacked-PR extension, while ezstack keeps the worktree-per-branch layout and tree-shaped stacks. `ezs sync` restacks each branch in its own worktree, pushes with `--force-with-lease`, cleans up merged branches, and links the PRs into GitHub native stacked PRs. Conflicts pause in the conflicted worktree: resolve, `git add`, then `ezs sync --continue` (or `ezs sync --abort`). Syncs always rebase — the old `sync_strategy` setting and `--merge`/`--rebase` flags were removed. See [How ezstack uses gh stack](DOCUMENTATION.md#how-ezstack-uses-gh-stack).
 
 ### Submodule Mirroring
 

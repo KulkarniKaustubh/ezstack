@@ -1,9 +1,12 @@
 package commands
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ghstack"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
@@ -23,22 +26,20 @@ func Reparent(args []string) error {
 %sOPTIONS%s
     -b, --branch <name>     Branch to reparent
     -p, --parent <name>     New parent branch
-    --merge                 Use git merge instead of git rebase
-    --rebase                Use git rebase (overrides config)
-    --no-rebase             Update tracking only, skip sync
+    --no-rebase             Update tracking only, skip the restack
     -h, --help              Show this help message
 
 %sDESCRIPTION%s
-    Changes the parent of a branch and syncs commits onto the new parent.
+    Changes the parent of a branch and restacks its commits (and every
+    branch above it) onto the new parent with gh stack rebase.
     This can be used to:
 
     1. Move a branch to a different parent within the same stack
     2. Add a standalone worktree/branch to an existing stack
     3. Split a stack by reparenting branches to different parents
 
-    Uses the configured sync_strategy (default: rebase). Override with
-    --merge or --rebase. If the sync conflicts, the reparent metadata is
-    still updated and you can resolve conflicts manually.
+    If the restack conflicts, the reparent is still recorded: resolve the
+    conflict, then run "ezs sync --continue" (or "ezs sync --abort").
 
 %sEXAMPLES%s
     ezs reparent                        Interactive mode
@@ -49,8 +50,6 @@ func Reparent(args []string) error {
 
 	branchFlag := fs.StringP("branch", "b", "", "Branch to reparent")
 	parentFlag := fs.StringP("parent", "p", "", "New parent branch")
-	mergeFlag := fs.Bool("merge", false, "Use git merge instead of git rebase")
-	rebaseFlag := fs.Bool("rebase", false, "Use git rebase (overrides config)")
 	noRebaseFlag := fs.Bool("no-rebase", false, "Update tracking only, skip sync")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
 
@@ -92,25 +91,8 @@ func Reparent(args []string) error {
 		newParent = fs.Arg(1)
 	}
 
-	// Resolve merge vs rebase: flags override config
-	if *mergeFlag && *rebaseFlag {
-		return fmt.Errorf("cannot use both --merge and --rebase")
-	}
-	useMerge := false
-	if *mergeFlag {
-		useMerge = true
-	} else if *rebaseFlag {
-		useMerge = false
-	} else {
-		useMerge = mgr.GetConfig().GetSyncStrategy(mgr.GetRepoDir()) == "merge"
-	}
-
-	// Helper to dispatch based on --no-rebase flag
 	doReparent := func(branch, parent string) error {
-		if *noRebaseFlag {
-			return doReparentNoRebase(mgr, branch, parent)
-		}
-		return doReparentWithMerge(mgr, branch, parent, useMerge)
+		return doReparentCore(mgr, branch, parent, !*noRebaseFlag)
 	}
 
 	// Interactive mode if branch or parent not specified
@@ -285,44 +267,36 @@ func IsDescendantOf(mgr *stack.Manager, branchName, ancestorName string) bool {
 	}
 }
 
-// doReparentWithMerge performs reparent with explicit merge/rebase choice
-func doReparentWithMerge(mgr *stack.Manager, branchName, newParent string, useMerge bool) error {
-	return doReparentCore(mgr, branchName, newParent, true, useMerge)
-}
-
-// doReparentNoRebase performs a reparent without rebasing (used by `ezs stack`)
+// doReparentNoRebase performs a reparent without restacking (used by `ezs stack`)
 func doReparentNoRebase(mgr *stack.Manager, branchName, newParent string) error {
-	return doReparentCore(mgr, branchName, newParent, false, false)
+	return doReparentCore(mgr, branchName, newParent, false)
 }
 
 // doReparentCore is the shared implementation for reparent and stack commands.
-// When rebase=true, commits are synced onto the new parent and push is offered.
-// When rebase=false, only the tracking metadata is updated.
-func doReparentCore(mgr *stack.Manager, branchName, newParent string, rebase bool, useMerge bool) error {
-	// Get current parent for display
+// It records the new parent, then (when restack is true) lets gh-stack move
+// the branch's own commits — and every branch above it — onto the new parent.
+// When restack is false, only the tracking metadata is updated.
+func doReparentCore(mgr *stack.Manager, branchName, newParent string, restack bool) error {
 	existingBranch := mgr.GetBranch(branchName)
 	oldParent := ""
 	if existingBranch != nil {
 		oldParent = existingBranch.Parent
 	}
 
-	// Show what we're about to do
 	if oldParent != "" {
 		ui.Info(fmt.Sprintf("Reparenting '%s' from '%s' to '%s'", branchName, oldParent, newParent))
 	} else {
 		ui.Info(fmt.Sprintf("Adding '%s' to stack with parent '%s'", branchName, newParent))
 	}
-
-	if rebase {
-		if useMerge {
-			ui.Info("Will merge new parent into branch")
-		} else {
-			ui.Info("Will rebase commits onto new parent")
+	if restack {
+		ui.Info("Will rebase its commits onto the new parent")
+		if err := requireGHStack(); err != nil {
+			return err
 		}
 	}
 
 	confirmMsg := "Proceed?"
-	if rebase {
+	if restack {
 		confirmMsg = "Proceed with reparent?"
 	}
 	if !ui.ConfirmTUI(confirmMsg) {
@@ -330,77 +304,82 @@ func doReparentCore(mgr *stack.Manager, branchName, newParent string, rebase boo
 		return nil
 	}
 
+	if restack {
+		// Record the branch's current base before the model changes: gh-stack
+		// moves exactly the commits above that base onto the new parent.
+		if _, err := reconcileGHStack(mgr); err != nil {
+			return err
+		}
+	}
+
 	oldStack := mgr.GetStackForBranch(branchName)
-	result, err := mgr.ReparentBranch(branchName, newParent, rebase, useMerge)
+	result, err := mgr.ReparentBranch(branchName, newParent)
 	if err != nil {
 		return err
 	}
 	if result == nil || result.Branch == nil {
 		return fmt.Errorf("operation succeeded but branch '%s' not found in updated config", branchName)
 	}
-
 	branch := result.Branch
-
-	if result.HasConflict {
-		syncType := "rebase"
-		continueCmd := "git rebase --continue"
-		if useMerge {
-			syncType = "merge"
-			continueCmd = "git merge --continue"
-		}
-		ui.Warn(fmt.Sprintf("Reparented '%s' to '%s' (config updated), but %s has conflicts", branch.Name, branch.Parent, syncType))
-		ui.Warn(fmt.Sprintf("Resolve conflicts in: %s", result.ConflictDir))
-		ui.Info(fmt.Sprintf("Then run: %s", continueCmd))
+	if oldParent != "" {
+		ui.Success(fmt.Sprintf("Reparented '%s' to '%s'", branch.Name, branch.Parent))
 	} else {
-		if oldParent != "" {
-			ui.Success(fmt.Sprintf("Reparented '%s' to '%s'", branch.Name, branch.Parent))
-		} else {
-			ui.Success(fmt.Sprintf("Added '%s' to stack with parent '%s'", branch.Name, branch.Parent))
-		}
+		ui.Success(fmt.Sprintf("Added '%s' to stack with parent '%s'", branch.Name, branch.Parent))
 	}
-
-	currentStack := mgr.GetStackForBranch(branchName)
 
 	cwd, _ := os.Getwd()
 	g := git.New(cwd)
 
-	// Offer push if synced and branch has a PR
-	pushSucceeded := true
-	if rebase && !result.HasConflict && branch.PRNumber > 0 {
-		worktreePath := cwd
-		if branch.WorktreePath != "" {
-			worktreePath = branch.WorktreePath
+	if !restack {
+		refreshGHStack(mgr)
+	} else {
+		// Move the branch's own commits, then let gh-stack restack the
+		// branches above it (their recorded bases still point at the
+		// branch's old tip, so they follow it with --onto).
+		if err := moveOntoParent(mgr, branchName, oldParent, newParent); err != nil {
+			return err
 		}
-		if useMerge {
-			ui.Info("Branch was merged. Push to update the PR.")
-			pushSucceeded = OfferPush(branchName, worktreePath, branch.EffectiveRemote())
-		} else {
-			ui.Info("Branch was rebased. Force-push required to update the PR.")
-			pushSucceeded = OfferForcePush(branchName, worktreePath, branch.EffectiveRemote())
+		chains, err := reconcileGHStack(mgr)
+		if err != nil {
+			return err
+		}
+		target := &syncTarget{mode: modeChildren, branch: branch, stacks: []*config.Stack{mgr.GetStackForBranch(branchName)}}
+		steps, err := restackSteps(g, mgr, chains, target)
+		if err != nil {
+			return err
+		}
+		p := newPusher(g, mgr, pushAsk, chains)
+		p.onlyPublished = true
+		p.limitTo(branchName)
+		if err := runRestack(g, mgr, steps, p); err != nil {
+			if errors.Is(err, errSyncConflict) {
+				savePausedScope(mgr, target)
+			}
+			return err
+		}
+		// The moved branch itself is pushed with the chain that owns it.
+		if c, ok := ghstack.ChainFor(chains, branchName); ok {
+			if err := p.pushChain(c); err != nil {
+				ui.Warn(err.Error())
+			}
 		}
 	}
 
-	// Update PR metadata on GitHub
-	gh, ghErr := newGitHubClient(g)
-	if ghErr == nil {
-		// Only update PR base when the push succeeded (or no rebase happened)
-		if branch.PRNumber > 0 && (pushSucceeded || !rebase) {
-			ui.Info(fmt.Sprintf("Updating PR #%d base branch to '%s'...", branch.PRNumber, newParent))
-			if err := gh.UpdatePRBase(branch.PRNumber, newParent); err != nil {
-				ui.Warn(fmt.Sprintf("Failed to update PR base branch: %v", err))
-			} else {
-				ui.Success(fmt.Sprintf("Updated PR #%d base branch to '%s'", branch.PRNumber, newParent))
+	// Retarget PR bases and relink both stacks — but not while the branch's
+	// rewritten history is still unpushed, or its PR would briefly show the
+	// old parent's commits against the new base.
+	currentStack := mgr.GetStackForBranch(branchName)
+	if gh, ghErr := newGitHubClient(g); ghErr == nil {
+		if restack && branch.PRNumber > 0 && branchDiffersFromRemote(g, branchName, branch.EffectiveRemote()) {
+			ui.Info(fmt.Sprintf("Push '%s' (ezs push), then run 'ezs pr update' to retarget PR #%d", branchName, branch.PRNumber))
+		} else {
+			if oldStack != nil && (currentStack == nil || oldStack.Hash != currentStack.Hash) {
+				if s := mgr.GetStackByHashExact(oldStack.Hash); s != nil {
+					updatePRMetadata(gh, mgr, s)
+				}
 			}
-		}
-
-		if oldStack != nil && (currentStack == nil || oldStack.Hash != currentStack.Hash) {
-			if err := updateStackDescriptions(gh, oldStack, ""); err != nil {
-				ui.Warn(fmt.Sprintf("Failed to update old stack descriptions: %v", err))
-			}
-		}
-		if currentStack != nil {
-			if err := updateStackDescriptions(gh, currentStack, branchName); err != nil {
-				ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
+			if currentStack != nil {
+				updatePRMetadata(gh, mgr, currentStack)
 			}
 		}
 	}
@@ -408,6 +387,5 @@ func doReparentCore(mgr *stack.Manager, branchName, newParent string, rebase boo
 	if currentStack != nil {
 		ui.PrintStack(currentStack, branchName, false, nil)
 	}
-
 	return nil
 }

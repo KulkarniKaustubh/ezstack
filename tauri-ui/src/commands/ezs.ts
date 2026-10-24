@@ -282,12 +282,8 @@ export async function configImport(
 // integration points). Keeping the bindings live so the next UI change set
 // can pick them up without round-tripping through Rust again.
 
-/** Strategy override for {@link commit} / {@link amend}. `default` keeps
- *  the configured `sync_strategy`. */
-export type SyncStrategy = "default" | "merge" | "rebase";
-
 /**
- * Commit and auto-sync child branches. The Tauri layer always passes
+ * Commit and auto-restack child branches (gh stack rebase). The Tauri layer always passes
  * `--no-push` because the desktop surface has no place to answer the
  * CLI's interactive push prompt; pushes are explicit user actions via
  * {@link pushBranch}. `all=true` maps to `git commit -a`.
@@ -295,18 +291,17 @@ export type SyncStrategy = "default" | "merge" | "rebase";
 export async function commit(
   repoPath: string,
   message: string,
-  opts?: { all?: boolean; strategy?: SyncStrategy },
+  opts?: { all?: boolean },
 ): Promise<CommandResult> {
   return invoke<CommandResult>("commit", {
     repoPath,
     message,
     all: opts?.all ?? false,
-    strategy: opts?.strategy ?? "default",
   });
 }
 
 /**
- * Amend the last commit and auto-sync children.
+ * Amend the last commit and auto-restack children.
  *
  * When `message` is empty/undefined the existing commit message is
  * preserved (`--no-edit`). Like {@link commit}, push is suppressed —
@@ -315,13 +310,12 @@ export async function commit(
  */
 export async function amend(
   repoPath: string,
-  opts?: { message?: string; all?: boolean; strategy?: SyncStrategy },
+  opts?: { message?: string; all?: boolean },
 ): Promise<CommandResult> {
   return invoke<CommandResult>("amend", {
     repoPath,
     message: opts?.message ?? null,
     all: opts?.all ?? false,
-    strategy: opts?.strategy ?? "default",
   });
 }
 

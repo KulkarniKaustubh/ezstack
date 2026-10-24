@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ghstack"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
 	"github.com/spf13/pflag"
 )
@@ -27,8 +28,8 @@ func Doctor(args []string) error {
 %sOPTIONS%s
     -h, --help    Show this help message
 
-Verifies required tools (git, gh, fzf) are installed and that the
-ezstack configuration is valid.
+Verifies required tools (git >= 2.36, gh with the gh stack extension
+>= 0.2.0, fzf) are installed and that the ezstack configuration is valid.
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
@@ -66,6 +67,19 @@ ezstack configuration is valid.
 	checkBin("git", "required", true)
 	checkBin("gh", "required for PR/CI features", true)
 	checkBin("fzf", "required for interactive selection", true)
+
+	if v, ok := gitVersion(); ok {
+		if v[0] < 2 || (v[0] == 2 && v[1] < 36) {
+			ui.Error(fmt.Sprintf("git %d.%d is too old: gh stack needs git >= 2.36 to rebase across worktrees", v[0], v[1]))
+			problems++
+		}
+	}
+	if err := ghstack.Check(); err != nil {
+		ui.Error(fmt.Sprintf("gh stack: %v", err))
+		problems++
+	} else {
+		ui.Success("gh stack extension: installed (>= 0.2.0)")
+	}
 
 	cfgDir, err := config.ConfigDir()
 	if err != nil {
@@ -143,4 +157,14 @@ func Info(version string) {
 	}
 	fmt.Printf("repos configured: %d\n", len(cfg.Repos))
 	fmt.Printf("default base branch: %s\n", cfg.DefaultBaseBranch)
+}
+
+// gitVersion returns git's major.minor.patch, or ok=false when it can't be
+// determined (doctor reports a missing git separately).
+func gitVersion() (v [3]int, ok bool) {
+	out, err := exec.Command("git", "--version").Output()
+	if err != nil {
+		return v, false
+	}
+	return ghstack.ParseVersion(string(out))
 }

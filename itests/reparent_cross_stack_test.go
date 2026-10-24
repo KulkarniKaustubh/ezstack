@@ -31,7 +31,7 @@ func TestReparent_CrossStack_Issue19(t *testing.T) {
 	}
 
 	mgr, _ = stack.NewManager(env.RepoDir)
-	if _, err := mgr.ReparentBranch("branchB1", "branchA2", false); err != nil {
+	if _, err := mgr.ReparentBranch("branchB1", "branchA2"); err != nil {
 		t.Fatalf("ReparentBranch failed: %v", err)
 	}
 
@@ -87,7 +87,7 @@ func TestReparent_CrossStack_SevenChain_Issue19(t *testing.T) {
 	}
 	for _, p := range pairs {
 		mgr, _ := stack.NewManager(env.RepoDir)
-		if _, err := mgr.ReparentBranch(p[0], p[1], false); err != nil {
+		if _, err := mgr.ReparentBranch(p[0], p[1]); err != nil {
 			t.Fatalf("ReparentBranch(%s, %s) failed: %v", p[0], p[1], err)
 		}
 	}
