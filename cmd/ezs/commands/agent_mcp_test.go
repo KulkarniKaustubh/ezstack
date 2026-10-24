@@ -77,11 +77,25 @@ func TestParseMCPVersionOutput(t *testing.T) {
 }
 
 func TestDocsReferenceFor(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("EZSTACK_HOME", home)
 	if got := docsReferenceFor(true); got != mcpDocsStub {
 		t.Errorf("docsReferenceFor(true) should return the MCP stub, got %q", got[:min(80, len(got))])
 	}
-	if got := docsReferenceFor(false); got != ezsDocsReference {
-		t.Errorf("docsReferenceFor(false) should return the full embedded docs")
+	got := docsReferenceFor(false)
+	if len(ezsDocsReference) <= docsInlineLimit {
+		if got != ezsDocsReference {
+			t.Errorf("docsReferenceFor(false) should inline docs that fit")
+		}
+		return
+	}
+	// Too big for one argv string on Linux: referenced by file instead.
+	if len(got) > docsInlineLimit || !strings.Contains(got, home) {
+		t.Fatalf("docsReferenceFor(false) should point at a docs file under %s, got %q", home, got[:min(200, len(got))])
+	}
+	data, err := os.ReadFile(filepath.Join(home, "DOCUMENTATION.md"))
+	if err != nil || string(data) != ezsDocsReference {
+		t.Fatalf("docs file missing or stale: %v", err)
 	}
 }
 

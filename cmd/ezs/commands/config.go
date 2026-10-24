@@ -32,7 +32,6 @@ func printConfigUsage() {
     cd_after_new          Auto-cd to new worktree (true/false, per-repo)
     use_worktrees         Use git worktrees for new branches (true/false, per-repo)
     init_submodules       Mirror initialized submodules into new worktrees (true/false, per-repo)
-    sync_strategy         Sync method: "rebase" or "merge" (per-repo)
     agent_command         AI agent CLI command (default: "claude", per-repo)
 
 %sOPTIONS%s
@@ -191,21 +190,8 @@ func configSet(key, value string) error {
 		repoCfg.InitSubmodules = &boolVal
 		cfg.SetRepoConfig(repoPath, repoCfg)
 		ui.Info(fmt.Sprintf("Setting init_submodules for repo: %s", repoPath))
-	case "sync_strategy":
-		repoPath, err := getCurrentRepoPath()
-		if err != nil {
-			return fmt.Errorf("sync_strategy is a per-repo setting: %w", err)
-		}
-		if value != "rebase" && value != "merge" {
-			return fmt.Errorf("sync_strategy must be 'rebase' or 'merge'")
-		}
-		repoCfg := cfg.GetRepoConfig(repoPath)
-		if repoCfg == nil {
-			repoCfg = &config.RepoConfig{}
-		}
-		repoCfg.SyncStrategy = value
-		cfg.SetRepoConfig(repoPath, repoCfg)
-		ui.Info(fmt.Sprintf("Setting sync_strategy for repo: %s", repoPath))
+	case "sync_strategy", "use_gh_stack":
+		return fmt.Errorf("%s was removed: ezstack always rebases, pushes, and links stacks with `gh stack`", key)
 	case "agent_command":
 		repoPath, err := getCurrentRepoPath()
 		if err != nil {
@@ -222,7 +208,7 @@ func configSet(key, value string) error {
 		cfg.SetRepoConfig(repoPath, repoCfg)
 		ui.Info(fmt.Sprintf("Setting agent_command for repo: %s", repoPath))
 	default:
-		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, init_submodules, sync_strategy, agent_command", key)
+		return fmt.Errorf("unknown config key: %s\nValid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, init_submodules, agent_command", key)
 	}
 
 	if err := cfg.Save(); err != nil {
@@ -287,11 +273,6 @@ func configShow() error {
 				fmt.Fprintf(os.Stderr, "  init_submodules: %v\n", *repoCfg.InitSubmodules)
 			} else {
 				fmt.Fprintf(os.Stderr, "  init_submodules: true (default)\n")
-			}
-			if repoCfg.SyncStrategy != "" {
-				fmt.Fprintf(os.Stderr, "  sync_strategy: %s\n", repoCfg.SyncStrategy)
-			} else {
-				fmt.Fprintf(os.Stderr, "  sync_strategy: rebase (default)\n")
 			}
 			if repoCfg.AgentCommand != "" {
 				fmt.Fprintf(os.Stderr, "  agent_command: %s\n", repoCfg.AgentCommand)
@@ -513,19 +494,6 @@ func configInteractive() error {
 	initSubmodules := ui.ConfirmTUIWithDefault("Mirror initialized submodules into new worktrees", currentInitSubmodules)
 	repoCfg.InitSubmodules = &initSubmodules
 	ui.Success(fmt.Sprintf("Set init_submodules = %v", initSubmodules))
-
-	// Sync strategy: rebase or merge
-	options := []string{"merge", "rebase"}
-	defaultIdx := 0
-	syncStrategyIdx := ui.SelectTUI(options, "Select your sync strategy (merge is recommended since rebase will force push)", defaultIdx)
-	if syncStrategyIdx >= 0 {
-		if syncStrategyIdx == 0 {
-			repoCfg.SyncStrategy = "merge"
-		} else {
-			repoCfg.SyncStrategy = "rebase"
-		}
-		ui.Success(fmt.Sprintf("Set sync_strategy = %s", repoCfg.SyncStrategy))
-	}
 
 	// Agent command: which CLI 'ezs agent' should invoke.
 	agentCommand := strings.TrimSpace(ui.Prompt("AI agent CLI command (used by 'ezs agent')", currentAgentCommand))

@@ -119,7 +119,7 @@ export function BranchActions({
           </Button>
         </Tooltip>
 
-        <Tooltip content="Update stack descriptions">
+        <Tooltip content="Retarget PR bases and link them into a GitHub stack">
           <Button variant="outline" size="sm" onClick={onUpdateStack} disabled={isLoading} className="w-full justify-start">
             <Layers className="h-3.5 w-3.5" />
             Stack PRs

@@ -668,16 +668,11 @@ export class EzsCli {
    */
   async commit(
     message: string,
-    opts?: { all?: boolean; merge?: boolean; rebase?: boolean },
+    opts?: { all?: boolean },
   ): Promise<void> {
     const args = ["commit", "-m", message, "--no-push"];
     if (opts?.all) {
       args.push("-a");
-    }
-    if (opts?.merge) {
-      args.push("--merge");
-    } else if (opts?.rebase) {
-      args.push("--rebase");
     }
     await this.execYes(args);
   }
@@ -689,7 +684,7 @@ export class EzsCli {
    * follow-up is Push with Options... → --force.
    */
   async amend(
-    opts?: { message?: string; all?: boolean; merge?: boolean; rebase?: boolean },
+    opts?: { message?: string; all?: boolean },
   ): Promise<void> {
     const args = ["amend", "--no-push"];
     if (opts?.message) {
@@ -699,11 +694,6 @@ export class EzsCli {
     }
     if (opts?.all) {
       args.push("-a");
-    }
-    if (opts?.merge) {
-      args.push("--merge");
-    } else if (opts?.rebase) {
-      args.push("--rebase");
     }
     await this.execYes(args);
   }

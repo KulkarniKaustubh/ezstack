@@ -120,8 +120,6 @@ pub struct RepoConfig {
     pub worktree_base_dir: String,
     #[serde(default)]
     pub default_base_branch: Option<String>,
-    #[serde(default)]
-    pub sync_strategy: Option<String>,
 }
 
 /// Live SSH connection state for the currently-active remote.

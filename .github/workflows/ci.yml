@@ -28,6 +28,17 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Install gh-stack (ezstack's rebase/push engine)
+        # ezstack drives github/gh-stack for every rebase, stack push and
+        # PR link; its tests (internal/ghstack, itests) skip without it.
+        # gh-stack >= 0.2.0 needs git >= 2.36 for cross-worktree rebases.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git version | awk '{split($3, v, "."); if (v[1] < 2 || (v[1] == 2 && v[2] < 36)) { print "git >= 2.36 required"; exit 1 }}'
+          gh extension install github/gh-stack --pin v0.2.1
+          gh stack --version
+
       - name: Test
         run: go test -v -race ./...
 

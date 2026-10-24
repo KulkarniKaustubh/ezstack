@@ -25,7 +25,7 @@ func printPRUsage() {
     draft     Toggle PR between draft and ready
     merge     Merge a pull request
     refresh   Reconcile cached PR state from GitHub
-    stack     Update all PR descriptions with stack info
+    stack     Link the stack's PRs into a GitHub stacked PR
     unlink    Clear cached PR association for a branch
     update    Push changes to existing PR
 
@@ -146,7 +146,7 @@ func prInteractive() error {
 		}
 	}
 	if prCount > 0 {
-		options = append(options, fmt.Sprintf("%s  Update stack info in %d PR(s)", ui.IconStack, prCount))
+		options = append(options, fmt.Sprintf("%s  Link %d PR(s) into a GitHub stack", ui.IconStack, prCount))
 		optionActions = append(optionActions, "stack")
 	}
 
@@ -394,8 +394,8 @@ func prCreateAllDraft(currentStack *config.Stack, draft, force bool, aiGen aiPRG
 	}
 
 	if created > 0 {
-		if err := updateStackDescriptions(gh, currentStack, ""); err != nil {
-			ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
+		if mgr, err := stack.NewReadOnlyManager(cwd); err == nil {
+			updatePRMetadata(gh, mgr, currentStack)
 		}
 	}
 
@@ -744,9 +744,7 @@ func prCreate(args []string) error {
 
 	ui.Success(fmt.Sprintf("Created %s #%d: %s", prType, pr.Number, pr.URL))
 
-	if err := updateStackDescriptions(gh, currentStack, branch.Name); err != nil {
-		ui.Warn(fmt.Sprintf("Failed to update stack descriptions: %v", err))
-	}
+	updatePRMetadata(gh, mgr, currentStack)
 
 	return nil
 }
@@ -780,9 +778,9 @@ func prUpdate(args []string) error {
     ezs pr update [options]
 
 %sDESCRIPTION%s
-    Reconciles cached PR state from GitHub, then pushes code changes and
-    updates the PR base branch and stack descriptions to match the current
-    stack structure. If the PR has been merged or closed externally, this
+    Reconciles cached PR state from GitHub, then pushes code changes,
+    retargets the PR base branch, and relinks the GitHub stacked PR to match
+    the current stack structure. If the PR has been merged or closed externally, this
     refuses to push and reports the new state.
 
 %sOPTIONS%s
@@ -954,7 +952,7 @@ func prUpdate(args []string) error {
 	// only need to update PR metadata when GitHub is reachable, and that
 	// determination was already made above.
 	if ghErr == nil {
-		updatePRMetadata(gh, currentStack, branch)
+		updatePRMetadata(gh, mgr, currentStack)
 	}
 
 	return nil
@@ -1182,7 +1180,7 @@ func prDraft(args []string) error {
 func prStack(args []string) error {
 	fs := pflag.NewFlagSet("pr stack", pflag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, `%sUpdate all PR descriptions with stack info%s
+		fmt.Fprintf(os.Stderr, `%sLink the stack's PRs into a GitHub stack%s
 
 %sUSAGE%s
     ezs pr stack [options]
@@ -1190,7 +1188,14 @@ func prStack(args []string) error {
 %sOPTIONS%s
     --branch <name>  Target a specific branch's stack (instead of current)
     -h, --help       Show this help message
-`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
+
+%sDESCRIPTION%s
+    Retargets each open PR's base to its parent branch and links the PRs
+    into GitHub stacked PRs with gh stack link (one GitHub stack per linear
+    chain; GitHub shows the stack navigation on every PR). Also removes the
+    "PR Stack" section older ezstack versions appended to PR descriptions.
+    Never creates PRs, pushes, or changes draft state.
+`, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 	branchFlag := fs.String("branch", "", "Target a specific branch's stack")
 	helpFlag := fs.BoolP("help", "h", false, "Show help")
@@ -1248,17 +1253,19 @@ func prStack(args []string) error {
 		}
 	}
 
-	ui.Info(fmt.Sprintf("Will update stack descriptions in %d PR(s)", prCount))
-	if !ui.ConfirmTUI("Update all PR stack descriptions") {
+	ui.Info(fmt.Sprintf("Will update %d PR(s)", prCount))
+	if !ui.ConfirmTUI("Retarget PR bases and link them into a GitHub stack") {
 		ui.Warn("Cancelled")
 		return nil
 	}
 
-	if err := updateStackDescriptions(gh, currentStack, branch.Name); err != nil {
+	if err := requireGHStack(); err != nil {
 		return err
 	}
-
-	ui.Success("Stack descriptions updated in all PRs")
+	if _, err := reconcileGHStack(mgr); err != nil {
+		return err
+	}
+	updatePRMetadata(gh, mgr, currentStack)
 	return nil
 }
 

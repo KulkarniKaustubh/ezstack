@@ -283,36 +283,6 @@ func (g *Git) IsAncestor(ancestor, descendant string) (bool, error) {
 	return true, nil
 }
 
-// IsBranchMerged checks if a branch has been merged into target
-func (g *Git) IsBranchMerged(branch, target string) (bool, error) {
-	// Check if the branch commit is an ancestor of target
-	cmd := exec.Command("git", "merge-base", "--is-ancestor", branch, target)
-	cmd.Dir = g.RepoDir
-	err := cmd.Run()
-	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			if exitErr.ExitCode() == 1 {
-				return false, nil
-			}
-		}
-		return false, err
-	}
-	return true, nil
-}
-
-// GetCommitsBehind returns the number of commits branch is behind target
-func (g *Git) GetCommitsBehind(branch, target string) (int, error) {
-	output, err := g.run("rev-list", "--count", branch+".."+target)
-	if err != nil {
-		return 0, err
-	}
-	count, err := strconv.Atoi(strings.TrimSpace(output))
-	if err != nil {
-		return 0, fmt.Errorf("failed to parse commit count: %w", err)
-	}
-	return count, nil
-}
-
 // GetCommitsAhead returns the number of commits branch is ahead of target
 func (g *Git) GetCommitsAhead(branch, target string) (int, error) {
 	output, err := g.run("rev-list", "--count", target+".."+branch)
@@ -353,30 +323,6 @@ func (g *Git) GetAheadBehind(local, remote string) (ahead, behind int, err error
 	return ahead, behind, nil
 }
 
-// FastForwardMerge runs `git merge --ff-only target` in the current repo.
-// Used by sync's remote-integration step to advance a branch to its remote's
-// new tip when the local has no diverging commits. Returns RebaseResult so
-// callers can use the same conflict-handling shape as RebaseNonInteractive.
-//
-// The --ff-only flag rejects any merge that would require a real merge
-// commit, so this is safe to call even when the caller hasn't pre-checked
-// divergence — git will refuse rather than create unexpected history.
-func (g *Git) FastForwardMerge(target string) RebaseResult {
-	cmd := exec.Command("git", "merge", "--ff-only", target)
-	cmd.Dir = g.RepoDir
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		combined := stdout.String() + stderr.String()
-		// --ff-only doesn't produce a CONFLICT in the merge sense — it just
-		// refuses on divergence — but a worktree-state error or refusal is
-		// still a real failure for our purposes.
-		return RebaseResult{Error: fmt.Errorf("fast-forward failed: %s", strings.TrimSpace(combined))}
-	}
-	return RebaseResult{Success: true}
-}
-
 // GetDiffStat returns the total lines added and removed between base and head.
 // Uses three-dot diff (merge-base) to show only changes introduced by head,
 // not changes on base that head doesn't have.
@@ -403,33 +349,6 @@ func (g *Git) GetDiffStat(base, head string) (added int, removed int, err error)
 		}
 	}
 	return added, removed, nil
-}
-
-// IsLocalAheadOfRemote checks if the local branch has commits not in the remote.
-// If remote is empty, defaults to "origin".
-// Returns true if local is ahead (needs push), false if in sync or behind.
-//
-// Distinguishes "remote ref doesn't exist" (treat as ahead — first push) from
-// transient or unrelated rev-parse failures (lock contention, repo corruption,
-// bad ref name) which are surfaced as errors. Returning (true, nil) on any
-// error would let downstream code push to a remote ref that may not be the
-// one we expected.
-func (g *Git) IsLocalAheadOfRemote(branch string, remote string) (bool, error) {
-	if remote == "" {
-		remote = "origin"
-	}
-	remoteBranch := remote + "/" + branch
-	if _, err := g.run("rev-parse", "--verify", remoteBranch); err != nil {
-		if isMissingRefError(err) {
-			return true, nil
-		}
-		return false, fmt.Errorf("rev-parse %s: %w", remoteBranch, err)
-	}
-	ahead, err := g.GetCommitsAhead(branch, remoteBranch)
-	if err != nil {
-		return false, err
-	}
-	return ahead > 0, nil
 }
 
 // isMissingRefError returns true if err's message looks like git's
@@ -553,212 +472,6 @@ func (g *Git) HasDivergedFromRemote(branch, remote string) (bool, int, int, erro
 	return hasDiverged, localAhead, remoteBehind, nil
 }
 
-// RebaseResult contains the result of a rebase operation
-type RebaseResult struct {
-	Success     bool
-	HasConflict bool
-	Error       error
-}
-
-// RebaseNonInteractive rebases current branch onto target without interactive mode
-// Returns structured result instead of just error for better conflict handling
-func (g *Git) RebaseNonInteractive(target string) RebaseResult {
-	defer startProgress(fmt.Sprintf("Rebasing onto %s...", target))()
-
-	cmd := exec.Command("git", "rebase", target)
-	cmd.Dir = g.RepoDir
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		// Check if it's a conflict
-		stderrStr := stderr.String()
-		if strings.Contains(stderrStr, "CONFLICT") ||
-			strings.Contains(stderrStr, "could not apply") ||
-			strings.Contains(stderrStr, "Resolve all conflicts") {
-			return RebaseResult{HasConflict: true, Error: fmt.Errorf("rebase conflict")}
-		}
-		// Check if rebase is in progress
-		inProgress, _ := g.IsRebaseInProgress()
-		if inProgress {
-			return RebaseResult{HasConflict: true, Error: fmt.Errorf("rebase conflict")}
-		}
-		return RebaseResult{Error: fmt.Errorf("rebase failed: %s", stderrStr)}
-	}
-	return RebaseResult{Success: true}
-}
-
-// RebaseOntoNonInteractive rebases commits from oldBase to current onto newBase
-// Returns structured result for better conflict handling
-func (g *Git) RebaseOntoNonInteractive(newBase, oldBase string) RebaseResult {
-	defer startProgress(fmt.Sprintf("Rebasing onto %s...", newBase))()
-
-	cmd := exec.Command("git", "rebase", "--onto", newBase, oldBase)
-	cmd.Dir = g.RepoDir
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		// Check if it's a conflict
-		stderrStr := stderr.String()
-		if strings.Contains(stderrStr, "CONFLICT") ||
-			strings.Contains(stderrStr, "could not apply") ||
-			strings.Contains(stderrStr, "Resolve all conflicts") {
-			return RebaseResult{HasConflict: true, Error: fmt.Errorf("rebase conflict")}
-		}
-		// Check if rebase is in progress
-		inProgress, _ := g.IsRebaseInProgress()
-		if inProgress {
-			return RebaseResult{HasConflict: true, Error: fmt.Errorf("rebase conflict")}
-		}
-		return RebaseResult{Error: fmt.Errorf("rebase failed: %s", stderrStr)}
-	}
-	return RebaseResult{Success: true}
-}
-
-// Rebase rebases current branch onto target
-func (g *Git) Rebase(target string) error {
-	return g.RunInteractive("rebase", target)
-}
-
-// RebaseOnto interactively rebases commits in `oldBase..HEAD` onto newBase.
-// Used by stack-aware callers that know the OLD parent SHA the current branch
-// was sitting on top of, so they can avoid replaying the parent's own commits
-// when the parent has been rewritten. When oldBase equals newBase this is
-// equivalent to plain `git rebase newBase`.
-func (g *Git) RebaseOnto(newBase, oldBase string) error {
-	return g.RunInteractive("rebase", "--onto", newBase, oldBase)
-}
-
-// MergeNonInteractive merges target into the current branch without interactive mode
-// Returns structured result for conflict handling, matching RebaseResult for compatibility
-func (g *Git) MergeNonInteractive(target string) RebaseResult {
-	defer startProgress(fmt.Sprintf("Merging %s...", target))()
-
-	cmd := exec.Command("git", "merge", target, "--no-edit")
-	cmd.Dir = g.RepoDir
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-
-	err := cmd.Run()
-	if err != nil {
-		// git merge outputs conflict info to stdout, not stderr
-		combined := stdout.String() + stderr.String()
-		if strings.Contains(combined, "CONFLICT") ||
-			strings.Contains(combined, "Automatic merge failed") ||
-			strings.Contains(combined, "fix conflicts") {
-			return RebaseResult{HasConflict: true, Error: fmt.Errorf("merge conflict")}
-		}
-		return RebaseResult{Error: fmt.Errorf("merge failed: %s", combined)}
-	}
-	return RebaseResult{Success: true}
-}
-
-// Merge merges target into the current branch interactively
-func (g *Git) Merge(target string) error {
-	return g.RunInteractive("merge", target)
-}
-
-// StashPush stashes all changes including untracked files
-func (g *Git) StashPush() error {
-	_, err := g.run("stash", "push", "-u", "-m", "ezstack-autostash")
-	return err
-}
-
-// StashPop pops the ezstack autostash entry for the current branch.
-// Uses targeted lookup to avoid popping user stashes or stashes from other branches.
-// Returns nil if no ezstack stash is found (nothing to pop).
-func (g *Git) StashPop() error {
-	branch, _ := g.CurrentBranch()
-	if branch == "" || branch == "HEAD" {
-		// Detached HEAD (e.g. mid-rebase): don't do a blind `git stash pop`
-		// — that would pop the top of the stash stack, which could be an
-		// unrelated user stash or a stash from another worktree. Instead,
-		// look for the most recent ezstack-autostash entry by message only.
-		idx, found := g.FindAnyEzstackStash()
-		if !found {
-			return nil
-		}
-		return g.StashPopIndex(idx)
-	}
-	idx, found := g.FindEzstackStash(branch)
-	if !found {
-		return nil // no ezstack stash to pop
-	}
-	return g.StashPopIndex(idx)
-}
-
-// FindAnyEzstackStash returns the most recent stash entry tagged
-// "ezstack-autostash" regardless of branch. Used only in the detached-HEAD
-// fallback path where the current branch is unknown.
-func (g *Git) FindAnyEzstackStash() (int, bool) {
-	output, err := g.run("stash", "list")
-	if err != nil || output == "" {
-		return -1, false
-	}
-	for _, line := range strings.Split(output, "\n") {
-		if !strings.Contains(line, "ezstack-autostash") {
-			continue
-		}
-		start := strings.Index(line, "stash@{")
-		if start == -1 {
-			continue
-		}
-		end := strings.Index(line[start:], "}")
-		if end == -1 {
-			continue
-		}
-		idx, err := strconv.Atoi(line[start+7 : start+end])
-		if err != nil {
-			continue
-		}
-		return idx, true
-	}
-	return -1, false
-}
-
-// FindEzstackStash finds the stash index of an ezstack autostash entry for a specific branch.
-// Git stash entries look like: "stash@{N}: On <branch>: ezstack-autostash"
-// Returns (index, true) if found, (-1, false) if not found.
-// Matches both branch name and message to avoid touching stashes from other worktrees.
-func (g *Git) FindEzstackStash(branchName string) (int, bool) {
-	output, err := g.run("stash", "list")
-	if err != nil || output == "" {
-		return -1, false
-	}
-
-	needle := "On " + branchName + ": ezstack-autostash"
-	for _, line := range strings.Split(output, "\n") {
-		if strings.Contains(line, needle) {
-			// Parse stash index from "stash@{N}: ..."
-			start := strings.Index(line, "stash@{")
-			if start == -1 {
-				continue
-			}
-			end := strings.Index(line[start:], "}")
-			if end == -1 {
-				continue
-			}
-			idxStr := line[start+7 : start+end]
-			idx, err := strconv.Atoi(idxStr)
-			if err != nil {
-				continue
-			}
-			return idx, true
-		}
-	}
-	return -1, false
-}
-
-// StashPopIndex pops a specific stash entry by index.
-func (g *Git) StashPopIndex(index int) error {
-	_, err := g.run("stash", "pop", fmt.Sprintf("stash@{%d}", index))
-	return err
-}
-
 // HasChanges returns true if the working directory has uncommitted changes
 func (g *Git) HasChanges() (bool, error) {
 	output, err := g.run("status", "--porcelain")
@@ -766,13 +479,6 @@ func (g *Git) HasChanges() (bool, error) {
 		return false, err
 	}
 	return output != "", nil
-}
-
-// ResetHard performs a hard reset to the given ref
-// This is used to fast-forward a branch that has no commits of its own
-func (g *Git) ResetHard(ref string) error {
-	_, err := g.run("reset", "--hard", ref)
-	return err
 }
 
 // GetRemote gets the remote URL

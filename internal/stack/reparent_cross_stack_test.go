@@ -66,7 +66,7 @@ func TestReparent_Issue19_SevenBranchChain(t *testing.T) {
 	}
 	for _, p := range pairs {
 		mgr, _ := NewManager(repoDir)
-		if _, err := mgr.ReparentBranch(p[0], p[1], false); err != nil {
+		if _, err := mgr.ReparentBranch(p[0], p[1]); err != nil {
 			t.Fatalf("ReparentBranch(%s, %s) error = %v", p[0], p[1], err)
 		}
 		mgr, _ = NewManager(repoDir)
@@ -121,7 +121,7 @@ func TestReparent_Issue19_TwoStackCanonical(t *testing.T) {
 	}
 
 	mgr, _ = NewManager(repoDir)
-	if _, err := mgr.ReparentBranch("branchB1", "branchA2", false); err != nil {
+	if _, err := mgr.ReparentBranch("branchB1", "branchA2"); err != nil {
 		t.Fatalf("ReparentBranch: %v", err)
 	}
 
@@ -166,7 +166,7 @@ func TestReparent_Issue19_SubtreeMove(t *testing.T) {
 	}
 
 	mgr, _ = NewManager(repoDir)
-	if _, err := mgr.ReparentBranch("branchB1", "branchA1", false); err != nil {
+	if _, err := mgr.ReparentBranch("branchB1", "branchA1"); err != nil {
 		t.Fatalf("ReparentBranch: %v", err)
 	}
 

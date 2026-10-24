@@ -274,17 +274,17 @@
             <tr>
               <td><code>ezstack_commit</code></td>
               <td><span class="mode-label mode-label-feature">destructive</span></td>
-              <td>Commit staged (or all) changes and auto-sync children. <code>message</code> (required), <code>all</code>, <code>merge</code>, <code>rebase</code>. Auto-pushes if the branch is already on the remote.</td>
+              <td>Commit staged (or all) changes and auto-restack children. <code>message</code> (required), <code>all</code>. Auto-pushes if the branch is already on the remote.</td>
             </tr>
             <tr>
               <td><code>ezstack_amend</code></td>
               <td><span class="mode-label mode-label-feature">destructive</span></td>
-              <td>Amend the last commit and auto-sync children. Optional <code>message</code> (otherwise <code>--no-edit</code>), <code>all</code>, <code>merge</code>, <code>rebase</code>. Force-pushes if the branch is already on the remote.</td>
+              <td>Amend the last commit and auto-restack children. Optional <code>message</code> (otherwise <code>--no-edit</code>), <code>all</code>. Force-pushes if the branch is already on the remote.</td>
             </tr>
             <tr>
               <td><code>ezstack_sync</code></td>
               <td><span class="mode-label mode-label-feature">destructive</span></td>
-              <td>Rebase (or merge) stack branches with their base. <code>stack</code>, <code>all</code>, <code>current</code>, <code>parent</code>, <code>children</code>, <code>merge</code>, <code>dry_run</code>, <code>resume</code>.</td>
+              <td>Restack branches onto their updated parents with gh stack, push them, clean up merged branches, relink PRs. <code>stack</code>, <code>all</code>, <code>current</code>, <code>branch</code>, <code>parent</code>, <code>children</code>, <code>squash</code>, <code>stats</code>, <code>no_delete_local</code>, <code>no_push</code>, <code>dry_run</code>, <code>resume</code>, <code>abort</code>.</td>
             </tr>
             <tr>
               <td><code>ezstack_push</code></td>
@@ -314,7 +314,7 @@
             <tr>
               <td><code>ezstack_pr_update</code></td>
               <td><span class="mode-label mode-label-feature">destructive</span></td>
-              <td>Push the latest commits and refresh the PR base branch and stack description. <code>branch</code>.</td>
+              <td>Push the latest commits, retarget the PR base branch, and relink the GitHub stack. <code>branch</code>.</td>
             </tr>
             <tr>
               <td><code>ezstack_pr_merge</code></td>
@@ -334,7 +334,7 @@
             <tr>
               <td><code>ezstack_pr_stack</code></td>
               <td>&mdash;</td>
-              <td>Update every PR description in the stack with navigation links. <code>branch</code>.</td>
+              <td>Retarget PR bases and link the stack's PRs into a GitHub stacked PR (<code>gh stack link</code>). <code>branch</code>.</td>
             </tr>
             <tr>
               <td><code>ezstack_pr_refresh</code></td>
@@ -359,7 +359,7 @@
             <tr>
               <td><code>ezstack_config_set</code></td>
               <td>&mdash;</td>
-              <td>Set a config value. <code>key</code> and <code>value</code> (both required). Valid keys: <code>worktree_base_dir</code>, <code>default_base_branch</code>, <code>github_token</code>, <code>cd_after_new</code>, <code>use_worktrees</code>, <code>sync_strategy</code>, <code>agent_command</code>.</td>
+              <td>Set a config value. <code>key</code> and <code>value</code> (both required). Valid keys: <code>worktree_base_dir</code>, <code>default_base_branch</code>, <code>github_token</code>, <code>cd_after_new</code>, <code>use_worktrees</code>, <code>init_submodules</code>, <code>agent_command</code>.</td>
             </tr>
             <tr>
               <td><code>ezstack_config_export</code></td>

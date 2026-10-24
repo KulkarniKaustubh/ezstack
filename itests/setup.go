@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
@@ -118,6 +119,12 @@ func setupStubGh(t *testing.T, env *TestEnv) {
 	ghPath := filepath.Join(env.StubBinDir, "gh")
 	if err := os.Symlink(stubScript, ghPath); err != nil {
 		t.Fatalf("Failed to create gh symlink: %v", err)
+	}
+
+	// Record the real gh (if any) before the stub shadows it: the stub
+	// forwards `gh stack` to it so the real gh-stack extension runs.
+	if real, err := exec.LookPath("gh"); err == nil && !strings.HasPrefix(real, env.TmpDir) {
+		os.Setenv("STUB_GH_REAL", real)
 	}
 
 	// Prepend stub bin dir to PATH

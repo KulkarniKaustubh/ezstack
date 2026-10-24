@@ -193,32 +193,6 @@ func TestCommit_PushChildrenFlag(t *testing.T) {
 	}
 }
 
-// TestCommit_PushChildrenFlag_Merge: same as above but with --merge. We want
-// to prove the merge path also ends up with origin/child in sync, and that
-// no force push is required (merge only adds commits).
-func TestCommit_PushChildrenFlag_Merge(t *testing.T) {
-	env := SetupTestEnv(t)
-	defer env.Cleanup()
-
-	parentWT, childWT, bare := setupCommitTestStack(t, env)
-
-	stageNewFile(t, parentWT, "push-children-merge.txt", "merge body\n")
-	chdirForTest(t, parentWT)
-
-	if err := commands.Commit([]string{"-m", "parent: merge sync", "--merge", "--push", "--push-children"}); err != nil {
-		t.Fatalf("commands.Commit: %v", err)
-	}
-
-	parentLocal := revParse(t, parentWT, "HEAD")
-	if got := revParse(t, bare, "parent"); got != parentLocal {
-		t.Errorf("origin/parent = %s, want %s", got, parentLocal)
-	}
-	childLocal := revParse(t, childWT, "HEAD")
-	if got := revParse(t, bare, "child"); got != childLocal {
-		t.Errorf("origin/child = %s, want %s", got, childLocal)
-	}
-}
-
 // TestCommit_PushChildrenSkipsUnpushedChild: a child that has never been
 // pushed to origin must stay local even when --push-children is set.
 // commands.Commit should not silently publish brand-new branches.

@@ -109,7 +109,7 @@ All commands are available via the Command Palette (`Cmd+Shift+P` / `Ctrl+Shift+
 | **ezstack: Create PR** | Create a GitHub PR (prompts for title and draft/ready) |
 | **ezstack: Create Draft PRs for Stack** | Open draft PRs for every branch in the stack that doesn't have one |
 | **ezstack: Update PR** | Update the current branch's PR base |
-| **ezstack: Update Stack Info in PRs** | Update the stack navigation table in all PR descriptions |
+| **ezstack: Link Stack PRs on GitHub** | Retarget PR bases and link the stack's PRs into a GitHub stacked PR (`ezs pr stack`) |
 | **ezstack: Merge PR** | Merge the current PR (prompts for squash/merge/rebase) |
 | **ezstack: Toggle PR Draft** | Toggle draft status on the current PR |
 | **ezstack: Open PR in Browser** | Open the GitHub PR page for a branch |

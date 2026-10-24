@@ -2,13 +2,16 @@ package commands
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
+	"strconv"
+	"sync"
 
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v4/internal/ghstack"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/github"
 	"github.com/KulkarniKaustubh/ezstack/v4/internal/hooks"
@@ -17,7 +20,8 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// Sync syncs the stack with remote - handles merged parents and branches behind origin/main
+// Sync restacks branches with `gh stack rebase`, pushes them, cleans up merged
+// branches, and refreshes PR bases and the GitHub stack links.
 func Sync(args []string) error {
 	if HasExamplesFlag("sync", args) {
 		return nil
@@ -31,54 +35,54 @@ func Sync(args []string) error {
     ezs sync <hash-prefix>    Sync a specific stack by hash (min 3 characters)
 
 %sOPTIONS%s
-    -s, --stack            Sync current stack (auto-detect what needs syncing)
+    -s, --stack            Sync current stack
     -a, --all              Sync ALL stacks
-    -c, --current          Sync current branch only (auto-detect what it needs)
+    -c, --current          Sync current branch only (rebase it and the branches below it)
     -b, --branch <name>    Sync a specific branch by name (rebase onto parent + cascade to children)
-    -p, --parent           Rebase current branch onto its parent
+    -p, --parent           Rebase current branch onto its parent (no trunk update)
     -C, --children         Rebase child branches onto current branch
-    --continue             Continue after resolving conflicts (completes rebase/merge, pushes, then re-syncs the entire descendant subtree). Honors -s, -a, -c, -b, and positional <hash-prefix> to limit the scope.
-    --merge                Use git merge instead of git rebase
-    --rebase               Use git rebase (overrides sync_strategy config)
+    --continue             Continue a sync that stopped on a conflict, then finish syncing. Honors -s, -a, -c, -b, and positional <hash-prefix> to limit the scope.
+    --abort                Abort a sync that stopped on a conflict and restore every branch
+    --no-push              Rebase only; don't push rebased branches
     --stats                Print commits-per-branch summary after syncing
     --squash               Squash each child's commits before rebasing onto parent
     --no-delete-local      Don't delete local branches after their PRs are merged
+    --include-remote-worktrees   Also rebase and push pickup branches
+                                 (ezs new origin/<branch> / -r). Left as-is
+                                 by default so another contributor's
+                                 history is never rewritten.
     --dry-run              Preview what would be synced without making changes
-    --no-autostash         Don't stash uncommitted changes before rebase
     --json                 Output dry-run results as JSON (requires --dry-run)
-    --include-remote-worktrees   Include pickup branches (ezs new origin/<branch> / -r)
-                                 in bulk sync. Excluded by default to avoid rewriting
-                                 another contributor's history.
     -h, --help             Show this help message
 
 %sDESCRIPTION%s
-    Syncs your stack branches with the remote. Without flags, shows an
-    interactive menu. This command can:
+    Restacks your branches with gh stack (github/gh-stack, required): fetches
+    the base branch, rebases every branch onto its updated parent in the
+    worktree that holds it, and drops the commits of parents whose PRs were
+    merged. Rebased branches are then pushed with --force-with-lease (asks
+    once; -y or --no-push to skip the prompt). Without flags, shows an
+    interactive menu.
 
-    1. Detect and sync branches with merged parents (rebase onto base)
-    2. Detect and sync branches behind their stack's base branch
-    3. Sync only the current branch (wherever it is in the chain)
-    4. Rebase current branch onto its parent
-    5. Rebase child branches onto current branch
+    Tree-shaped stacks map to one gh stack stack per root-to-leaf path; a
+    branch with several children appears in each path below it, so every
+    subtree is restacked when it changes.
 
-    By default, sync uses git rebase. Use --merge to use git merge instead,
-    which preserves commit history and avoids force pushes. The default
-    strategy can be set per-repo with: ezs config set sync_strategy merge
-    Use --rebase or --merge to override the configured strategy.
+    On a conflict, sync stops in the conflicted worktree. Resolve it, stage
+    the files, then run "ezs sync --continue" (or "ezs sync --abort").
 
-    When run from main (not in a stack worktree), shows a menu to choose
-    which stack to sync. You can also pass a stack hash prefix (minimum
-    3 characters) to sync a specific stack from anywhere.
+    Worktrees with uncommitted changes block the rebase; commit or stash
+    them first.
 
 %sEXAMPLES%s
     ezs sync              Interactive menu
     ezs sync a1b2c        Sync stack matching hash prefix
-    ezs sync -s           Auto-sync current stack
-    ezs sync -a           Auto-sync all stacks
+    ezs sync -s           Sync current stack
+    ezs sync -a           Sync all stacks
     ezs sync -c           Sync current branch only
     ezs sync -b feat-x    Sync a specific branch by name
     ezs sync -p           Rebase current onto parent
     ezs sync -C           Rebase children onto current
+    ezs sync --continue   Finish a sync after resolving conflicts
 `, ui.Bold, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset, ui.Cyan, ui.Reset)
 	}
 
@@ -91,14 +95,13 @@ func Sync(args []string) error {
 	branchFlag := fs.StringP("branch", "b", "", "Sync a specific branch by name")
 	parentFlag := fs.BoolP("parent", "p", false, "Rebase onto parent")
 	childrenFlag := fs.BoolP("children", "C", false, "Rebase children")
-	mergeFlag := fs.Bool("merge", false, "Use git merge instead of git rebase")
-	rebaseFlag := fs.Bool("rebase", false, "Use git rebase (overrides config)")
 	noDeleteLocal := fs.Bool("no-delete-local", false, "Don't delete local branches after their PRs are merged")
 	dryRunFlag := fs.Bool("dry-run", false, "Preview what would be synced")
 	continueFlag := fs.Bool("continue", false, "Continue after resolving conflicts")
-	noAutostashFlag := fs.Bool("no-autostash", false, "Don't stash uncommitted changes before rebase")
+	abortFlag := fs.Bool("abort", false, "Abort a sync stopped on a conflict")
+	noPushFlag := fs.Bool("no-push", false, "Don't push rebased branches")
 	jsonFlag := fs.Bool("json", false, "Output dry-run results as JSON")
-	includeRemoteFlag := fs.Bool("include-remote-worktrees", false, "Include pickup branches (IsRemote=true) in bulk sync")
+	includeRemoteFlag := fs.Bool("include-remote-worktrees", false, "Also rebase and push pickup branches")
 
 	if err := fs.Parse(args); err != nil {
 		if err == pflag.ErrHelp {
@@ -110,209 +113,798 @@ func Sync(args []string) error {
 		fs.Usage()
 		return nil
 	}
+	if *jsonFlag && !*dryRunFlag {
+		return fmt.Errorf("--json requires --dry-run")
+	}
+	if *continueFlag && *abortFlag {
+		return fmt.Errorf("cannot use both --continue and --abort")
+	}
+	if *dryRunFlag && (*continueFlag || *abortFlag) {
+		return fmt.Errorf("--dry-run cannot be combined with --continue or --abort")
+	}
 
 	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
-
-	// Capture the starting cwd so the --stats defer below uses the directory
-	// sync was invoked from, not whatever worktree we ended up in after
-	// rebase/cd operations.
-	statsCwd := cwd
-
 	g := git.New(cwd)
 	mgr, err := stack.NewManager(cwd)
 	if err != nil {
 		return err
 	}
 
-	gh, _ := newGitHubClient(g)
-
-	deleteLocal := !*noDeleteLocal
-
-	dryRun := *dryRunFlag
-	autostash := !*noAutostashFlag
-	jsonOutput := *jsonFlag
-
-	// Acquire a sync-level lock so two `ezs sync` invocations can't race on
-	// snapshot reads/writes or fight over rebase state. The lock file lives
-	// next to stacks.json (which is global per ezstack install), so the
-	// lock is also global — concurrent syncs across different repos will
-	// serialize. That's what we want: stacks.json is shared state.
-	//
-	// Skipped only for --dry-run, which is read-only. --continue acquires
-	// the lock too: by the time the user runs --continue, the original sync
-	// has already returned (its lock release fired), so there's no
-	// contention with the conflicted run; the lock here exists to prevent
-	// two simultaneous --continue invocations from racing on snapshot
-	// cleanup and PR-metadata updates.
-	if !dryRun {
-		cfgDir, cfgErr := config.ConfigDir()
-		if cfgErr == nil {
-			lock, lockErr := config.AcquireSyncLock(filepath.Join(cfgDir, "stacks.json"))
-			if lockErr != nil {
-				return lockErr
-			}
-			defer lock.Release()
-		}
+	sel := syncSelection{
+		all: *allFlag, stack: *stackFlag, current: *currentFlag,
+		branch: *branchFlag, parent: *parentFlag, children: *childrenFlag,
+		args: fs.Args(),
 	}
 
-	// Resolve merge vs rebase: flags override config
-	useMerge := false
-	if *mergeFlag && *rebaseFlag {
-		return fmt.Errorf("cannot use both --merge and --rebase")
-	} else if *mergeFlag {
-		useMerge = true
-	} else if *rebaseFlag {
-		useMerge = false
-	} else {
-		// No flag specified — use config
-		useMerge = mgr.GetConfig().GetSyncStrategy(mgr.GetRepoDir()) == "merge"
+	if *dryRunFlag {
+		// Read-only, so no menu: default to the current stack (all from main).
+		target, err := resolveDefaultTarget(mgr, sel)
+		if err != nil {
+			return err
+		}
+		return syncDryRun(g, mgr, target, *jsonFlag)
+	}
+
+	if err := requireGHStack(); err != nil {
+		return err
+	}
+
+	// One sync at a time: stacks.json and the gh-stack catalog are shared state.
+	if cfgDir, cfgErr := config.ConfigDir(); cfgErr == nil {
+		lock, lockErr := config.AcquireSyncLock(filepath.Join(cfgDir, "stacks.json"))
+		if lockErr != nil {
+			return lockErr
+		}
+		defer lock.Release()
+	}
+
+	warnLegacySyncStrategy(mgr)
+
+	opts := syncOptions{
+		deleteLocal:   !*noDeleteLocal,
+		push:          pushAsk,
+		includeRemote: *includeRemoteFlag,
+	}
+	if *noPushFlag {
+		opts.push = pushNever
+	}
+
+	if *abortFlag {
+		if !ghstackPaused(mgr) {
+			return fmt.Errorf("no stopped sync to abort")
+		}
+		if err := ghstack.New(mgr.GetRepoDir()).Abort(); err != nil {
+			return err
+		}
+		clearPausedScope(mgr)
+		ui.Success("Sync aborted; branches restored")
+		return nil
 	}
 
 	hookCtx := BuildHookContext()
 
-	// --continue resumes an in-progress rebase that already fired its pre-sync
-	// hook on the original invocation. Re-running pre-sync here would execute
-	// user-configured tests against an unresolved tree — wrong and slow. We
-	// still fire post-sync on successful completion so "sync is done" hooks
-	// see the terminal state, and --squash must not run again either (the
-	// squash already happened on the original invocation).
+	// --continue resumes a cascade whose pre-sync hook already fired, and
+	// whose --squash already ran; only post-sync fires here.
 	if *continueFlag {
-		// Resolve the same scope flags as non-continue sync: -s, -a, -c, -b,
-		// positional hash. Without this, syncContinue defaulted to "all
-		// stacks", so `ezs sync -s --continue` (intended: current stack only)
-		// silently continued conflicts in unrelated stacks.
-		scope, err := resolveContinueScope(mgr, fs.Args(), *allFlag, *stackFlag, *currentFlag, *branchFlag)
-		if err != nil {
-			return err
+		if !ghstackPaused(mgr) {
+			return fmt.Errorf("no stopped sync to continue (resolve plain git rebases with `git rebase --continue`)")
+		}
+		if err := ghstack.New(mgr.GetRepoDir()).Continue(); err != nil {
+			return restackError(err)
 		}
 		defer func() {
 			if hookErr := hooks.Run("post-sync", hookCtx); hookErr != nil {
 				ui.Warn(hookErr.Error())
 			}
 		}()
-		return syncContinue(mgr, gh, useMerge, scope)
-	}
-
-	if jsonOutput && !dryRun {
-		return fmt.Errorf("--json requires --dry-run")
-	}
-
-	// Dry-run must be side-effect free: no hooks fire, no squash runs.
-	// Everything below up through --squash is gated on !dryRun.
-	if !dryRun {
-		if err := hooks.Run("pre-sync", hookCtx); err != nil {
-			return err
-		}
-		defer func() {
-			if hookErr := hooks.Run("post-sync", hookCtx); hookErr != nil {
-				ui.Warn(hookErr.Error())
-			}
-		}()
-
-		// --stats prints a commits-ahead summary after sync completes. Registered
-		// AFTER the post-sync defer so LIFO fires stats first, post-sync second.
-		if *statsFlag {
-			defer printSyncStats(statsCwd)
-		}
-
-		if *squashFlag {
-			ui.Info("--squash: squashing children before sync")
-			if err := squashStackChildren(mgr); err != nil {
+		// The paused cascade finished its own chain; re-running the sync for
+		// the same scope restacks anything after it (nested chains, other
+		// stacks) and does the push / cleanup / PR steps. Restacking an
+		// up-to-date chain is a no-op.
+		target := loadPausedScope(mgr)
+		if target == nil || sel.any() {
+			if target, err = resolveDefaultTarget(mgr, sel); err != nil {
 				return err
 			}
 		}
+		return runSync(g, mgr, target, opts)
 	}
 
-	// Handle --branch flag: sync a specific branch by name
-	if *branchFlag != "" {
-		branch := mgr.GetBranch(*branchFlag)
-		if branch == nil {
-			return fmt.Errorf("branch %q not found in any stack", *branchFlag)
-		}
-		targetStack := mgr.FindStackForBranch(*branchFlag)
-		if targetStack == nil {
-			return fmt.Errorf("branch %q is not part of any stack", *branchFlag)
-		}
-		if dryRun {
-			// Per-branch dry-run mirrors the execute path (syncCurrentBranch),
-			// which uses DetectSyncNeededForBranch and does NOT skip remote-only
-			// branches. Routing through syncDryRun (bulk detection) would filter
-			// pickups out and report "no sync needed" while the real run rebases
-			// — a divergence between preview and apply.
-			return syncDryRunBranch(mgr, gh, branch, jsonOutput)
-		}
-		// Use the branch's worktree path so stash operations target the correct worktree
-		branchCwd := cwd
-		if branch.WorktreePath != "" {
-			branchCwd = branch.WorktreePath
-		}
-		return syncCurrentBranch(mgr, gh, branch, branchCwd, autostash, useMerge)
+	target, err := resolveSyncTarget(mgr, sel)
+	if err != nil {
+		return err
+	}
+	if target == nil { // interactive menu cancelled
+		return nil
 	}
 
-	// Check for positional arg (hash prefix)
-	positionalArgs := fs.Args()
-	if len(positionalArgs) > 0 {
-		hashPrefix := positionalArgs[0]
-		targetStack, err := mgr.GetStackByHash(hashPrefix)
+	if err := hooks.Run("pre-sync", hookCtx); err != nil {
+		return err
+	}
+	defer func() {
+		if hookErr := hooks.Run("post-sync", hookCtx); hookErr != nil {
+			ui.Warn(hookErr.Error())
+		}
+	}()
+	// Registered after the post-sync defer so stats print first.
+	if *statsFlag {
+		defer printSyncStats(cwd)
+	}
+	if *squashFlag {
+		ui.Info("--squash: squashing children before sync")
+		if err := squashStackChildren(mgr); err != nil {
+			return err
+		}
+	}
+	return runSync(g, mgr, target, opts)
+}
+
+// warnLegacySyncStrategy tells users who had set sync_strategy=merge that
+// syncs now always rebase (and force-push), once: the key is then dropped.
+func warnLegacySyncStrategy(mgr *stack.Manager) {
+	cfg := mgr.GetConfig()
+	rc := cfg.GetRepoConfig(mgr.GetRepoDir())
+	if rc == nil || rc.LegacySyncStrategy == "" {
+		return
+	}
+	if rc.LegacySyncStrategy == "merge" {
+		ui.Warn("sync_strategy=merge is no longer supported: ezs sync now rebases with gh stack and pushes with --force-with-lease. The setting has been removed from your config.")
+	}
+	rc.LegacySyncStrategy = ""
+	cfg.SetRepoConfig(mgr.GetRepoDir(), rc)
+	if err := cfg.Save(); err != nil {
+		ui.Warn(fmt.Sprintf("Could not update config: %v", err))
+	}
+}
+
+// syncSelection is the raw scope requested on the command line.
+type syncSelection struct {
+	all, stack, current, parent, children bool
+	branch                                string
+	args                                  []string
+}
+
+func (s syncSelection) any() bool {
+	return s.all || s.stack || s.current || s.parent || s.children || s.branch != "" || len(s.args) > 0
+}
+
+// syncMode is what part of the stack(s) a sync restacks.
+type syncMode int
+
+const (
+	modeStacks   syncMode = iota // every chain of the selected stacks
+	modeCurrent                  // bottom of the branch's chain up to the branch
+	modeBranch                   // the branch's whole chain + chains nested above it
+	modeParent                   // only the branch onto its parent
+	modeChildren                 // only the branch's descendants onto it
+)
+
+// syncTarget is a resolved sync scope.
+type syncTarget struct {
+	mode   syncMode
+	stacks []*config.Stack // stacks touched (for cleanup / PR refresh)
+	branch *config.Branch  // anchor for the branch modes
+}
+
+type syncOptions struct {
+	deleteLocal   bool
+	push          pushPolicy
+	includeRemote bool // rebase and push pickup branches too
+}
+
+// resolveSyncTarget turns flags (or the interactive menu, when no flag is
+// given) into a syncTarget. A nil target with nil error means the user
+// cancelled the menu.
+func resolveSyncTarget(mgr *stack.Manager, sel syncSelection) (*syncTarget, error) {
+	if sel.branch != "" {
+		b := mgr.GetBranch(sel.branch)
+		s := mgr.FindStackForBranch(sel.branch)
+		if b == nil || s == nil {
+			return nil, fmt.Errorf("branch %q not found in any stack", sel.branch)
+		}
+		return &syncTarget{mode: modeBranch, stacks: []*config.Stack{s}, branch: b}, nil
+	}
+	if len(sel.args) > 0 {
+		s, err := mgr.GetStackByHash(sel.args[0])
+		if err != nil {
+			return nil, err
+		}
+		return &syncTarget{mode: modeStacks, stacks: []*config.Stack{s}}, nil
+	}
+	if sel.all {
+		return allStacksTarget(mgr)
+	}
+
+	currentStack, branch, err := mgr.GetCurrentStack()
+	if err != nil {
+		// Not in a stack worktree.
+		if sel.stack {
+			return allStacksTarget(mgr)
+		}
+		if sel.current || sel.parent || sel.children {
+			return nil, err
+		}
+		return syncMenuFromMain(mgr)
+	}
+	one := []*config.Stack{currentStack}
+	switch {
+	case sel.stack:
+		return &syncTarget{mode: modeStacks, stacks: one}, nil
+	case sel.current:
+		return &syncTarget{mode: modeCurrent, stacks: one, branch: branch}, nil
+	case sel.parent:
+		return &syncTarget{mode: modeParent, stacks: one, branch: branch}, nil
+	case sel.children:
+		return &syncTarget{mode: modeChildren, stacks: one, branch: branch}, nil
+	}
+	return syncMenuInStack(mgr, currentStack, branch)
+}
+
+// resolveDefaultTarget is resolveSyncTarget without menus (for --continue
+// and --dry-run): with no scope flag it targets the current stack, or every
+// stack when run outside one.
+func resolveDefaultTarget(mgr *stack.Manager, sel syncSelection) (*syncTarget, error) {
+	if sel.any() {
+		return resolveSyncTarget(mgr, sel)
+	}
+	if s, _, err := mgr.GetCurrentStack(); err == nil {
+		return &syncTarget{mode: modeStacks, stacks: []*config.Stack{s}}, nil
+	}
+	return allStacksTarget(mgr)
+}
+
+func allStacksTarget(mgr *stack.Manager) (*syncTarget, error) {
+	stacks := mgr.ListStacks()
+	if len(stacks) == 0 {
+		return nil, fmt.Errorf("no stacks found. Create a branch first with: ezs new <branch-name>")
+	}
+	return &syncTarget{mode: modeStacks, stacks: stacks}, nil
+}
+
+func syncMenuFromMain(mgr *stack.Manager) (*syncTarget, error) {
+	stacks := mgr.ListStacks()
+	if len(stacks) == 0 {
+		ui.Info("No stacks found. Create a branch first with: ezs new <branch-name>")
+		return nil, nil
+	}
+	options := []string{
+		fmt.Sprintf("%s  Sync ALL stacks", ui.IconSync),
+		fmt.Sprintf("%s  Choose a stack to sync", ui.IconStack),
+	}
+	selected, err := ui.SelectOptionWithBack(options, "Sync from main - what would you like to do?")
+	if err != nil {
+		return nil, err
+	}
+	if selected == 0 {
+		return &syncTarget{mode: modeStacks, stacks: stacks}, nil
+	}
+	s, err := ui.SelectStack(stacks, "Select a stack to sync")
+	if err != nil {
+		return nil, err
+	}
+	return &syncTarget{mode: modeStacks, stacks: []*config.Stack{s}}, nil
+}
+
+func syncMenuInStack(mgr *stack.Manager, s *config.Stack, branch *config.Branch) (*syncTarget, error) {
+	type option struct {
+		label  string
+		target *syncTarget
+	}
+	one := []*config.Stack{s}
+	opts := []option{
+		{fmt.Sprintf("%s  Sync current stack", ui.IconSync), &syncTarget{mode: modeStacks, stacks: one}},
+		{fmt.Sprintf("%s  Sync ALL stacks", ui.IconSync), &syncTarget{mode: modeStacks, stacks: mgr.ListStacks()}},
+		{fmt.Sprintf("%s  Sync current branch only", ui.IconSync), &syncTarget{mode: modeCurrent, stacks: one, branch: branch}},
+	}
+	if branch.Parent != "" && branch.Parent != s.Root {
+		opts = append(opts, option{fmt.Sprintf("%s  Rebase current branch onto parent (%s)", ui.IconUp, branch.Parent),
+			&syncTarget{mode: modeParent, stacks: one, branch: branch}})
+	}
+	if n := len(mgr.GetChildren(branch.Name)); n > 0 {
+		opts = append(opts, option{fmt.Sprintf("%s  Rebase %d child branch(es) onto current", ui.IconDown, n),
+			&syncTarget{mode: modeChildren, stacks: one, branch: branch}})
+	}
+	labels := make([]string, len(opts))
+	for i, o := range opts {
+		labels[i] = o.label
+	}
+	selected, err := ui.SelectOptionWithBack(labels, "What would you like to do?")
+	if err != nil {
+		return nil, err
+	}
+	return opts[selected].target, nil
+}
+
+// ghstackPaused reports whether a gh-stack cascade is stopped on a conflict.
+func ghstackPaused(mgr *stack.Manager) bool {
+	dir, err := ghstack.CommonDir(mgr.GetRepoDir())
+	return err == nil && ghstack.RebaseInProgress(dir)
+}
+
+// restackSteps plans the gh-stack rebases for a target (modeParent is a
+// single-branch move, see moveOntoParent).
+//
+// gh-stack picks the stack from the branch it is given and refuses one that
+// sits in several stacks — a tree fork point is a layer of every chain below
+// it — so steps only anchor on a branch that is Unique, falling back to the
+// chain's topmost unique layer (restacking more of the chain; layers already
+// stacked are no-ops).
+func restackSteps(g *git.Git, mgr *stack.Manager, chains []ghstack.Chain, t *syncTarget) ([]restackStep, error) {
+	if t.mode == modeStacks {
+		return wholeChainSteps(g, mgr, chainsForStacks(chains, t.stacks), chains), nil
+	}
+	name := t.branch.Name
+	c, ok := ghstack.ChainFor(chains, name)
+	if !ok {
+		return nil, fmt.Errorf("branch %q has nothing to sync (merged, or not tracked by gh stack)", name)
+	}
+	others := ghstack.ChainsSharing(chains, name) // chains of name's other subtrees
+
+	switch t.mode {
+	case modeCurrent:
+		if !ghstack.Unique(chains, name) {
+			// gh-stack can't anchor on a fork point; restack every chain
+			// through it so no subtree is left on its old tip.
+			ui.Info(fmt.Sprintf("'%s' has several child branches; restacking all of its subtrees", name))
+			return wholeChainSteps(g, mgr, append([]ghstack.Chain{c}, others...), chains), nil
+		}
+		return []restackStep{{c, ghstack.RebaseOptions{Branch: name, Remote: trunkRemote(g, mgr, c), Downstack: true}}}, nil
+
+	case modeChildren:
+		// Restack only what is above name: in its own chain from the layer
+		// right above it, in each other subtree's chain from its first own
+		// layer. Inter-branch rebases only; name itself is not moved.
+		var steps []restackStep
+		active := c.Active()
+		if i := indexOf(active, name); i+1 < len(active) {
+			steps = append(steps, upstackStep(g, mgr, chains, c, active[i+1]))
+		}
+		for _, o := range others {
+			if own := o.Own(); len(own) > 0 {
+				steps = append(steps, upstackStep(g, mgr, chains, o, own[0]))
+			}
+		}
+		return steps, nil
+
+	case modeBranch:
+		return wholeChainSteps(g, mgr, append([]ghstack.Chain{c}, others...), chains), nil
+	}
+	return nil, fmt.Errorf("unknown sync mode %d", t.mode)
+}
+
+// upstackStep rebases c from `from` to its top onto the layers below
+// (--upstack --no-trunk). When gh-stack can't address `from` (it's a fork
+// point), the whole chain is restacked without the trunk instead.
+func upstackStep(g *git.Git, mgr *stack.Manager, chains []ghstack.Chain, c ghstack.Chain, from string) restackStep {
+	o := ghstack.RebaseOptions{Branch: from, Remote: trunkRemote(g, mgr, c), Upstack: true, NoTrunk: true}
+	if !ghstack.Unique(chains, from) {
+		o.Branch, o.Upstack = chainAnchor(chains, c), false
+	}
+	return restackStep{c, o}
+}
+
+// moveOntoParent rebases only branch's own commits onto its parent — the
+// commits after its recorded base (gh-stack's record of the parent tip it was
+// last stacked on), or after the fork point with the parent. gh-stack can't
+// express this one-branch move: it always rebases a stack's bottom onto the
+// trunk with a plain rebase, and skips a branch whose parent tip it already
+// contains. Runs in the worktree that holds the branch.
+func moveOntoParent(mgr *stack.Manager, branch, oldParent, newParent string) error {
+	repo := git.New(mgr.GetRepoDir())
+	newRef := parentTipRef(repo, mgr, newParent)
+	// The branch's own commits start after: the old parent's tip when the
+	// branch contains it; else the recorded base (the old parent tip it was
+	// last stacked on — the parent has since been rewritten or merged); else
+	// the fork point. Same order gh-stack itself uses.
+	from := oldParent
+	if from == "" { // a standalone branch joining a stack
+		from = newParent
+	}
+	oldTip := parentTipRef(repo, mgr, from)
+	var oldBase string
+	if ok, _ := repo.IsAncestor(oldTip, "refs/heads/"+branch); ok {
+		oldBase, _ = repo.RunCapture("rev-parse", oldTip)
+	} else if rb := ghstack.RecordedBase(mgr.GetRepoDir(), branch); rb != "" {
+		if ok, _ := repo.IsAncestor(rb, "refs/heads/"+branch); ok {
+			oldBase = rb
+		}
+	}
+	if oldBase == "" {
+		oldBase, _ = repo.RunCapture("merge-base", "refs/heads/"+branch, oldTip)
+	}
+	if oldBase == "" {
+		return fmt.Errorf("cannot find where '%s' forked from '%s'", branch, oldParent)
+	}
+	dir := checkedOutDir(repo, []string{branch})
+	if dir == "" {
+		dir = mgr.GetRepoDir()
+	}
+	wg := git.New(dir)
+	if dirty, _ := wg.HasChanges(); dirty {
+		return fmt.Errorf("'%s' has uncommitted changes in %s; commit or stash them first", branch, dir)
+	}
+	ui.Info(fmt.Sprintf("Rebasing %s onto %s", branch, newParent))
+	if _, err := wg.RunCapture("rebase", "--onto", newRef, oldBase, branch); err != nil {
+		if wg.BranchFromRebaseState() != "" {
+			return ui.NewExitError(ui.ExitConflict,
+				"rebase of '%s' stopped on a conflict in %s: resolve it, `git add` the files and run `git rebase --continue` there, then `ezs sync -C` from that worktree to restack its children", branch, dir)
+		}
+		return fmt.Errorf("rebase %s onto %s: %w", branch, newParent, err)
+	}
+	return nil
+}
+
+// parentTipRef is the ref a branch should sit on for parent: the local
+// branch for a stack branch, the remote-tracking ref for a stack root (the
+// base branch) when there is one.
+func parentTipRef(g *git.Git, mgr *stack.Manager, parent string) string {
+	if mgr.GetBranch(parent) == nil {
+		if r := defaultRemote(g); r != "" && g.RefExists("refs/remotes/"+r+"/"+parent) {
+			return "refs/remotes/" + r + "/" + parent
+		}
+	}
+	return "refs/heads/" + parent
+}
+
+func indexOf(list []string, s string) int {
+	for i, v := range list {
+		if v == s {
+			return i
+		}
+	}
+	return -1
+}
+
+// runSync is the whole sync pipeline for a resolved target.
+func runSync(g *git.Git, mgr *stack.Manager, t *syncTarget, opts syncOptions) error {
+	cwd, _ := os.Getwd()
+	gh, _ := newGitHubClient(g)
+	if gh != nil {
+		gh = gh.WithPRCache() // detection, cleanup and PR refresh share lookups
+	}
+
+	// Find merged PRs before restacking. The cleanup list is computed first
+	// and the merged set is only a hint to the gh-stack projection (so it
+	// drops their commits even when gh-stack can't see PR state itself);
+	// nothing is marked merged in ezstack's model until the user confirms
+	// the cleanup.
+	var merged []stack.MergedBranchInfo
+	var mergedPRs map[string]bool
+	if gh != nil {
+		if opts.deleteLocal {
+			var err error
+			if merged, err = mgr.DetectMergedBranchesForStacks(gh, t.stacks); err != nil {
+				ui.Warn(fmt.Sprintf("Could not check for merged branches: %v", err))
+			}
+		}
+		mergedPRs = mergedPRBranches(gh, t.stacks)
+	}
+
+	chains, err := reconcileGHStackMerged(mgr, mergedPRs)
+	if err != nil {
+		return err
+	}
+	p := newPusher(g, mgr, opts.push, chains)
+	p.includeRemote = opts.includeRemote
+
+	if t.mode == modeParent {
+		if c, ok := ghstack.ChainFor(chains, t.branch.Name); ok {
+			integrateRemoteCommits(g, mgr, []ghstack.Chain{c}, p)
+		}
+		if err := syncOntoParent(g, mgr, t.branch, p, chains); err != nil {
+			return err
+		}
+	} else {
+		steps, err := restackSteps(g, mgr, chains, t)
 		if err != nil {
 			return err
 		}
-		if dryRun {
-			return syncDryRun(mgr, gh, []*config.Stack{targetStack}, jsonOutput, *includeRemoteFlag)
-		}
-		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash, useMerge, *includeRemoteFlag)
-	}
-
-	// Try to get current stack (may fail if on main)
-	currentStack, branch, err := mgr.GetCurrentStack()
-	if err != nil {
-		// On main or not in a stack - show main menu
-		if *allFlag || *stackFlag {
-			if dryRun {
-				return syncDryRunAll(mgr, gh, jsonOutput, *includeRemoteFlag)
+		if len(steps) > 0 {
+			limitPushes(mgr, p, t)
+			integrateRemoteCommits(g, mgr, stepChains(steps), p)
+			if err := runRestack(g, mgr, steps, p); err != nil {
+				if errors.Is(err, errSyncConflict) {
+					savePausedScope(mgr, t)
+				}
+				return err
 			}
-			return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge, *includeRemoteFlag)
+			ui.Success("Restack complete")
 		}
-		if dryRun {
-			return syncDryRunAll(mgr, gh, jsonOutput, *includeRemoteFlag)
+	}
+	clearPausedScope(mgr)
+
+	if len(merged) > 0 {
+		printMergedBranchesList(merged)
+		handleMergedBranchCleanup(mgr, merged, t.stacks, cwd)
+	}
+	cleanupFullyMergedStacks(mgr, t.stacks)
+
+	// Cleanup may have removed branches or whole stacks; re-read the model.
+	refreshGHStack(mgr)
+	if gh != nil {
+		for _, s := range t.stacks {
+			if live := mgr.GetStackByHashExact(s.Hash); live != nil {
+				updatePRMetadata(gh, mgr, live)
+			}
 		}
-		return syncFromMain(mgr, gh, cwd, deleteLocal, autostash, useMerge, *includeRemoteFlag)
 	}
+	return nil
+}
 
-	// In a stack worktree - existing behavior
-	spinner := ui.NewDelayedSpinner("Fetching branch status...")
-	spinner.Start()
-	statusMap := fetchBranchStatuses(g, currentStack, false)
-	spinner.Stop()
-	ui.PrintStack(currentStack, branch.Name, true, statusMap)
-
-	if dryRun {
-		if *allFlag {
-			return syncDryRunAll(mgr, gh, jsonOutput, *includeRemoteFlag)
+// limitPushes restricts a branch-scoped sync to pushing what it restacked:
+// -C the branch's descendants, -c the branch and the branches below it.
+func limitPushes(mgr *stack.Manager, p *pusher, t *syncTarget) {
+	switch t.mode {
+	case modeChildren:
+		p.only = map[string]bool{}
+		for _, d := range mgr.GetDescendants(t.branch.Name) {
+			p.only[d.Name] = true
 		}
-		return syncDryRun(mgr, gh, []*config.Stack{currentStack}, jsonOutput, *includeRemoteFlag)
+	case modeCurrent:
+		p.only = map[string]bool{}
+		for b := t.branch; b != nil; b = mgr.GetBranch(b.Parent) {
+			if p.only[b.Name] {
+				break
+			}
+			p.only[b.Name] = true
+		}
+	}
+}
+
+// stepChains returns the distinct chains of steps.
+func stepChains(steps []restackStep) []ghstack.Chain {
+	var out []ghstack.Chain
+	for _, s := range steps {
+		out = append(out, s.chain)
+	}
+	return out
+}
+
+// mergedPRBranches returns the branches of stacks, not yet marked merged,
+// whose PRs are merged on GitHub. PR lookups run in parallel.
+func mergedPRBranches(gh *github.Client, stacks []*config.Stack) map[string]bool {
+	var (
+		mu  sync.Mutex
+		wg  sync.WaitGroup
+		out = map[string]bool{}
+	)
+	sem := make(chan struct{}, 10)
+	for _, s := range stacks {
+		for _, b := range s.Branches {
+			if b.PRNumber == 0 || b.IsMerged {
+				continue
+			}
+			wg.Add(1)
+			go func(name string, number int) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				if pr, err := gh.GetPR(number); err == nil && pr.Merged {
+					mu.Lock()
+					out[name] = true
+					mu.Unlock()
+				}
+			}(b.Name, b.PRNumber)
+		}
+	}
+	wg.Wait()
+	return out
+}
+
+// syncOntoParent is `ezs sync -p`: move only the branch onto its parent
+// (no trunk update, children untouched), then offer to push it.
+func syncOntoParent(g *git.Git, mgr *stack.Manager, b *config.Branch, p *pusher, chains []ghstack.Chain) error {
+	if s := mgr.GetStackForBranch(b.Name); s != nil && b.Parent == s.Root {
+		ui.Info(fmt.Sprintf("Parent is %s - use 'ezs sync -s' to sync onto the latest %s", s.Root, s.Root))
+		return nil
+	}
+	if err := moveOntoParent(mgr, b.Name, b.Parent, b.Parent); err != nil {
+		return err
+	}
+	ui.Success(fmt.Sprintf("Rebased %s onto %s", b.Name, b.Parent))
+	p.only = map[string]bool{b.Name: true}
+	if c, ok := ghstack.ChainFor(chains, b.Name); ok {
+		if err := p.pushChain(c); err != nil {
+			ui.Warn(err.Error())
+		}
+	}
+	return nil
+}
+
+// pausedScope is the target of a restack that stopped on a conflict, so
+// `ezs sync --continue` without flags finishes the same operation (e.g. a
+// commit's child restack) instead of a full stack sync.
+type pausedScope struct {
+	Mode   syncMode `json:"mode"`
+	Branch string   `json:"branch,omitempty"`
+	Stacks []string `json:"stacks,omitempty"`
+}
+
+func pausedScopePath(mgr *stack.Manager) string {
+	dir, err := ghstack.CommonDir(mgr.GetRepoDir())
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "ezstack-paused-sync")
+}
+
+func savePausedScope(mgr *stack.Manager, t *syncTarget) {
+	path := pausedScopePath(mgr)
+	if path == "" {
+		return
+	}
+	ps := pausedScope{Mode: t.mode}
+	if t.branch != nil {
+		ps.Branch = t.branch.Name
+	}
+	for _, s := range t.stacks {
+		ps.Stacks = append(ps.Stacks, s.Hash)
+	}
+	if data, err := json.Marshal(ps); err == nil {
+		_ = os.WriteFile(path, data, 0o644)
+	}
+}
+
+func clearPausedScope(mgr *stack.Manager) {
+	if path := pausedScopePath(mgr); path != "" {
+		_ = os.Remove(path)
+	}
+}
+
+// loadPausedScope returns the saved target, or nil when there is none or it
+// no longer resolves (a branch or stack was removed meanwhile).
+func loadPausedScope(mgr *stack.Manager) *syncTarget {
+	path := pausedScopePath(mgr)
+	if path == "" {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var ps pausedScope
+	if json.Unmarshal(data, &ps) != nil {
+		return nil
+	}
+	t := &syncTarget{mode: ps.Mode}
+	for _, h := range ps.Stacks {
+		if s := mgr.GetStackByHashExact(h); s != nil {
+			t.stacks = append(t.stacks, s)
+		}
+	}
+	if ps.Branch != "" {
+		if t.branch = mgr.GetBranch(ps.Branch); t.branch == nil {
+			return nil
+		}
+	}
+	if t.mode == modeStacks && len(t.stacks) == 0 {
+		return nil
+	}
+	return t
+}
+
+// ── dry run ──────────────────────────────────────────────────────────────────
+
+// syncInfo describes a branch a sync would rebase.
+type syncInfo struct {
+	Branch       string `json:"branch"`
+	NeedsSync    bool   `json:"needs_sync"`
+	MergedParent string `json:"merged_parent,omitempty"`
+	BehindParent string `json:"behind_parent,omitempty"`
+	BehindBy     int    `json:"behind_by,omitempty"`
+	StackRoot    string `json:"stack_root"`
+}
+
+// syncDryRun previews a sync without touching branches, the gh-stack catalog,
+// or hooks. It fetches remotes so "behind" counts are current.
+func syncDryRun(g *git.Git, mgr *stack.Manager, t *syncTarget, jsonOutput bool) error {
+	if t == nil {
+		return nil
+	}
+	repo := git.New(mgr.GetRepoDir())
+	_ = repo.Fetch()
+	chains, err := ghstack.PlanChains(mgr.GetRepoDir(), mgr.ListStacks())
+	if err != nil {
+		return err
+	}
+	scope := map[string]bool{}
+	if t.mode == modeStacks {
+		for _, c := range chainsForStacks(chains, t.stacks) {
+			for _, b := range c.Own() {
+				scope[b] = true
+			}
+		}
+	} else {
+		scope[t.branch.Name] = true
+		if t.mode == modeBranch || t.mode == modeChildren {
+			for _, d := range mgr.GetDescendants(t.branch.Name) {
+				scope[d.Name] = true
+			}
+		}
 	}
 
-	if *allFlag {
-		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge, *includeRemoteFlag)
-	}
-	if *stackFlag {
-		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash, useMerge, *includeRemoteFlag)
-	}
-	if *currentFlag {
-		return syncCurrentBranch(mgr, gh, branch, cwd, autostash, useMerge)
-	}
-	if *parentFlag {
-		return syncOntoParent(mgr, branch, useMerge)
-	}
-	if *childrenFlag {
-		return syncChildren(mgr, branch, useMerge)
+	var infos []syncInfo
+	for _, c := range chains {
+		root := c.Trunk
+		if s := mgr.GetStackByHashExact(c.StackHash); s != nil {
+			root = s.Root
+		}
+		var mergedBelow string
+		parent := c.Trunk
+		for i, b := range c.Branches {
+			if c.Merged[b] {
+				mergedBelow = b
+				continue
+			}
+			if i >= c.Shared && scope[b] {
+				info := syncInfo{Branch: b, StackRoot: root}
+				if mergedBelow != "" {
+					info.MergedParent = mergedBelow
+				} else if behind := commitsBehind(repo, b, parentRef(repo, mgr, parent, c)); behind > 0 {
+					info.BehindBy = behind
+					if parent != root {
+						info.BehindParent = parent
+					}
+				}
+				info.NeedsSync = info.MergedParent != "" || info.BehindBy > 0
+				if info.NeedsSync {
+					infos = append(infos, info)
+				}
+			}
+			parent, mergedBelow = b, ""
+		}
 	}
 
-	return syncInteractive(mgr, gh, currentStack, branch, cwd, deleteLocal, autostash, useMerge, *includeRemoteFlag)
+	if jsonOutput {
+		if infos == nil {
+			infos = []syncInfo{}
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		return enc.Encode(infos)
+	}
+	if len(infos) == 0 {
+		ui.Success("All branches are up to date. No sync needed.")
+		return nil
+	}
+	ui.Info(fmt.Sprintf("Found %d branch(es) that need syncing:", len(infos)))
+	for _, info := range infos {
+		switch {
+		case info.MergedParent != "":
+			fmt.Fprintf(os.Stderr, "  %s %s%s%s: parent %s%s%s was merged to %s\n",
+				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset, info.StackRoot)
+		case info.BehindParent != "":
+			fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind parent %s%s%s\n",
+				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
+		default:
+			fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind %s\n",
+				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, info.StackRoot)
+		}
+	}
+	return nil
+}
+
+// parentRef is the ref a layer is rebased onto: the remote-tracking trunk for
+// a chain's bottom (gh-stack fetches it), otherwise the parent branch.
+func parentRef(g *git.Git, mgr *stack.Manager, parent string, c ghstack.Chain) string {
+	if parent == c.Trunk {
+		if r := trunkRemote(g, mgr, c); r != "" && g.RefExists("refs/remotes/"+r+"/"+parent) {
+			return "refs/remotes/" + r + "/" + parent
+		}
+	}
+	return parent
+}
+
+func commitsBehind(g *git.Git, branch, target string) int {
+	out, err := g.RunCapture("rev-list", "--count", branch+".."+target)
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(out)
+	return n
 }
 
 // printSyncStats prints a "commits ahead of parent" summary for each branch
@@ -412,19 +1004,26 @@ func squashStackChildren(mgr *stack.Manager) error {
 	}
 	ui.Warn("--squash rewrites branch history; pushed branches will need --force-with-lease")
 
-	// Walk branches parents-before-children. Squashing a child before its
-	// parent would leave the child pointing at the pre-squash parent commit,
-	// so the parent's later squash orphans the child's ancestry and rebase
-	// inherits spurious conflicts. Topological order guarantees each branch
-	// sees its parent's squashed tip as the reset target.
+	// Walk branches parents-before-children, and squash each branch onto its
+	// fork point from the parent's PRE-squash tip. Resetting onto the parent's
+	// current tip instead would turn the squash commit into a revert of any
+	// parent commits the child hadn't been rebased onto yet, and once a parent
+	// is squashed its new tip is no longer in the child's history at all. The
+	// rebase that follows moves each squashed child onto its new parent.
 	ordered := topoOrderStackBranches(currentStack)
+	repo := git.New(mgr.GetRepoDir())
+	origTip := map[string]string{}
+	for _, b := range ordered {
+		if sha, err := repo.GetBranchCommit(b.Name); err == nil {
+			origTip[b.Name] = sha
+		}
+	}
 
 	squashed := 0
 	for _, b := range ordered {
-		// Skip the stack root: it has no parent inside the stack, and its
-		// "parent" in config is typically the base branch (main), which we
-		// must never touch.
-		if b.Parent == "" || b.Name == currentStack.Root {
+		// The stack root has no parent inside the stack; its "parent" is the
+		// base branch (main), which we must never touch.
+		if b.Parent == "" || b.Name == currentStack.Root || b.IsMerged {
 			continue
 		}
 		if b.WorktreePath == "" {
@@ -437,7 +1036,16 @@ func squashStackChildren(mgr *stack.Manager) error {
 			ui.Warn(fmt.Sprintf("Skipping squash of '%s': uncommitted changes", b.Name))
 			continue
 		}
-		ahead, err := bg.GetCommitsAhead(b.Name, b.Parent)
+		parentTip := origTip[b.Parent]
+		if parentTip == "" {
+			parentTip = b.Parent
+		}
+		forkPoint, err := bg.RunCapture("merge-base", b.Name, parentTip)
+		if err != nil || forkPoint == "" {
+			ui.Warn(fmt.Sprintf("Skipping squash of '%s': no common ancestor with %s", b.Name, b.Parent))
+			continue
+		}
+		ahead, err := bg.GetCommitsAhead(b.Name, forkPoint)
 		if err != nil || ahead < 2 {
 			continue
 		}
@@ -445,7 +1053,7 @@ func squashStackChildren(mgr *stack.Manager) error {
 		if last, lerr := bg.GetLastCommitMessage(); lerr == nil && last != "" {
 			msg = last
 		}
-		if _, runErr := bg.RunCapture("reset", "--soft", b.Parent); runErr != nil {
+		if _, runErr := bg.RunCapture("reset", "--soft", forkPoint); runErr != nil {
 			ui.Warn(fmt.Sprintf("Squash failed for '%s' (reset): %v", b.Name, runErr))
 			continue
 		}
@@ -462,179 +1070,6 @@ func squashStackChildren(mgr *stack.Manager) error {
 	return nil
 }
 
-// syncDryRun previews what sync would do for specific stacks
-func syncDryRun(mgr *stack.Manager, gh *github.Client, stacks []*config.Stack, jsonOutput bool, includeRemote bool) error {
-	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, stacks, includeRemote)
-	if err != nil {
-		return err
-	}
-	if jsonOutput {
-		return printSyncInfoJSON(syncNeeded)
-	}
-	if len(syncNeeded) == 0 {
-		ui.Success("All branches are up to date. Nothing to sync.")
-		return nil
-	}
-	ui.Info("[dry-run] The following branches would be synced:")
-	printSyncInfoList(syncNeeded)
-	return nil
-}
-
-// syncDryRunBranch previews what sync would do for a single explicitly-named
-// branch. Matches the execute path (syncCurrentBranch → DetectSyncNeededForBranch),
-// which never filters IsRemote because the user named the branch directly.
-//
-// We fetch before detecting because DetectSyncNeededForBranch only consults
-// local tracking refs — without a fetch, a teammate's just-pushed commit on
-// origin/<branch> would be invisible and we'd report "no sync needed",
-// while the execute path (which fetches at syncCurrentBranch start) would
-// see the commit and rebase. That's the same dry-run-vs-apply divergence
-// this wrapper exists to close. Failures are non-fatal: a stale tracking
-// ref just means the preview can't flag a remote-pull; surface a warning
-// so the user knows to retry once their network is healthy.
-func syncDryRunBranch(mgr *stack.Manager, gh *github.Client, branch *config.Branch, jsonOutput bool) error {
-	if !jsonOutput {
-		ui.Info("Fetching latest changes...")
-	}
-	if err := mgr.Fetch(); err != nil {
-		return fmt.Errorf("failed to fetch from remote: %w. Check your network connection and that the remote is accessible", err)
-	}
-	if r := branch.EffectiveRemote(); r != "" && r != "origin" && branch.CanPush() {
-		if ferr := mgr.FetchRemote(r); ferr != nil && !jsonOutput {
-			ui.Warn(fmt.Sprintf("Could not fetch %s for %s: %v — preview may miss collaborator commits on that remote.", r, branch.Name, ferr))
-		}
-	}
-	info := mgr.DetectSyncNeededForBranch(branch.Name, gh)
-	var syncNeeded []stack.SyncInfo
-	if info != nil && info.NeedsSync {
-		syncNeeded = []stack.SyncInfo{*info}
-	}
-	if jsonOutput {
-		return printSyncInfoJSON(syncNeeded)
-	}
-	if len(syncNeeded) == 0 {
-		ui.Success("Current branch is up to date. No sync needed.")
-		return nil
-	}
-	ui.Info("[dry-run] The following branches would be synced:")
-	printSyncInfoList(syncNeeded)
-	return nil
-}
-
-// syncDryRunAll previews what sync would do across all stacks
-func syncDryRunAll(mgr *stack.Manager, gh *github.Client, jsonOutput bool, includeRemote bool) error {
-	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, mgr.ListStacks(), includeRemote)
-	if err != nil {
-		return err
-	}
-	if jsonOutput {
-		return printSyncInfoJSON(syncNeeded)
-	}
-	if len(syncNeeded) == 0 {
-		ui.Success("All branches are up to date. Nothing to sync.")
-		return nil
-	}
-	ui.Info("[dry-run] The following branches would be synced:")
-	printSyncInfoList(syncNeeded)
-	return nil
-}
-
-// syncFromMain shows an interactive menu when running sync from main (not in a stack worktree)
-func syncFromMain(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, autostash bool, useMerge bool, includeRemote bool) error {
-	stacks := mgr.ListStacks()
-	if len(stacks) == 0 {
-		ui.Info("No stacks found. Create a branch first with: ezs new <branch-name>")
-		return nil
-	}
-
-	options := []string{
-		fmt.Sprintf("%s  Auto-sync ALL stacks (detect merged parents / behind base branch)", ui.IconSync),
-		fmt.Sprintf("%s  Choose a stack to sync", ui.IconStack),
-	}
-
-	selected, err := ui.SelectOptionWithBack(options, "Sync from main - what would you like to do?")
-	if err != nil {
-		if err == ui.ErrBack {
-			return ui.ErrBack
-		}
-		return err
-	}
-
-	switch selected {
-	case 0:
-		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge, includeRemote)
-	case 1:
-		targetStack, err := ui.SelectStack(stacks, "Select a stack to sync")
-		if err != nil {
-			return err
-		}
-		return syncSpecificStacks(mgr, gh, cwd, deleteLocal, []*config.Stack{targetStack}, autostash, useMerge, includeRemote)
-	}
-
-	return nil
-}
-
-// printSyncInfoList prints the list of branches that need syncing.
-func printSyncInfoList(syncNeeded []stack.SyncInfo) {
-	ui.Info(fmt.Sprintf("Found %d branch(es) that need syncing:", len(syncNeeded)))
-	for _, info := range syncNeeded {
-		switch {
-		case info.MergedParent != "":
-			fmt.Fprintf(os.Stderr, "  %s %s%s%s: parent %s%s%s was merged to %s\n",
-				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset, info.StackRoot)
-		case info.BehindParent != "":
-			fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind parent %s%s%s\n",
-				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
-		case info.BehindBy > 0:
-			fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s behind origin/%s\n",
-				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, info.StackRoot)
-		case info.BehindRemote > 0:
-			// Remote-only behind: branch is in sync with parent but a teammate
-			// pushed new commits to origin/<branch>.
-			fmt.Fprintf(os.Stderr, "  %s %s%s%s: %s%d commits%s on origin/%s (collaborator pushed)\n",
-				ui.IconBullet, ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindRemote, ui.Reset, info.Branch)
-			continue
-		}
-		// If a branch is behind both its parent and its remote, append the
-		// remote count after the primary reason printed above.
-		if info.BehindRemote > 0 && (info.MergedParent != "" || info.BehindParent != "" || info.BehindBy > 0) {
-			fmt.Fprintf(os.Stderr, "      (also %s%d commits%s behind origin/%s)\n",
-				ui.Yellow, info.BehindRemote, ui.Reset, info.Branch)
-		}
-	}
-	fmt.Fprintln(os.Stderr)
-}
-
-// syncInfoJSON represents a sync info entry in JSON output
-type syncInfoJSON struct {
-	Branch       string `json:"branch"`
-	NeedsSync    bool   `json:"needs_sync"`
-	MergedParent string `json:"merged_parent,omitempty"`
-	BehindParent string `json:"behind_parent,omitempty"`
-	BehindBy     int    `json:"behind_by,omitempty"`
-	BehindRemote int    `json:"behind_remote,omitempty"`
-	StackRoot    string `json:"stack_root"`
-}
-
-// printSyncInfoJSON outputs sync info as JSON to stdout
-func printSyncInfoJSON(syncNeeded []stack.SyncInfo) error {
-	result := make([]syncInfoJSON, 0, len(syncNeeded))
-	for _, info := range syncNeeded {
-		result = append(result, syncInfoJSON{
-			Branch:       info.Branch,
-			NeedsSync:    info.NeedsSync,
-			MergedParent: info.MergedParent,
-			BehindParent: info.BehindParent,
-			BehindBy:     info.BehindBy,
-			BehindRemote: info.BehindRemote,
-			StackRoot:    info.StackRoot,
-		})
-	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	return enc.Encode(result)
-}
-
 // printMergedBranchesList prints the list of merged branches.
 func printMergedBranchesList(mergedBranches []stack.MergedBranchInfo) {
 	ui.Info(fmt.Sprintf("Found %d branch(es) with merged PRs (will be deleted):", len(mergedBranches)))
@@ -643,125 +1078,6 @@ func printMergedBranchesList(mergedBranches []stack.MergedBranchInfo) {
 			ui.IconSuccess, ui.Bold, info.Branch, ui.Reset, info.PRNumber)
 	}
 	fmt.Fprintln(os.Stderr)
-}
-
-// formatSyncConfirmMsg builds the confirmation prompt for a sync operation.
-func formatSyncConfirmMsg(info stack.SyncInfo) string {
-	if info.MergedParent != "" {
-		return fmt.Sprintf("Sync %s%s%s? (parent %s%s%s was merged)",
-			ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.MergedParent, ui.Reset)
-	}
-	if info.BehindParent != "" {
-		return fmt.Sprintf("Sync %s%s%s? (%s%d commits%s behind parent %s%s%s)",
-			ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, ui.Yellow, info.BehindParent, ui.Reset)
-	}
-	return fmt.Sprintf("Sync %s%s%s? (%s%d commits%s behind origin/%s)",
-		ui.Bold, info.Branch, ui.Reset, ui.Yellow, info.BehindBy, ui.Reset, info.StackRoot)
-}
-
-// makeSyncCallbacks creates standard sync callbacks for interactive syncing.
-// When singleStackMode is true, declining a push shows a more detailed error
-// explaining that child branches can't be synced without pushing the parent.
-func makeSyncCallbacks(singleStackMode bool, autostash bool, useMerge bool, includeRemote bool) *stack.SyncCallbacks {
-	beforeRebase := func(info stack.SyncInfo) bool {
-		if ui.ConfirmTUI(formatSyncConfirmMsg(info)) {
-			if useMerge {
-				ui.Info("Merging...")
-			} else {
-				ui.Info("Rebasing...")
-			}
-			return true
-		}
-		return false
-	}
-
-	afterRebase := func(result stack.RebaseResult, g *git.Git) bool {
-		fmt.Fprintln(os.Stderr)
-		if useMerge {
-			ui.Success(fmt.Sprintf("Merged into %s", result.Branch))
-		} else {
-			ui.Success(fmt.Sprintf("Rebased %s", result.Branch))
-		}
-
-		remote := result.Remote
-		if remote == "" {
-			if mgr, mErr := stack.NewReadOnlyManager(g.RepoDir); mErr == nil {
-				remote = ResolveBranchRemote(g, mgr, result.Branch)
-			} else {
-				remote = "origin"
-			}
-		}
-
-		if useMerge {
-			if !OfferPush(result.Branch, result.WorktreePath, remote) {
-				if singleStackMode {
-					fmt.Fprintln(os.Stderr)
-					ui.Error("Cannot continue syncing child branches without pushing parent first.")
-					ui.Info("The merged parent branch must be pushed before child branches can be synced.")
-					ui.Info("Run 'ezs sync' again after pushing to continue.")
-				} else {
-					ui.Warn("Skipping remaining branches in this stack (push required for children)")
-				}
-				return false
-			}
-		} else {
-			if !OfferForcePush(result.Branch, result.WorktreePath, remote) {
-				if singleStackMode {
-					fmt.Fprintln(os.Stderr)
-					ui.Error("Cannot continue syncing child branches without pushing parent first.")
-					ui.Info("The rebased parent branch must be pushed before child branches can be synced.")
-					ui.Info("Run 'ezs sync' again after pushing to continue.")
-				} else {
-					ui.Warn("Skipping remaining branches in this stack (push required for children)")
-				}
-				return false
-			}
-		}
-
-		return true
-	}
-
-	return &stack.SyncCallbacks{
-		BeforeRebase:           beforeRebase,
-		AfterRebase:            afterRebase,
-		Autostash:              autostash,
-		UseMerge:               useMerge,
-		IncludeRemoteWorktrees: includeRemote,
-	}
-}
-
-// printSyncSummary prints the summary after sync operations complete.
-func printSyncSummary(results []stack.RebaseResult, useMerge bool) {
-	successCount := 0
-	conflictStacks := make(map[string]bool)
-	for _, r := range results {
-		if r.HasConflict {
-			name := r.StackName
-			if name == "" {
-				name = "(unknown stack)"
-			}
-			conflictStacks[name] = true
-		}
-		if r.Success {
-			successCount++
-		}
-	}
-
-	fmt.Fprintln(os.Stderr)
-	if successCount > 0 {
-		ui.Success(fmt.Sprintf("Synced %d branch(es)!", successCount))
-	}
-	if len(conflictStacks) > 0 {
-		names := make([]string, 0, len(conflictStacks))
-		for name := range conflictStacks {
-			names = append(names, name)
-		}
-		if useMerge {
-			ui.Warn(fmt.Sprintf("%d stack(s) unsynced due to merge conflicts: %s", len(names), strings.Join(names, ", ")))
-		} else {
-			ui.Warn(fmt.Sprintf("%d stack(s) unsynced due to rebase conflicts: %s", len(names), strings.Join(names, ", ")))
-		}
-	}
 }
 
 // handleMergedBranchCleanup handles cleanup of merged branches, including
@@ -873,1024 +1189,6 @@ func handleMergedBranchCleanup(mgr *stack.Manager, mergedBranches []stack.Merged
 			if needsCd {
 				EmitCd(mgr.GetRepoDir())
 			}
-		}
-	}
-}
-
-// syncSpecificStacks syncs a specific set of stacks
-func syncSpecificStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, stacks []*config.Stack, autostash bool, useMerge bool, includeRemote bool) error {
-	ui.Info("Fetching latest changes...")
-
-	syncNeeded, err := mgr.DetectSyncNeededForStacks(gh, stacks, includeRemote)
-	if err != nil {
-		ui.Warn(fmt.Sprintf("Could not check for sync needed: %v", err))
-	}
-
-	var mergedBranches []stack.MergedBranchInfo
-	if deleteLocal && gh != nil {
-		mergedBranches, err = mgr.DetectMergedBranchesForStacks(gh, stacks)
-		if err != nil {
-			ui.Warn(fmt.Sprintf("Could not check for merged branches: %v", err))
-		}
-	}
-
-	if len(syncNeeded) == 0 && len(mergedBranches) == 0 {
-		// Even if no sync is needed, check for fully merged stacks that need cleanup
-		cleanupFullyMergedStacks(mgr, stacks)
-		ui.Success("All branches are up to date. No sync needed.")
-		return nil
-	}
-
-	if len(syncNeeded) > 0 {
-		printSyncInfoList(syncNeeded)
-	}
-
-	if len(mergedBranches) > 0 {
-		printMergedBranchesList(mergedBranches)
-	}
-
-	if len(syncNeeded) > 0 {
-		fmt.Fprintln(os.Stderr)
-
-		callbacks := makeSyncCallbacks(len(stacks) == 1, autostash, useMerge, includeRemote)
-		results, err := mgr.SyncSpecificStacks(stacks, gh, callbacks)
-		if err != nil {
-			return err
-		}
-
-		printSyncResults(results, useMerge)
-		printSyncSummary(results, useMerge)
-	}
-
-	if len(mergedBranches) > 0 {
-		handleMergedBranchCleanup(mgr, mergedBranches, stacks, cwd)
-	}
-
-	// Check for stacks that were already fully merged in cache before this sync run
-	cleanupFullyMergedStacks(mgr, stacks)
-
-	// Update PR base branches and stack descriptions (parallelized per stack)
-	if gh != nil {
-		for _, s := range stacks {
-			updatePRMetadata(gh, s, nil)
-		}
-	}
-
-	return nil
-}
-
-// syncInteractive shows an interactive menu for sync operations
-func syncInteractive(mgr *stack.Manager, gh *github.Client, currentStack *config.Stack, branch *config.Branch, cwd string, deleteLocal bool, autostash bool, useMerge bool, includeRemote bool) error {
-	options := []string{}
-	optionActions := []string{}
-
-	options = append(options, fmt.Sprintf("%s  Auto-sync current stack (detect merged parents / behind %s)", ui.IconSync, currentStack.Root))
-	optionActions = append(optionActions, "auto")
-
-	options = append(options, fmt.Sprintf("%s  Auto-sync ALL stacks", ui.IconSync))
-	optionActions = append(optionActions, "auto-all")
-
-	syncInfo := mgr.DetectSyncNeededForBranch(branch.Name, gh)
-	if syncInfo != nil && syncInfo.NeedsSync {
-		var reason string
-		if syncInfo.MergedParent != "" {
-			reason = fmt.Sprintf("parent %s merged", syncInfo.MergedParent)
-		} else if syncInfo.BehindParent != "" {
-			reason = fmt.Sprintf("%d commits behind %s", syncInfo.BehindBy, syncInfo.BehindParent)
-		} else if syncInfo.BehindBy > 0 {
-			reason = fmt.Sprintf("%d commits behind %s", syncInfo.BehindBy, currentStack.Root)
-		}
-		options = append(options, fmt.Sprintf("%s  Sync current branch only (%s)", ui.IconSync, reason))
-		optionActions = append(optionActions, "current")
-	}
-
-	if branch.Parent != "" && branch.Parent != currentStack.Root {
-		options = append(options, fmt.Sprintf("%s  Rebase current branch onto parent (%s)", ui.IconUp, branch.Parent))
-		optionActions = append(optionActions, "parent")
-	}
-
-	localChildren := mgr.GetChildren(branch.Name)
-	if len(localChildren) > 0 {
-		childNames := ""
-		for i, c := range localChildren {
-			if i > 0 {
-				childNames += ", "
-			}
-			childNames += c.Name
-		}
-		options = append(options, fmt.Sprintf("%s  Rebase %d child branch(es) onto current (%s)", ui.IconDown, len(localChildren), childNames))
-		optionActions = append(optionActions, "children")
-	}
-
-	if len(options) == 0 {
-		ui.Info("No sync operations available for current branch")
-		return nil
-	}
-
-	selected, err := ui.SelectOptionWithBack(options, "What would you like to do?")
-	if err != nil {
-		if err == ui.ErrBack {
-			return ui.ErrBack
-		}
-		return err
-	}
-
-	action := optionActions[selected]
-	switch action {
-	case "auto":
-		return syncStacks(mgr, gh, cwd, deleteLocal, false, autostash, useMerge, includeRemote)
-	case "auto-all":
-		return syncStacks(mgr, gh, cwd, deleteLocal, true, autostash, useMerge, includeRemote)
-	case "current":
-		return syncCurrentBranch(mgr, gh, branch, cwd, autostash, useMerge)
-	case "parent":
-		return syncOntoParent(mgr, branch, useMerge)
-	case "children":
-		return syncChildren(mgr, branch, useMerge)
-	}
-
-	return nil
-}
-
-// syncStacks resolves the target stacks and delegates to syncSpecificStacks.
-func syncStacks(mgr *stack.Manager, gh *github.Client, cwd string, deleteLocal bool, allStacks bool, autostash bool, useMerge bool, includeRemote bool) error {
-	var stacks []*config.Stack
-	if allStacks {
-		stacks = mgr.ListStacks()
-		if len(stacks) == 0 {
-			ui.Info("No stacks found.")
-			return nil
-		}
-	} else {
-		currentStack, _, err := mgr.GetCurrentStack()
-		if err != nil {
-			return err
-		}
-		stacks = []*config.Stack{currentStack}
-	}
-	return syncSpecificStacks(mgr, gh, cwd, deleteLocal, stacks, autostash, useMerge, includeRemote)
-}
-
-// continueScope captures the user-requested scope for `ezs sync --continue`.
-// Mirrors the dispatch shape of non-continue sync (-a / -s / -c / -b /
-// positional hash) so `--continue` honors the same selectors.
-//
-// `defaulted` is true when no scope flag was provided and the resolver picked
-// a default — used to print one explanatory line so the user isn't surprised
-// when, e.g., running `ezs sync --continue` from main implicitly touches every
-// stack with an in-progress rebase.
-type continueScope struct {
-	mode       continueMode
-	stack      *config.Stack
-	branchName string
-	defaulted  bool
-}
-
-type continueMode int
-
-const (
-	continueModeAll continueMode = iota
-	continueModeCurrentStack
-	continueModeSpecificStack
-	continueModeBranch
-)
-
-// ErrSyncIncomplete signals that `ezs sync --continue` finished but some
-// branches are still mid-conflict, or a re-synced child hit a new conflict.
-// Wrapped as *ui.ExitError so main() exits with ExitConflict (3) rather than
-// the generic ExitGeneral (1), letting scripts distinguish "still in conflict —
-// re-run after resolving" from any other failure mode.
-var ErrSyncIncomplete = ui.NewExitError(ui.ExitConflict, "sync continue incomplete: resolve remaining conflicts and re-run `ezs sync --continue`")
-
-// errSyncContinueFailed wraps a non-conflict failure during `--continue` (a
-// real git or filesystem error from `git rebase --continue` / `git commit`,
-// or a SyncBranch failure on a descendant re-sync). Exits with
-// ExitGeneral (1) instead of ExitConflict (3) so scripts and the user can
-// distinguish "broken state — investigate" from "still in conflict —
-// resolve and re-run".
-func errSyncContinueFailed(detail string) error {
-	return ui.NewExitError(ui.ExitGeneral, "sync continue failed: %s", detail)
-}
-
-// resolveContinueScope mirrors the scope-flag dispatch used by non-continue
-// sync (lines reading -a / -s / -c / -b / positional hash). Defaults: in a
-// stack worktree → currentStack; on main with no flags → all.
-func resolveContinueScope(mgr *stack.Manager, posArgs []string, allFlag, stackFlag, currentFlag bool, branchFlag string) (continueScope, error) {
-	// At most one explicit selector.
-	selectors := 0
-	if allFlag {
-		selectors++
-	}
-	if stackFlag {
-		selectors++
-	}
-	if currentFlag {
-		selectors++
-	}
-	if branchFlag != "" {
-		selectors++
-	}
-	if len(posArgs) > 0 {
-		selectors++
-	}
-	if selectors > 1 {
-		return continueScope{}, fmt.Errorf("--continue accepts at most one of: -a, -s, -c, -b <name>, <stack-hash>")
-	}
-
-	if branchFlag != "" {
-		if mgr.GetBranch(branchFlag) == nil {
-			return continueScope{}, fmt.Errorf("branch %q not found in any stack", branchFlag)
-		}
-		return continueScope{mode: continueModeBranch, branchName: branchFlag}, nil
-	}
-	if currentFlag {
-		_, branch, err := mgr.GetCurrentStack()
-		if err != nil {
-			return continueScope{}, fmt.Errorf("--current requires being in a stack worktree: %w", err)
-		}
-		return continueScope{mode: continueModeBranch, branchName: branch.Name}, nil
-	}
-	if len(posArgs) > 0 {
-		stk, err := mgr.GetStackByHash(posArgs[0])
-		if err != nil {
-			return continueScope{}, err
-		}
-		return continueScope{mode: continueModeSpecificStack, stack: stk}, nil
-	}
-	if stackFlag {
-		stk, _, err := mgr.GetCurrentStack()
-		if err != nil {
-			return continueScope{}, fmt.Errorf("-s requires being in a stack worktree: %w", err)
-		}
-		return continueScope{mode: continueModeCurrentStack, stack: stk}, nil
-	}
-	if allFlag {
-		return continueScope{mode: continueModeAll}, nil
-	}
-	// Default: if in a stack, current stack only; else all.
-	if stk, _, err := mgr.GetCurrentStack(); err == nil {
-		return continueScope{mode: continueModeCurrentStack, stack: stk, defaulted: true}, nil
-	}
-	return continueScope{mode: continueModeAll, defaulted: true}, nil
-}
-
-// stacksInScope returns the stacks that --continue should consider, given a
-// resolved scope. For branch / specificStack / currentStack it's a single
-// stack; for all it's every stack.
-func stacksInScope(mgr *stack.Manager, scope continueScope) []*config.Stack {
-	switch scope.mode {
-	case continueModeAll:
-		return mgr.ListStacks()
-	case continueModeCurrentStack, continueModeSpecificStack:
-		return []*config.Stack{scope.stack}
-	case continueModeBranch:
-		if stk := mgr.GetStackForBranch(scope.branchName); stk != nil {
-			return []*config.Stack{stk}
-		}
-	}
-	return nil
-}
-
-// syncContinue resumes any in-progress rebase or merge that's within the
-// given scope, then re-syncs the entire descendant subtree of each branch
-// whose continue completed cleanly. Returns ErrSyncIncomplete when one or
-// more branches are still in conflict — either because the original branch's
-// rebase paused on its next commit, or because a re-synced descendant hit a
-// new conflict.
-//
-// Topology:
-//   - Branches are processed parents-before-children so a parent's `--continue`
-//     reaches its terminal state before any child consults its PreSyncCommit.
-//   - Children that themselves have an in-progress rebase/merge are skipped
-//     during re-sync — they'll be picked up on the user's next `--continue`,
-//     after they've been resolved.
-//   - The full descendant subtree (not just immediate children) is walked, so
-//     deep stacks fully re-sync after a single root resolution.
-func syncContinue(mgr *stack.Manager, gh *github.Client, useMerge bool, scope continueScope) error {
-	scopedStacks := stacksInScope(mgr, scope)
-	if len(scopedStacks) == 0 {
-		ui.Info("No stacks in scope.")
-		return nil
-	}
-
-	// When the user gave no scope flag, surface the resolved default so the
-	// implicit blast radius of `--continue` (especially "all stacks" when run
-	// from main) isn't a surprise. Explicit selectors don't need this — the
-	// user already knows what they asked for.
-	if scope.defaulted {
-		switch scope.mode {
-		case continueModeAll:
-			ui.Info(fmt.Sprintf("--continue: no scope flag given, defaulting to all stacks (%d). Use -s/-c/-b/<hash> to scope.", len(scopedStacks)))
-		case continueModeCurrentStack:
-			if scope.stack != nil {
-				ui.Info(fmt.Sprintf("--continue: scoped to current stack %s. Use -a to include all stacks.", scope.stack.DisplayName()))
-			}
-		}
-	}
-
-	// Fetch so the descendant re-sync can pick up any commits that landed on
-	// origin/<branch> while the user was resolving the original conflict.
-	// Manager.Fetch is deduped per process, so this is cheap on subsequent
-	// internal calls.
-	if err := mgr.Fetch(); err != nil {
-		ui.Warn(fmt.Sprintf("fetch failed before --continue: %v (proceeding with cached refs)", err))
-	}
-	scopedSet := make(map[string]bool, len(scopedStacks))
-	for _, s := range scopedStacks {
-		scopedSet[s.Hash] = true
-	}
-
-	type conflictBranch struct {
-		branch   *config.Branch
-		stack    *config.Stack
-		isRebase bool
-		isMerge  bool
-	}
-
-	branchInProgress := func(b *config.Branch) (rebaseIP, mergeIP bool) {
-		workdir := b.WorktreePath
-		isCheckout := workdir == ""
-		if isCheckout {
-			workdir = mgr.GetRepoDir()
-		}
-		g := git.New(workdir)
-		rebaseIP, _ = g.IsRebaseInProgress()
-		mergeIP, _ = g.IsMergeInProgress()
-		// For checkout-based branches we share the main repo with every other
-		// checkout-based branch in this manager. Any in-progress rebase/merge
-		// there is "the main repo's" — not necessarily this branch's. Without
-		// disambiguation, a checkout-based sibling's mid-rebase would falsely
-		// flag B as in-progress, and `RebaseContinue` would advance the wrong
-		// branch's rebase and offer to push it under B's name.
-		//
-		// rebase: head-name in rebase-state files is canonical.
-		// merge: HEAD is still on the branch ref during a merge conflict, so
-		//   CurrentBranch is sufficient.
-		if isCheckout {
-			if rebaseIP {
-				if name := g.BranchFromRebaseState(); name != "" && name != b.Name {
-					rebaseIP = false
-				}
-			}
-			if mergeIP {
-				cur, _ := g.CurrentBranch()
-				if cur != "" && cur != "HEAD" && cur != b.Name {
-					mergeIP = false
-				}
-			}
-		}
-		return
-	}
-
-	// Collect in-progress branches across in-scope stacks. For "branch" mode
-	// only consider that branch (other in-progress branches are out of scope).
-	var found []conflictBranch
-	for _, s := range scopedStacks {
-		ordered := topoOrderStackBranches(s)
-		for _, b := range ordered {
-			if scope.mode == continueModeBranch && b.Name != scope.branchName {
-				continue
-			}
-			rebaseIP, mergeIP := branchInProgress(b)
-			if rebaseIP || mergeIP {
-				found = append(found, conflictBranch{branch: b, stack: s, isRebase: rebaseIP, isMerge: mergeIP})
-			}
-		}
-	}
-
-	// Surface orphan ezstack autostashes for branches in scope that are NOT in
-	// conflict — they were left behind by a prior aborted sync. We don't
-	// auto-pop because the user may have edited the worktree after the stash
-	// was created, so popping could surprise them. Just inform.
-	//
-	// Why `git -C b.WorktreePath` is correct: ezstack only ever creates an
-	// autostash from inside b's own worktree (StashPush is invoked there),
-	// so the saved diff applies cleanly to that worktree. Stashes are stored
-	// at repo level (`refs/stash`) so `FindEzstackStash` works from any
-	// worktree, but popping is only safe in the worktree the diff was taken
-	// from — `b.WorktreePath` per ezstack's one-worktree-per-branch model.
-	inProgressSet := make(map[string]bool, len(found))
-	for _, cb := range found {
-		inProgressSet[cb.branch.Name] = true
-	}
-	for _, s := range scopedStacks {
-		for _, b := range s.Branches {
-			if inProgressSet[b.Name] || b.WorktreePath == "" {
-				continue
-			}
-			g := git.New(b.WorktreePath)
-			if _, ok := g.FindEzstackStash(b.Name); ok {
-				ui.Warn(fmt.Sprintf("Orphan ezstack autostash found for %s. Run `git -C %s stash pop` to restore, or `git stash drop` to discard.", b.Name, b.WorktreePath))
-			}
-		}
-	}
-
-	if len(found) == 0 {
-		ui.Success("No in-progress rebase or merge found. Nothing to continue.")
-		return nil
-	}
-
-	ui.Info(fmt.Sprintf("Found %d branch(es) with in-progress rebase/merge:", len(found)))
-	for _, cb := range found {
-		kind := "rebase"
-		if cb.isMerge {
-			kind = "merge"
-		}
-		fmt.Fprintf(os.Stderr, "  %s %s%s%s (%s in %s)\n",
-			ui.IconBullet, ui.Bold, cb.branch.Name, ui.Reset, kind, cb.stack.DisplayName())
-	}
-	fmt.Fprintln(os.Stderr)
-
-	successCount := 0
-	stillInConflict := false
-	hardErrorCount := 0
-	var firstHardError string
-	var continuedBranches []conflictBranch
-	for _, cb := range found {
-		branchWorkDir := cb.branch.WorktreePath
-		if branchWorkDir == "" {
-			branchWorkDir = mgr.GetRepoDir()
-		}
-		g := git.New(branchWorkDir)
-
-		// Check for unresolved conflicts before attempting to continue.
-		hasConflicts, _ := g.HasUnresolvedConflicts()
-		if hasConflicts {
-			ui.Warn(fmt.Sprintf("Skipping %s: still has unresolved conflicts in %s", cb.branch.Name, branchWorkDir))
-			stillInConflict = true
-			continue
-		}
-
-		var res git.ContinueResult
-		if cb.isRebase {
-			ui.Info(fmt.Sprintf("Continuing rebase for %s...", cb.branch.Name))
-			res = g.RebaseContinue()
-		} else {
-			ui.Info(fmt.Sprintf("Continuing merge for %s...", cb.branch.Name))
-			res = g.MergeContinue()
-		}
-
-		switch {
-		case res.Done:
-			ui.Success(fmt.Sprintf("Completed %s", cb.branch.Name))
-			successCount++
-			continuedBranches = append(continuedBranches, cb)
-
-			// Pop this branch's autostash if one was created.
-			if _, stashFound := g.FindEzstackStash(cb.branch.Name); stashFound {
-				if err := g.StashPop(); err != nil {
-					ui.Warn(fmt.Sprintf("Failed to pop autostash for %s: %v", cb.branch.Name, err))
-				} else {
-					ui.Info(fmt.Sprintf("Restored stashed changes for %s", cb.branch.Name))
-				}
-			}
-
-			// Offer to push the freshly-completed branch.
-			if cb.isRebase {
-				OfferForcePush(cb.branch.Name, branchWorkDir, cb.branch.EffectiveRemote())
-			} else {
-				OfferPush(cb.branch.Name, branchWorkDir, cb.branch.EffectiveRemote())
-			}
-		case res.StillInConflict:
-			ui.Warn(fmt.Sprintf("%s: paused on next commit's conflict — resolve in %s, then re-run `ezs sync --continue`", cb.branch.Name, branchWorkDir))
-			stillInConflict = true
-		default:
-			ui.Error(fmt.Sprintf("Failed to continue %s: %v", cb.branch.Name, res.Err))
-			hardErrorCount++
-			if firstHardError == "" {
-				firstHardError = fmt.Sprintf("%s: %v", cb.branch.Name, res.Err)
-			}
-		}
-	}
-
-	if successCount == 0 {
-		if hardErrorCount > 0 {
-			return errSyncContinueFailed(firstHardError)
-		}
-		if stillInConflict {
-			return ErrSyncIncomplete
-		}
-		return nil
-	}
-
-	// Re-sync the full descendant subtree of each continued branch in topo
-	// order. Skip descendants that are themselves mid-rebase — they'll be
-	// resumed by the user's next `--continue` invocation. Stop walking a
-	// subtree once any node hits a fresh conflict, since further descendants
-	// would just re-derive the same problem.
-	descendantConflict := false
-	descendantHardError := false
-	for _, cb := range continuedBranches {
-		descendants := mgr.GetDescendants(cb.branch.Name)
-		if len(descendants) == 0 {
-			continue
-		}
-		// Filter to in-scope descendants. (Cross-scope descendants exist when
-		// stacks share branches via reparenting; conservatively skip them in
-		// branch / single-stack modes.)
-		var inScope []*config.Branch
-		for _, d := range descendants {
-			ds := mgr.GetStackForBranch(d.Name)
-			if ds != nil && scopedSet[ds.Hash] {
-				inScope = append(inScope, d)
-			}
-		}
-		if len(inScope) == 0 {
-			continue
-		}
-
-		fmt.Fprintln(os.Stderr)
-		names := make([]string, len(inScope))
-		for i, d := range inScope {
-			names[i] = d.Name
-		}
-		ui.Info(fmt.Sprintf("Re-syncing %d descendant(s) of %s: %s",
-			len(inScope), cb.branch.Name, strings.Join(names, ", ")))
-
-		// Track branches we've stopped descending into so we don't re-sync
-		// their further descendants.
-		stoppedSubtrees := make(map[string]bool)
-		for _, child := range inScope {
-			// Skip if any ancestor in this subtree was already stopped.
-			// `seen` guards against a malformed tree producing a parent cycle —
-			// shouldn't happen in practice (validated on stack ops), but a
-			// blind walk would otherwise loop forever on corruption.
-			ancestorStopped := false
-			seen := make(map[string]bool)
-			for parent := child.Parent; parent != ""; {
-				if seen[parent] {
-					break
-				}
-				seen[parent] = true
-				if stoppedSubtrees[parent] {
-					ancestorStopped = true
-					break
-				}
-				parentBranch := mgr.GetBranch(parent)
-				if parentBranch == nil {
-					break
-				}
-				parent = parentBranch.Parent
-			}
-			if ancestorStopped {
-				continue
-			}
-
-			// If the child is mid-rebase already, leave it for the user's next
-			// --continue. Don't try to start a new rebase on top.
-			rebaseIP, mergeIP := branchInProgress(child)
-			if rebaseIP || mergeIP {
-				ui.Warn(fmt.Sprintf("Skipping %s: already has its own in-progress rebase/merge — run `ezs sync --continue` after resolving", child.Name))
-				stillInConflict = true
-				stoppedSubtrees[child.Name] = true
-				continue
-			}
-
-			// Autostash any uncommitted changes in the child's worktree before
-			// the re-sync. The bulk-sync path autostashes per-branch via
-			// SyncCallbacks; SyncBranch (called below) doesn't, so descendants
-			// re-synced under --continue would otherwise hit `git merge
-			// --ff-only`'s "would be overwritten" refusal during integrate, or
-			// git's rebase dirty-tree complaint.
-			//
-			// Skipped when no dedicated worktree exists (checkout-based sync
-			// requires the main repo to be clean — an existing constraint).
-			didChildStash := false
-			var childStashGit *git.Git
-			if child.WorktreePath != "" {
-				childStashGit = git.New(child.WorktreePath)
-				if _, found := childStashGit.FindEzstackStash(child.Name); found {
-					// A prior aborted sync already left an autostash. Don't
-					// stack another one on top — the existing one still has
-					// the user's changes. The orphan-stash banner above
-					// already surfaced this to the user.
-				} else if hasChanges, _ := childStashGit.HasChanges(); hasChanges {
-					if err := childStashGit.StashPush(); err != nil {
-						ui.Warn(fmt.Sprintf("Failed to autostash %s before re-sync: %v (refusing to rebase over uncommitted changes)", child.Name, err))
-						stoppedSubtrees[child.Name] = true
-						descendantConflict = true
-						continue
-					}
-					didChildStash = true
-				}
-			}
-
-			childResult, err := mgr.SyncBranch(child.Name, gh, useMerge)
-			if err != nil {
-				if didChildStash {
-					if popErr := childStashGit.StashPop(); popErr != nil {
-						ui.Warn(fmt.Sprintf("Failed to pop autostash for %s after sync error: %v (your changes are still in `git stash list`)", child.Name, popErr))
-					}
-				}
-				ui.Warn(fmt.Sprintf("Failed to sync %s: %v", child.Name, err))
-				stoppedSubtrees[child.Name] = true
-				descendantHardError = true
-				continue
-			}
-			childWorkDir := child.WorktreePath
-			if childWorkDir == "" {
-				childWorkDir = mgr.GetRepoDir()
-			}
-			switch {
-			case childResult.HasConflict:
-				// Leave the autostash in place — the user resolves the conflict
-				// and the next successful --continue (or manual `git stash pop`)
-				// restores their changes.
-				ui.Warn(fmt.Sprintf("Conflict syncing %s — resolve in: %s, then re-run `ezs sync --continue`", child.Name, childWorkDir))
-				if didChildStash {
-					ui.Warn(fmt.Sprintf("Uncommitted changes were autostashed for %s; they will restore on the next successful sync, or run `git stash pop` manually.", child.Name))
-				}
-				stoppedSubtrees[child.Name] = true
-				descendantConflict = true
-			case childResult.Error != nil:
-				if didChildStash {
-					if popErr := childStashGit.StashPop(); popErr != nil {
-						ui.Warn(fmt.Sprintf("Failed to pop autostash for %s: %v", child.Name, popErr))
-					}
-				}
-				ui.Warn(fmt.Sprintf("Failed to sync %s: %v", child.Name, childResult.Error))
-				stoppedSubtrees[child.Name] = true
-				descendantHardError = true
-			case childResult.Success:
-				if didChildStash {
-					if popErr := childStashGit.StashPop(); popErr != nil {
-						ui.Warn(fmt.Sprintf("Failed to pop autostash for %s: %v", child.Name, popErr))
-					} else {
-						ui.Info(fmt.Sprintf("Restored stashed changes for %s", child.Name))
-					}
-				}
-				ui.Success(fmt.Sprintf("Synced %s", child.Name))
-				if useMerge {
-					OfferPush(child.Name, childWorkDir, child.EffectiveRemote())
-				} else {
-					OfferForcePush(child.Name, childWorkDir, child.EffectiveRemote())
-				}
-			}
-		}
-	}
-
-	// Update PR metadata for in-scope stacks.
-	if gh != nil {
-		for _, s := range scopedStacks {
-			updatePRMetadata(gh, s, nil)
-		}
-	}
-
-	// If the entire scope is now fully resolved (no in-progress branches and
-	// no descendant conflicts or hard errors), clear PreSyncCommits for every
-	// branch in the scope — the snapshots have served their purpose. Otherwise
-	// leave them for the next --continue.
-	if !stillInConflict && !descendantConflict && hardErrorCount == 0 && !descendantHardError {
-		var toClear []string
-		for _, s := range scopedStacks {
-			for _, b := range s.Branches {
-				toClear = append(toClear, b.Name)
-			}
-		}
-		mgr.ClearPreSyncCommits(toClear)
-	}
-
-	fmt.Fprintln(os.Stderr)
-	ui.Success(fmt.Sprintf("Continued %d branch(es)!", successCount))
-
-	// Exit-code priority: hard errors (broken state) outrank conflicts (just
-	// re-run after resolving). Scripts can use the exit code to decide
-	// whether to retry automatically (3) or escalate to a human (1).
-	if hardErrorCount > 0 || descendantHardError {
-		if firstHardError != "" {
-			return errSyncContinueFailed(firstHardError)
-		}
-		return errSyncContinueFailed("descendant re-sync failed (see log)")
-	}
-	if stillInConflict || descendantConflict {
-		return ErrSyncIncomplete
-	}
-	return nil
-}
-
-// syncOntoParent syncs the current branch onto its parent (rebase or merge)
-func syncOntoParent(mgr *stack.Manager, branch *config.Branch, useMerge bool) error {
-	stack := mgr.GetStackForBranch(branch.Name)
-	if stack != nil && branch.Parent == stack.Root {
-		ui.Info(fmt.Sprintf("Parent is %s - use 'Auto-sync' to sync onto latest origin/%s", stack.Root, stack.Root))
-		return nil
-	}
-
-	var confirmMsg string
-	if useMerge {
-		confirmMsg = fmt.Sprintf("Merge %s into %s", branch.Parent, branch.Name)
-	} else {
-		confirmMsg = fmt.Sprintf("Rebase %s onto %s", branch.Name, branch.Parent)
-	}
-	if !ui.ConfirmTUI(confirmMsg) {
-		ui.Warn("Cancelled")
-		return nil
-	}
-
-	if useMerge {
-		ui.Info("Merging parent...")
-	} else {
-		ui.Info("Rebasing onto parent...")
-	}
-	if err := mgr.RebaseOnParent(useMerge); err != nil {
-		// Interactive merge/rebase returns an exit status error on conflict.
-		// The user sees the conflict output directly on the terminal, so
-		// give them resolution instructions instead of a raw "exit status 1".
-		// But if the error is NOT an exit status (e.g., GetCurrentStack failed),
-		// propagate it as-is.
-		errStr := err.Error()
-		if strings.Contains(errStr, "exit status") {
-			if useMerge {
-				ui.Warn("Merge has conflicts. Resolve them, then run: git add . && git merge --continue")
-			} else {
-				ui.Warn("Rebase has conflicts. Resolve them, then run: git add . && git rebase --continue")
-			}
-			return nil
-		}
-		return err
-	}
-	worktreePath := branch.WorktreePath
-	if worktreePath == "" {
-		cwd, _ := os.Getwd()
-		worktreePath = cwd
-	}
-	if useMerge {
-		ui.Success("Merge complete")
-		OfferPush(branch.Name, worktreePath, branch.EffectiveRemote())
-	} else {
-		ui.Success("Rebase complete")
-		OfferForcePush(branch.Name, worktreePath, branch.EffectiveRemote())
-	}
-	return nil
-}
-
-// syncChildren rebases child branches onto the current branch
-func syncChildren(mgr *stack.Manager, branch *config.Branch, useMerge bool) error {
-	localChildren := mgr.GetChildren(branch.Name)
-
-	if len(localChildren) == 0 {
-		ui.Info("No local child branches to sync")
-		return nil
-	}
-
-	var confirmMsg string
-	if useMerge {
-		confirmMsg = fmt.Sprintf("Merge %s into %d child branch(es)", branch.Name, len(localChildren))
-	} else {
-		confirmMsg = fmt.Sprintf("Rebase %d child branch(es) onto %s", len(localChildren), branch.Name)
-	}
-	if !ui.ConfirmTUI(confirmMsg) {
-		ui.Warn("Cancelled")
-		return nil
-	}
-
-	if useMerge {
-		ui.Info("Merging into child branches...")
-	} else {
-		ui.Info("Rebasing child branches...")
-	}
-	results, err := mgr.RebaseChildren(useMerge)
-	if err != nil {
-		return err
-	}
-
-	hasConflicts := false
-	successCount := 0
-	var successfulBranches []string
-	for _, r := range results {
-		if r.Success {
-			if useMerge {
-				ui.Success(fmt.Sprintf("Merged into %s", r.Branch))
-			} else {
-				ui.Success(fmt.Sprintf("Rebased %s", r.Branch))
-			}
-			successCount++
-			successfulBranches = append(successfulBranches, r.Branch)
-		} else if r.HasConflict {
-			ui.Warn(fmt.Sprintf("Conflict in %s", r.Branch))
-			hasConflicts = true
-		} else if r.Error != nil {
-			ui.Error(fmt.Sprintf("Failed to sync %s: %v", r.Branch, r.Error))
-		}
-	}
-
-	fmt.Fprintln(os.Stderr)
-	if hasConflicts {
-		if useMerge {
-			ui.Warn("Some branches have conflicts. Resolve them and run 'git merge --continue' in each worktree.")
-		} else {
-			ui.Warn("Some branches have conflicts. Resolve them and run 'git rebase --continue' in each worktree.")
-		}
-	}
-	if successCount > 0 {
-		ui.Success(fmt.Sprintf("Synced %d child branch(es)!", successCount))
-
-		// Offer to push successfully synced branches
-		if len(successfulBranches) > 0 {
-			getWorktree := func(branchName string) string {
-				childBranch := mgr.GetBranch(branchName)
-				if childBranch == nil {
-					return ""
-				}
-				if childBranch.WorktreePath == "" {
-					return mgr.GetRepoDir()
-				}
-				return childBranch.WorktreePath
-			}
-			getRemote := func(branchName string) string {
-				childBranch := mgr.GetBranch(branchName)
-				if childBranch == nil {
-					return "origin"
-				}
-				return childBranch.EffectiveRemote()
-			}
-			if useMerge {
-				OfferPushMultiple(successfulBranches, getWorktree, getRemote)
-			} else {
-				OfferForcePushMultiple(successfulBranches, getWorktree, getRemote)
-			}
-		}
-	}
-
-	return nil
-}
-
-// syncCurrentBranch syncs only the current branch (wherever it is in the chain)
-func syncCurrentBranch(mgr *stack.Manager, gh *github.Client, branch *config.Branch, cwd string, autostash bool, useMerge bool) error {
-	ui.Info("Fetching latest changes...")
-	// Use Manager.Fetch() so the fetch is deduped if already done earlier
-	if err := mgr.Fetch(); err != nil {
-		return fmt.Errorf("failed to fetch from remote: %w. Check your network connection and that the remote is accessible", err)
-	}
-	// If this branch's configured remote isn't `origin` (e.g. a fork), also
-	// fetch that remote so the ahead-behind check below can see any commits
-	// a teammate pushed there. Failure is non-fatal: detection just can't
-	// flag a remote-pull, and the user gets an "up to date" message they
-	// can ignore by running `git fetch <remote>` themselves.
-	if r := branch.EffectiveRemote(); r != "" && r != "origin" && branch.CanPush() {
-		_ = mgr.FetchRemote(r)
-	}
-
-	g := git.New(cwd)
-	syncInfo := mgr.DetectSyncNeededForBranch(branch.Name, gh)
-	if syncInfo == nil || !syncInfo.NeedsSync {
-		ui.Success("Current branch is up to date. No sync needed.")
-		return nil
-	}
-
-	if syncInfo.MergedParent != "" {
-		if useMerge {
-			ui.Info(fmt.Sprintf("Parent %s was merged to %s. Will merge %s.", syncInfo.MergedParent, syncInfo.StackRoot, syncInfo.StackRoot))
-		} else {
-			ui.Info(fmt.Sprintf("Parent %s was merged to %s. Will rebase onto %s.", syncInfo.MergedParent, syncInfo.StackRoot, syncInfo.StackRoot))
-		}
-	} else if syncInfo.BehindParent != "" {
-		ui.Info(fmt.Sprintf("Current branch is %d commits behind %s.", syncInfo.BehindBy, syncInfo.BehindParent))
-	} else if syncInfo.BehindBy > 0 {
-		ui.Info(fmt.Sprintf("Current branch is %d commits behind origin/%s.", syncInfo.BehindBy, syncInfo.StackRoot))
-	}
-	if syncInfo.BehindRemote > 0 {
-		ui.Info(fmt.Sprintf("Current branch is %d commits behind origin/%s (collaborator pushed). Will fast-forward.", syncInfo.BehindRemote, branch.Name))
-	}
-
-	if !ui.ConfirmTUI("Sync current branch") {
-		ui.Warn("Cancelled")
-		return nil
-	}
-
-	// Autostash: stash uncommitted changes before sync
-	didStash := false
-	if autostash {
-		// Check for orphaned ezstack stash from a previous conflicted sync
-		if _, found := g.FindEzstackStash(branch.Name); found {
-			ui.Warn(fmt.Sprintf("Existing autostash found for %s (from a previous sync)", branch.Name))
-			ui.Info("Skipping autostash. Run 'git stash pop' in the worktree to restore, or 'git stash drop' to discard.")
-			// Don't create another stash on top — the old one already has the user's changes
-		} else if hasChanges, _ := g.HasChanges(); hasChanges {
-			// Mirror the engine's behavior in internal/stack/sync.go: refuse to
-			// rebase over uncommitted changes if stash fails, otherwise the
-			// rebase could clobber the user's work.
-			if err := g.StashPush(); err != nil {
-				return fmt.Errorf("autostash failed for %s: %w (refusing to rebase over uncommitted changes)", branch.Name, err)
-			}
-			didStash = true
-			ui.Info("Stashed uncommitted changes")
-		}
-	}
-
-	ui.Info("Syncing current branch...")
-	result, err := mgr.SyncBranch(branch.Name, gh, useMerge)
-	if err != nil {
-		if didStash {
-			if popErr := g.StashPop(); popErr != nil {
-				ui.Warn(fmt.Sprintf("Failed to pop stash: %v (your changes are still in 'git stash list')", popErr))
-			}
-		}
-		return err
-	}
-
-	// Pop stash after successful sync (not on conflict — user resolves first)
-	if didStash && !result.HasConflict {
-		if err := g.StashPop(); err != nil {
-			ui.Warn(fmt.Sprintf("Failed to pop stash: %v", err))
-		} else {
-			ui.Info("Restored stashed changes")
-		}
-	}
-
-	if result.Success {
-		if result.BehindBy > 0 && result.SyncedParent != "" {
-			ui.Success(fmt.Sprintf("Synced %s (was %d commits behind %s)", result.Branch, result.BehindBy, result.SyncedParent))
-		} else if result.SyncedParent != "" {
-			ui.Success(fmt.Sprintf("Synced %s (parent merged, now based on %s)", result.Branch, result.SyncedParent))
-		} else {
-			ui.Success(fmt.Sprintf("Synced %s", result.Branch))
-		}
-		resultRemote := result.Remote
-		if resultRemote == "" {
-			resultRemote = ResolveBranchRemote(g, mgr, result.Branch)
-		}
-		if useMerge {
-			OfferPush(result.Branch, result.WorktreePath, resultRemote)
-		} else {
-			OfferForcePush(result.Branch, result.WorktreePath, resultRemote)
-		}
-	} else if result.HasConflict {
-		ui.Warn(fmt.Sprintf("Conflict in %s", result.Branch))
-		if result.WorktreePath != "" {
-			fmt.Fprintf(os.Stderr, "%sResolve in:%s %s\n", ui.Gray, ui.Reset, result.WorktreePath)
-		}
-		if useMerge {
-			fmt.Fprintf(os.Stderr, "%sTo resolve: fix conflicts, then run 'git merge --continue'%s\n", ui.Gray, ui.Reset)
-		} else {
-			fmt.Fprintf(os.Stderr, "%sTo resolve: fix conflicts, then run 'git rebase --continue'%s\n", ui.Gray, ui.Reset)
-		}
-		if didStash {
-			ui.Warn("Uncommitted changes were stashed. They will be restored on next successful sync, or run 'git stash pop' manually.")
-		}
-	} else if result.Error != nil {
-		ui.Error(fmt.Sprintf("Failed to sync %s: %v", result.Branch, result.Error))
-	}
-
-	return nil
-}
-
-// printSyncResults prints the results of a sync operation
-func printSyncResults(results []stack.RebaseResult, useMerge bool) {
-	var conflicts []stack.RebaseResult
-	for _, r := range results {
-		if r.Success {
-			if r.BehindBy > 0 {
-				ui.Success(fmt.Sprintf("Synced %s (was %d commits behind)", r.Branch, r.BehindBy))
-			} else if r.SyncedParent != "" {
-				ui.Success(fmt.Sprintf("Synced %s (parent merged, now based on %s)", r.Branch, r.SyncedParent))
-			} else {
-				ui.Success(fmt.Sprintf("Synced %s", r.Branch))
-			}
-		} else if r.HasConflict {
-			conflicts = append(conflicts, r)
-		} else if r.Error != nil {
-			ui.Error(fmt.Sprintf("Failed to sync %s: %v", r.Branch, r.Error))
-		}
-	}
-
-	if len(conflicts) > 0 {
-		fmt.Fprintln(os.Stderr)
-		// Group conflicts by stack
-		type stackConflicts struct {
-			name     string
-			branches []stack.RebaseResult
-		}
-		var ordered []stackConflicts
-		seen := make(map[string]int)
-		for _, c := range conflicts {
-			name := c.StackName
-			if name == "" {
-				name = "(unknown stack)"
-			}
-			if idx, ok := seen[name]; ok {
-				ordered[idx].branches = append(ordered[idx].branches, c)
-			} else {
-				seen[name] = len(ordered)
-				ordered = append(ordered, stackConflicts{name: name, branches: []stack.RebaseResult{c}})
-			}
-		}
-
-		fmt.Fprintf(os.Stderr, "%s%s Stacks with conflicts (%d):%s\n", ui.Yellow, ui.IconConflict, len(ordered), ui.Reset)
-		for _, sc := range ordered {
-			fmt.Fprintf(os.Stderr, "\n  %s%sStack %s%s\n", ui.Red, ui.Bold, sc.name, ui.Reset)
-			for _, c := range sc.branches {
-				fmt.Fprintf(os.Stderr, "    %s %s%s%s\n", ui.IconBullet, ui.Bold, c.Branch, ui.Reset)
-				if c.WorktreePath != "" {
-					fmt.Fprintf(os.Stderr, "      %sResolve in:%s %s\n", ui.Gray, ui.Reset, c.WorktreePath)
-				}
-			}
-		}
-		fmt.Fprintln(os.Stderr)
-		if useMerge {
-			fmt.Fprintf(os.Stderr, "%sTo resolve: cd to each worktree, fix conflicts, then run 'git merge --continue'%s\n", ui.Gray, ui.Reset)
-		} else {
-			fmt.Fprintf(os.Stderr, "%sTo resolve: cd to each worktree, fix conflicts, then run 'git rebase --continue'%s\n", ui.Gray, ui.Reset)
 		}
 	}
 }

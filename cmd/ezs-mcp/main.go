@@ -420,7 +420,7 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_sync",
-			mcp.WithDescription("Sync stack branches with remote. Detects merged parents and rebases branches behind their base. Rewrites local history — on conflict, manual resolution may be required."),
+			mcp.WithDescription("Sync stack branches with remote via gh stack (github/gh-stack >= 0.2.0 required): restacks branches onto their updated parents (dropping commits of merged parents), pushes rebased branches with --force-with-lease, cleans up merged branches, and relinks the GitHub stacked PRs. Rewrites local history — on conflict the sync stops in the conflicted worktree; resolve and stage it, then call again with resume=true (or abort=true). Worktrees with uncommitted changes block the rebase."),
 			// Sync rewrites local branch history (rebase) and may leave
 			// the working tree in a conflict state requiring manual
 			// resolution, so we mark it destructive.
@@ -431,14 +431,13 @@ func registerTools(s *server.MCPServer) {
 			mcp.WithString("branch", mcp.Description("Sync a specific branch by name")),
 			mcp.WithBoolean("parent", mcp.Description("Rebase current branch onto parent")),
 			mcp.WithBoolean("children", mcp.Description("Rebase children onto current branch")),
-			mcp.WithBoolean("merge", mcp.Description("Use merge instead of rebase")),
-			mcp.WithBoolean("rebase", mcp.Description("Use rebase instead of merge (overrides config)")),
 			mcp.WithBoolean("squash", mcp.Description("Squash each child's commits into one before rebase")),
 			mcp.WithBoolean("stats", mcp.Description("Print commits-per-branch summary after syncing")),
 			mcp.WithBoolean("no_delete_local", mcp.Description("Don't delete local branches after their PRs are merged")),
-			mcp.WithBoolean("no_autostash", mcp.Description("Don't stash uncommitted changes before rebase")),
+			mcp.WithBoolean("no_push", mcp.Description("Rebase only; don't push rebased branches")),
 			mcp.WithBoolean("dry_run", mcp.Description("Preview what would be synced without making changes")),
 			mcp.WithBoolean("resume", mcp.Description("Resume a sync after the user has resolved rebase conflicts (maps to ezs sync --continue)")),
+			mcp.WithBoolean("abort", mcp.Description("Abort a sync stopped on a conflict and restore every branch (maps to ezs sync --abort)")),
 		),
 		toolHandler(commands.Sync, func(req mcp.CallToolRequest) []string {
 			var args []string
@@ -448,14 +447,13 @@ func registerTools(s *server.MCPServer) {
 			stringFlag(&args, req, "branch", "--branch")
 			boolFlag(&args, req, "parent", "--parent")
 			boolFlag(&args, req, "children", "--children")
-			boolFlag(&args, req, "merge", "--merge")
-			boolFlag(&args, req, "rebase", "--rebase")
 			boolFlag(&args, req, "squash", "--squash")
 			boolFlag(&args, req, "stats", "--stats")
 			boolFlag(&args, req, "no_delete_local", "--no-delete-local")
-			boolFlag(&args, req, "no_autostash", "--no-autostash")
+			boolFlag(&args, req, "no_push", "--no-push")
 			boolFlag(&args, req, "dry_run", "--dry-run")
 			boolFlag(&args, req, "resume", "--continue")
+			boolFlag(&args, req, "abort", "--abort")
 			return args
 		}),
 	)
@@ -520,7 +518,7 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_pr_stack",
-			mcp.WithDescription("Update all PR descriptions in the stack with navigation links. Use branch to target a specific branch's stack when not on a stack branch."),
+			mcp.WithDescription("Retarget each open PR's base to its parent branch and link the stack's PRs into GitHub stacked PRs (via gh stack link; GitHub shows stack navigation natively). Also removes the legacy 'PR Stack' section older ezstack versions wrote into PR descriptions. Never creates PRs, pushes, or changes draft state. Use branch to target a specific branch's stack when not on a stack branch."),
 			mcp.WithString("branch", mcp.Description("Branch whose stack to update (defaults to current branch's stack)")),
 			mcp.WithDestructiveHintAnnotation(false),
 		),
@@ -633,7 +631,7 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_reparent",
-			mcp.WithDescription("Move a branch to a new parent in the stack."),
+			mcp.WithDescription("Move a branch to a new parent in the stack and restack its commits (and every branch above it) onto the new parent with gh stack rebase. A conflict while moving the branch itself is a plain git rebase: resolve, git add, run `git rebase --continue` in its worktree, then ezstack_sync with children=true from it. A conflict restacking the branches above it: resolve, git add, then ezstack_sync with resume=true."),
 			mcp.WithString("branch",
 				mcp.Description("Branch to reparent"),
 				mcp.Required(),
@@ -664,33 +662,27 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_commit",
-			mcp.WithDescription("Commit staged (or all) changes and auto-sync child branches. Auto-pushes when the branch already exists on the remote. Refuses to open an editor: message is required."),
+			mcp.WithDescription("Commit staged (or all) changes and auto-restack child branches (gh stack rebase). Auto-pushes when the branch already exists on the remote. Refuses to open an editor: message is required."),
 			mcp.WithString("message",
 				mcp.Description("Commit message — passed directly to git commit -m"),
 				mcp.Required(),
 			),
 			mcp.WithBoolean("all", mcp.Description("Stage all tracked modified files (git commit -a)")),
-			mcp.WithBoolean("merge", mcp.Description("Use merge instead of rebase when syncing children")),
-			mcp.WithBoolean("rebase", mcp.Description("Use rebase instead of merge when syncing children")),
 			mcp.WithDestructiveHintAnnotation(true),
 		),
 		yesModeHandler(commands.Commit, func(req mcp.CallToolRequest) []string {
 			var args []string
 			boolFlag(&args, req, "all", "-a")
 			args = append(args, "-m", req.GetString("message", ""))
-			boolFlag(&args, req, "merge", "--merge")
-			boolFlag(&args, req, "rebase", "--rebase")
 			return args
 		}),
 	)
 
 	s.AddTool(
 		mcp.NewTool("ezstack_amend",
-			mcp.WithDescription("Amend the last commit and auto-sync child branches. Force-pushes when the branch already exists on the remote (amend rewrites history). If message is omitted, --no-edit is forced to avoid launching an editor."),
+			mcp.WithDescription("Amend the last commit and auto-restack child branches (gh stack rebase). Force-pushes when the branch already exists on the remote (amend rewrites history). If message is omitted, --no-edit is forced to avoid launching an editor."),
 			mcp.WithString("message", mcp.Description("New commit message. If omitted, the existing message is preserved via --no-edit.")),
 			mcp.WithBoolean("all", mcp.Description("Stage all tracked modified files before amending (git commit -a)")),
-			mcp.WithBoolean("merge", mcp.Description("Use merge instead of rebase when syncing children")),
-			mcp.WithBoolean("rebase", mcp.Description("Use rebase instead of merge when syncing children")),
 			mcp.WithDestructiveHintAnnotation(true),
 		),
 		yesModeHandler(commands.Amend, func(req mcp.CallToolRequest) []string {
@@ -701,8 +693,6 @@ func registerTools(s *server.MCPServer) {
 			} else {
 				args = append(args, "--no-edit")
 			}
-			boolFlag(&args, req, "merge", "--merge")
-			boolFlag(&args, req, "rebase", "--rebase")
 			return args
 		}),
 	)
@@ -754,7 +744,7 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_pr_update",
-			mcp.WithDescription("Push the latest commits and update the PR base branch and stack description to match the current stack structure."),
+			mcp.WithDescription("Push the latest commits, retarget the PR base branch, and relink the GitHub stacked PRs to match the current stack structure."),
 			mcp.WithString("branch", mcp.Description("Branch whose PR to update (defaults to current)")),
 			mcp.WithDestructiveHintAnnotation(true),
 		),
@@ -856,7 +846,7 @@ func registerTools(s *server.MCPServer) {
 
 	s.AddTool(
 		mcp.NewTool("ezstack_config_set",
-			mcp.WithDescription("Set an ezstack configuration value. Valid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, init_submodules, sync_strategy, agent_command."),
+			mcp.WithDescription("Set an ezstack configuration value. Valid keys: worktree_base_dir, default_base_branch, github_token, cd_after_new, use_worktrees, init_submodules, agent_command."),
 			mcp.WithString("key",
 				mcp.Description("Config key to set"),
 				mcp.Required(),

@@ -23,27 +23,22 @@ func TestParseCommitArgs(t *testing.T) {
 			wantPassage: []string{"-m", "hello"},
 		},
 		{
-			name: "merge override stripped",
-			args: []string{"--merge", "-m", "x"},
-			wantFlags: commitFlags{
-				mergeOverride:  true,
-				gitPassthrough: []string{"-m", "x"},
-			},
-			wantPassage: []string{"-m", "x"},
+			name:    "removed --merge is rejected",
+			args:    []string{"--merge", "-m", "x"},
+			wantErr: "--merge was removed",
 		},
 		{
-			name: "rebase override stripped",
-			args: []string{"-m", "x", "--rebase"},
-			wantFlags: commitFlags{
-				rebaseOverride: true,
-				gitPassthrough: []string{"-m", "x"},
-			},
-			wantPassage: []string{"-m", "x"},
+			name:    "removed --rebase is rejected",
+			args:    []string{"-m", "x", "--rebase"},
+			wantErr: "--rebase was removed",
 		},
 		{
-			name:    "merge + rebase errors",
-			args:    []string{"--merge", "--rebase"},
-			wantErr: "both --merge and --rebase",
+			name: "--merge as a commit message is preserved",
+			args: []string{"-m", "--merge"},
+			wantFlags: commitFlags{
+				gitPassthrough: []string{"-m", "--merge"},
+			},
+			wantPassage: []string{"-m", "--merge"},
 		},
 		{
 			name: "push flag",
@@ -111,9 +106,8 @@ func TestParseCommitArgs(t *testing.T) {
 		},
 		{
 			name: "full kitchen sink",
-			args: []string{"--rebase", "--push-children", "-m", "msg"},
+			args: []string{"--push-children", "-m", "msg"},
 			wantFlags: commitFlags{
-				rebaseOverride:   true,
 				pushFlag:         true,
 				pushChildrenFlag: true,
 				gitPassthrough:   []string{"-m", "msg"},
@@ -137,9 +131,7 @@ func TestParseCommitArgs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if got.mergeOverride != tc.wantFlags.mergeOverride ||
-				got.rebaseOverride != tc.wantFlags.rebaseOverride ||
-				got.pushFlag != tc.wantFlags.pushFlag ||
+			if got.pushFlag != tc.wantFlags.pushFlag ||
 				got.pushChildrenFlag != tc.wantFlags.pushChildrenFlag ||
 				got.noPushFlag != tc.wantFlags.noPushFlag {
 				t.Errorf("flags mismatch:\n got %+v\nwant %+v", got, tc.wantFlags)

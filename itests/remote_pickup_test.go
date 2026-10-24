@@ -137,3 +137,63 @@ func mustRunGit(t *testing.T, dir string, args ...string) {
 		t.Fatalf("git %v (dir=%q): %v\n%s", args, dir, err, out)
 	}
 }
+
+// setupPickupStack publishes a collaborator branch "feat" on origin, picks
+// it up with `ezs new origin/feat`, stacks an own branch "mine" on it, and
+// advances main. Returns mine's worktree.
+func setupPickupStack(t *testing.T, f *ghFixture) string {
+	t.Helper()
+	scratch := filepath.Join(f.env.TmpDir, "collab")
+	mustRunGit(t, "", "clone", "-q", f.bare, scratch)
+	mustRunGit(t, scratch, "config", "user.email", TestUserEmail)
+	mustRunGit(t, scratch, "config", "user.name", TestUserName)
+	mustRunGit(t, scratch, "checkout", "-qb", "feat")
+	GitCommit(t, scratch, "feat.txt", "collab\n", "collaborator work")
+	mustRunGit(t, scratch, "push", "-q", "origin", "feat")
+
+	f.mustEzs(f.env.RepoDir, "new", "origin/feat")
+	mineWT := f.branch("mine", "feat")
+	f.advanceMain("m2.txt", "m2\n")
+	return mineWT
+}
+
+// TestPickup_SyncLeavesPickupAlone: by default a pickup branch at the bottom
+// of a chain is neither rebased onto main nor pushed (it's another
+// contributor's history); branches stacked on it are still restacked.
+func TestPickup_SyncLeavesPickupAlone(t *testing.T) {
+	f := newGHFixture(t)
+	mineWT := setupPickupStack(t, f)
+	featBefore := f.rev(f.env.RepoDir, "feat")
+	remoteBefore := f.remote("feat")
+
+	out := f.mustEzs(mineWT, "sync", "-s")
+
+	if f.rev(f.env.RepoDir, "feat") != featBefore {
+		t.Errorf("pickup branch was rebased without --include-remote-worktrees:\n%s", out)
+	}
+	if f.remote("feat") != remoteBefore {
+		t.Error("pickup branch was pushed without --include-remote-worktrees")
+	}
+	if !f.isAncestor("feat", "mine") {
+		t.Error("own branch no longer stacked on the pickup")
+	}
+}
+
+// TestPickup_IncludeRemoteWorktrees: the flag opts in to rebasing and
+// pushing the pickup too.
+func TestPickup_IncludeRemoteWorktrees(t *testing.T) {
+	f := newGHFixture(t)
+	mineWT := setupPickupStack(t, f)
+
+	f.mustEzs(mineWT, "sync", "-s", "--include-remote-worktrees")
+
+	if !f.isAncestor("origin/main", "feat") {
+		t.Error("pickup not rebased onto main with --include-remote-worktrees")
+	}
+	if !f.isAncestor("feat", "mine") {
+		t.Error("own branch not restacked onto the rebased pickup")
+	}
+	if f.remote("feat") != f.rev(f.env.RepoDir, "feat") {
+		t.Error("pickup not pushed with --include-remote-worktrees")
+	}
+}

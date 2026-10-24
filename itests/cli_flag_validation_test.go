@@ -65,7 +65,7 @@ func TestFlagValidation_ConfigSetRejectsExtraArg(t *testing.T) {
 	env := SetupTestEnv(t)
 	defer env.Cleanup()
 
-	out, err := runEzs(t, env, "config", "set", "sync_strategy", "merge", "--bogus")
+	out, err := runEzs(t, env, "config", "set", "init_submodules", "false", "--bogus")
 	if err == nil {
 		t.Fatalf("config set with extra arg should fail:\n%s", out)
 	}
@@ -231,14 +231,14 @@ func TestFlagValidation_LegitimateConfigSetStillWorks(t *testing.T) {
 	env := SetupTestEnv(t)
 	defer env.Cleanup()
 
-	// sync_strategy is an enum field with simple validation — perfect for
-	// asserting end-to-end set+show roundtrip without touching the path
-	// expansion paths used by worktree_base_dir.
-	out, err := runEzs(t, env, "config", "set", "sync_strategy", "merge")
+	// init_submodules is a simple per-repo boolean — perfect for asserting
+	// end-to-end set+show roundtrip without touching the path expansion
+	// paths used by worktree_base_dir.
+	out, err := runEzs(t, env, "config", "set", "init_submodules", "false")
 	if err != nil {
 		t.Fatalf("legitimate config set failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "Set sync_strategy = merge") {
+	if !strings.Contains(out, "Set init_submodules = false") {
 		t.Errorf("expected success line in output:\n%s", out)
 	}
 
@@ -246,8 +246,26 @@ func TestFlagValidation_LegitimateConfigSetStillWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("config show failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "sync_strategy: merge") {
+	if !strings.Contains(out, "init_submodules: false") {
 		t.Errorf("config show didn't reflect set value:\n%s", out)
+	}
+}
+
+// TestFlagValidation_RemovedConfigKeysExplained: sync_strategy and
+// use_gh_stack were removed when gh stack became the only engine; setting
+// them must fail with an explanation rather than "unknown config key".
+func TestFlagValidation_RemovedConfigKeysExplained(t *testing.T) {
+	env := SetupTestEnv(t)
+	defer env.Cleanup()
+
+	for _, key := range []string{"sync_strategy", "use_gh_stack"} {
+		out, err := runEzs(t, env, "config", "set", key, "merge")
+		if err == nil {
+			t.Fatalf("config set %s should fail:\n%s", key, out)
+		}
+		if !strings.Contains(out, key+" was removed") {
+			t.Errorf("config set %s: expected removal explanation:\n%s", key, out)
+		}
 	}
 }
 
