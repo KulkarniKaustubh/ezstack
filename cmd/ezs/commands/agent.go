@@ -1130,12 +1130,44 @@ func buildTemplateVars(ctx *agentContext) map[string]string {
 }
 
 // docsReferenceFor returns the MCP stub when the ezstack MCP is active,
-// otherwise the full embedded DOCUMENTATION.md.
+// otherwise the embedded DOCUMENTATION.md — inline when it fits, else as a
+// file the agent reads on demand (see docsInlineLimit).
 func docsReferenceFor(useMCP bool) string {
 	if useMCP {
 		return mcpDocsStub
 	}
-	return ezsDocsReference
+	if len(ezsDocsReference) <= docsInlineLimit {
+		return ezsDocsReference
+	}
+	path, err := writeDocsFile(ezsDocsReference)
+	if err != nil {
+		return ezsDocsReference
+	}
+	return fmt.Sprintf("The full ezstack documentation is in %s (Markdown). Search it for the section you need, e.g. `grep -n '^##' %s`, and read only that section.", path, path)
+}
+
+// docsInlineLimit caps how much documentation is inlined into the prompt.
+// The prompt reaches the agent CLI as a single argv string, and Linux limits
+// one argument to 128 KiB (MAX_ARG_STRLEN) — beyond it exec fails with
+// "argument list too long". The headroom covers the rest of the prompt
+// (stack JSON, instructions).
+const docsInlineLimit = 96 * 1024
+
+// writeDocsFile stores docs in the ezstack config dir (rewriting it only when
+// the content changed) and returns its path.
+func writeDocsFile(docs string) (string, error) {
+	dir, err := config.ConfigDir()
+	if err != nil {
+		dir = os.TempDir()
+	}
+	path := filepath.Join(dir, "DOCUMENTATION.md")
+	if cur, err := os.ReadFile(path); err == nil && string(cur) == docs {
+		return path, nil
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return path, os.WriteFile(path, []byte(docs), 0o644)
 }
 
 // ── Agent process ──────────────────────────────────────────────────────────────
