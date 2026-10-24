@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/git"
 )
 
 // silenceStdout swallows stdout for the duration of fn. HasExamplesFlag calls

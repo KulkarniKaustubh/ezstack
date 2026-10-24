@@ -7,11 +7,11 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
+	"github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/version"
 )
 
 // init wires the optional progress hook in internal/git so long-running ops

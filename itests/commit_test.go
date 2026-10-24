@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs/commands"
 )
 
 // setupCommitTestStack creates a parent/child stack wired to a bare origin

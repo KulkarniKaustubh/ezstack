@@ -5,8 +5,8 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
 )
 
 // Regression tests for navigating up/down *from* (and through) a branch that

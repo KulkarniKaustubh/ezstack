@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ghstack"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/ghstack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/ui"
 	"github.com/spf13/pflag"
 )
 

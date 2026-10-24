@@ -5,7 +5,7 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
 )
 
 // Reconcile rewrites the gh-stack catalog of the repository at repoDir so it

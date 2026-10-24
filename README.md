@@ -37,10 +37,10 @@ brew install ezstack
 ### Go Install
 
 ```bash
-go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest
+go install github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs@latest
 
 # Optional: MCP server for Claude Code and other MCP-compatible agents
-go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
+go install github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs-mcp@latest
 ```
 
 ### From Source
@@ -185,7 +185,7 @@ ezstack ships a standalone MCP server, `ezs-mcp`, that exposes the full stack wo
 Install:
 
 ```bash
-go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
+go install github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs-mcp@latest
 # or, from source
 make install-mcp
 ```

@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
 )
 
 // setupSyncStatsRepo builds a two-branch stack in an isolated EZSTACK_HOME

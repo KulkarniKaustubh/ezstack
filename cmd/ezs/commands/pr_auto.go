@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/git"
 )
 
 // `ezs pr create --auto` (alias `--ai`) hands the PR's diff, commits, and the

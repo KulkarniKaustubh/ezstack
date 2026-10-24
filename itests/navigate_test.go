@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
 )
 
 // Integration tests for `ezs up` and `ezs down` exercising the merged-branch

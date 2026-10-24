@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/ui"
 )
 
 // TestDelete_CascadeRemovesDescendants is the end-to-end regression for

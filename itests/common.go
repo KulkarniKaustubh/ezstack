@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
 )
 
 // Constants for testing

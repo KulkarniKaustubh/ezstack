@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/github"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/github"
 )
 
 // fakePRFetcher implements prFetcher for unit tests. Each map entry takes

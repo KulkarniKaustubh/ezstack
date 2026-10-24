@@ -9,12 +9,12 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/version"
 )
 
 // ezsMCPModulePath is the go-install path for the ezs-mcp binary.
-const ezsMCPModulePath = "github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp"
+const ezsMCPModulePath = "github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs-mcp"
 
 // ezsMCPName is the name under which the server is registered with claude.
 const ezsMCPName = "ezstack"

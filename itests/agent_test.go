@@ -9,7 +9,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/version"
 )
 
 var (

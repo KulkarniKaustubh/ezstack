@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
 	"github.com/chzyer/readline"
 	"github.com/mattn/go-runewidth"
 	"golang.org/x/term"

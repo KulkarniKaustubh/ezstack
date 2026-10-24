@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
 )
 
 // TestStackConfig_MultiProcessConcurrentSave is the cross-process flavor

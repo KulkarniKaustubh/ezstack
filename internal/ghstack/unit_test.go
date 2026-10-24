@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
 )
 
 // fakeGit is an in-memory Git for projection tests.

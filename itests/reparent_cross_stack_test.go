@@ -3,7 +3,7 @@ package itests
 import (
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
 )
 
 // TestReparent_CrossStack_Issue19 is the integration version of the issue #19

@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
 )
 
 // topLevelCommands is what we emit for `ezs <TAB>`. Aliases (ls, st, ci, n,

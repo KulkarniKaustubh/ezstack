@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/git"
 )
 
 // ── parseAIPRResponse ──────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
 )
 
 func TestValidateWorktreeBaseDir(t *testing.T) {

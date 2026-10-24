@@ -3,7 +3,7 @@ package commands
 import (
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
 )
 
 // Tests pinning the merged-branch handling in navigate's selection helpers.

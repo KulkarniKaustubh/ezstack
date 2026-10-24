@@ -94,7 +94,7 @@ jobs:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
   verify-go-install:
-    # Confirms `go install github.com/.../ezstack/v4/cmd/ezs@<tag>` resolves
+    # Confirms `go install github.com/.../ezstack/v5/cmd/ezs@<tag>` resolves
     # and builds. If the module path ever drifts from the major version in
     # the tag, this job fails fast and the release is caught before users
     # hit the broken install command.
@@ -114,9 +114,9 @@ jobs:
           scratch="$(mktemp -d)"
           cd "$scratch"
           GOBIN="$scratch/bin" go install \
-            github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@${{ github.ref_name }}
+            github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs@${{ github.ref_name }}
           GOBIN="$scratch/bin" go install \
-            github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@${{ github.ref_name }}
+            github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs-mcp@${{ github.ref_name }}
           "$scratch/bin/ezs" --version
           # ezs-mcp speaks JSON-RPC over stdio and has no --version flag; a
           # successful `go install` plus an executable binary is enough to

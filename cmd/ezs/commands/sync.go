@@ -10,13 +10,13 @@ import (
 	"strconv"
 	"sync"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ghstack"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/github"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/hooks"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/ghstack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/github"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/hooks"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/ui"
 	"github.com/spf13/pflag"
 )
 

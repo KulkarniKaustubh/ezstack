@@ -807,14 +807,14 @@ func predictedGoInstallDir() string {
 // goModulePath computes the import path that `go install` should
 // receive for the given release tag. Major versions ≥ 2 use the
 // /vN suffix that semantic-import-versioning requires; v0/v1 omit it.
-// Falls back to the v4 path that ships today when the tag is malformed
+// Falls back to the v5 path that ships today when the tag is malformed
 // so a corrupted release record doesn't silently re-install the wrong
 // major version.
 func goModulePath(tag string) string {
 	core, _ := splitSemver(tag)
 	major := core[0]
 	if major <= 0 {
-		major = 4
+		major = 5
 	}
 	if major == 1 {
 		return fmt.Sprintf("github.com/%s/%s", repoOwner, repoName)

@@ -5,7 +5,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
 )
 
 // concurrentSaveHelperMain is the body executed when the test binary is

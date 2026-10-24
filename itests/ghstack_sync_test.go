@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ghstack"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/ghstack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
 )
 
 // These tests drive the real ezs binary against a repo with a bare local

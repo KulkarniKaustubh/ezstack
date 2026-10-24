@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/version"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"

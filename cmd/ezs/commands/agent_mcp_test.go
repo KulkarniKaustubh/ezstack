@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/version"
 )
 
 // matchingVersionStub is a shell ezs-mcp stub that reports the version the

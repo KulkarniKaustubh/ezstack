@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs/commands"
 )
 
 // mustRunGit is defined in remote_pickup_test.go in the same package.

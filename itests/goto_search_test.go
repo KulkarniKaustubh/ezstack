@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs/commands"
 )
 
 // captureStdout replaces os.Stdout with a pipe for the duration of fn and

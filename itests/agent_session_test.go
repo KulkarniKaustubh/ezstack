@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
 )
 
 // runEzsStubbed runs the built ezs binary inside env.RepoDir with PATH

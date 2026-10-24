@@ -704,8 +704,8 @@
 <span class="c-cmd">brew</span> <span class="c-flag">install</span> <span class="c-str">ezstack</span>
 
 <span class="c-comment"># Go toolchain — Go 1.25+ required (matches the module&#39;s go directive)</span>
-<span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest</span>
-<span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest</span>
+<span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs@latest</span>
+<span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs-mcp@latest</span>
 </code></pre>
       <p><code>ezs-mcp</code> is the companion MCP server that <code>ezs agent</code> (and any standalone
       MCP client) uses to drive <code>ezs</code> from inside Claude Code. If you install via
@@ -975,7 +975,7 @@
 <span class="c-cmd">brew</span> <span class="c-flag">install</span> <span class="c-str">ezstack</span>
 </code></pre>
       <p><strong>Go Install</strong></p>
-      <pre><code><span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest</span>
+      <pre><code><span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs@latest</span>
 </code></pre>
       <p><strong>Build from source</strong></p>
       <pre><code><span class="c-cmd">git</span> <span class="c-flag">clone</span> <span class="c-str">https://github.com/KulkarniKaustubh/ezstack.git</span>
@@ -1895,7 +1895,7 @@ Options:
       <ol>
       <li><strong>Ensures <code>ezs-mcp</code> is installed and version-aligned.</strong> If the binary is
       missing or was built against a different ezstack release, ezs runs
-      <code>go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@v&lt;version&gt;</code>,
+      <code>go install github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs-mcp@v&lt;version&gt;</code>,
       falling back to <code>@latest</code> for untagged dev builds.</li>
       <li><strong>Registers <code>ezs-mcp</code> with Claude Code at user scope</strong> (equivalent to
       running <code>claude mcp add ezstack --scope user -- ezs-mcp</code> yourself), so
@@ -2824,7 +2824,7 @@ ref=$(git <span class="c-flag">stash</span> <span class="c-str">list</span> <spa
 <span class="c-cmd">brew</span> <span class="c-flag">install</span> <span class="c-str">ezstack</span>
 
 <span class="c-comment"># Go install</span>
-<span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest</span>
+<span class="c-cmd">go</span> <span class="c-flag">install</span> <span class="c-str">github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs-mcp@latest</span>
 
 <span class="c-comment"># From source</span>
 <span class="c-cmd">make</span> <span class="c-str">install-mcp</span>

@@ -1166,10 +1166,10 @@ func TestGoModulePath(t *testing.T) {
 		{"v2.0.0-rc.1", "github.com/KulkarniKaustubh/ezstack/v2"},
 		// Major 1 omits the suffix per semantic-import-versioning.
 		{"v1.9.9", "github.com/KulkarniKaustubh/ezstack"},
-		// Junk tags fall back to the v4 shipping path so a corrupted
+		// Junk tags fall back to the v5 shipping path so a corrupted
 		// release record doesn't silently re-install the wrong major.
-		{"", "github.com/KulkarniKaustubh/ezstack/v4"},
-		{"banana", "github.com/KulkarniKaustubh/ezstack/v4"},
+		{"", "github.com/KulkarniKaustubh/ezstack/v5"},
+		{"banana", "github.com/KulkarniKaustubh/ezstack/v5"},
 	}
 	for _, c := range cases {
 		if got := goModulePath(c.tag); got != c.want {

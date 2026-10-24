@@ -7,8 +7,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/git"
 )
 
 // BranchesRemoved, when set, is called after the manager drops branches from

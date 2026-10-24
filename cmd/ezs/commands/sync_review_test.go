@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ghstack"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/ghstack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/ui"
 )
 
 // fileAt reports whether path exists in branch's tree.

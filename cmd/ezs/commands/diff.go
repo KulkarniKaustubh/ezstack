@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/git"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/git"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/ui"
 	"github.com/spf13/pflag"
 )
 

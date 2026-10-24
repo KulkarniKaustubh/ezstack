@@ -1,4 +1,4 @@
-module github.com/KulkarniKaustubh/ezstack/v4
+module github.com/KulkarniKaustubh/ezstack/v5
 
 go 1.25.1
 

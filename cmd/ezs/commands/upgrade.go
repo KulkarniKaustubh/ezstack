@@ -7,9 +7,9 @@ import (
 	"os"
 	"time"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/ui"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/upgrade"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/version"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/ui"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/upgrade"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/version"
 	"github.com/spf13/pflag"
 )
 

@@ -53,8 +53,8 @@ brew tap KulkarniKaustubh/ezstack
 brew install ezstack
 
 # Go toolchain — Go 1.25+ required (matches the module's go directive)
-go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest
-go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
+go install github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs@latest
+go install github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs-mcp@latest
 ```
 
 `ezs-mcp` is the companion MCP server that `ezs agent` (and any standalone
@@ -355,7 +355,7 @@ brew install ezstack
 **Go Install**
 
 ```bash
-go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@latest
+go install github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs@latest
 ```
 
 **Build from source**
@@ -1416,7 +1416,7 @@ When the configured agent CLI is `claude`, `ezs agent` automatically:
 
 1. **Ensures `ezs-mcp` is installed and version-aligned.** If the binary is
    missing or was built against a different ezstack release, ezs runs
-   `go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@v<version>`,
+   `go install github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs-mcp@v<version>`,
    falling back to `@latest` for untagged dev builds.
 2. **Registers `ezs-mcp` with Claude Code at user scope** (equivalent to
    running `claude mcp add ezstack --scope user -- ezs-mcp` yourself), so
@@ -2440,7 +2440,7 @@ brew tap KulkarniKaustubh/ezstack
 brew install ezstack
 
 # Go install
-go install github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@latest
+go install github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs-mcp@latest
 
 # From source
 make install-mcp

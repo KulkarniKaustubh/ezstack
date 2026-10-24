@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/config"
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/github"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/config"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/github"
 )
 
 // Rebasing, pushing, and PR linking are done by gh-stack (internal/ghstack).

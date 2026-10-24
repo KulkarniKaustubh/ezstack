@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/internal/stack"
+	"github.com/KulkarniKaustubh/ezstack/v5/internal/stack"
 	"github.com/mark3labs/mcp-go/mcp"
 )
 

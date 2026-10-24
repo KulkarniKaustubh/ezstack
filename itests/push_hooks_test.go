@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs/commands"
+	"github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs/commands"
 )
 
 // setupPushEnv attaches a bare upstream remote to env.RepoDir so `ezs push`

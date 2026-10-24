@@ -43,7 +43,7 @@ jobs:
         run: go test -v -race ./...
 
   go-install:
-    # Verifies `go install github.com/.../ezstack/v4/cmd/ezs@<sha>` works
+    # Verifies `go install github.com/.../ezstack/v5/cmd/ezs@<sha>` works
     # against the module proxy. This catches SIV mistakes (e.g. bumping to
     # a new major without updating the module path / import paths) that
     # local `go build` can't see because it uses go.mod verbatim.
@@ -64,9 +64,9 @@ jobs:
           scratch="$(mktemp -d)"
           cd "$scratch"
           GOBIN="$scratch/bin" go install \
-            github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs@${{ github.sha }}
+            github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs@${{ github.sha }}
           GOBIN="$scratch/bin" go install \
-            github.com/KulkarniKaustubh/ezstack/v4/cmd/ezs-mcp@${{ github.sha }}
+            github.com/KulkarniKaustubh/ezstack/v5/cmd/ezs-mcp@${{ github.sha }}
           "$scratch/bin/ezs" --version
           test -x "$scratch/bin/ezs-mcp"
 
